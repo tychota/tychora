@@ -1,0 +1,33 @@
+docs/superpowers/specs/2026-09-10-tychora-configuration-design.md
+  s_35b641b930a96d::t_853cd15f6b80aa 41-58,217,223,237,243,253
+docs/superpowers/specs/2026-09-10-tychora-dashboard-design.md
+  s_35b641b930a96d::t_ded04910187631 64,113,120
+docs/superpowers/specs/2026-09-10-tychora-design.md
+  s_35b641b930a96d::t_b462b84e84f2d8 5,181,185,212,228,238
+docs/superpowers/specs/2026-09-10-tychora-distribution-design.md
+  s_35b641b930a96d::t_bf534dfdff95f8 73
+docs/superpowers/specs/2026-09-10-tychora-engineering-design.md
+  s_35b641b930a96d::t_5e64e58078b428 131,144-146,160,163,166,171-174,216,260,264,266,268,270,277,290-292
+docs/superpowers/specs/2026-09-10-tychora-lifecycle-design.md
+  s_35b641b930a96d::t_5cb1600f46b96b 1-137
+docs/superpowers/specs/2026-09-10-tychora-pipeline-algorithms.md
+  s_35b641b930a96d::t_fe6bc2eb5e7511 74,186,194-215,223-233,257
+docs/superpowers/specs/2026-09-10-tychora-storage-schema.md
+  s_35b641b930a96d::t_42ba8c012abcc8 8,36-38,70,140-144,461-463,474-482,570-575,590,594,602,692
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "6bf6ae0b08849fb620d1bbd6a9adfac17ff071a8",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
