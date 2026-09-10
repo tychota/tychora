@@ -3,7 +3,7 @@
 Date: 2026-09-10
 Status: engineering review draft; product direction accepted, application not implemented
 
-This specification defines implementation contracts, storage boundaries and execution order. It supplements the [application design](2026-09-10-tychora-design.md) and [dashboard design](2026-09-10-tychora-dashboard-design.md). The [storage schema](2026-09-10-tychora-storage-schema.md) contains the SQLite DDL, vector records and graph model. The [pipeline algorithms](2026-09-10-tychora-pipeline-algorithms.md) define extraction, indexing, ranking and evaluation. Where an earlier product description leaves an implementation choice open, these engineering documents make the choice explicit.
+This specification defines implementation contracts, storage boundaries and execution order. It supplements the [application design](2026-09-10-tychora-design.md) and [dashboard design](2026-09-10-tychora-dashboard-design.md). The [storage schema](2026-09-10-tychora-storage-schema.md) contains the SQLite DDL, vector records and graph model. The [pipeline algorithms](2026-09-10-tychora-pipeline-algorithms.md) define extraction, indexing, ranking and evaluation. The [Code retrieval profile](2026-09-10-tychora-code-retrieval-design.md) makes language adapters, structural context, code evaluation and cache benchmarks first-release contracts. Where an earlier product description leaves an implementation choice open, these engineering documents make the choice explicit.
 
 ## 1. Runtime topology and dependency direction
 
@@ -44,7 +44,7 @@ src/tychora/
   application/              # add, sync, query, inspect, maintain, evaluate
   ingestion/                # acquire, normalize, provenance, quality checks
   indexing/                 # batches, checkpoints, activation, cache keys
-  retrieval/                # eligibility, channels, fusion, rerank, assemble
+  retrieval/                # eligibility, channels, structural context, fusion, rerank, assemble
   ports/                    # storage, parsers, model providers, clock/events
   adapters/
     sqlite/                 # migrations, repositories, eligibility SQL, FTS
@@ -52,7 +52,7 @@ src/tychora/
     ladybug/                # generations, statements, graph validation
     files/                  # atomic artifact writes, manifests, recovery
     docling/                # structured extraction and normalization mapping
-    code/                   # Git scanner and supported Tree-sitter grammars
+    code/                   # Git capture, language adapters, symbols and structural assertions
     voyage/                 # contextual text, multimodal, text reranking
     vision/                 # optional ingestion-only vision
   interfaces/cli.py
@@ -193,7 +193,7 @@ async with AsyncTychora.open("./knowledge", scope=scope) as kb:
     result = await kb.search(request)
 ```
 
-`SourceInput` is a discriminated union: local file/folder/repository, in-memory text or bytes with metadata, or an explicitly enabled URL-acquisition adapter. QueryRequest is a discriminated question/passage/image input plus typed filters and budgets. `FilterExpr` supports registered-field `eq`, `in`, ordered range, `and`/`or`; unknown fields/operators fail. RequestScope is immutable and can only narrow the client's granted collections, access ceiling, uses and provider-upload permissions.
+`SourceInput` is a discriminated union: local file/folder/repository, in-memory text or bytes with metadata, or an explicitly enabled URL-acquisition adapter. QueryRequest is a discriminated question/passage/image input plus typed filters and budgets. `FilterExpr` supports registered-field `eq`, `in`, ordered range, `and`/`or`; unknown fields/operators fail. Registry filter scopes distinguish candidate selectors from all-unit constraints; mixed-scope OR expressions fail validation. Code context/support still obeys source/date/access/review and source-range restrictions. RequestScope is immutable and can only narrow the client's granted collections, access ceiling, uses and provider-upload permissions.
 
 Both clients return the same immutable Pydantic DTOs, never private database handles. They expose no process exit, printing, CLI parsing or global logging side effects. Sync calls use the owner directly; async calls use native async providers and bounded offload for blocking libraries. A synchronous call made inside an async event loop is documented as blocking; use AsyncTychora there. No wrapper nests `asyncio.run` within an existing loop.
 
@@ -202,10 +202,11 @@ Both clients return the same immutable Pydantic DTOs, never private database han
 | CorpusStore | `commit_extraction`, `resolve_snapshot`, `compile_eligibility`, `hydrate`, `publish_snapshot`, `withdraw`, `record_review`, `record_assertion_decision`, `append_job_event` |
 | LexicalIndex | `write_batch`, `search(eligible_chunks_and_owners, query, candidate_limit)`, `verify_batch`, `drop_batch` |
 | VectorIndex | `create_family`, `upsert_batch`, `search(query_vector, eligible_records_and_owners, candidate_limit, work_limits)`, `verify_batch`, `drop_records` |
-| GraphStore | `begin_generation`, `upsert_batch`, `seal_generation`, `expand(view, seed_unit_ids, limits)`, `get_assertions`, `drop_generation` |
+| GraphStore | `begin_generation`, `upsert_batch`, `seal_generation`, `expand(view, seed_unit_ids, limits)`, `structural_context(view, seed_unit_ids, limits)`, `get_assertions`, `drop_generation` |
 | ArtifactStore | `put_stream`, `open_verified`, `stat`, `collect_unreferenced`; all access by registered hash/ref |
 | Parser | `extract(original_ref, config) -> ExtractionArtifact`; progress and diagnostics, no database writes |
-| TextEmbedder | `embed_groups(groups)`, `embed_queries(queries)`, `capabilities` |
+| LanguageAdapter | `capabilities`, `parse`, `definitions`, `references`, `resolve`, `context_spans`; code-specific typed ingestion contract |
+| TextEmbedder | `embed_groups(groups)`, `embed_queries(queries)`, `capabilities` including declared joint/independent contextualization |
 | VisualEmbedder | `embed_assets(items)`, `embed_query(text_or_image)`, `capabilities` |
 | Reranker | `rank(query, representations) -> indexed_scores`; never invent result IDs |
 | VisionProvider | `interpret(region, task_schema) -> DerivedObservation`; ingestion-only |
@@ -246,6 +247,8 @@ For the selected MCP SDK, construct `MCPServer.streamable_http_app()` once, moun
 
 Run tasks are bounded and cooperative: cancellation stops new provider calls/workers and checks between batches. A blocking library operation that cannot be interrupted is allowed to finish its transaction; it cannot publish a cancelled job. Owner shutdown drains bounded work, releases handles and then releases the lock. Abrupt shutdown is covered by the recovery protocol above.
 
+The owner retains bounded query-embedding and result caches as separate resources. The code-profile cache contract defines keys, TTL, purge and four benchmark states; it applies to every modality/profile using those shared caches. A result-cache hit revalidates policy and creates a fresh run ID. Code symbol records persist exact context spans, and extraction/index manifests retain overlapping-range and joint-group dependencies so parent representations cannot bypass child restrictions.
+
 ## 7. Errors, events and HTTP contracts
 
 Error envelope: `schema_version`, `code`, `message`, `retryable`, `run_or_job_id`, and permitted diagnostic references. Error codes include `INVALID_REQUEST`, `FORBIDDEN_SCOPE`, `NOT_FOUND`, `WORKSPACE_BUSY`, `CAPABILITY_MISSING`, `INDEX_INCOMPLETE`, `PROVIDER_FAILURE`, `INTEGRITY_ERROR`, `CANCELLED`, `DEADLINE_EXCEEDED`, `SCOPE_CHANGED`. CLI maps invalid input to exit 2, operational failures to 1, success to 0, cancellation to 130; JSON error output is on stderr.
@@ -268,6 +271,7 @@ Operational query history defaults to IDs, counts, timing and configuration fing
 - Append unpublished FTS rows while retaining a snapshot: membership stays fixed, statistics epoch changes, and ranking caches invalidate.
 - Open clients through sync Python, async Python, CLI, MCP and HTTP and compare typed results/policy behavior.
 - Ensure event-loop responsiveness with two concurrent queries while a blocking parser runs; verify deadlines and queue bounds.
+- Pass the language, symbol-collision, structural-context, resolution-diagnostic and cold/warm/cache acceptance cases in the code profile.
 - Install from built wheel in a fresh supported environment; help/import perform no network or state creation.
 
 The storage DDL can be syntax/integrity-checked independently as a design artifact. Graph/backend runtime qualification, provider live checks and retrieval-quality measurements are implementation acceptance tasks; this document does not claim those tests have passed.

@@ -3,6 +3,7 @@
 Date: 2026-09-10
 Status: engineering review draft
 Parent: [Engineering design](2026-09-10-tychora-engineering-design.md)
+Code record and structural-query contract: [Code retrieval profile](2026-09-10-tychora-code-retrieval-design.md)
 
 ## 1. Physical layout and ownership
 
@@ -69,7 +70,7 @@ erDiagram
 | Operations | `jobs`, `job_steps`, `job_events`, `query_runs` | Job state, event stream and query retention have distinct lifecycles |
 | Evaluation | `evaluation_datasets`, `evaluation_cases`, `evaluation_runs`, `evaluation_results` | Gold labels, execution settings and outcomes must be independently versioned |
 
-`structured_records` stores one versioned schema-validated record associated with an evidence unit, with `record_type` equal to `rule`, `feedback`, `template_slot` or another registered type. This retains a generic core without creating a different physical database for every document kind. Required queryable fields have typed facets; arbitrary JSON is not automatically searchable or a source of SQL expressions.
+`structured_records` stores one versioned schema-validated record associated with an evidence unit, with `record_type` equal to `rule`, `feedback`, `template_slot`, `code_symbol` or another registered type. This retains a generic core without creating a different physical database for every document kind. Required queryable fields have typed facets; arbitrary JSON is not automatically searchable or a source of SQL expressions.
 
 A rule record requires identifier and requirement, with optional proof/control/foundation identifiers and declared status. Feedback requires literal annotation, target locator or quote, observation/action, author provenance and status; unknown values are explicit nulls. A generated interpretation is a separate derived record, never a rewrite of the literal annotation. These schemas belong to the kind registry and are versioned by digest.
 
@@ -281,6 +282,8 @@ CREATE TABLE facet_definitions (
   facet_key TEXT PRIMARY KEY,
   value_type TEXT NOT NULL CHECK(value_type IN ('text','number','boolean','date')),
   operators_json TEXT NOT NULL CHECK(json_valid(operators_json)),
+  filter_scope TEXT NOT NULL DEFAULT 'all_units'
+    CHECK(filter_scope IN ('all_units','matched_candidates')),
   definition_hash TEXT NOT NULL
 ) STRICT;
 
@@ -553,11 +556,13 @@ Enforce same-extraction asset links, locator span bounds, exact chunk substring 
 
 Assertion decisions reference the stable assertion ID and immutable artifact record; validate that binding before appending because the assertion itself lives in a file/graph rather than a SQL adjacency table. Latest rejected/proposed decisions immediately block normal traversal through the policy overlay. Every graph receipt stores `decision_sequence_max`; any assertion with a decision newer than that applied watermark is blocked in that generation until a rebuilt generation applies the decision. This includes confirmations and re-acceptance, so a stale recorded edge cannot be accidentally reactivated. Restrictive decisions remain blocked regardless of the watermark. Keep original assertion observations unchanged.
 
+Code uses existing rows: revision artifacts retain files; a non-searchable file-container unit owns top-level definitions; `code_symbol` structured records and registered `code.*` facets describe definitions; exact identifier namespaces preserve file/revision-qualified identity. Symbol records persist dependency-bound `context_spans` for parent declarations and referenced imports; these refer to actual source units and cannot quote empty file containers. The extraction artifact also maps overlapping source ranges to every owning unit; index manifests carry complete representation/group dependencies. Per-reference resolved/ambiguous/unresolved records live in immutable diagnostic artifacts. Cross-record validation and lookup keys are specified in the code profile. `facet_definitions.filter_scope` distinguishes matched-candidate selectors from constraints applying to all support/context units. Code symbol-kind/name facets are candidate selectors; path/language and all authorization/date/use constraints remain all-unit. Mixed-scope OR expressions are rejected; conjunctions can be split into validated scoped subtrees. No SQL adjacency table is introduced.
+
 Kind definitions are immutable per version-qualified `kind_id` (for example `standard@1`), with a human-facing stable key in the JSON definition. Updating the description/schema creates a new kind version; old revisions retain theirs. A profile determines which registered version new ingestion uses.
 
 ### Query-critical indexes and eligibility
 
-The main eligibility query joins snapshot_members → sources/collections → revisions → extractions → evidence_units/chunks, then applies version selector, access floors, allowed uses, review states, dates and typed facets. It materializes request-local eligible unit/chunk/asset IDs and compatible ready vector-record IDs, joining the exact batches selected by `snapshot_batches`. Proxy IDs are a separate allowed retrieval set; they do not enter citable source-unit eligibility. This is not a persisted global permission table. Cache it only by `(snapshot, policy_epoch, granted_scope_digest, complete_filter_digest)`.
+The main eligibility query joins snapshot_members → sources/collections → revisions → extractions → evidence_units/chunks, then applies version selector, access floors, allowed uses, review states, dates and typed facets. It materializes separate context-eligible and matched-candidate unit sets (the latter also applies selection-only facets), plus eligible chunk/asset IDs and compatible ready vector-record IDs, joining the exact batches selected by `snapshot_batches`. Every representation is also checked against its overlapping source-range and contextual-group dependencies; parent units cannot expose forbidden child text. Non-searchable file-container IDs form a separate permitted structural-unit set for graph grounding; they are never text candidates. Proxy IDs are a separate allowed retrieval set; they do not enter citable source-unit eligibility. This is not a persisted global permission table. Cache it only by `(snapshot, policy_epoch, granted_scope_digest, complete_filter_digest)`.
 
 Revision-selection precedence is: exact `revision_ids`, otherwise `all`, otherwise `current`; each still undergoes all policy/date filters. Explicit IDs and `all` retain every qualifying requested member. Undated `current` uses `is_default`. When an effective date or publication cutoff is supplied, `current` evaluates **all retained editions first**, applies those predicates, then chooses the latest known applicable date per source (effective start for an effective-date query, otherwise publication date; publication date is the secondary key). Tied/overlapping winners are all returned with an ambiguity warning; never choose one by hash. In permissive mode undated editions are supplemental, clearly uncertain results, and never replace a dated winner. At most one extraction per revision belongs to one published snapshot; old extraction revisions remain inspectable by explicit ID if retained and permitted. A snapshot may contain many editions of one source, so historic document retrieval does not depend on retaining every former workspace snapshot.
 
@@ -617,7 +622,9 @@ The JSONL assertion artifact stores predicate, subject/object external IDs, comp
 
 `Evidence.evidence_id` equals canonical `evidence_units.unit_id`; seal-time validation checks its revision/extraction and locator against SQLite. The GraphStore accepts **unit IDs** as seeds, resolves their grounded entities internally, and returns target unit IDs plus assertion/support IDs and path metadata. Internal graph primary keys never stand in for public evidence IDs.
 
-Traversal uses repeated bounded one-hop graph queries. Example outgoing page (the incoming variant reverses seed direction):
+The code structural-context operation uses the same generation and decision overlay. Sparse `contains` and `precedes` assertions support explicit parent/sibling/adjacency patterns; same-parent lookup is a bounded child-parent-child pattern, not general two-hop semantic search. All parent/end/support units must be permitted, and returned candidates must be searchable source units. Structural and semantic operations receive applicable subsets of one coordinator-owned five-seed list and a shared remaining candidate/work budget; a two-assertion sibling path consumes two work units.
+
+Traversal uses repeated bounded one-hop semantic graph queries. Example outgoing page (the incoming variant reverses seed direction and applies candidate eligibility to the returned endpoint):
 
 ```cypher
 MATCH (u:Entity)-[:GroundedIn]->(ue:Evidence),
@@ -629,6 +636,7 @@ WHERE ue.evidence_id IN $seed_unit_ids
   AND a.generation_id = $gid AND ue.generation_id = $gid
   AND ve.generation_id = $gid
   AND ue.evidence_id IN $eligible AND ve.evidence_id IN $eligible
+  AND ve.evidence_id IN $candidate_eligible
   AND a.origin_evidence_id IN $eligible
   AND a.status IN $statuses AND a.predicate IN $predicates
   AND NOT (a.assertion_id IN $blocked_assertion_ids)
@@ -644,12 +652,14 @@ SKIP $offset LIMIT $page_size;
 
 Every admitted frontier and every required supporting unit passes the same pinned generation/eligibility check, so a hidden intermediate cannot connect otherwise visible results. Page a deterministic sealed view (initial page size 128) with a one-row lookahead; merge incoming/outgoing page streams by the same status/confidence/target-ID tuple before applying global admission limits; deduplicate targets against initial candidates and previous pages. Search augmentation stops at 32 new unit IDs or 2,000 inspected eligible assertion rows across all seeds/directions, whichever comes first. Distinguish candidate-cap truncation, edge-work truncation and true exhaustion. Policy epoch changes restart the view; pagination must not span different overlays. Explicit relationship inspection instead budgets returned edges, with its own 100-edge cap. SupportedBy edges must match the support-ID list at seal time. [List predicates](https://docs.ladybugdb.com/cypher/expressions/list-functions/), [prepared statements](https://docs.ladybugdb.com/get-started/prepared-statements/).
 
+`eligible` in the graph contract is the union of context-eligible source units and structural containers, constrained by all-unit filters and current policy; `candidate_eligible` contains only searchable source evidence. Structural containers can support a traversal without being returned as passages.
+
 Only unsealed generations accept upserts. Retry compares immutable content hashes; conflicting data fails. Merge nodes and structural edges separately because MERGE matches a complete pattern. Store nodes/edges in bounded single-writer transactions, using connections from one owning Database object. [MERGE](https://docs.ladybugdb.com/cypher/data-manipulation-clauses/merge/), [concurrency](https://docs.ladybugdb.com/concurrency/).
 
 GC removes only unreferenced and unleased generations: assertions first, then entity/evidence stubs, with structural edges detached. Retain active/previous plus pinned evaluation/query generations. Snapshot manifests persist after graph GC; exact evidence remains accessible, but replay must rebuild a missing graph generation before claiming identical capabilities. Neo4j supplies its own constraints/queries for the same GraphStore contract; arbitrary Cypher portability is not promised.
 
 ## 6. Design validation performed
 
-The SQL block was executed on SQLite 3.53.2 in memory on 2026-09-10: **38 application tables plus one FTS5 virtual table**, with empty `foreign_key_check` and `integrity_check=ok`. Fourteen fixture/negative checks passed, covering snapshot batch filtering, distinct-unit FTS grouping, insert/delete statistics epochs, immutable lexical rows, family/extraction uniqueness, cross-family/cross-revision foreign keys, invalid ranges/JSON, review/vector ownership and proxy constraints.
+The SQL block was executed on SQLite 3.53.2 in memory on 2026-09-10: **38 application tables plus one FTS5 virtual table**, with empty `foreign_key_check` and `integrity_check=ok`. Seventeen fixture/negative checks passed, covering snapshot batch filtering, distinct-unit FTS grouping, insert/delete statistics epochs, immutable lexical rows, family/extraction uniqueness, cross-family/cross-revision foreign keys, invalid ranges/JSON, review/vector ownership, proxy constraints and registered facet scopes.
 
 These checks validate the documented SQL and selected constraints. Cross-record publication rules, temporal/profile semantics, Ladybug Cypher, real Chroma/Docling integration and provider quality remain implementation acceptance tests. No application or live-provider validation is claimed by this design check.

@@ -2,7 +2,7 @@
 
 Date: 2026-09-10
 Status: product direction accepted; detailed engineering design under review
-Related specifications: [Dashboard](2026-09-10-tychora-dashboard-design.md), [Engineering](2026-09-10-tychora-engineering-design.md), [Storage schema](2026-09-10-tychora-storage-schema.md), [Algorithms](2026-09-10-tychora-pipeline-algorithms.md)
+Related specifications: [Code retrieval profile](2026-09-10-tychora-code-retrieval-design.md), [Dashboard](2026-09-10-tychora-dashboard-design.md), [Engineering](2026-09-10-tychora-engineering-design.md), [Storage schema](2026-09-10-tychora-storage-schema.md), [Algorithms](2026-09-10-tychora-pipeline-algorithms.md)
 
 ## 1. Product
 
@@ -32,6 +32,7 @@ Public code, documentation, tests, screenshots, examples, package metadata, and 
 6. Expensive work is resumable and cached; failed reindexing does not replace a working snapshot with partial results.
 7. Graph traversal and vector search use dedicated engines behind replaceable interfaces.
 8. Evaluation, observable jobs, and useful failure messages are part of the initial application, not dashboard-only additions.
+9. Code retrieval preserves bounded parent/sibling context, language-specific extraction contracts, file-qualified symbol identity and code-specific quality/cache benchmarks.
 
 ## 3. Components and dependencies
 
@@ -136,7 +137,7 @@ Text and image vectors live in separate embedding spaces. Text-only questions ca
 
 Use Tree-sitter adapters with initially tested Python and TypeScript/JavaScript support; expand the advertised language list with fixtures. Preserve symbol boundaries, decorators, parent scope, imports, comments and exact ranges. Respect Git ignore rules plus workspace excludes; avoid secrets, generated/vendor content and symlink escapes. Git operations inspect source state and never execute repository hooks or code.
 
-Store an explicit indexed snapshot. Dirty working-tree bytes must not be attributed solely to HEAD. Unchanged files reuse extraction/embedding artifacts; deletion removes them from the active snapshot. Historical inspection is revision-qualified. Calls/imports/inheritance are typed, and heuristic name resolution is labelled as such.
+Store an explicit indexed snapshot. Dirty working-tree bytes must not be attributed solely to HEAD. Unchanged files reuse extraction/embedding artifacts; deletion removes them from the active snapshot. Historical inspection is revision-qualified. Calls/imports/inheritance are typed, and heuristic name resolution is labelled as such. The [Code retrieval profile](2026-09-10-tychora-code-retrieval-design.md) makes structural context, a LanguageAdapter port, resolution diagnostics, file/symbol evaluation and four cache benchmark states first-release requirements. Sparse parent/adjacency assertions replace a quadratic set of sibling links. More elaborate graph propagation and relevance/penalty segment scoring remain explicit experiments.
 
 ### Retrieval-related indexing
 
@@ -153,7 +154,7 @@ Build exact identifier, contextual lexical, contextual text-vector, image-vector
 7. Attach linked images and typed relation paths; enforce diversity and a shared response budget.
 8. Revalidate returned evidence against current withdrawal/access restrictions and format it.
 
-Each graph path requires eligible endpoints, intermediate nodes, assertion grounding and every required supporting unit. Optional search augmentation starts from five seeds, traverses one hop and admits at most 32 new units, subject to a separate work budget. Explicit relationship inspection is bounded to two hops and 100 edges. Requests can lower configured limits. Relation provenance and confidence remain visible; graph rank expansion is evaluated rather than assumed to improve ranking.
+Each graph path requires eligible endpoints, intermediate nodes, assertion grounding and every required supporting unit. Optional semantic search augmentation uses one-hop traversal; the code preset also supports named parent/sibling structural queries. They share five seeds, at most 32 new units and a 2,000-row work budget; they do not each receive a separate allowance. Explicit relationship inspection is bounded to two hops and 100 edges. Requests can lower configured limits. Relation provenance and confidence remain visible; graph rank expansion is evaluated rather than assumed to improve ranking.
 
 A QueryRequest contains a discriminated question/passage/image input, collection/profile selection, typed filters, requested modalities, context budget and optional previously selected evidence IDs. Advanced candidate counts and model tuning live in configuration or structured request files. The tool accepts passage input directly; hidden generative rewriting and a conversation-memory engine are not part of this release.
 

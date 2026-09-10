@@ -39,6 +39,8 @@ At the top, provide a question/passage field, selected collections and an option
 
 The main result area has three coordinated regions: result list, evidence reader and collapsible details. On narrower screens these become navigable panels with state preserved. A result row shows title, source kind/role, revision, exact locator, short excerpt and why it matched. Dense technical scores live in details; a score is not presented as a probability that the answer is correct.
 
+For code, show separately labelled parent-declaration/import excerpts and structural selection reasons; a sibling returned as matched evidence remains distinct from context-only declarations. Each excerpt keeps its own exact source span.
+
 The evidence reader shows the complete returned segment, visually distinguishing directly matched units from added context. Original quotations are distinguishable from generated descriptions and OCR. A citation control copies a stable citation with source/revision/evidence IDs. Users can export the complete response as JSON or the deterministically formatted agent envelope.
 
 For PDF evidence, open the original page with highlighted bounding boxes when available; label physical page and printed page separately. For a figure, show the source crop, caption and surrounding passage together, with full-page access. For code, show syntax-highlighted source at the indexed snapshot with line numbers, symbol and revision/dirty-snapshot status. For DOCX without reliable page geometry, show structured source content and original-file access rather than invented page numbers.
@@ -55,7 +57,7 @@ States distinguish no matches, incomplete channel coverage, missing configured i
 
 The inventory is a sortable/filterable table with source title, kind, collection, current revision, extraction status, text/image/graph coverage, review state and last update. Coverage uses counts plus labels such as 8 of 10 eligible figures indexed; a single green status must not imply every stage or asset is complete.
 
-Source detail contains Overview, Revisions, Evidence, Assets and Diagnostics tabs. Revision comparison distinguishes source changes from changes in extraction/model configuration. It exposes immutable source hashes, available dates and policy, while avoiding raw filesystem paths unless explicitly requested by the local user. Multiple revisions alone do not imply conflict.
+Source detail contains Overview, Revisions, Evidence, Assets and Diagnostics tabs. Revision comparison distinguishes source changes from changes in extraction/model configuration. It exposes immutable source hashes, available dates and policy, while avoiding raw filesystem paths unless explicitly requested by the local user. Multiple revisions alone do not imply conflict. Code diagnostics expose language/dialect support, syntax coverage and resolved/ambiguous/unresolved reference rates with denominators and scope limits; a resolved name is not presented as a verified edge.
 
 Add sources supports selected files or a registered local source root. A browser may upload chosen files, but it cannot browse arbitrary server paths. Before queuing, show recognized formats, suggested kind, metadata requirements, destination collection, processing mode and external providers that will receive content. Values supplied by the user stay explicit; suggestions do not silently promote a document's trust status.
 
@@ -73,11 +75,11 @@ Server-sent events have durable monotonically increasing per-job sequence IDs. R
 
 Show a list of evaluation runs with dataset version, split, corpus snapshot, retrieval configuration and completion status. Compare only compatible runs by default; check dataset/split, snapshot, policy/lexical-statistics epochs and projection availability, and label differences explicitly.
 
-A comparison view includes retrieval quality, integrity failures, visual/graph metrics and cost/performance in distinct groups. Display changes against the selected baseline and link every aggregate to its cases. Never collapse integrity failures, recall and latency into one unexplained quality score.
+A comparison view includes retrieval quality, integrity failures, visual/graph metrics and cost/performance in distinct groups. Display changes against the selected baseline and link every aggregate to its cases. Never collapse integrity failures, recall and latency into one unexplained quality score. Code views separate file and file-qualified-symbol metrics, needle/exploratory cases and required-flow completeness under a fixed token budget.
 
 Case detail shows the query when retained, expected/forbidden evidence IDs, retrieved rank order, exact source reader, relation paths, and why an assertion failed. Include the distinction between a correctly retrieved source and a sufficiently complete segment. Support human relevance labels with author/time and label provenance; editing a label creates a new dataset revision.
 
-Graphs/plots have tabular alternatives and exportable data. Synthetic/offline-provider runs carry a visible label and do not imply semantic-quality validation. Runtime metrics specify corpus size, concurrency and hardware context.
+Graphs/plots have tabular alternatives and exportable data. Synthetic/offline-provider runs carry a visible label and do not imply semantic-quality validation. Runtime metrics specify corpus size, concurrency and hardware context. Performance comparisons label cold owner, warm resources, warm query embedding and warm result separately, with cache hits and provider-call counts. Warn when benchmark states differ.
 
 ## 7. Activity and analytics
 
@@ -114,7 +116,7 @@ Pagination is stable and bounded. Responses distinguish inaccessible from missin
 
 Job events contain schema version, per-job sequence ID, timestamp, job ID, stage, state, optional completed/total counts and diagnostic references. Query traces contain stage names/durations/counts, model/configuration fingerprints and policy/lexical-statistics epochs; request/input payloads follow optional retention policy. Both event and snapshot endpoints are required because events alone are insufficient for reconnect and recovery.
 
-The frontend can be a small TypeScript/React application consuming HTTP and SSE. Backend DTO generation and contract fixtures prevent drift. It is built/packaged separately so Python API/CLI/MCP use does not require a Node.js runtime. Final visual styling and component selection happen in the UI implementation phase, without changing the workflows or data contracts in this specification.
+The frontend can be a small TypeScript/React application consuming HTTP and SSE. Backend DTO generation and contract fixtures prevent drift. The [Code retrieval profile](2026-09-10-tychora-code-retrieval-design.md) defines these additional code-context, diagnostic and benchmark fields. The frontend is built/packaged separately so Python API/CLI/MCP use does not require a Node.js runtime. Final visual styling and component selection happen in the UI implementation phase, without changing the workflows or data contracts in this specification.
 
 ## 10. Accessibility, security and interaction quality
 
