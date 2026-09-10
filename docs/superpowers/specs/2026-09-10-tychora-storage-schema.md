@@ -5,6 +5,7 @@ Status: engineering review draft
 Parent: [Engineering design](2026-09-10-tychora-engineering-design.md)
 Registry/format compatibility contract: [Configuration](2026-09-10-tychora-configuration-design.md)
 Code record and structural-query contract: [Code retrieval profile](2026-09-10-tychora-code-retrieval-design.md)
+Artifact retention, backups and idempotency: [Lifecycle and recovery](2026-09-10-tychora-lifecycle-design.md)
 
 ## 1. Physical layout and ownership
 
@@ -32,6 +33,9 @@ erDiagram
     collections ||--o{ sources : registers
     kinds ||--o{ revisions : classifies
     sources ||--o{ revisions : versions
+    revisions ||--o{ original_payload_tombstones : releases
+    artifacts ||--o{ original_payload_tombstones : identifies
+    jobs ||--o{ original_payload_tombstones : records
     revisions ||--o{ revision_artifacts : retains
     artifacts ||--o{ revision_artifacts : stores
     revisions ||--o{ extractions : parsed_as
@@ -63,7 +67,7 @@ erDiagram
 | Family | Tables | Important distinction |
 | --- | --- | --- |
 | Workspace/config | `schema_migrations`, `workspaces`, `collections`, `kinds` | Migration version differs from source and model version |
-| Originals | `sources`, `revisions`, `artifacts`, `revision_artifacts` | Logical source differs from immutable edition/tree snapshot |
+| Originals | `sources`, `revisions`, `artifacts`, `revision_artifacts`, `original_payload_tombstones` | Logical source, immutable edition and retained original payload are distinct |
 | Extraction | `extractions`, `evidence_units`, `locators`, `assets`, `unit_assets`, `asset_proxies`, `asset_proxy_dependencies` | A parser upgrade must not overwrite an old cited extraction |
 | Structured semantics | `structured_records`, `identifiers`, `facet_definitions`, `facet_values`, `review_events`, `assertion_decisions` | Rules/feedback stay typed; exact identifiers are not semantic matches |
 | Search | `chunks`, `index_families`, `index_batches`, `vector_records`, `lexical_records`, `lexical_fts` | Index windows and cache representations are not the quoted source |
@@ -133,7 +137,11 @@ CREATE TABLE artifacts (
   size_bytes INTEGER NOT NULL CHECK(size_bytes>=0),
   media_type TEXT NOT NULL,
   storage_key TEXT NOT NULL UNIQUE,
-  created_at TEXT NOT NULL
+  payload_state TEXT NOT NULL DEFAULT 'present'
+    CHECK(payload_state IN ('present','delete_pending','deleted')),
+  payload_deleted_at TEXT,
+  created_at TEXT NOT NULL,
+  CHECK((payload_state='deleted')=(payload_deleted_at IS NOT NULL))
 ) STRICT;
 
 CREATE TABLE revisions (
@@ -450,6 +458,9 @@ CREATE TABLE jobs (
   operation TEXT NOT NULL,
   principal_id TEXT NOT NULL,
   idempotency_key TEXT,
+  request_digest TEXT NOT NULL CHECK(length(request_digest)=64),
+  effective_config_sha TEXT NOT NULL REFERENCES artifacts(artifact_sha),
+  captured_inputs_sha TEXT REFERENCES artifacts(artifact_sha),
   state TEXT NOT NULL CHECK(state IN ('queued','running','cancelling','cancelled','failed','complete')),
   base_snapshot_id TEXT REFERENCES snapshots(snapshot_id),
   result_snapshot_id TEXT REFERENCES snapshots(snapshot_id),
@@ -459,6 +470,15 @@ CREATE TABLE jobs (
   error_code TEXT,
   UNIQUE(principal_id,operation,idempotency_key)
 ) STRICT;
+
+CREATE TABLE original_payload_tombstones (
+  revision_id TEXT NOT NULL REFERENCES revisions(revision_id),
+  artifact_sha TEXT NOT NULL REFERENCES artifacts(artifact_sha),
+  removal_job_id TEXT NOT NULL REFERENCES jobs(job_id),
+  removed_at TEXT NOT NULL,
+  PRIMARY KEY(revision_id, artifact_sha)
+) STRICT;
+CREATE INDEX tombstones_artifact ON original_payload_tombstones(artifact_sha);
 
 CREATE TABLE job_steps (
   job_id TEXT NOT NULL REFERENCES jobs(job_id),
@@ -547,6 +567,12 @@ CREATE INDEX queries_expiration ON query_runs(expires_at);
 
 ### Validation beyond SQL
 
+Artifact metadata remains after original-payload deletion so provenance foreign keys stay valid. `payload_state` is current global byte availability; `original_payload_tombstones` permanently removes serving permission for one historical revision/artifact binding even when shared bytes remain. Required-reference walkers distinguish live payload dependencies from provenance-only hashes, using the same rules for backup, purge and GC. Writers and deleters share a per-SHA guard; active readers/builds/backups hold leases. A missing `present` file is corruption. Tombstone validation and lifecycle recovery are defined in the linked lifecycle contract, not inferred from foreign keys alone.
+
+`jobs.request_digest` binds canonical caller intent independently of mutable defaults. `effective_config_sha` pins first-acceptance defaults/registry; `captured_inputs_sha` pins acquisition bytes once captured. These bindings and the minimal keyed result survive optional diagnostic retention. A reused key with a different digest is rejected before scheduling or modifying work; a same-key retry never rereads a committed capture. Repository methods enforce immutability and current capability checks.
+
+`index_batches.state` is mutable physical/build availability. Sealed `receipt_json`, batch content identity and snapshot bindings remain immutable across collection/restore. Restoring absent native indexes sets availability to `pending`, preserving historical receipts; queries require current readiness. Receipts bind sorted entry records `(record_id, input_sha, value_sha)` with a versioned canonical digest. Vector value hashes use the actual stored, post-normalization little-endian float32 bytes; graph value hashes use canonical assertion/node/edge records. Family IDs include a persisted creation nonce, allowing deliberate recomputation with the same config hash in a distinct namespace. Rebuilds can reuse identity only after verifying those digests; remote replacement values require new indexing identity. Restore/rebuild events record new physical verification separately from sealed content receipts.
+
 Dates are strict ISO dates. Effective intervals are `[effective_from, effective_until)`; null `effective_until` means open-ended, while null start/publication dates mean unknown. Strict mode requires only the dates used by requested predicates: a publication cutoff requires `published_on`; an effective-date predicate requires `effective_from`, never a non-null end. Omitted dates are not guessed. SQLite CHECK clauses do not validate every date string; contract validation does. Source metadata corrections create a new revision; review state changes append an event. The latest applicable event by event ID overrides declared state, without rewriting the quoted text. Revision-level rejection restricts all descendant evidence regardless of a child acceptance event.
 
 `access_floor` is current minimum classification at collection/source level. Registration/re-ingestion can raise it but cannot automatically lower it. Review/withdrawal/access and assertion-decision mutations increment the workspace policy epoch in the same transaction. Secrets and principal authentication material are outside this schema. Local server capabilities map to an immutable granted RequestScope.
@@ -561,11 +587,11 @@ Code uses existing rows: revision artifacts retain files; a non-searchable file-
 
 The resolved kind/role/lane/facet/relation/mode/renderer registry is an immutable `artifacts` object referenced through configuration/snapshot manifests. Relation definitions require no SQL adjacency table. Predicate version/schema digests bind assertion artifacts and graph-family configuration. Facet keys are semantically immutable; changed type/scope/global semantics require a new key with an explicit registry alias, preserving old facet values. Explicit global-facet applicability is validated revision metadata; missing values are not automatically global.
 
-Kind definitions are immutable per version-qualified `kind_id` (for example `standard@1`), with a human-facing stable key in the JSON definition. Updating the description/schema creates a new kind version; old revisions retain theirs. A profile determines which registered version new ingestion uses.
+Kind definitions are immutable per version-qualified `kind_id` (for example `standard@1`), with a human-facing stable key in the JSON definition. Updating the description/schema creates a new kind version; old revisions retain theirs. A profile determines which registered version new ingestion uses. Historical revisions retain their original kind/schema/use restrictions. Query profiles require an explicit lane binding for every kind version in their selected readable corpus membership; missing bindings fail with PROFILE_INCOMPATIBLE, never silently exclude a retained edition. The configuration compatibility contract defines upgrade preflight and exact version mappings.
 
 ### Query-critical indexes and eligibility
 
-The main eligibility query joins snapshot_members → sources/collections → revisions → extractions → evidence_units/chunks, then applies version selector, access floors, allowed uses, review states, dates and typed facets. It materializes separate context-eligible and matched-candidate unit sets (the latter also applies selection-only facets), plus eligible chunk/asset IDs and compatible ready vector-record IDs, joining the exact batches selected by `snapshot_batches`. Every representation is also checked against its overlapping source-range and contextual-group dependencies; parent units cannot expose forbidden child text. Non-searchable file-container IDs form a separate permitted structural-unit set for graph grounding; they are never text candidates. Proxy IDs are a separate allowed retrieval set; they do not enter citable source-unit eligibility. This is not a persisted global permission table. Cache it only by `(snapshot, policy_epoch, granted_scope_digest, complete_filter_digest)`.
+The main eligibility query joins snapshot_members → sources/collections → revisions → extractions → evidence_units/chunks, then applies version selector, access floors, allowed uses, review states, dates and typed facets. It materializes separate context-eligible and matched-candidate unit sets (the latter also applies selection-only facets), plus eligible chunk/asset IDs and compatible ready vector-record IDs, joining the exact batches selected by `snapshot_batches`. Every representation is also checked against its overlapping source-range and contextual-group dependencies; parent units cannot expose forbidden child text. Non-searchable file-container IDs form a separate permitted structural-unit set for graph grounding; they are never text candidates. Proxy IDs are a separate allowed retrieval set; they do not enter citable source-unit eligibility. This is not a persisted global permission table. Cache it only by `(snapshot_id, policy_epoch, granted_scope_digest, eligibility_policy_digest, eligibility_request_digest)`. The policy digest hashes the resolved registry/mode, permitted lanes/uses, original/proxy review rules, facet aliases/global semantics, source-range/group dependency rules and eligibility-compiler version. The request digest hashes the normalized complete FilterExpr, revision selector/IDs, dates/unknown-date policy and global-scope options. Do not substitute only the caller's explicit filters. Query text and rendering labels alone need not invalidate eligibility, but any effective eligibility change must. Cache hits still undergo delivery/provider-dispatch policy-epoch validation with the same pinned mode; final-result and query-embedding caches retain their distinct contracts.
 
 Revision-selection precedence is: exact `revision_ids`, otherwise `all`, otherwise `current`; each still undergoes all policy/date filters. Explicit IDs and `all` retain every qualifying requested member. Undated `current` uses `is_default`. When an effective date or publication cutoff is supplied, `current` evaluates **all retained editions first**, applies those predicates, then chooses the latest known applicable date per source (effective start for an effective-date query, otherwise publication date; publication date is the secondary key). Tied/overlapping winners are all returned with an ambiguity warning; never choose one by hash. In permissive mode undated editions are supplemental, clearly uncertain results, and never replace a dated winner. At most one extraction per revision belongs to one published snapshot; old extraction revisions remain inspectable by explicit ID if retained and permitted. A snapshot may contain many editions of one source, so historic document retrieval does not depend on retaining every former workspace snapshot.
 
@@ -573,7 +599,7 @@ Do not hold a SQLite read transaction open during provider calls. Read membershi
 
 FTS5 body/context rows are immutable and transactionally indexed by triggers. Query BM25 with weights `5,3,2,1,0.5` and ascending score; join against eligible rows before LIMIT. A separate exact-ID path preserves punctuation/case rules that the Unicode tokenizer may erase. FTS corpus statistics include all retained physical rows, even other/unpublished batches. Snapshots therefore freeze evidence membership, **not bit-identical BM25 ranking**. `lexical_statistics_epoch` increments transactionally on row insertion/deletion and explicitly on rebuild. Record it with query/evaluation runs and in ranking-cache keys; execute the lexical read and epoch capture in one short SQLite read transaction. Comparable A/B evaluations pause lexical writes/GC/rebuild for the run and use one policy/statistics epoch. Historical exact-rank replay requires a frozen database backup, not just a snapshot ID. Scores are not calibrated confidence measures. Bulk stale-family cleanup and FTS rebuild are explicit maintenance jobs. [FTS5 reference](https://www.sqlite.org/fts5.html).
 
-Enable `foreign_keys=ON`, `journal_mode=WAL`, `synchronous=FULL` and a bounded busy timeout on the owned SQLite database. WAL is for local storage, not shared network-file concurrency. Migrations have checksums, preflight/backup and explicit schema compatibility; opening for query never silently runs an incompatible migration. Backup captures a consistent SQLite backup plus referenced artifact/index manifests through the workspace owner. [WAL](https://www.sqlite.org/wal.html), [backup API](https://www.sqlite.org/backup.html).
+Enable `foreign_keys=ON`, `journal_mode=WAL`, `synchronous=FULL` and a bounded busy timeout on the owned SQLite database. WAL is for local storage, not shared network-file concurrency. Migrations have checksums, preflight/backup and explicit schema compatibility; opening for query never silently runs an incompatible migration. Canonical backup captures a consistent SQLite backup plus the complete typed required-payload closure under owner-held leases; native projections are omitted explicitly. Restore/deletion/idempotency follow [Lifecycle and recovery](2026-09-10-tychora-lifecycle-design.md). [WAL](https://www.sqlite.org/wal.html), [backup API](https://www.sqlite.org/backup.html).
 
 ## 4. Chroma collections and vector records
 
@@ -663,6 +689,6 @@ GC removes only unreferenced and unleased generations: assertions first, then en
 
 ## 6. Design validation performed
 
-The SQL block was executed on SQLite 3.53.2 in memory on 2026-09-10: **38 application tables plus one FTS5 virtual table**, with empty `foreign_key_check` and `integrity_check=ok`. Seventeen fixture/negative checks passed, covering snapshot batch filtering, distinct-unit FTS grouping, insert/delete statistics epochs, immutable lexical rows, family/extraction uniqueness, cross-family/cross-revision foreign keys, invalid ranges/JSON, review/vector ownership, proxy constraints and registered facet scopes.
+The SQL block was executed on SQLite 3.53.2 in memory on 2026-09-10: **39 application tables plus one FTS5 virtual table**, with empty `foreign_key_check` and `integrity_check=ok`. Thirty fixture/negative SQL checks passed, covering snapshot batch filtering, distinct-unit FTS grouping, insert/delete statistics epochs, immutable lexical rows, family/extraction uniqueness, cross-family/cross-revision foreign keys, invalid ranges/JSON, review/vector ownership, proxy constraints, registered facet scopes, payload-state/timestamp consistency, required job digest/configuration, scoped key uniqueness, and per-revision tombstone uniqueness/foreign keys. These SQL checks do not execute backup, deletion, idempotency replay or response-fitting algorithms; their failure-case acceptance fixtures remain implementation work.
 
 These checks validate the documented SQL and selected constraints. Cross-record publication rules, temporal/profile semantics, Ladybug Cypher, real Chroma/Docling integration and provider quality remain implementation acceptance tests. No application or live-provider validation is claimed by this design check.

@@ -70,7 +70,7 @@ Required gates on the **actual installed wheel and final one-file executable**:
 
 1. Clean-machine startup and help with networking disabled; no hidden interpreter/developer-path dependence. Verify missing Git only affects repository operations.
 2. Real Markdown/PDF/DOCX extraction, image provenance and supported code parsing with preprovisioned model assets; no development fixture masquerades as a real adapter test.
-3. Chroma/Ladybug create, reopen, query, transaction failure and forced-termination recovery; SQLite feature checks and migrations/backups.
+3. Chroma/Ladybug create, reopen, query, transaction failure and forced-termination recovery; SQLite feature checks and migrations/backups, including a canonical restore on a clean target with no original workspace or native projection directories; apply the [Lifecycle and recovery](2026-09-10-tychora-lifecycle-design.md) acceptance cases.
 4. Real stdio MCP framing, HTTP lifespan/ownership and delegation; logs never corrupt protocol stdout.
 5. Load an external generic configuration pack, register a custom kind/relation and compare canonical and hierarchical output between wheel and executable.
 6. Provider contract checks, explicit offline failures, parser multiprocessing/cancellation, paths with spaces and read-only install locations.

@@ -128,7 +128,7 @@ A repository is one Source. Its original artifact is a sorted file manifest: rel
 
 The workspace has one canonical SQLite corpus file, one embedded Chroma directory, one Ladybug database and immutable artifact files. SQLite contains source records and projection manifests, not a copy of vector-search or graph-traversal implementations.
 
-A vector/lexical **family** is a physical namespace with one immutable representation/configuration. A **batch** is a completed immutable set of entries for an extraction. New source revisions append entries to the same compatible family; changing a model/representation creates a different family. `snapshot_batches` binds the exact sealed batch receipts for every slot; queries search only those batches' eligible entry IDs. Unpublished or old entries in the physical family cannot enter retrieval. Shared FTS statistics can still change scores; record the lexical statistics epoch separately from membership identity.
+A vector/lexical **family** is a physical namespace with one immutable representation/configuration. Persist a family-creation UUID in the creation job and derive `family_id = H("family-v1", workspace_id, config_sha, creation_uuid)`; retries reuse that UUID. Identical configurations may have distinct family IDs for explicitly requested fresh recomputation. Ordinary incremental additions reuse the selected compatible family. Configuration equality alone is never namespace identity. A **batch** is a completed immutable set of entries for an extraction. New source revisions append entries to the same compatible family; changing a model/representation creates a different family. `snapshot_batches` binds the exact sealed batch receipts for every slot; queries search only those batches' eligible entry IDs. Unpublished or old entries in the physical family cannot enter retrieval. Shared FTS statistics can still change scores; record the lexical statistics epoch separately from membership identity.
 
 Graph v1 deliberately uses a full immutable generation. Every graph node key includes generation ID; each new published content snapshot has a completed graph generation resolved against precisely its source membership. This costs O(V+E) copying/storage and avoids stale cross-revision symbol bindings. It reuses stored assertion/parse artifacts and does not repeat embeddings or model extraction. Keep active and previous generations, plus pinned ones; optimize graph deltas only after measurement.
 
@@ -141,7 +141,9 @@ sequenceDiagram
     participant I as Index builders
     participant G as Graph store
     C->>O: add(source, idempotency_key)
-    O->>S: Persist job and base snapshot ID
+    O->>S: Compare request digest; persist job and pinned configuration
+    O->>A: Capture inputs once for this job
+    O->>S: Persist capture manifest and base snapshot ID
     O->>A: Atomic original / extraction / cache artifacts
     O->>S: Commit revision, units, chunks, pending batches
     O->>I: Build lexical and text/image entries
@@ -155,16 +157,20 @@ sequenceDiagram
 
 ### Exact publication protocol
 
-1. Acquire the workspace owner; create/reuse a job by idempotency key and record `base_snapshot_id`.
+1. Acquire the workspace owner; compare/create the durable caller-intent digest under the scoped idempotency key, pin effective configuration/capture once, and record `base_snapshot_id`. A conflicting key fails before work; an identical replay reuses committed inputs. See [Lifecycle and recovery](2026-09-10-tychora-lifecycle-design.md).
 2. Write each artifact into a private staging path, flush/fsync, atomically rename to its hash-derived final path, fsync the containing directory, then add its SQLite reference. Never commit a reference to a not-yet-durable file.
 3. Commit revision/extraction objects and source-local batch manifests as one SQLite transaction. No external API or parser runs inside a SQLite write transaction.
-4. Build projections under non-active family/batch/generation IDs. Batch completion requires entry-ID digest, entry count, dimension/config validation and a backend durability receipt. A retry of the same immutable ID with different content is an integrity error.
+4. Build projections under non-active family/batch/generation IDs. Batch completion requires entry-ID/input/value digests, entry count, dimension/config validation and a backend durability receipt. A retry of the same immutable ID with different content is an integrity error.
 5. Seal graph generation after validating endpoints, required evidence dependencies and counts. No sealed generation accepts further writes.
 6. In one SQLite `BEGIN IMMEDIATE` transaction, compare current active snapshot with `base_snapshot_id`, create the new snapshot membership/slot/batch bindings, verify all required receipts (including one full generation for a graph slot) and switch `active_snapshot_id`. Serialized source jobs use the latest committed membership; a changed base requires rebase/revalidation, not blind overwrite.
-7. Publish the completion event after commit. A query holds a lease on its snapshot/index generations until every associated worker/backend operation has actually exited. A client deadline or cancellation ends delivery, not the resource lease; release it in final cleanup after blocking work drains. Leases are in the sole owner process; parser child processes never open databases, and owner death cannot leave child database readers behind.
+7. Publish the completion event after commit. A query holds a lease on its snapshot/index generations until every associated worker/backend operation has actually exited. A client deadline or cancellation ends delivery, not the resource lease; release it in final cleanup after blocking work drains. Leases are in the sole owner process; parser child processes never open databases or canonical artifact paths. The owner copies their inputs by verified hash under a payload lease into private per-job staging before dispatch; children read only those independent copies. Owner threads perform all canonical artifact reads/copies. Owner death therefore ends canonical readers without assuming that its child processes also die. Staging cleanup waits for child exit or explicit fencing/termination, including successor-owner recovery.
 8. Revalidate current withdrawal/access-policy epoch before returning or sending a provider request. If policy changed, discard affected work and retry the eligibility phase once; a second change returns a retryable scope-changed error.
 
 Snapshot pinning preserves corpus consistency; it does not grant perpetual access to subsequently withdrawn content. Once a provider request has been sent it cannot be recalled; checks occur before dispatch and delivery.
+
+### Artifact lifecycle and restore
+
+[Lifecycle and recovery](2026-09-10-tychora-lifecycle-design.md) specifies consistent backup cuts and transitive payload inventories, leases during copying, shared-original tombstones, durable deletion and request-digest replay. Canonical backups include required file payloads and omit native Chroma/Ladybug files explicitly. Restore preserves snapshot/receipt content identity while marking absent physical batches unavailable. `index_batches.state` is operational availability; a sealed receipt is historical evidence of a build, not proof that its current files exist. A rebuild verifies original contents before restoring readiness; reembedding without matching retained values creates a new indexing identity. No restoration dispatches a provider call implicitly.
 
 ### Failure and recovery matrix
 
@@ -207,7 +213,7 @@ Both clients return the same immutable Pydantic DTOs, never private database han
 | LexicalIndex | `write_batch`, `search(eligible_chunks_and_owners, query, candidate_limit)`, `verify_batch`, `drop_batch` |
 | VectorIndex | `create_family`, `upsert_batch`, `search(query_vector, eligible_records_and_owners, candidate_limit, work_limits)`, `verify_batch`, `drop_records` |
 | GraphStore | `begin_generation`, `upsert_batch`, `seal_generation`, `expand(view, seed_unit_ids, limits)`, `structural_context(view, seed_unit_ids, limits)`, `get_assertions(view, selected_unit_ids, predicates, limits)`, `drop_generation` |
-| ArtifactStore | `put_stream`, `open_verified`, `stat`, `collect_unreferenced`; all access by registered hash/ref |
+| ArtifactStore | `put_stream`, `open_verified`, `stat`, `pin_payloads`, `collect_unreferenced`; registered refs, typed retention closure, per-SHA write/delete guards and lease-aware cleanup |
 | Parser | `extract(original_ref, config) -> ExtractionArtifact`; progress and diagnostics, no database writes |
 | LanguageAdapter | `capabilities`, `parse`, `definitions`, `references`, `resolve`, `context_spans`; code-specific typed ingestion contract |
 | TextEmbedder | `embed_groups(groups)`, `embed_queries(queries)`, `capabilities` including declared joint/independent contextualization |
@@ -251,23 +257,24 @@ For the selected MCP SDK, construct `MCPServer.streamable_http_app()` once, moun
 
 Run tasks are bounded and cooperative: cancellation stops new provider calls/workers and checks between batches. A blocking library operation that cannot be interrupted is allowed to finish its transaction; it cannot publish a cancelled job. Owner shutdown drains bounded work, releases handles and then releases the lock. Abrupt shutdown is covered by the recovery protocol above.
 
-The owner retains bounded query-embedding and result caches as separate resources. The code-profile cache contract defines keys, TTL, purge and four benchmark states; it applies to every modality/profile using those shared caches. A result-cache hit revalidates policy and creates a fresh run ID. Resolved registry/query/output digests participate in configuration and cache identity; configuration changes are pinned per request. Code symbol records persist exact context spans, and extraction/index manifests retain overlapping-range and joint-group dependencies so parent representations cannot bypass child restrictions.
+The owner retains bounded query-embedding and result caches as separate resources. The code-profile cache contract defines keys, TTL, purge and four benchmark states; it applies to every modality/profile using those shared caches. A result-cache hit revalidates policy and creates a fresh run ID. Eligibility entries specifically include the resolved eligibility-policy and eligibility-request digests; resolved registry/query/output digests participate in the other relevant configuration and cache identities; configuration changes are pinned per request. Code symbol records persist exact context spans, and extraction/index manifests retain overlapping-range and joint-group dependencies so parent representations cannot bypass child restrictions.
 
 ## 7. Errors, events and HTTP contracts
 
-Error envelope: `schema_version`, `code`, `message`, `retryable`, `run_or_job_id`, and permitted diagnostic references. Error codes include `INVALID_REQUEST`, `FORBIDDEN_SCOPE`, `NOT_FOUND`, `WORKSPACE_BUSY`, `CAPABILITY_MISSING`, `INDEX_INCOMPLETE`, `PROVIDER_FAILURE`, `INTEGRITY_ERROR`, `CANCELLED`, `DEADLINE_EXCEEDED`, `SCOPE_CHANGED`. CLI maps invalid input to exit 2, operational failures to 1, success to 0, cancellation to 130; JSON error output is on stderr.
+Error envelope: `schema_version`, `code`, `message`, `retryable`, `run_or_job_id`, and permitted diagnostic references. Error codes include `INVALID_REQUEST`, `FORBIDDEN_SCOPE`, `NOT_FOUND`, `WORKSPACE_BUSY`, `CAPABILITY_MISSING`, `INDEX_INCOMPLETE`, `PROVIDER_FAILURE`, `INTEGRITY_ERROR`, `CANCELLED`, `DEADLINE_EXCEEDED`, `SCOPE_CHANGED`, `PROFILE_INCOMPATIBLE`, `BUDGET_TOO_SMALL`, `OUTPUT_BUDGET_EXCEEDED`, `IDEMPOTENCY_CONFLICT`, `ORIGINAL_REMOVED`. CLI maps invalid input to exit 2, operational failures to 1, success to 0, cancellation to 130; JSON error output is on stderr.
 
-The application returns canonical QueryResult with permitted structured records, lanes, gaps and recorded decision requirements. `format_result` renders an already materialized result under a resolved output profile; it performs no I/O or retrieval. CLI canonical JSON, explicit hierarchical JSON and MCP structured/text projections have the separate contracts defined in the configuration spec.
+The application returns canonical QueryResult with permitted structured records, lanes, gaps and recorded decision requirements. ResponseAssembler performs final deterministic fitting after these attachments, measuring every requested delivered representation under the pipeline budget contract. `format_result` renders an already materialized result under a resolved output profile; it performs no I/O or retrieval. CLI canonical JSON, explicit hierarchical JSON and MCP structured/text projections have the separate contracts defined in the configuration spec.
 
-HTTP uses `/v1/discovery`, `/v1/sources`, `/v1/evidence`, `/v1/assets`, `/v1/relations`, `/v1/queries`, `/v1/jobs`, `/v1/evaluations`, `/v1/settings`. Search is `POST /v1/queries`, with explicit hierarchical media negotiation defined in the configuration contract; ingestion is `POST /v1/sources` returning 202 with a job ID; status/cancel/retry are job resources/actions. Exact reads take registered IDs, not arbitrary paths. Read and write methods require separate capabilities. Semantic errors map consistently to 400/403/404/409/503/504; internal SDK messages are sanitized.
+HTTP uses `/v1/discovery`, `/v1/sources`, `/v1/evidence`, `/v1/assets`, `/v1/relations`, `/v1/queries`, `/v1/jobs`, `/v1/evaluations`, `/v1/settings`. Search is `POST /v1/queries`, with explicit hierarchical media negotiation defined in the configuration contract; ingestion is `POST /v1/sources` returning 202 with a job ID; status/cancel/retry are job resources/actions. Exact reads take registered IDs, not arbitrary paths. Read and write methods require separate capabilities. Semantic errors map consistently to 400/403/404/409/410/503/504; internal SDK messages are sanitized. Invalid or too-small response budgets map to 400; PROFILE_INCOMPATIBLE and IDEMPOTENCY_CONFLICT to 409; an authorized removed-original inspection to 410. Output-budget errors in pure formatters use the same typed code as their HTTP adapter.
 
-Events contain `schema_version`, monotonically increasing per-job `sequence`, timestamp, job ID, stage, state, counters and diagnostic refs. SSE resumes after Last-Event-ID; database state is authoritative if old events have expired. A disconnected browser does not cancel a job. GET endpoints are bounded and cursor-paginated. Requests that retry writes supply an idempotency key scoped to workspace/principal/operation.
+Events contain `schema_version`, monotonically increasing per-job `sequence`, timestamp, job ID, stage, state, counters and diagnostic refs. SSE resumes after Last-Event-ID; database state is authoritative if old events have expired. A disconnected browser does not cancel a job. GET endpoints are bounded and cursor-paginated. Requests that retry writes supply an idempotency key scoped to workspace/principal/operation. The durable request-digest/capture protocol in [Lifecycle and recovery](2026-09-10-tychora-lifecycle-design.md) governs key conflicts, changed live paths, concurrent replay and retention.
 
 Operational query history defaults to IDs, counts, timing and configuration fingerprints for 30 days. Full request text/results live only in explicitly enabled retention-controlled artifacts, not mandatory `query_runs` columns. An evidence hash is not a privacy-preserving anonymizer and is not exposed as a substitute for deleted text. Source provenance survives query-history deletion.
 
 ## 8. Tests that make this architecture falsifiable
 
 - Load and enforce the schema/foreign keys; duplicate immutable IDs with different hashes fail.
+- Pass the lifecycle failure cases: backup closure/corruption and concurrent deletion, shared original binding removal, crash-safe unlink/re-materialization, digest conflicts and same-key capture replay after restart/diagnostic expiry.
 - Publish while a query is running: old query keeps its snapshot, next query sees new entries; neither sees a mixture.
 - Withdraw evidence during a query: provider dispatch/delivery revalidation rejects the old authorization view.
 - Force a process crash at every row in the failure matrix and confirm recoverability without reembedding completed groups.
@@ -280,6 +287,9 @@ Operational query history defaults to IDs, counts, timing and configuration fing
 - Pass the language, symbol-collision, structural-context, resolution-diagnostic and cold/warm/cache acceptance cases in the code profile.
 - Install from built wheel in a fresh supported environment; help/import perform no network or state creation.
 - Validate custom kinds/relations, global scope, lane reservations and hierarchical output fixtures across transports.
+- Warm eligibility in audit mode, then query composition with identical principal/snapshot/explicit filters; verify maintenance-only evidence and disallowed proxies cannot leak through the cache.
+- Upgrade a profile while retaining two kind versions: fail activation without the old mapping, then retrieve both after an explicit mapping while preserving each original schema and usage policy.
+- Fit long records, localized labels, mandatory warnings and combined MCP representations under the exact aggregate cap; preserve strongest retained matches and fail tiny mandatory-only budgets explicitly.
 - Qualify the locked full runtime in final one-file executables on each advertised target, including native databases, document extraction, multiprocessing and external Git behavior.
 
 The storage DDL can be syntax/integrity-checked independently as a design artifact. Graph/backend runtime qualification, provider live checks and retrieval-quality measurements are implementation acceptance tasks; this document does not claim those tests have passed.
