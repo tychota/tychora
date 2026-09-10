@@ -2,7 +2,7 @@
 
 Date: 2026-09-10
 Status: product direction accepted; detailed engineering design under review
-Related specifications: [Code retrieval profile](2026-09-10-tychora-code-retrieval-design.md), [Dashboard](2026-09-10-tychora-dashboard-design.md), [Engineering](2026-09-10-tychora-engineering-design.md), [Storage schema](2026-09-10-tychora-storage-schema.md), [Algorithms](2026-09-10-tychora-pipeline-algorithms.md)
+Related specifications: [Kinds/relations/output configuration](2026-09-10-tychora-configuration-design.md), [Distribution](2026-09-10-tychora-distribution-design.md), [Code retrieval profile](2026-09-10-tychora-code-retrieval-design.md), [Dashboard](2026-09-10-tychora-dashboard-design.md), [Engineering](2026-09-10-tychora-engineering-design.md), [Storage schema](2026-09-10-tychora-storage-schema.md), [Algorithms](2026-09-10-tychora-pipeline-algorithms.md)
 
 ## 1. Product
 
@@ -109,7 +109,7 @@ Assets contain immutable hashes, MIME type, artifact references and source-regio
 
 A PDF may contain a law, standard, manual, template or feedback. A kind definition declares its stable key, label, description, evidence role, required/optional metadata, normalization hints, permitted uses, available relations and representative queries. An adapter declares formats and extraction capabilities separately.
 
-Ship generic presets for documents, standards/regulations, feedback and code. Built-in kinds include law, regulation, standard, guidance, template, manual, feedback, example, research note, code file and architecture decision. Presets are declarative and editable; arbitrary metadata fields do not automatically become filterable. Register typed facets explicitly.
+Ship generic presets for documents, standards/regulations, feedback and code. Built-in kinds include law, regulation, standard, guidance, template, manual, feedback, example, research note, code file and architecture decision. Presets are declarative and editable; arbitrary metadata fields do not automatically become filterable. The configuration specification defines versioned role/lane/mode registries, concrete kind/relation TOML examples, structured normalization, global applicability versus missing values, and a deterministic hierarchical output profile. Register typed facets explicitly.
 
 `inspect kinds` returns descriptions, examples and requirements, including zero-count configured kinds. `inspect sources` reports accessible source counts, versions, ingestion status and coverage. Discovery also exposes supported filters/operators, relation types, installed adapters, enabled models, limitations and structured request schemas. Counts and diagnostics obey the same access scope as search.
 
@@ -158,7 +158,9 @@ Each graph path requires eligible endpoints, intermediate nodes, assertion groun
 
 A QueryRequest contains a discriminated question/passage/image input, collection/profile selection, typed filters, requested modalities, context budget and optional previously selected evidence IDs. Advanced candidate counts and model tuning live in configuration or structured request files. The tool accepts passage input directly; hidden generative rewriting and a conversation-memory engine are not part of this release.
 
-A QueryResult contains schema version, run ID, snapshot ID, applied scope, separately ranked `segments` and `visuals`, exact citations, relevant relations, coverage, warnings and an optional detailed trace with policy and lexical-statistics epochs. Coverage reports what was retrieved and which channels completed; it does not claim that finding a passage proves an answer correct. No matches, partial channel coverage, multiple versions and missing required kinds are distinct states.
+A QueryResult contains schema version, run ID, snapshot ID, applied scope, separately ranked `segments` and `visuals`, configured lane IDs, permitted structured-record attachments, exact citations, relevant relations, coverage, typed coverage gaps/decision requirements, warnings and an optional detailed trace with policy and lexical-statistics epochs. Coverage reports what was retrieved and which channels completed; it does not claim that finding a passage proves an answer correct. No matches, partial channel coverage, multiple versions and missing required kinds are distinct states.
+
+Optional profile-defined lane reservations occur during candidate admission and final selection, before formatting; grouping results afterward cannot restore an omitted lane. The pure hierarchical renderer preserves authorized records/citations and supports configured labels and field aliases. Output compatibility and retrieval equivalence have separate fixture gates.
 
 Provider failure preserves successful channel results only if the profile allows degraded retrieval, with an explicit partial result. Strict profiles fail with a typed error. Timeouts, cancellation, retries and provider usage are traceable. External providers receive only authorized inputs; offline mode disables every remote model invocation and never silently switches to a remote fallback.
 
@@ -180,7 +182,7 @@ Less frequent lifecycle operations belong under `tychora manage`: sync registere
 
 Use positional inputs, shell completion and concise help with examples. Human output is readable; `--json` emits only the versioned machine response to stdout, with progress/errors on stderr. Structured error codes and process exit statuses are consistent. Common flags cover workspace, profile, output format and offline execution. Advanced ranking knobs stay out of the default help.
 
-Configuration lives in `tychora.toml`, with source metadata in sidecar manifests or the registry. Precedence is validated defaults → selected preset → workspace config → explicit request/CLI overrides. Credentials are environment/secret references only. `inspect config` shows effective values and their origins with secrets redacted. Configuration is strict: unknown keys or contradictory provider/index settings fail with a useful explanation. Embedding changes create a new compatible family; graph representation changes require a new graph generation.
+Configuration lives in `tychora.toml`, with source metadata in sidecar manifests or the registry. Precedence is validated defaults → selected preset → explicit versioned pack dependencies → selected pack → workspace config → allowlisted request/CLI overrides; the configuration specification defines merge and conflict rules. Credentials are environment/secret references only. `inspect config` shows effective values and their origins with secrets redacted. Configuration is strict: unknown keys or contradictory provider/index settings fail with a useful explanation. Embedding changes create a new compatible family; graph representation changes require a new graph generation.
 
 ## 9. Programmatic, agent and HTTP interfaces
 
@@ -252,11 +254,13 @@ Required tests cover:
 - Real code parser fixtures, ignored files, dirty revisions, deleted files and heuristic relation precision.
 - Embedding response validation, cache identity, failed-reindex preservation and independent text/image spaces.
 - Actual MCP/HTTP requests, scoped writes, path containment, malformed inputs, resource limits and prompt-like source content treated as data.
-- Build/install from wheel and source distribution, dependency checks, license notices and public-artifact content review.
+- Build/install from wheel and source distribution, freeze/qualify final standalone executables, dependency checks, license notices and public-artifact content review; see the distribution specification.
 
 Evaluation separates deterministic integrity checks from semantic quality. Exact-ID and forbidden-source cases require zero failures. Report node/document recall, nDCG, citation/locator accuracy, temporal precision, context completeness, relevant-image recall and relationship precision. Compare lexical, hybrid, reranked and graph-expanded variants on the same dataset/split, snapshot, policy epoch and lexical-statistics epoch; report any differences in these controls. Golden assertions identify expected and forbidden source/revision/evidence IDs.
 
 Capture p50/p95 latency, stage durations, peak memory, ingestion throughput, cache reuse and provider usage under declared hardware/corpus/concurrency conditions. No universal speed or semantic quality target is claimed without measurements. Release reports include regressions, missing capabilities and reproducible commands; synthetic hash embeddings never stand in for semantic-quality evidence.
+
+One `tychora` wheel ships the API/CLI/resources with documented extras. Standalone executable targets bundle the supported runtime stack per platform; system Git and explicitly provisioned model weights remain external requirements. The distribution specification defines build tools, resource hooks, candidate platforms, artifact contents and clean-machine acceptance; no built binary is claimed yet.
 
 ## 12. Delivery sequence
 

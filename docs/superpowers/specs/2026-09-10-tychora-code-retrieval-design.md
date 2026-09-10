@@ -145,6 +145,8 @@ Instrument cache keys and calls with synthetic inputs: changed query/model/optio
 
 The baseline release gate is all deterministic identity, range, policy, budget and cache-isolation cases passing plus a published code retrieval comparison. Semantic improvements require independently labelled cases; no numerical quality promise follows from fake embeddings. Add optional weighted-graph and greedy-segment experiments only as separate configuration rows, reporting ranking, context quality and latency together.
 
+The generic [configuration contract](2026-09-10-tychora-configuration-design.md) registers version-qualified predicates and facets. The code structural adapter resolves its fixed invariant relation definitions through that registry; a user pack cannot replace the meanings of reserved structural predicates.
+
 ## 8. Interfaces and dashboard
 
 The public Python clients expose structural context through `relations.traverse` with a typed `relation_view='structural'` option and through the code search profile; MCP uses its existing typed `inspect` tool. Discovery lists supported languages/dialects/reference forms, available code embedding profiles and context limits. Exact file/symbol inspection uses registered IDs and original snapshots.
