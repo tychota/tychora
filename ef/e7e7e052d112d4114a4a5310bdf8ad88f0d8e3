@@ -1,0 +1,149 @@
+src/tychora/configuration/compatibility.py
+  s_036a834257bcb8::t_c0ac31801dfca6 1-93
+src/tychora/configuration/models.py
+  s_35b641b930a96d::t_f00ca04fd1f131 18
+src/tychora/configuration/registry.py
+  s_35b641b930a96d::t_45f53c2dfcf21d 1-682
+src/tychora/configuration/resolve.py
+  s_036a834257bcb8::t_2738b76419c295 388-403,479-483
+src/tychora/configuration/schemas.py
+  s_036a834257bcb8::t_64f39b200181f0 1-218
+src/tychora/profiles/code/profile.toml
+  s_35b641b930a96d::t_3a8fe0042da7d0 1-17
+src/tychora/profiles/documents/kinds/architecture_decision.toml
+  s_35b641b930a96d::t_57d5c5ff74e8e1 1-11
+src/tychora/profiles/documents/kinds/code_file.toml
+  s_35b641b930a96d::t_811b94e82b4c06 1-12
+src/tychora/profiles/documents/kinds/decision.toml
+  s_35b641b930a96d::t_5bd065054926a2 1-11
+src/tychora/profiles/documents/kinds/evidence.toml
+  s_35b641b930a96d::t_16c986dc06d509 1-12
+src/tychora/profiles/documents/kinds/example.toml
+  s_35b641b930a96d::t_7dcc61583d2d66 1-11
+src/tychora/profiles/documents/kinds/feedback.toml
+  s_35b641b930a96d::t_a294802bbff412 1-12
+src/tychora/profiles/documents/kinds/guidance.toml
+  s_35b641b930a96d::t_fec2f156bab628 1-11
+src/tychora/profiles/documents/kinds/law.toml
+  s_35b641b930a96d::t_2771893c1e0d77 1-11
+src/tychora/profiles/documents/kinds/manual.toml
+  s_35b641b930a96d::t_c41a0c1f41647f 1-11
+src/tychora/profiles/documents/kinds/procedure.toml
+  s_35b641b930a96d::t_b253c91e194417 1-11
+src/tychora/profiles/documents/kinds/rationale.toml
+  s_35b641b930a96d::t_df4239b52c9656 1-11
+src/tychora/profiles/documents/kinds/regulation.toml
+  s_35b641b930a96d::t_68d6ae3e6042e3 1-11
+src/tychora/profiles/documents/kinds/research_note.toml
+  s_35b641b930a96d::t_b04b68b3db3e61 1-11
+src/tychora/profiles/documents/kinds/standard.toml
+  s_35b641b930a96d::t_cebdf966f7bafe 1-17
+src/tychora/profiles/documents/kinds/template.toml
+  s_35b641b930a96d::t_5afbbbbdbf3d89 1-12
+src/tychora/profiles/documents/profile.toml
+  s_35b641b930a96d::t_a51573728b75f0 1-207
+src/tychora/profiles/documents/relations/calls.toml
+  s_35b641b930a96d::t_0439f8095b464c 1-22
+src/tychora/profiles/documents/relations/cites.toml
+  s_35b641b930a96d::t_db748600f05d79 1-22
+src/tychora/profiles/documents/relations/contains.toml
+  s_35b641b930a96d::t_5d0d7546d21d74 1-24
+src/tychora/profiles/documents/relations/continues_table.toml
+  s_35b641b930a96d::t_6ee7fd2fa3b0fc 1-22
+src/tychora/profiles/documents/relations/contradicts.toml
+  s_35b641b930a96d::t_9cbbf0acae823a 1-22
+src/tychora/profiles/documents/relations/derived_from.toml
+  s_35b641b930a96d::t_c10fd18a516316 1-22
+src/tychora/profiles/documents/relations/illustrates.toml
+  s_35b641b930a96d::t_1b9e9259995c5f 1-22
+src/tychora/profiles/documents/relations/imports.toml
+  s_35b641b930a96d::t_e501b63ed97a23 1-22
+src/tychora/profiles/documents/relations/inherits.toml
+  s_35b641b930a96d::t_ea5b0ac4ff7250 1-22
+src/tychora/profiles/documents/relations/limits.toml
+  s_35b641b930a96d::t_a02c61ad75cf7f 1-22
+src/tychora/profiles/documents/relations/precedes.toml
+  s_35b641b930a96d::t_f573efe28e63ff 1-24
+src/tychora/profiles/documents/relations/reviews.toml
+  s_35b641b930a96d::t_027414acb9fde2 1-22
+src/tychora/profiles/documents/relations/supersedes.toml
+  s_35b641b930a96d::t_65119cd3abf44c 1-22
+src/tychora/profiles/documents/relations/supports.toml
+  s_35b641b930a96d::t_4249d04ff1c140 1-22
+src/tychora/profiles/documents/schemas/architecture_decision-metadata.json
+  s_35b641b930a96d::t_845e321ba1a575 1-140
+src/tychora/profiles/documents/schemas/code-symbol.json
+  s_35b641b930a96d::t_4e3af9d4673482 1-209
+src/tychora/profiles/documents/schemas/code_file-metadata.json
+  s_35b641b930a96d::t_ab938e63329435 1-139
+src/tychora/profiles/documents/schemas/decision-metadata.json
+  s_35b641b930a96d::t_40a64b9e0061e9 1-140
+src/tychora/profiles/documents/schemas/evidence-metadata.json
+  s_35b641b930a96d::t_413c779a15e55d 1-139
+src/tychora/profiles/documents/schemas/evidence-record.json
+  s_35b641b930a96d::t_30fbbb55bc4303 1-54
+src/tychora/profiles/documents/schemas/example-metadata.json
+  s_35b641b930a96d::t_b62e60f2f6f2fb 1-139
+src/tychora/profiles/documents/schemas/feedback-metadata.json
+  s_35b641b930a96d::t_6e5904773182ec 1-140
+src/tychora/profiles/documents/schemas/feedback.json
+  s_35b641b930a96d::t_17c38b53f307cc 1-60
+src/tychora/profiles/documents/schemas/guidance-metadata.json
+  s_35b641b930a96d::t_aa090525c18e4c 1-139
+src/tychora/profiles/documents/schemas/law-metadata.json
+  s_35b641b930a96d::t_a25eb7971fafd7 1-140
+src/tychora/profiles/documents/schemas/manual-metadata.json
+  s_35b641b930a96d::t_9ec81f32406ff5 1-139
+src/tychora/profiles/documents/schemas/metadata.json
+  s_35b641b930a96d::t_27890a10e1b1f1 1-138
+src/tychora/profiles/documents/schemas/procedure-metadata.json
+  s_35b641b930a96d::t_0b482d959dff45 1-139
+src/tychora/profiles/documents/schemas/rationale-metadata.json
+  s_35b641b930a96d::t_7ecab2ba02287a 1-139
+src/tychora/profiles/documents/schemas/regulation-metadata.json
+  s_35b641b930a96d::t_6d8f601306d471 1-140
+src/tychora/profiles/documents/schemas/research_note-metadata.json
+  s_35b641b930a96d::t_e3fddec0581102 1-139
+src/tychora/profiles/documents/schemas/rule.json
+  s_35b641b930a96d::t_ae919ef063e7dd 1-54
+src/tychora/profiles/documents/schemas/standard-metadata.json
+  s_35b641b930a96d::t_24d6514374ac33 1-139
+src/tychora/profiles/documents/schemas/template-metadata.json
+  s_35b641b930a96d::t_3eb2a23f1b1ec8 1-139
+src/tychora/profiles/documents/schemas/template-slot.json
+  s_35b641b930a96d::t_b73c2b8945ab6e 1-60
+src/tychora/profiles/manifest.json
+  s_35b641b930a96d::t_dbc2cd93df393d 1-14
+src/tychora/profiles/verified/profile.toml
+  s_35b641b930a96d::t_39957f586305f5 1-19
+tests/configuration/fixtures/generic-records.json
+  s_35b641b930a96d::t_5be594086e01f3 1-17
+tests/configuration/test_historical_kinds.py
+  s_036a834257bcb8::t_55b6129aca0a5e 1-102
+tests/configuration/test_registry.py
+  s_036a834257bcb8::t_631e821586b08c 1-597
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "efe7e7e052d112d4114a4a5310bdf8ad88f0d8e3",
+  "prompts": {},
+  "sessions": {
+    "s_036a834257bcb8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    },
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
