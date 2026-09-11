@@ -1,0 +1,25 @@
+src/tychora/adapters/sqlite/code_provenance.py
+  s_35b641b930a96d::t_be68bbe5c1606b 25,40,48
+src/tychora/adapters/sqlite/corpus.py
+  s_35b641b930a96d::t_f148667ffb2e19 286-298,349-351,355-356
+src/tychora/adapters/sqlite/validation.py
+  s_35b641b930a96d::t_cef9f1bb82b403 31-35,78-98,133-138,153-155,173,176,180,224,237-241,251-262,278
+tests/storage/test_corpus.py
+  s_35b641b930a96d::t_8483403ad5bd57 181-182,940-1272
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "27f04131a8f57417f49f80f1514891367d2946c7",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
