@@ -1,0 +1,33 @@
+tests/qualification/test_docling.py
+  s_35b641b930a96d::t_1d3fec71cde2c9 221-390
+  s_35b641b930a96d::t_0c8e7f183bb027 391-400
+src/tychora/adapters/docling/parser.py
+  s_35b641b930a96d::t_8ad60db5fd5ec3 9,40,73,80-83,133-134,141,148-151,155-158,219-226
+  s_35b641b930a96d::t_b6ea02fc95ad04 16,85-89,94
+  s_35b641b930a96d::t_040ece5c69c068 7-8,13,15,38,70-72,74-79,84,90-93,95-102,105-132,135-140,142-147,152-154,159-168,186,198-199,210,228-238
+  s_35b641b930a96d::t_fa064cdd55cb8c 103-104
+src/tychora/application/owner.py
+  s_35b641b930a96d::t_c2965b3d5fd47a 268-270
+src/tychora/contracts/documents.py
+  s_35b641b930a96d::t_a2705f8de8838e 241-244,246-247
+tests/ingestion/test_docling_mapping.py
+  s_35b641b930a96d::t_94220cc0799c84 464-504
+tests/runtime/test_owner.py
+  s_35b641b930a96d::t_78b2814edac25c 585-641
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "3d85443ab8eb269622d652c0e79636eaeae5e522",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
