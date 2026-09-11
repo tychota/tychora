@@ -1,0 +1,25 @@
+src/tychora/contracts/__init__.py
+  s_222e22d69f50fe::t_a76c188c814374 91-97
+src/tychora/contracts/operations.py
+  s_222e22d69f50fe::t_9ae98eff7930e6 217
+src/tychora/contracts/requests.py
+  s_222e22d69f50fe::t_14ae19a21860d8 156
+tests/contracts/test_models.py
+  s_222e22d69f50fe::t_9d228ece0c38c5 457-502
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "97171118544c00a27f9d4b46908c89a42f126832",
+  "prompts": {},
+  "sessions": {
+    "s_222e22d69f50fe": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8ea68c2d-415a-4dbf-b984-493d5948d26f",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
