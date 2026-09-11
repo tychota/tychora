@@ -1,0 +1,10 @@
+schema_version = 1
+id = "note@1"
+key = "note"
+label = "Note"
+description = "An attributed reference note."
+role = "reference"
+metadata_schema = "schemas/note.json"
+normalizer = "structured_sections@1"
+examples = ["Find the reference note."]
+allowed_uses = ["lookup"]

@@ -1,0 +1,14 @@
+schema_version = 1
+id = "fixture-child"
+version = "1"
+extends = [{id = "fixture-base", version = "1", digest = "94838aec79c954a2c91a9d0de30b2186a0c128d409c436812e890220a0d9e17b"}]
+
+[lanes.reference]
+label = "Selected references"
+
+[limits]
+max_tokens = 3000
+
+[output]
+title = "Selected evidence"
+include_empty_lanes = false

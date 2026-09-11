@@ -1,0 +1,48 @@
+schema_version = 1
+id = "fixture-base"
+version = "1"
+kind_definitions = ["kinds/note.toml"]
+relation_definitions = ["relations/cites.toml"]
+schema_definitions = ["schemas/note.json"]
+default_mode = "lookup"
+
+[roles.reference]
+id = "reference@1"
+key = "reference"
+label = "Reference"
+description = "Attributed reference material."
+intended_use = "Lookup and inspection."
+
+[lanes.reference]
+label = "References"
+description = "Original reference material."
+citation_prefix = "R"
+kinds = ["note@1"]
+
+[modes.lookup]
+allowed_lanes = ["reference"]
+allowed_uses = ["lookup"]
+original_review_states = ["accepted"]
+derived_proxy_policy = "accepted_only"
+
+[retrieval.graph]
+semantic = false
+predicates = ["cites@1"]
+directions = ["outgoing"]
+statuses = ["recorded"]
+
+[limits]
+max_tokens = 4000
+limit = 8
+
+[output]
+renderer = "hierarchical-evidence@1"
+lane_order = ["reference"]
+include_empty_lanes = true
+locale = "en"
+title = "Reference evidence"
+envelope_tag = "evidence_context"
+
+[renderers."hierarchical-evidence@1"]
+id = "hierarchical-evidence@1"
+label = "Hierarchical evidence"

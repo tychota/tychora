@@ -1,0 +1,13 @@
+schema_version = 1
+id = "cites@1"
+key = "cites"
+label = "Cites"
+description = "An explicitly recorded citation."
+directed = true
+subject_unit_types = ["paragraph"]
+object_unit_types = ["paragraph"]
+methods = ["human"]
+default_status = "recorded"
+revision_binding = "explicit"
+require_origin = true
+require_supports = true

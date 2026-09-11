@@ -1,0 +1,1 @@
+{"$id":"note-metadata@1","type":"object","properties":{"author":{"type":"string"}},"required":["author"],"additionalProperties":false}
