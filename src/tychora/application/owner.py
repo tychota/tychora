@@ -265,7 +265,9 @@ class WorkspaceOwner:
                     raise TychoraError(
                         "INVALID_REQUEST", "Parser output exceeds256MiB limit"
                     )
-                fd = os.open(directory / entry.name, os.O_RDONLY | os.O_NOFOLLOW)
+                fd = os.open(
+                    directory / entry.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+                )
                 stream = stack.enter_context(os.fdopen(fd, "rb"))
                 info = os.fstat(stream.fileno())
                 if (

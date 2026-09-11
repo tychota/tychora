@@ -461,3 +461,44 @@ def test_docx_rejects_unrendered_page_metadata(retained_case):
     }
     with pytest.raises(ValueError, match="DOCX physical pages"):
         ExtractionArtifact.model_validate_json(canonical_bytes(data))
+
+
+@pytest.mark.parametrize("execution", ["pdf"], indirect=True)
+@pytest.mark.parametrize("change", ["page_identity", "unknown_origin"])
+def test_rehashed_replay_rejects_invalid_native_coordinate_semantics(
+    retained_case, change
+):
+    from tychora.contracts.extraction import extraction_document
+    from tychora.contracts.identity import canonical_bytes
+    from tychora.ingestion.documents import replay_document
+
+    artifact, _, _ = retained_case
+    data = artifact.model_dump(mode="json", exclude={"raw_document_ref"})
+    document = data.pop("document_json")
+    if change == "page_identity":
+        document["pages"]["2"]["page_no"] = 99
+    else:
+        box = document["texts"][0]["prov"][0]["bbox"]
+        box.update(coord_origin="UNKNOWN", t=120.0, b=140.0)
+        data["units"][0]["provenance"][0]["raw_bbox"] = box
+        data["units"][0]["provenance"][0]["transform"] = "identity_top_left"
+    raw = canonical_bytes(document)
+    raw_sha = sha256(raw).hexdigest()
+    data["docling_json_ref"] = {
+        "sha256": raw_sha,
+        "storage_key": raw_sha,
+        "size_bytes": len(raw),
+        "media_type": "application/json",
+    }
+    root = extraction_document(data)
+    root_sha = sha256(root).hexdigest()
+    root_ref = ArtifactRef(
+        sha256=root_sha,
+        storage_key=root_sha,
+        size_bytes=len(root),
+        media_type="application/json",
+    )
+    with pytest.raises(ValueError):
+        map_document(document, artifact.original_ref)
+    with pytest.raises(ValueError, match="page identity|coordinate origin"):
+        replay_document(root, raw, root_ref)

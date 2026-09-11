@@ -4,12 +4,16 @@ import base64
 import io
 import json
 import os
-from collections.abc import Mapping
+import warnings
+from collections.abc import Iterator, Mapping
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from hashlib import sha256
 from importlib.metadata import version
+from math import ceil, isfinite
 from pathlib import Path
-from typing import Any, BinaryIO, cast
+from threading import Event
+from typing import IO, Any, BinaryIO, Literal, NoReturn, cast
 
 from tychora.application.owner import (
     MAX_PARSER_OUTPUT_BYTES,
@@ -31,9 +35,9 @@ from tychora.contracts.extraction import (
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.ports.execution import ExecutionContext
 
-from .mapping import map_document
+from .mapping import MAX_ITEMS, map_document
 
-MAX_IMAGE_PIXELS = 40_000_000
+MAX_IMAGE_PIXELS: int = 40_000_000
 MAX_EXTRACTION_BYTES = 16 * 1024 * 1024
 INVENTORY = Path(__file__).with_name("model-inventory.json")
 
@@ -63,6 +67,105 @@ def validate_models(root: Path) -> FrozenJsonMap:
     return FrozenJsonMap(inventory)
 
 
+@contextmanager
+def _image_decode_guard() -> Iterator[None]:
+    """Enforce image header limits in the isolated child, before SDK decoding."""
+    from PIL import Image, ImageFile
+
+    original_open, original_limit = Image.open, Image.MAX_IMAGE_PIXELS
+    exceeded = Event()
+
+    def fail() -> NoReturn:
+        exceeded.set()
+        raise TychoraError(
+            "INVALID_REQUEST",
+            "Document image exceeds the 40 million pixel predecode limit",
+        )
+
+    def checked_open(
+        fp: str | bytes | os.PathLike[str] | os.PathLike[bytes] | IO[bytes],
+        mode: Literal["r"] = "r",
+        formats: list[str] | tuple[str, ...] | None = None,
+    ) -> ImageFile.ImageFile:
+        with warnings.catch_warnings():
+            # Translate Pillow's warning-only interval into our hard limit.
+            warnings.simplefilter("ignore", Image.DecompressionBombWarning)
+            try:
+                opened = original_open(fp, mode, formats)
+            except Image.DecompressionBombError:
+                fail()
+        if opened.width * opened.height > MAX_IMAGE_PIXELS:
+            opened.close()
+            fail()
+        return opened
+
+    Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+    # This scoped SDK module-function replacement is intentionally dynamic.
+    cast(Any, Image).open = checked_open
+    try:
+        yield
+    finally:
+        Image.open, Image.MAX_IMAGE_PIXELS = original_open, original_limit
+        # SDK code can catch the first error and return a partial document.
+        # That does not authorize silently dropping an over-capacity image.
+        if exceeded.is_set():
+            fail()
+
+
+def _check_pdf_image_capacity(path: Path) -> None:
+    """Inspect 1x canvases and nested image objects without rendering/decoding.
+
+    PDFium exposes image-object dimensions, but not separately referenced mask
+    dimensions here. This is a pixel preflight, not a total native-memory bound.
+    """
+    import pypdfium2 as pdfium
+    import pypdfium2.raw as pdfium_raw
+
+    def check_size(width: float, height: float) -> None:
+        if (
+            not isfinite(width)
+            or not isfinite(height)
+            or width <= 0
+            or height <= 0
+            or ceil(width) * ceil(height) > MAX_IMAGE_PIXELS
+        ):
+            raise TychoraError(
+                "INVALID_REQUEST",
+                "PDF image or canvas exceeds the predecode pixel limit",
+            )
+
+    work = 0
+    try:
+        with pdfium.PdfDocument(path) as document:
+            for index in range(len(document)):
+                with closing(document[index]) as page:
+                    check_size(*page.get_size())
+                    pending = [(None, 0)]
+                    while pending:
+                        form, depth = pending.pop()
+                        work += 1
+                        if work > MAX_ITEMS or depth > 128:
+                            raise TychoraError(
+                                "INVALID_REQUEST",
+                                "PDF metadata exceeds structural capacity",
+                            )
+                        for item in page.get_objects(max_depth=1, form=form):
+                            work += 1
+                            if work > MAX_ITEMS:
+                                raise TychoraError(
+                                    "INVALID_REQUEST",
+                                    "PDF metadata exceeds structural capacity",
+                                )
+                            if item.type == pdfium_raw.FPDF_PAGEOBJ_IMAGE:
+                                check_size(*item.get_px_size())
+                            elif item.type == pdfium_raw.FPDF_PAGEOBJ_FORM:
+                                pending.append((item, depth + 1))
+    except (pdfium.PdfiumError, OSError, ValueError, OverflowError) as exc:
+        raise TychoraError(
+            "INVALID_REQUEST", "Cannot inspect PDF image dimensions before decoding"
+        ) from exc
+
+
 @dataclass(frozen=True)
 class _Convert:
     model_path: str
@@ -80,6 +183,7 @@ class _Convert:
             AcceleratorDevice,
             AcceleratorOptions,
         )
+        from docling.datamodel.backend_options import ThreadedDoclingParseBackendOptions
         from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import (
             LayoutObjectDetectionOptions,
@@ -88,11 +192,11 @@ class _Convert:
         )
         from docling.document_converter import DocumentConverter, PdfFormatOption
         from docling_core.types.doc import ImageRef
-        from PIL import Image
 
-        Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
         original = paths[0].with_name("input." + self.format)
         paths[0].rename(original)
+        if self.format == "pdf":
+            _check_pdf_image_capacity(original)
         layout = LayoutObjectDetectionOptions.from_preset("layout_heron_default")
         layout.model_spec.revision = "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8"
         options = PdfPipelineOptions(
@@ -103,6 +207,7 @@ class _Convert:
             layout_options=layout,
             generate_page_images=True,
             generate_picture_images=True,
+            images_scale=1.0,
             enable_remote_services=False,
             allow_external_plugins=False,
             accelerator_options=AcceleratorOptions(
@@ -111,18 +216,26 @@ class _Convert:
         )
         converter = DocumentConverter(
             allowed_formats=[InputFormat.PDF, InputFormat.DOCX],
-            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=options)},
+            format_options={
+                InputFormat.PDF: PdfFormatOption(
+                    pipeline_options=options,
+                    backend_options=ThreadedDoclingParseBackendOptions(
+                        render_scale=1.0
+                    ),
+                )
+            },
         )
-        converted = converter.convert(str(original))
-        document = converted.document
-        for table in document.tables:
-            picture = table.get_image(document)
-            if picture is not None:
-                table.image = ImageRef.from_pil(picture, dpi=72)
-        document_json = document.export_to_dict()
-        payload = canonical_bytes(document_json)
-        if len(payload) > MAX_PARSER_OUTPUT_BYTES:
-            raise ValueError("Docling serialized output exceeds256MiB")
+        with _image_decode_guard():
+            converted = converter.convert(str(original))
+            document = converted.document
+            for table in document.tables:
+                picture = table.get_image(document)
+                if picture is not None:
+                    table.image = ImageRef.from_pil(picture, dpi=72)
+            document_json = document.export_to_dict()
+            payload = canonical_bytes(document_json)
+            if len(payload) > MAX_PARSER_OUTPUT_BYTES:
+                raise ValueError("Docling serialized output exceeds256MiB")
         path = original.with_name("document.json")
         with path.open("xb") as out:
             out.write(payload)

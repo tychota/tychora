@@ -582,3 +582,60 @@ async def test_cancelled_collector_drains_before_staging_cleanup(
             with pytest.raises(asyncio.CancelledError):
                 await pending
         assert not list((owner.path / "staging").iterdir())
+
+
+def _fifo_collection_probe(directory, settings, scope, sender):
+    import os
+
+    from tychora.application.owner import StagedOutput
+
+    with WorkspaceOwner.open(directory / "data", settings, scope) as owner:
+        staging = owner.path / "staging" / "probe"
+        staging.mkdir()
+        os.mkfifo(staging / "output", 0o600)
+
+        def unexpected_collection(outputs):
+            raise AssertionError("FIFO reached result collector")
+
+        try:
+            owner.run_blocking_sync(
+                lambda: owner._collect_outputs(
+                    staging,
+                    (StagedOutput("output", "application/json", 0),),
+                    unexpected_collection,
+                ),
+                ExecutionContext(),
+            )
+        except TychoraError as exc:
+            sender.send((exc.code, exc.message))
+        finally:
+            sender.close()
+
+
+def test_fifo_output_is_rejected_without_blocking_owner(tmp_path, settings, scope):
+    import multiprocessing
+
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    child = context.Process(
+        target=_fifo_collection_probe, args=(tmp_path, settings, scope, sender)
+    )
+    try:
+        child.start()
+        sender.close()
+        assert receiver.poll(5), (
+            "FIFO open blocked the canonical owner before rejection"
+        )
+        code, message = receiver.recv()
+        assert code == "INTEGRITY_ERROR"
+        assert message == "Unsafe parser output file"
+        child.join(2)
+        assert child.exitcode == 0
+    finally:
+        if child.pid is not None:
+            if child.is_alive():
+                child.kill()
+            child.join()
+            child.close()
+        receiver.close()
+        sender.close()

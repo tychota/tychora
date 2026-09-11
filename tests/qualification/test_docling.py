@@ -218,3 +218,183 @@ def test_real_docling_retains_document_and_locators(
         assert figure.caption == expected["pdf"]["figure"]["caption"]
     else:
         assert len(next(u for u in artifact.units if u.unit_type == "table").cells) == 5
+
+
+def _docx_capacity_probe(source, staged, ceiling, sender):
+    """Run controlled instrumentation inside an isolated conversion process."""
+    from shutil import copyfile
+
+    from docling.backend.msword_backend import MsWordDocumentBackend
+    from docling.document_converter import DocumentConverter
+    from PIL import Image, PngImagePlugin
+
+    from tychora.adapters.docling import parser
+    from tychora.contracts.errors import TychoraError
+
+    parser.MAX_IMAGE_PIXELS = ceiling
+    original_open = Image.open
+    original_load = PngImagePlugin.PngImageFile.load
+    original_save = Image.Image.save
+    original_pictures = MsWordDocumentBackend._handle_pictures
+    original_convert = DocumentConverter.convert
+    counts = {"load": 0, "save": 0, "caught": 0, "sdk_returned": False}
+
+    def observed_load(self, *args, **kwargs):
+        if self.size == (640, 320):
+            counts["load"] += 1
+        return original_load(self, *args, **kwargs)
+
+    def observed_save(self, *args, **kwargs):
+        if self.size == (640, 320):
+            counts["save"] += 1
+        return original_save(self, *args, **kwargs)
+
+    def catching_backend(self, *args, **kwargs):
+        try:
+            return original_pictures(self, *args, **kwargs)
+        except (TychoraError, Image.DecompressionBombError):
+            # Model an SDK fallback that drops the offending object and returns
+            # a usable document: the application must still reject this result.
+            counts["caught"] += 1
+            return []
+
+    def observed_convert(self, *args, **kwargs):
+        result = original_convert(self, *args, **kwargs)
+        counts["sdk_returned"] = True
+        return result
+
+    PngImagePlugin.PngImageFile.load = observed_load
+    Image.Image.save = observed_save
+    MsWordDocumentBackend._handle_pictures = catching_backend
+    DocumentConverter.convert = observed_convert
+    staged.mkdir()
+    original = staged / "0"
+    copyfile(source, original)
+    try:
+        parser._Convert("/unused-docx-model-path", "docx")((original,))
+        rejected = False
+    except TychoraError as exc:
+        rejected = exc.code == "INVALID_REQUEST"
+    sender.send(
+        {**counts, "rejected": rejected, "restored": Image.open is original_open}
+    )
+    sender.close()
+
+
+@pytest.mark.qualification
+@pytest.mark.parametrize("ceiling", [150_000, 80_000, 204_800])
+def test_docx_pixel_limit_precedes_decode_and_survives_sdk_fallback(tmp_path, ceiling):
+    import multiprocessing
+
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    source = Path(__file__).parents[1] / "fixtures/documents/rich.docx"
+    child = context.Process(
+        target=_docx_capacity_probe, args=(source, tmp_path / "staged", ceiling, sender)
+    )
+    try:
+        child.start()
+        sender.close()
+        assert receiver.poll(40), "Capacity qualification process did not finish"
+        result = receiver.recv()
+        child.join(2)
+        assert child.exitcode == 0
+        assert result["restored"]
+        assert result["sdk_returned"]
+        if ceiling < 204_800:
+            assert result["rejected"], result
+            assert result["caught"] == 1
+            assert result["load"] == result["save"] == 0
+        else:
+            assert not result["rejected"]
+            assert result["caught"] == 0
+            assert result["load"] and result["save"]
+    finally:
+        if child.pid is not None:
+            if child.is_alive():
+                child.kill()
+            child.join()
+            child.close()
+        receiver.close()
+        sender.close()
+
+
+def _pdf_capacity_probe(source, staged, sender):
+    from shutil import copyfile
+
+    from docling.document_converter import DocumentConverter
+
+    from tychora.adapters.docling import parser
+    from tychora.contracts.errors import TychoraError
+
+    parser.MAX_IMAGE_PIXELS = 1000
+    entered = False
+
+    def unexpected_conversion(*args, **kwargs):
+        nonlocal entered
+        entered = True
+        raise RuntimeError("conversion sentinel")
+
+    DocumentConverter.convert = unexpected_conversion
+    staged.mkdir()
+    original = staged / "0"
+    copyfile(source, original)
+    rejected = False
+    try:
+        parser._Convert("/unused-pdf-model-path", "pdf")((original,))
+    except TychoraError as exc:
+        rejected = exc.code == "INVALID_REQUEST"
+    except RuntimeError as exc:
+        assert str(exc) == "conversion sentinel"
+    sender.send({"entered": entered, "rejected": rejected})
+    sender.close()
+
+
+@pytest.mark.qualification
+@pytest.mark.parametrize("kind", ["page", "image", "nested_image", "boundary"])
+def test_pdf_pixel_metadata_is_checked_before_conversion(tmp_path, kind):
+    import multiprocessing
+
+    from reportlab.pdfgen import canvas
+
+    source = tmp_path / "source.pdf"
+    size = (41, 25) if kind == "page" else (20, 50) if kind == "boundary" else (25, 25)
+    pdf = canvas.Canvas(str(source), pagesize=size, invariant=1)
+    if kind in ("image", "nested_image"):
+        picture = Path(__file__).parents[1] / "fixtures/documents/rich-figure.png"
+        if kind == "nested_image":
+            pdf.beginForm("inner")
+        pdf.drawImage(str(picture), 1, 1, width=20, height=10)
+        if kind == "nested_image":
+            pdf.endForm()
+            pdf.beginForm("outer")
+            pdf.doForm("inner")
+            pdf.endForm()
+            pdf.doForm("outer")
+    pdf.showPage()
+    pdf.save()
+    context = multiprocessing.get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    child = context.Process(
+        target=_pdf_capacity_probe, args=(source, tmp_path / "staged", sender)
+    )
+    try:
+        child.start()
+        sender.close()
+        assert receiver.poll(40), "PDF capacity qualification process did not finish"
+        result = receiver.recv()
+        child.join(2)
+        assert child.exitcode == 0
+        assert result == (
+            {"entered": True, "rejected": False}
+            if kind == "boundary"
+            else {"entered": False, "rejected": True}
+        )
+    finally:
+        if child.pid is not None:
+            if child.is_alive():
+                child.kill()
+            child.join()
+            child.close()
+        receiver.close()
+        sender.close()

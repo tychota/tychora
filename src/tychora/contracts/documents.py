@@ -238,7 +238,13 @@ def validate_document_units(
             raise ValueError("Document provenance coverage differs")
         for native, prov, loc in zip(native_prov, unit.provenance, unit.locators):
             page = raw["pages"][str(native["page_no"])]
+            if page.get("page_no") != native["page_no"]:
+                raise ValueError(
+                    "Retained Docling page identity differs from provenance"
+                )
             box = native["bbox"]
+            if box["coord_origin"] not in ("TOPLEFT", "BOTTOMLEFT"):
+                raise ValueError("Unknown retained Docling coordinate origin")
             width, height = page["size"]["width"], page["size"]["height"]
             bottom = box["coord_origin"] == "BOTTOMLEFT"
             expected = Geometry(
