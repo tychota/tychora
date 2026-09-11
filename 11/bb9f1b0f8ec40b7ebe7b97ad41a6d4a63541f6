@@ -1,0 +1,47 @@
+src/tychora/adapters/sqlite/code_provenance.py
+  s_35b641b930a96d::t_9dde4cb304856c 1-67
+src/tychora/adapters/sqlite/connection.py
+  s_35b641b930a96d::t_a7211b0d9b3890 1-56
+src/tychora/adapters/sqlite/corpus.py
+  s_35b641b930a96d::t_6d3b32f662f6f8 1-382
+src/tychora/adapters/sqlite/migrations.py
+  s_35b641b930a96d::t_1a706812f9f07e 1-30
+src/tychora/adapters/sqlite/policy.py
+  s_35b641b930a96d::t_72085392218bd6 1-234
+src/tychora/adapters/sqlite/validation.py
+  s_35b641b930a96d::t_c3dd33848a557d 1-247
+src/tychora/contracts/artifacts.py
+  s_35b641b930a96d::t_ac1e162b96d954 1-10
+src/tychora/contracts/corpus.py
+  s_35b641b930a96d::t_42cc89a10deb61 1-186
+src/tychora/contracts/evidence.py
+  s_35b641b930a96d::t_3f9e4fc95ae322 47
+src/tychora/ports/artifacts.py
+  s_35b641b930a96d::t_7534e0ac4491d4 1-10
+src/tychora/ports/corpus.py
+  s_35b641b930a96d::t_75194fcb073637 1-20
+src/tychora/resources/migrations/0001.sql
+  s_35b641b930a96d::t_68ee0131c15cea 1-479
+tests/helpers/corpus.py
+  s_35b641b930a96d::t_c24e605ca9d133 1-167
+tests/storage/test_corpus.py
+  s_35b641b930a96d::t_b9c6f1c890fc42 1-931
+tests/storage/test_schema.py
+  s_35b641b930a96d::t_fdc599e1ad6d4e 1-496
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "11bb9f1b0f8ec40b7ebe7b97ad41a6d4a63541f6",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
