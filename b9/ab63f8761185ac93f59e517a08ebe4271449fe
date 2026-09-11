@@ -1,0 +1,21 @@
+src/tychora/adapters/sqlite/jobs.py
+  s_35b641b930a96d::t_6fd6cfb1235b85 208-210,215,566
+tests/jobs/test_events.py
+  s_35b641b930a96d::t_ca610706eb98aa 196-278
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "b9ab63f8761185ac93f59e517a08ebe4271449fe",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
