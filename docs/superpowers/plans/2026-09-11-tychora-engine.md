@@ -594,7 +594,7 @@ def block_tokens(text: str):
 
 **Files:** Create `src/tychora/adapters/docling/{parser,mapping}.py`, `tests/ingestion/test_docling_mapping.py`, `tests/qualification/test_docling.py`, `tests/fixtures/documents/create_rich_fixtures.py`, `tests/fixtures/documents/rich-manifest.json`.
 
-**Interfaces:** `DoclingParser.extract(original: ArtifactRef, config: ResolvedConfig, ctx: ExecutionContext) -> ExtractionArtifact`; `map_document(export: JsonValue, original: ArtifactRef) -> ExtractionArtifact`. Same Parser port as 11; qualification uses an explicitly preprovisioned local asset fixture; the user-facing model inventory/setup service is completed in Task 14, avoiding a dependency cycle. Dependencies: 3, 7–8, 10–11.
+**Interfaces:** `DoclingParser.extract(original: ArtifactRef, config: ResolvedConfig, ctx: ExecutionContext) -> ExtractionArtifact`; `map_document(export: JsonValue, original: ArtifactRef) -> MappedDocument`. The pure mapper returns source facts; explicit DocumentRegistration plus owner-retained artifacts produce ExtractionArtifact. Preserve the synchronous Parser port with bounded owner sync bridges and provide an async path; conversion children receive only private staged files/model paths. Qualification uses an explicitly preprovisioned local asset fixture; the user-facing model inventory/setup service is completed in Task 14, avoiding a dependency cycle. Dependencies: 3, 7–8, 10–11.
 
 **Red/green command:** `uv run --locked pytest tests/ingestion/test_docling_mapping.py tests/qualification/test_docling.py -q`. Run once after adding each new failing test, then again after its minimal implementation. Initial expected failure is the named missing export/behavior, not unrelated fixture errors; final expected result is PASS for every listed case.
 
@@ -622,6 +622,53 @@ raw_ref = artifacts.put_stream(io.BytesIO(canonical_bytes(document_json)), "appl
 
 - [ ] Preserve complete JSON, `self_ref`, hierarchy/order, page dimensions/origin, bbox, charspan coordinate domain and picture/table/page assets. Preserve native annotation objects if available; unsupported extraction becomes a capability diagnostic. DOCX without renderer gets no physical page. Normalize geometry only with recorded transforms; keep raw coordinates too. Run parser inside owner-managed private staging, with explicit model paths/download disabled and no canonical handles in child processes.
 - [ ] Test fake export mapping separately from real PDF/DOCX extraction; verify five exact source passages and table/figure geometry against manually reviewed expectations. Run `uv run --locked pytest tests/ingestion/test_docling_mapping.py tests/qualification/test_docling.py -q`; commit with message `feat: retain Docling extraction artifacts and source geometry`.
+
+Implementation boundary: this task qualifies `structured_sections@1` for rich documents and rejects other requested strategies explicitly before conversion. Task 12b below completes numbered/rule/feedback/template normalization before table/proxy work. Preserve complete SDK JSON as a separate required artifact; the extraction replay manifest binds typed source facts without duplicating embedded images. Replay validates source facts against that JSON and does not reopen original payloads. Worker output uses bounded private staged files collected by the owner after child exit and before staging cleanup. Initial bounds are 256MiB serialized conversion output, 16MiB extraction manifest and 40 million decoded pixels per image; oversized input fails without truncation. Explicit standalone-image/OCR qualification belongs to Task 14.
+
+### Task 12b: Rich-document semantic records and numbered provisions
+
+**Placement:** Required immediately after Task 12 and before Task 13. This completes a missing format/normalizer integration in the original plan; it is not a later-release feature.
+
+**Files:** Create `src/tychora/ingestion/document_records.py`, `tests/ingestion/test_document_records.py`, `tests/qualification/test_docling_records.py`, and `tests/fixtures/documents/create_record_fixtures.py`. Modify `src/tychora/ingestion/documents.py`, the shared `normalize.py` dispatch, `contracts/documents.py` only for needed grouped source-part coordinates, and the Docling capability preflight in `adapters/docling/parser.py`. Keep pure document-record grammar in its own focused module. Any extraction of shared native semantics must be proposed before restructuring the existing native module.
+
+**Interfaces:** Keep `normalize(parsed: ExtractionArtifact, revision_id: str, registry: Registry) -> ExtractionBundle`. The new focused document-record module exposes `normalize_document_records(parsed: ExtractionArtifact, revision_id: str, registry: Registry) -> ExtractionBundle` for numbered/rule/feedback/template strategies; the existing document normalizer dispatch selects it by the registered strategy. Consume Task 12 raw `DocumentUnit`/`MappedDocument` and verified SDK JSON without rewriting those raw parser facts into synthetic source objects. Group canonical EvidenceUnit/StructuredRecordRow/LocatorRow results deterministically at normalization. The existing raw-item coverage validator remains applicable to raw extraction units. Canonical grouped source parts live in explicit immutable typed records/attributes, never pretend to be a real SDK self_ref. Reuse actual bundle assembly helpers where possible without adding an independent storage API. Dependencies:11,12.
+
+**Fixtures:** Implement `document_record_case(kind, format)` in these tests as a thin real pipeline fixture, not a fake parser: build the selected self-authored source using the locked reportlab/python-docx development dependencies; capture bytes with Acquirer; construct explicit workspace/collection/source/revision and DocumentRegistration; run DoclingParser through WorkspaceOwner with the explicit checksum-verified model bundle; normalize and commit using CorpusStore on the owner lane; return the actual parsed artifact, bundle, store and registry. Reuse qualified Task 12 provisioning and registration helpers when they fit; no hidden fixture or parser output is assumed. All sources and source metadata are synthetic. Pure mapping tests may supply explicit SDK export dictionaries for negative cases.
+
+**Synthetic content:** Create separate documents for these cases, each in PDF and DOCX, with source-native headings/paragraphs and labels rather than Markdown pasted into a PDF:
+
+- standard@1: heading `STD-01 - Sample trace`, paragraph `Requirement: Record the sample before changing the instrument.`, continuation paragraph `Keep the original label.`, `Expected evidence: The sample identifier is quotable.`, `Control: Inspect the source.`, `Severity: warning`, `Foundation: REF-MISSING`.
+- template@1: heading `Summary`, paragraph `Instruction: State the observed result.`, second paragraph `Keep the uncertainty explicit.`. A second heading `Limits` has `Instruction: State the supported range.`; neither slot swallows its sibling.
+- feedback@1: heading `Observation`, `Comment: The baseline is missing.`, `Target: paragraph-3`, with no author/decision/observation/status field. Expected unknowns remain null; no guessed reviewer or generated observation. A second fixture supplies each explicit field and preserves its exact source value.
+- law@1: heading `Article 4`, numbered paragraphs `1. Record the sample.` and `2. Preserve the label.`, a subordinate heading `4.1 Observations` and a numbered child, followed by `Article 5`. Retain every independently identified descendant with exact markers and nearest enclosing canonical parent.
+
+**RED/GREEN command:** `uv run --locked --no-sync pytest tests/ingestion/test_document_records.py tests/qualification/test_docling_records.py -q`. Required local model environment is the same as Task 12; missing assets fail with setup guidance. Add one named failing case, run it, implement the minimum, rerun. Do not rerun expensive conversion for every pure negative case; use a scoped qualified fixture lifetime with real captured facts.
+
+- [ ] Write the standard PDF/DOCX pipeline case before changing capability preflight. The initial expected failure is CAPABILITY_MISSING for rule_records@1. After implementation:
+
+```python
+result = document_record_case("standard@1", format)
+record = next(row for row in result.bundle.records if row.record_type == "rule@1")
+assert "Record the sample before changing the instrument." in record.data_json["requirement"]
+assert "Keep the original label." in record.data_json["requirement"]
+assert record.data_json["proof"] == "The sample identifier is quotable."
+assert record.data_json["control"] == "Inspect the source."
+assert record.data_json["severity"] == "warning"
+assert record.data_json["foundation_ids"] == ()
+assert record.data_json["foundation_refs"] == ("REF-MISSING",)
+```
+
+The canonical record_type is the registered schema ID (rule@1, template-slot@1 or feedback@1), matching Task 11 and Registry.definition_schema_bindings; do not introduce competing labels.
+
+- [ ] Implement exact configured heading-prefix/label aliases against Docling source structure. Keep literal fields, unknown nulls and same-extraction original foundation rules from11. No arbitrary pack regex, generated interpretation or silent generic-section fallback. A requested unsupported source shape has a named diagnostic/capability failure. Existing structured_sections@1 remains supported; code_symbols@1 remains explicitly rejected by this document adapter.
+- [ ] Add positive PDF/DOCX cases for template, explicit feedback and numbered provisions. Compare exact source parts/field strings rather than only record counts. Preserve source table cell/marker text and heading hierarchy; source formatting structure may supply canonical separators but cannot supply new words.
+- [ ] Define grouped source-part mapping explicitly. Each part binds retained SDK item/ref/domain/span to its canonical unit range; canonical join separators are marked structural and never given a fictitious original range. A unit crossing pages retains each physical locator and raw provenance. DOCX physical pages remain unknown. Reject missing/duplicate/conflicting part refs, reversed/out-of-range spans, source text mismatch and overlapping parts with contradictory ownership before canonical commit.
+- [ ] Retain independently canonical numbered descendants and every overlapping ancestor owner. Persist the complete ownership map needed by Tasks19/27/31/34, including exact-lookup inspection paths; a restricted child cannot become visible through an ancestor representation. Do not implement retrieval policy here, but provide an actual stored roundtrip fixture and exact handoff fields.
+- [ ] Add pure export negative cases for ambiguous labels, duplicate identifiers, unrelated heading siblings, field split across items, literal value markup, unsupported custom grammar, missing required field and forged mapped facts. Preserve diagnostic boundaries instead of assigning an unknown field to the previous value. Ordinary Docling text labels do not require Markdown wrappers; never treat exported Markdown as the canonical original.
+- [ ] Validate stable normalize/commit retry and replay from verified extraction+SDK JSON after the temporary original payload is removed. Keep raw JSON binding, semantic normalizer fingerprint and immutable revision identity. The test qualifies pure replay only, not authorized original-deletion lifecycle. Confirm parsed text/provenance substitution is rejected and no canonical row is committed.
+- [ ] Run native document/record tests plus changed rich-document/runtime/storage tests covering the actual shared diff. Run scoped Ruff, Ruff format, ty and git diff --check. Self-review and commit `feat: normalize rich document records with exact source parts`. Full report must include exact source-part and overlapping-owner contract, strategy support matrix, RED/GREEN evidence, real PDF/DOCX qualification and any explicit limitations. Independent scoped review is required before Task 13.
+
+The engine specification remains binding, including exact configured aliases, source-part provenance, noncitable derived material and immutable version identities.
 
 ### Task 13: Conservative table continuation and asset proxy ownership
 

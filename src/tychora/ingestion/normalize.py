@@ -22,6 +22,7 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit, TextLocator
 from tychora.contracts.extraction import (
     Diagnostic,
+    DocumentRegistration,
     ExtractionArtifact,
     NativeRegistration,
     ParsedRecord,
@@ -33,6 +34,10 @@ def normalize(
     parsed: ExtractionArtifact, revision_id: str, registry: Registry
 ) -> ExtractionBundle:
     parsed = ExtractionArtifact.model_validate(parsed.model_dump())
+    if isinstance(parsed.registration, DocumentRegistration):
+        from .documents import normalize_document
+
+        return normalize_document(parsed, revision_id, registry)
     registration = NativeRegistration.model_validate(parsed.registration.model_dump())
     if (
         revision_id != registration.revision.revision_id
@@ -44,12 +49,13 @@ def normalize(
     registry.validate_metadata(
         registration.revision.kind_id, registration.revision.metadata_json
     )
+    native_units = cast(tuple[ParsedUnit, ...], parsed.units)
+    native_text = cast(str, parsed.source_text)
     seen = set()
-    for unit in parsed.units:
+    for unit in native_units:
         if (
             unit.native_ref in seen
-            or parsed.source_text[unit.char_start : unit.char_end]
-            != unit.source_substring
+            or native_text[unit.char_start : unit.char_end] != unit.source_substring
         ):
             raise TychoraError(
                 "INTEGRITY_ERROR",
@@ -73,9 +79,9 @@ def normalize(
         p.native_ref: identity.unit_id(
             eid, p.native_ref, i, sha256(p.source_substring.encode()).hexdigest()
         )
-        for i, p in enumerate(parsed.units)
+        for i, p in enumerate(native_units)
     }
-    for ordinal, unit in enumerate(parsed.units):
+    for ordinal, unit in enumerate(native_units):
         uid = identifiers[unit.native_ref]
         loc = TextLocator(
             artifact_ref=parsed.original_ref.sha256,
@@ -145,7 +151,7 @@ def normalize(
             original_value=p.identifier,
             unit_id=identifiers[p.native_ref],
         )
-        for p in parsed.units
+        for p in native_units
         if p.identifier
     )
     refs = {

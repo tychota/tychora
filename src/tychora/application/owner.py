@@ -1,15 +1,20 @@
 """Sole workspace owner and thread-affine canonical resources."""
 
+import asyncio
 import json
+import os
 import shutil
 import sqlite3
+import stat
 import tempfile
 from collections.abc import Callable, Iterator
-from contextlib import ExitStack, contextmanager
+from concurrent.futures import Future
+from contextlib import ExitStack, contextmanager, suppress
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock, get_ident
-from typing import NoReturn
+from typing import BinaryIO, NoReturn, cast, overload
 from uuid import UUID, uuid4
 
 from tychora.adapters.files.cas import LocalArtifacts
@@ -31,6 +36,29 @@ from .runtime import (
     parser_process,
     private_directory,
 )
+
+MAX_PARSER_OUTPUT_BYTES = 256 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class StagedOutput:
+    name: str
+    media_type: str
+    size_bytes: int
+
+
+def _sync_result[T](future: Future[T], ctx: ExecutionContext) -> T:
+    try:
+        result = future.result()
+    except BaseException:
+        ctx.cancelled.set()
+        # Never abandon resource cleanup, even for external KeyboardInterrupt.
+        while not future.done():
+            with suppress(BaseException):
+                future.result()
+        raise
+    ctx.checkpoint()
+    return result
 
 
 class WorkspaceOwner:
@@ -153,14 +181,36 @@ class WorkspaceOwner:
             )
         self._handles.callback(close)
 
-    async def run_blocking[T](self, call: Callable[[], T], ctx: ExecutionContext) -> T:
+    def _sync_thread(self) -> None:
+        if get_ident() == self._thread_id:
+            raise TychoraError(
+                "INVALID_REQUEST", "Sync dispatch cannot run on the owner thread"
+            )
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        raise TychoraError(
+            "INVALID_REQUEST", "Use the async owner/parser path on an event-loop thread"
+        )
+
+    def _blocking_future[T](
+        self, call: Callable[[], T], ctx: ExecutionContext
+    ) -> Future[T]:
         ctx.checkpoint()
 
         def checked() -> T:
             ctx.checkpoint()
             return call()
 
-        return await drain_result(self._worker.submit(checked), ctx)
+        return self._worker.submit(checked)
+
+    async def run_blocking[T](self, call: Callable[[], T], ctx: ExecutionContext) -> T:
+        return await drain_result(self._blocking_future(call, ctx), ctx)
+
+    def run_blocking_sync[T](self, call: Callable[[], T], ctx: ExecutionContext) -> T:
+        self._sync_thread()
+        return _sync_result(self._blocking_future(call, ctx), ctx)
 
     def _stage(
         self, refs: tuple[ArtifactRef, ...], ctx: ExecutionContext
@@ -185,12 +235,56 @@ class WorkspaceOwner:
             shutil.rmtree(directory)
             raise
 
-    async def run_parser[T](
+    def _collect_outputs[T](
         self,
-        call: Callable[[tuple[Path, ...]], T],
+        directory: Path,
+        result: object,
+        collector: Callable[[tuple[tuple[StagedOutput, BinaryIO], ...]], T],
+    ) -> T:
+        if not isinstance(result, tuple) or len(result) > 4096:
+            raise TychoraError("INTEGRITY_ERROR", "Invalid parser output descriptors")
+        total, names = 0, set()
+        with ExitStack() as stack:
+            outputs = []
+            for entry in result:
+                if (
+                    not isinstance(entry, StagedOutput)
+                    or not entry.name
+                    or Path(entry.name).name != entry.name
+                    or entry.name in (".", "..")
+                    or entry.name in names
+                    or type(entry.size_bytes) is not int
+                    or entry.size_bytes < 0
+                ):
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Unsafe parser output descriptor"
+                    )
+                names.add(entry.name)
+                total += entry.size_bytes
+                if total > MAX_PARSER_OUTPUT_BYTES:
+                    raise TychoraError(
+                        "INVALID_REQUEST", "Parser output exceeds256MiB limit"
+                    )
+                fd = os.open(directory / entry.name, os.O_RDONLY | os.O_NOFOLLOW)
+                stream = stack.enter_context(os.fdopen(fd, "rb"))
+                info = os.fstat(stream.fileno())
+                if (
+                    not stat.S_ISREG(info.st_mode)
+                    or info.st_nlink != 1
+                    or info.st_size != entry.size_bytes
+                    or info.st_uid != os.getuid()
+                ):
+                    raise TychoraError("INTEGRITY_ERROR", "Unsafe parser output file")
+                outputs.append((entry, stream))
+            return collector(tuple(outputs))
+
+    def _parser_future[T](
+        self,
+        call: Callable[[tuple[Path, ...]], object],
         inputs: tuple[ArtifactRef, ...],
         ctx: ExecutionContext,
-    ) -> T:
+        collector: Callable[[tuple[tuple[StagedOutput, BinaryIO], ...]], T] | None,
+    ) -> Future[T]:
         ctx.checkpoint()
 
         def parse() -> T:
@@ -200,11 +294,78 @@ class WorkspaceOwner:
             ).result()
             try:
                 ctx.checkpoint()
-                return parser_process(call, copies)
+                result = parser_process(call, copies)
+                if collector is not None:
+                    # The child has been reaped; collect before deleting its files.
+                    result = self._worker.submit(
+                        lambda: self._collect_outputs(directory, result, collector)
+                    ).result()
+                return cast(T, result)
             finally:
                 shutil.rmtree(directory)
 
-        return await drain_result(self._parsers.submit(parse), ctx)
+        return self._parsers.submit(parse)
+
+    @overload
+    async def run_parser[T](
+        self,
+        call: Callable[[tuple[Path, ...]], T],
+        inputs: tuple[ArtifactRef, ...],
+        ctx: ExecutionContext,
+    ) -> T: ...
+
+    @overload
+    async def run_parser[T](
+        self,
+        call: Callable[[tuple[Path, ...]], object],
+        inputs: tuple[ArtifactRef, ...],
+        ctx: ExecutionContext,
+        *,
+        collector: Callable[[tuple[tuple[StagedOutput, BinaryIO], ...]], T],
+    ) -> T: ...
+
+    async def run_parser[T](
+        self,
+        call: Callable[[tuple[Path, ...]], object],
+        inputs: tuple[ArtifactRef, ...],
+        ctx: ExecutionContext,
+        *,
+        collector: Callable[[tuple[tuple[StagedOutput, BinaryIO], ...]], T]
+        | None = None,
+    ) -> T:
+        return await drain_result(
+            self._parser_future(call, inputs, ctx, collector), ctx
+        )
+
+    @overload
+    def run_parser_sync[T](
+        self,
+        call: Callable[[tuple[Path, ...]], T],
+        inputs: tuple[ArtifactRef, ...],
+        ctx: ExecutionContext,
+    ) -> T: ...
+
+    @overload
+    def run_parser_sync[T](
+        self,
+        call: Callable[[tuple[Path, ...]], object],
+        inputs: tuple[ArtifactRef, ...],
+        ctx: ExecutionContext,
+        *,
+        collector: Callable[[tuple[tuple[StagedOutput, BinaryIO], ...]], T],
+    ) -> T: ...
+
+    def run_parser_sync[T](
+        self,
+        call: Callable[[tuple[Path, ...]], object],
+        inputs: tuple[ArtifactRef, ...],
+        ctx: ExecutionContext,
+        *,
+        collector: Callable[[tuple[tuple[StagedOutput, BinaryIO], ...]], T]
+        | None = None,
+    ) -> T:
+        self._sync_thread()
+        return _sync_result(self._parser_future(call, inputs, ctx, collector), ctx)
 
     async def run_provider[T](
         self,

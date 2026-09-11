@@ -1,0 +1,2 @@
+# Generated document fixtures contain PDF byte offsets and binary streams.
+tests/fixtures/documents/*.pdf binary

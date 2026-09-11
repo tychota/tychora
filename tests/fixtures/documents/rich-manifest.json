@@ -1,0 +1,133 @@
+{
+  "schema_version": "1",
+  "license": "MIT",
+  "source": "create_rich_fixtures.py",
+  "review": "Synthetic source drawings and both rendered PDF pages reviewed by the controller agent; expectations are independent of Docling extraction.",
+  "pdf": {
+    "pages": 2,
+    "page_width_points": 612,
+    "page_height_points": 792,
+    "coordinate_origin": "top_left",
+    "passages": [
+      {
+        "text": "Field notebook",
+        "page": 1
+      },
+      {
+        "text": "Record the sample before changing the instrument.",
+        "page": 1
+      },
+      {
+        "text": "Keep the blue marker beside the reference vessel.",
+        "page": 1
+      },
+      {
+        "text": "Repeat the observation after the indicator settles.",
+        "page": 2
+      },
+      {
+        "text": "Figure 1. Reference vessel and blue marker.",
+        "page": 2
+      }
+    ],
+    "tables": [
+      {
+        "page": 1,
+        "bbox": [
+          54,
+          600,
+          558,
+          696
+        ],
+        "rows": [
+          [
+            "Sample",
+            "Indicator",
+            "Result"
+          ],
+          [
+            "Aster",
+            "Blue",
+            "Stable"
+          ],
+          [
+            "Birch",
+            "Green",
+            "Pending"
+          ]
+        ]
+      },
+      {
+        "page": 2,
+        "bbox": [
+          54,
+          80,
+          558,
+          176
+        ],
+        "rows": [
+          [
+            "Sample",
+            "Indicator",
+            "Result"
+          ],
+          [
+            "Cedar",
+            "Amber",
+            "Stable"
+          ],
+          [
+            "Dahlia",
+            "Violet",
+            "Repeat"
+          ]
+        ]
+      }
+    ],
+    "figure": {
+      "page": 2,
+      "image_box": [
+        96,
+        290,
+        516,
+        500
+      ],
+      "label": "REFERENCE VESSEL",
+      "caption": "Figure 1. Reference vessel and blue marker.",
+      "visible_regions": {
+        "vessel": [
+          201,
+          335.9375,
+          332.90625,
+          458
+        ],
+        "blue_marker": [
+          384.75,
+          381.875,
+          424.78125,
+          421.90625
+        ],
+        "vessel_label": [
+          215.4375,
+          471.125,
+          337.5,
+          480.3125
+        ],
+        "blue_label": [
+          359.8125,
+          438.3125,
+          445.78125,
+          447.5
+        ]
+      },
+      "raster_rounding_tolerance_points": 1
+    },
+    "table_bbox_tolerance_points": 12
+  },
+  "docx": {
+    "physical_pages": null,
+    "reason": "Explicit page break is not a layout-preserving renderer",
+    "embedded_pictures": 1,
+    "table_rows": 5
+  }
+}

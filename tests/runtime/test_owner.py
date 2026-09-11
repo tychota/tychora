@@ -481,3 +481,104 @@ def test_existing_corpus_without_identity_is_not_assigned_a_new_workspace(
     db.close()
     with pytest.raises(TychoraError), WorkspaceOwner.open(root, settings, scope):
         pytest.fail("Existing anonymous corpus accepted")
+
+
+def _write_parser_output(paths):
+    from tychora.application.owner import StagedOutput
+
+    output = paths[0].parent / "result.json"
+    output.write_bytes(b'{"retained":true}')
+    return (StagedOutput("result.json", "application/json", 17),)
+
+
+def test_sync_owner_collects_after_child_exit_and_retains_output(
+    tmp_path, settings, scope
+):
+    from io import BytesIO
+    from threading import get_ident
+
+    with WorkspaceOwner.open(tmp_path / "data", settings, scope) as owner:
+        ctx = ExecutionContext()
+        ref = owner.run_blocking_sync(
+            lambda: owner.artifacts.put_stream(BytesIO(b"original"), "text/plain"), ctx
+        )
+
+        def collect(outputs):
+            assert get_ident() == owner._thread_id
+            return owner.artifacts.put_stream(outputs[0][1], outputs[0][0].media_type)
+
+        result = owner.run_parser_sync(
+            _write_parser_output, (ref,), ctx, collector=collect
+        )
+        assert owner.run_blocking_sync(
+            lambda: owner.artifacts.stat(result).available, ctx
+        )
+        assert not list((owner.path / "staging").iterdir())
+        with pytest.raises(TychoraError, match="owner thread"):
+            owner.run_blocking_sync(
+                lambda: owner.run_blocking_sync(lambda: None, ctx), ctx
+            )
+
+
+@pytest.mark.asyncio
+async def test_sync_owner_bridge_rejects_event_loop(tmp_path, settings, scope):
+    with (
+        WorkspaceOwner.open(tmp_path / "data", settings, scope) as owner,
+        pytest.raises(TychoraError, match="async"),
+    ):
+        owner.run_blocking_sync(lambda: None, ExecutionContext())
+
+
+def test_collector_failure_removes_private_outputs(tmp_path, settings, scope):
+    from io import BytesIO
+
+    with WorkspaceOwner.open(tmp_path / "data", settings, scope) as owner:
+        ctx = ExecutionContext()
+        ref = owner.run_blocking_sync(
+            lambda: owner.artifacts.put_stream(BytesIO(b"original"), "text/plain"), ctx
+        )
+
+        def fail(outputs):
+            raise ValueError("collector failure")
+
+        with pytest.raises(ValueError, match="collector failure"):
+            owner.run_parser_sync(_write_parser_output, (ref,), ctx, collector=fail)
+        assert not list((owner.path / "staging").iterdir())
+
+
+@pytest.mark.asyncio
+async def test_cancelled_collector_drains_before_staging_cleanup(
+    tmp_path, settings, scope
+):
+    from io import BytesIO
+
+    started, release = threading.Event(), threading.Event()
+    with WorkspaceOwner.open(tmp_path / "data", settings, scope) as owner:
+        ctx = ExecutionContext()
+        ref = await owner.run_blocking(
+            lambda: owner.artifacts.put_stream(BytesIO(b"original"), "text/plain"), ctx
+        )
+
+        def collect(outputs):
+            started.set()
+            assert release.wait(5)
+            return outputs[0][1].read()
+
+        pending = asyncio.create_task(
+            owner.run_parser(_write_parser_output, (ref,), ctx, collector=collect)
+        )
+        try:
+            for _ in range(200):
+                if started.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            assert started.is_set()
+            pending.cancel()
+            await asyncio.sleep(0.02)
+            assert not pending.done()
+            assert list((owner.path / "staging").iterdir())
+        finally:
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+        assert not list((owner.path / "staging").iterdir())
