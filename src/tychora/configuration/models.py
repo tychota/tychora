@@ -8,7 +8,6 @@ from tychora.contracts.base import (
     Contract,
     FrozenJsonMap,
     NonEmptyStr,
-    NonNegativeInt,
     PositiveInt,
     Sha256,
 )
@@ -31,7 +30,7 @@ class RetrievalSettings(Contract):
 class RelationChecks(Contract):
     enabled: bool = False
     required: bool = False
-    max_assertions: NonNegativeInt = 100
+    max_assertions: Annotated[int, Field(ge=0, le=100)] = 100
 
 
 class ChecksSettings(Contract):
@@ -39,7 +38,9 @@ class ChecksSettings(Contract):
 
 
 class SelectionSettings(Contract):
-    lane_reservation: Literal["none", "one_per_available_lane"] = "none"
+    lane_reservation: Literal[
+        "none", "one_per_available_lane", "one_per_required_lane"
+    ] = "none"
 
 
 class OutputSettings(Contract):
@@ -57,12 +58,12 @@ class ResourceLimits(Contract):
     limit: Annotated[int, Field(ge=1, le=1000)] = 8
     max_tokens: PositiveInt = 6000
     max_response_bytes: PositiveInt = 1048576
-    graph_seed_limit: NonNegativeInt = 5
-    graph_candidate_limit: NonNegativeInt = 32
-    graph_work_limit: NonNegativeInt = 2000
-    semantic_hops: NonNegativeInt = 1
-    inspection_hops: NonNegativeInt = 2
-    inspection_edges: NonNegativeInt = 100
+    graph_seed_limit: Annotated[int, Field(ge=0, le=5)] = 5
+    graph_candidate_limit: Annotated[int, Field(ge=0, le=32)] = 32
+    graph_work_limit: Annotated[int, Field(ge=0, le=2000)] = 2000
+    semantic_hops: Annotated[int, Field(ge=0, le=1)] = 1
+    inspection_hops: Annotated[int, Field(ge=0, le=2)] = 2
+    inspection_edges: Annotated[int, Field(ge=0, le=100)] = 100
 
 
 class EmbeddingSettings(Contract):

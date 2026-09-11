@@ -99,6 +99,10 @@ def _load_pack(root: Path) -> tuple[dict[str, Any], dict[str, dict[str, Any]], s
                 if category == "schemas"
                 else tomllib.loads(_read(path))
             )
+            if not isinstance(definition, dict):
+                raise TychoraError(
+                    "INVALID_REQUEST", "Definition document must be an object"
+                )
             files[name] = definition
             key = definition.get("$id" if category == "schemas" else "id")
             if not isinstance(key, str) or not re.fullmatch(
@@ -120,7 +124,7 @@ def _load_pack(root: Path) -> tuple[dict[str, Any], dict[str, dict[str, Any]], s
                     ):
                         schema_names.append(definition[schema_field])
     schema_files = {name: files[name] for name in schema_names}
-    _validate_schemas(schema_files)
+    registry["schema_reference_bindings"] = _validate_schemas(schema_files)
     registry["schema_bindings"] = {
         f"{profile['id']}@{profile['version']}": {
             name: schema["$id"] for name, schema in schema_files.items()
@@ -140,7 +144,7 @@ def _load_pack(root: Path) -> tuple[dict[str, Any], dict[str, dict[str, Any]], s
     return profile, registry, digest("profile-pack-v1", files)
 
 
-def _validate_schemas(schemas: dict[str, Any]) -> None:
+def _validate_schemas(schemas: dict[str, Any]) -> dict[str, dict[str, dict[str, str]]]:
     """Validate a bounded schema subset and resolve only preloaded local references."""
     keywords = {
         "$id",
@@ -164,8 +168,13 @@ def _validate_schemas(schemas: dict[str, Any]) -> None:
         "format",
     }
     budget = 4096
+    references: dict[str, dict[str, dict[str, str]]] = {
+        schema["$id"]: {} for schema in schemas.values()
+    }
 
-    def walk(node: Any, name: str, stack: tuple[int, ...] = ()) -> None:
+    def walk(
+        node: Any, name: str, stack: tuple[int, ...] = (), location: str = ""
+    ) -> None:
         nonlocal budget
         budget -= 1
         if budget < 0 or len(stack) > 32 or id(node) in stack:
@@ -193,23 +202,36 @@ def _validate_schemas(schemas: dict[str, Any]) -> None:
                 else name
             )
             target = schemas[target_name]
+            association = {"schema_id": target["$id"], "fragment": fragment}
+            source = references[schemas[name]["$id"]]
+            reference_location = f"{location}/$ref"
+            if (
+                reference_location in source
+                and source[reference_location] != association
+            ):
+                raise TychoraError(
+                    "INVALID_REQUEST", "Conflicting immutable schema reference binding"
+                )
+            source[reference_location] = association
             if fragment:
                 if not fragment.startswith("/"):
                     raise ValueError("unsupported schema anchor")
                 for segment in fragment[1:].split("/"):
                     target = target[segment.replace("~1", "/").replace("~0", "~")]
-            walk(target, target_name, stack)
+            walk(target, target_name, stack, fragment)
         for keyword in ("properties", "$defs"):
-            for child in node.get(keyword, {}).values():
-                walk(child, name, stack)
+            for key, child in node.get(keyword, {}).items():
+                escaped_key = key.replace("~", "~0").replace("/", "~1")
+                walk(child, name, stack, f"{location}/{keyword}/{escaped_key}")
         for keyword in ("items", "additionalProperties"):
             if keyword in node:
-                walk(node[keyword], name, stack)
+                walk(node[keyword], name, stack, f"{location}/{keyword}")
 
     try:
         for name, schema in schemas.items():
             walk(schema, name)
             Draft202012Validator.check_schema(schema)
+        return references
     except (ValueError, TypeError, KeyError, AttributeError, SchemaError):
         raise TychoraError(
             "INVALID_REQUEST", "Invalid, unsupported or unresolved local schema"
@@ -325,6 +347,7 @@ def _resolve_config(
             *_DEFINITION_FIELDS.values(),
             "schema_bindings",
             "definition_schema_bindings",
+            "schema_reference_bindings",
         )
     }
     origins: dict[str, Any] = {}
@@ -356,6 +379,12 @@ def _resolve_config(
                     raise TychoraError(
                         "INVALID_REQUEST", "Conflicting immutable schema binding"
                     )
+        for key, binding in overlay.get("schema_reference_bindings", {}).items():
+            previous = registry["schema_reference_bindings"].get(key)
+            if previous is not None and previous != binding:
+                raise TychoraError(
+                    "INVALID_REQUEST", "Conflicting immutable schema reference binding"
+                )
         record(overlay)
         values = merge_values(
             values,
@@ -379,8 +408,11 @@ def _resolve_config(
         "workspace",
         str(workspace_file.resolve()),
     )
+    # Validate the workspace layer before a lower request can conceal invalid limits.
+    ConfigurationValues.from_mapping(values)
     request = deepcopy(dict(overrides))
-    ConfigurationValues.from_mapping(request)
+    if "limits" in request and not isinstance(request["limits"], dict):
+        raise TychoraError("INVALID_REQUEST", "Request limits must be an object")
     for key, limit in request.get("limits", {}).items():
         if (
             key not in values["limits"]
@@ -391,6 +423,7 @@ def _resolve_config(
                 "INVALID_REQUEST",
                 "Request limit exceeds a configured ceiling or is invalid",
             )
+    ConfigurationValues.from_mapping(request)
     configured_filter = values["filters"]
     if "filters" in request and configured_filter is not None:
         request["filters"] = {
@@ -443,6 +476,7 @@ def _resolve_config(
             registry["schemas"],
             registry["relations"],
             registry["definition_schema_bindings"],
+            registry["schema_reference_bindings"],
         ),
         index_fingerprint=digest(
             "index-config-v1", values["providers"], values["index"]

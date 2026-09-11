@@ -676,3 +676,170 @@ def test_graph_request_respects_lower_workspace_ceiling(workspace):
     assert config.values.limits.inspection_edges == 100
     with pytest.raises(TychoraError, match="ceiling"):
         resolve_config(workspace, "child", {"limits": {"graph_work_limit": 101}})
+
+
+def test_profile_can_reserve_one_candidate_per_required_lane(workspace):
+    from tychora.configuration.resolve import resolve_config
+
+    file = workspace.parent / "packs/child/profile.toml"
+    file.write_text(
+        file.read_text() + '\n[selection]\nlane_reservation = "one_per_required_lane"\n'
+    )
+    config = resolve_config(workspace, "child", {})
+    assert config.values.selection.lane_reservation == "one_per_required_lane"
+
+
+@pytest.mark.parametrize(
+    "table, field, excessive",
+    [
+        ("limits", "graph_seed_limit", 6),
+        ("limits", "graph_candidate_limit", 33),
+        ("limits", "graph_work_limit", 2001),
+        ("limits", "semantic_hops", 2),
+        ("limits", "inspection_hops", 3),
+        ("limits", "inspection_edges", 101),
+        ("checks.relations", "max_assertions", 101),
+    ],
+)
+@pytest.mark.parametrize("narrow_request", [False, True])
+def test_workspace_cannot_raise_hard_graph_maxima(
+    workspace, table, field, excessive, narrow_request
+):
+    from tychora.configuration.resolve import resolve_config
+
+    workspace.write_text(
+        workspace.read_text() + f"\n[configuration.{table}]\n{field} = {excessive}\n"
+    )
+    overrides = {"limits": {field: 0}} if narrow_request and table == "limits" else {}
+    with pytest.raises(TychoraError) as error:
+        resolve_config(workspace, "child", overrides)
+    assert error.value.code == "INVALID_REQUEST"
+
+
+@pytest.mark.parametrize("document", [[], None, "schema", 1, 1.5, True])
+def test_nonobject_schema_documents_return_typed_invalid_request(workspace, document):
+    from tychora.configuration.resolve import resolve_config
+
+    file = workspace.parent / "packs/base/schemas/note.json"
+    file.write_text(json.dumps(document))
+    with pytest.raises(TychoraError) as error:
+        resolve_config(workspace, "base", {})
+    assert error.value.code == "INVALID_REQUEST"
+    assert str(workspace.parent) not in str(error.value)
+
+
+def install_reference_schemas(root, *, transitive=False):
+    """Declare a complete synthetic schema inventory without hidden file discovery."""
+    documents = {
+        "note.json": {"$id": "root@1", "$ref": "a.json"},
+        "a.json": {"$id": "a@1", "type": "string"},
+        "b.json": {"$id": "b@1", "type": "integer"},
+    }
+    if transitive:
+        documents = {
+            "note.json": {"$id": "root@1", "$ref": "middle.json#/$defs/item"},
+            "middle.json": {
+                "$id": "middle@1",
+                "$defs": {"item": {"$ref": "a.json#/$defs/value"}},
+            },
+            "a.json": {"$id": "a@1", "$defs": {"value": {"type": "string"}}},
+            "b.json": {"$id": "b@1", "$defs": {"value": {"type": "integer"}}},
+        }
+    (root / "schemas").mkdir(exist_ok=True)
+    for name, document in documents.items():
+        (root / "schemas" / name).write_text(json.dumps(document))
+    profile = root / "profile.toml"
+    text = profile.read_text().replace(
+        'schema_definitions = ["schemas/note.json"]\n', ""
+    )
+    includes = json.dumps([f"schemas/{name}" for name in documents])
+    profile.write_text(
+        text.replace(
+            'version = "1"\n', f'version = "1"\nschema_definitions = {includes}\n', 1
+        )
+    )
+
+
+def swap_schema_files(root):
+    a = root / "schemas/a.json"
+    b = root / "schemas/b.json"
+    first, second = a.read_bytes(), b.read_bytes()
+    a.write_bytes(second)
+    b.write_bytes(first)
+
+
+@pytest.mark.parametrize("transitive", [False, True])
+def test_resolved_schema_reference_targets_bind_extraction_identity(
+    workspace, transitive
+):
+    from tychora.configuration.resolve import resolve_config
+
+    root = workspace.parent / "packs/base"
+    install_reference_schemas(root, transitive=transitive)
+    before = resolve_config(workspace, "base", {})
+    swap_schema_files(root)
+    after = resolve_config(workspace, "base", {})
+    assert before.registry["schemas"] == after.registry["schemas"]
+    assert (
+        before.registry["definition_schema_bindings"]
+        == after.registry["definition_schema_bindings"]
+    )
+    assert before.extraction_fingerprint != after.extraction_fingerprint
+    if transitive:
+        assert dict(
+            before.registry["schema_reference_bindings"]["root@1"]["/$ref"]
+        ) == {"schema_id": "middle@1", "fragment": "/$defs/item"}
+        assert dict(
+            before.registry["schema_reference_bindings"]["middle@1"]["/$defs/item/$ref"]
+        ) == {"schema_id": "a@1", "fragment": "/$defs/value"}
+        assert dict(
+            after.registry["schema_reference_bindings"]["middle@1"]["/$defs/item/$ref"]
+        ) == {"schema_id": "b@1", "fragment": "/$defs/value"}
+    else:
+        assert dict(
+            before.registry["schema_reference_bindings"]["root@1"]["/$ref"]
+        ) == {"schema_id": "a@1", "fragment": ""}
+        assert dict(after.registry["schema_reference_bindings"]["root@1"]["/$ref"]) == {
+            "schema_id": "b@1",
+            "fragment": "",
+        }
+    renamed = root / "profile.toml"
+    renamed.write_text(renamed.read_text().replace("fixture-base", "renamed-base"))
+    assert (
+        resolve_config(workspace, "base", {}).extraction_fingerprint
+        == after.extraction_fingerprint
+    )
+
+
+@pytest.mark.parametrize("transitive", [False, True])
+def test_same_immutable_schema_cannot_bind_different_reference_targets_across_packs(
+    workspace, transitive
+):
+    from tychora.configuration.resolve import resolve_config
+
+    base = workspace.parent / "packs/base"
+    child = workspace.parent / "packs/child"
+    install_reference_schemas(base, transitive=transitive)
+    install_reference_schemas(child, transitive=transitive)
+    swap_schema_files(child)
+    files = {
+        str(path.relative_to(base)): (
+            json.loads(path.read_text())
+            if path.suffix == ".json"
+            else tomllib.loads(path.read_text())
+        )
+        for path in base.rglob("*")
+        if path.is_file()
+    }
+    encoded = json.dumps(
+        ["profile-pack-v1", files],
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode()
+    sha = hashlib.sha256(encoded).hexdigest()
+    file = child / "profile.toml"
+    previous = tomllib.loads(file.read_text())["extends"][0]["digest"]
+    file.write_text(file.read_text().replace(previous, sha))
+    with pytest.raises(TychoraError, match="immutable.*reference"):
+        resolve_config(workspace, "child", {})
