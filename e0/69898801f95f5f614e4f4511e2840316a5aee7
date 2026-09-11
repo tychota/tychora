@@ -1,0 +1,42 @@
+tests/test_import.py
+  s_35b641b930a96d::t_ade55b5ee468ac 1-13,15-18
+  s_35b641b930a96d::t_5dc408b633ef79 19-27,29-33
+  s_35b641b930a96d::t_5a6dfa94659ba2 14,28,43
+  s_35b641b930a96d::t_78d87d63a5fb2c 34-42,44-48
+.python-version
+  s_35b641b930a96d::t_ade55b5ee468ac 1
+src/tychora/__init__.py
+  s_35b641b930a96d::t_452a105d1153a5 1-5
+src/tychora/py.typed
+  s_35b641b930a96d::t_452a105d1153a5 1
+tests/conftest.py
+  s_35b641b930a96d::t_5dc408b633ef79 1-18
+src/tychora/__main__.py
+  s_35b641b930a96d::t_7ff12cfe9fa3cd 1-4
+.gitignore
+  s_35b641b930a96d::t_52eacdee045ce4 1-20
+pyproject.toml
+  s_35b641b930a96d::t_ade55b5ee468ac 1-25
+src/tychora/interfaces/cli.py
+  s_35b641b930a96d::t_4e7216e94da47e 1-15
+LICENSE
+  s_35b641b930a96d::t_52eacdee045ce4 1-21
+uv.lock
+  s_35b641b930a96d::t_dcb8c216421012 1-583
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "e069898801f95f5f614e4f4511e2840316a5aee7",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
