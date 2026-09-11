@@ -1,0 +1,60 @@
+src/tychora/ingestion/tables.py
+  s_35b641b930a96d::t_4902a6c18fed54 3-9,106-130,132-177
+  s_35b641b930a96d::t_eb1e99d16a7da8 1-2,10-105,131
+  s_35b641b930a96d::t_5cd646ee73e2d6 178-276
+src/tychora/contracts/assets.py
+  s_35b641b930a96d::t_49de16dba5883b 1-28
+src/tychora/contracts/relationships.py
+  s_35b641b930a96d::t_4902a6c18fed54 1-103
+  s_35b641b930a96d::t_4727a8f436e504 104-133
+src/tychora/contracts/composition.py
+  s_35b641b930a96d::t_68f18d77baec2b 1-67
+  s_35b641b930a96d::t_2f98abfaf2d408 68-86
+src/tychora/contracts/tables.py
+  s_35b641b930a96d::t_eb1e99d16a7da8 1-57
+  s_35b641b930a96d::t_67ed64b3ab72fe 58-69
+src/tychora/ingestion/assets.py
+  s_35b641b930a96d::t_49de16dba5883b 1-148
+  s_35b641b930a96d::t_de8f11dea25340 149-225
+src/tychora/ingestion/document_identity.py
+  s_35b641b930a96d::t_68f18d77baec2b 1-49
+  s_35b641b930a96d::t_0fdfb3d99611ff 50-67
+src/tychora/configuration/models.py
+  s_35b641b930a96d::t_83156a76df233c 29
+src/tychora/configuration/resolve.py
+  s_35b641b930a96d::t_7a570fe6c56d86 534
+src/tychora/ingestion/composition.py
+  s_35b641b930a96d::t_0971778d58ba57 1-457
+src/tychora/ingestion/document_records.py
+  s_35b641b930a96d::t_0779d48ebe8c4d 26,292-296,318-321,323,325,491
+src/tychora/ingestion/document_views.py
+  s_35b641b930a96d::t_8b9bc599ec385a 1-278
+src/tychora/ingestion/documents.py
+  s_35b641b930a96d::t_1f2f81c35a5631 27-28,121-122,127-128,130,196
+src/tychora/profiles/manifest.json
+  s_35b641b930a96d::t_e0a032aa89c8fa 12
+src/tychora/profiles/verified/profile.toml
+  s_35b641b930a96d::t_831a48148ca306 6-8
+tests/ingestion/test_assets.py
+  s_35b641b930a96d::t_17abd7b2d8e544 1-282
+tests/ingestion/test_tables.py
+  s_35b641b930a96d::t_fc59526f47359e 1-1073
+tests/qualification/test_docling_records.py
+  s_35b641b930a96d::t_ec23aa3bc2f35b 36-45,87-90,199-205
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "7078a5902957c8d6c3b7886e32ace9a40164bc13",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
