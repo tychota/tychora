@@ -105,7 +105,10 @@ class PolicyRepository:
                 (identifier, state, actor, now()),
             )
             self._bump(workspace)
-            return cursor.lastrowid
+            event_id = cursor.lastrowid
+            if event_id is None:
+                fail("SQLite did not return the inserted policy event identity")
+            return event_id
 
     def raise_access_floor(self, target: ReviewTarget, rank: int) -> None:
         if type(rank) is not int or not 0 <= rank <= 3:
@@ -231,4 +234,7 @@ class PolicyRepository:
             )
             for workspace in owners:
                 self._bump(workspace)
-            return cursor.lastrowid
+            event_id = cursor.lastrowid
+            if event_id is None:
+                fail("SQLite did not return the inserted policy event identity")
+            return event_id

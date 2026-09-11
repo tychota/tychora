@@ -1,6 +1,8 @@
 """Real SQLite transactions with verified synthetic artifact bytes."""
 
+from collections.abc import Mapping
 from hashlib import sha256
+from typing import cast
 
 import pytest
 
@@ -526,9 +528,11 @@ def test_document_locator_retains_unit_coordinate_domain(corpus):
 
 def test_record_foundations_must_resolve_to_original_units(corpus):
     b = seed_bundle(kind="standard@1")
-    binding = registry().artifact["definition_schema_bindings"]["kinds"]["standard@1"][
-        "record_schema"
-    ]
+    bindings = cast(
+        Mapping[str, Mapping[str, Mapping[str, str]]],
+        registry().artifact["definition_schema_bindings"],
+    )
+    binding = bindings["kinds"]["standard@1"]["record_schema"]
     data = FrozenJsonMap(
         {
             "requirement": "Retain the source.",
@@ -541,7 +545,7 @@ def test_record_foundations_must_resolve_to_original_units(corpus):
     row = StructuredRecordRow(
         unit_id=b.units[0].unit_id,
         record_type="rule",
-        schema_hash=registry().schema_digests[binding],
+        schema_hash=cast(str, registry().schema_digests[binding]),
         data_json=data,
     )
     with pytest.raises(TychoraError):
@@ -555,9 +559,11 @@ def test_verified_records_and_identifiers_persist(corpus):
     from tychora.contracts.corpus import IdentifierRow
 
     b = seed_bundle(kind="standard@1")
-    binding = registry().artifact["definition_schema_bindings"]["kinds"]["standard@1"][
-        "record_schema"
-    ]
+    bindings = cast(
+        Mapping[str, Mapping[str, Mapping[str, str]]],
+        registry().artifact["definition_schema_bindings"],
+    )
+    binding = bindings["kinds"]["standard@1"]["record_schema"]
     data = FrozenJsonMap(
         {
             "requirement": "Retain the source.",
@@ -570,7 +576,7 @@ def test_verified_records_and_identifiers_persist(corpus):
     row = StructuredRecordRow(
         unit_id=b.units[0].unit_id,
         record_type="rule",
-        schema_hash=registry().schema_digests[binding],
+        schema_hash=cast(str, registry().schema_digests[binding]),
         data_json=data,
     )
     b = b.model_copy(
@@ -667,9 +673,11 @@ def code_bundle():
             "locators": (symbol_loc,),
         }
     )
-    binding = registry().artifact["definition_schema_bindings"]["kinds"]["code_file@1"][
-        "record_schema"
-    ]
+    bindings = cast(
+        Mapping[str, Mapping[str, Mapping[str, str]]],
+        registry().artifact["definition_schema_bindings"],
+    )
+    binding = bindings["kinds"]["code_file@1"]["record_schema"]
     data = FrozenJsonMap(
         {
             "relative_path": "src/parser.py",
@@ -713,7 +721,7 @@ def code_bundle():
     row = StructuredRecordRow(
         unit_id="function",
         record_type="code_symbol",
-        schema_hash=registry().schema_digests[binding],
+        schema_hash=cast(str, registry().schema_digests[binding]),
         data_json=data,
     )
     return b.model_copy(

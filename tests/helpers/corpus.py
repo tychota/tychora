@@ -4,6 +4,7 @@ from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import cast
 from uuid import UUID
 
 from tychora.configuration.registry import Registry
@@ -118,7 +119,7 @@ def seed_bundle(
             original_sha=original.sha256,
             edition_key="1",
             metadata_sha=metadata_sha,
-            title=metadata["title"],
+            title=cast(str, metadata["title"]),
             metadata_json=metadata,
             allowed_uses_json=("lookup", "compose", "audit"),
             captured_at=CREATED,

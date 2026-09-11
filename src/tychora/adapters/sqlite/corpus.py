@@ -2,13 +2,13 @@
 
 import json
 import sqlite3
-from typing import NoReturn
+from typing import NoReturn, cast
 
 from tychora.configuration.registry import Registry
-from tychora.contracts.base import Contract
+from tychora.contracts.base import Contract, FrozenJsonMap
 from tychora.contracts.corpus import ExtractionBundle, ReviewTarget
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.evidence import EvidenceUnit
+from tychora.contracts.evidence import EvidenceUnit, Geometry
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.ports.artifacts import ArtifactReader
 
@@ -93,10 +93,12 @@ class CorpusStore(PolicyRepository):
                 raised |= self._register("sources", _row(bundle.source), "source_id")
                 if raised:
                     self._bump(bundle.workspace.workspace_id)
-                envelope = self.registry.historical_definitions()[
-                    bundle.revision.kind_id
-                ]
-                kind = envelope["kind"]
+                # Registry construction has validated the immutable envelope shape.
+                envelope = cast(
+                    FrozenJsonMap,
+                    self.registry.historical_definitions()[bundle.revision.kind_id],
+                )
+                kind = cast(FrozenJsonMap, envelope["kind"])
                 self._insert(
                     "kinds",
                     {
@@ -160,6 +162,7 @@ class CorpusStore(PolicyRepository):
                     )
                 for row in bundle.locators:
                     loc = row.locator
+                    geometry = cast(Geometry | None, getattr(loc, "geometry", None))
                     self._insert(
                         "locators",
                         {
@@ -175,8 +178,8 @@ class CorpusStore(PolicyRepository):
                             "line_end": getattr(loc, "line_end", None),
                             "byte_start": getattr(loc, "byte_start", None),
                             "byte_end": getattr(loc, "byte_end", None),
-                            "geometry_json": _json(loc.geometry.model_dump(mode="json"))
-                            if getattr(loc, "geometry", None)
+                            "geometry_json": _json(geometry.model_dump(mode="json"))
+                            if geometry
                             else None,
                             "details_json": loc.model_dump_json(),
                         },
@@ -218,7 +221,7 @@ class CorpusStore(PolicyRepository):
                         "boolean": "boolean",
                         "date": "date",
                         "date-time": "text",
-                    }[definition["value_type"]]
+                    }[cast(str, definition["value_type"])]
                     self._insert(
                         "facet_definitions",
                         {

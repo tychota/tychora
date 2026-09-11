@@ -1,12 +1,14 @@
 """Cross-record validation before a SQLite write transaction is acquired."""
 
+from collections.abc import Mapping
 from datetime import date
 from hashlib import sha256
-from typing import NoReturn
+from typing import NoReturn, cast
 
 from tychora.configuration.registry import Registry, compile_filter
 from tychora.contracts.corpus import ExtractionBundle
 from tychora.contracts.errors import TychoraError
+from tychora.contracts.evidence import CodeLocator, TextLocator
 from tychora.contracts.identity import digest, normalize_source_key
 from tychora.contracts.requests import EqFilter
 from tychora.ports.artifacts import ArtifactReader
@@ -142,7 +144,8 @@ def validate_bundle(
                     text = raw.decode("utf-8")
                 except UnicodeDecodeError:
                     fail("Text locator requires valid UTF-8 bytes")
-                if loc.char_end > len(text):
+                source_locator = cast(TextLocator | CodeLocator, loc)
+                if source_locator.char_end > len(text):
                     fail("Locator character range exceeds original text")
                 if loc.type == "code" and (
                     loc.relative_path != loc.native_ref
@@ -168,7 +171,7 @@ def validate_bundle(
                 payloads[loc.artifact_ref].decode("utf-8")[
                     loc.char_start : loc.char_end
                 ]
-                for loc in unit.locators
+                for loc in cast(tuple[TextLocator | CodeLocator, ...], unit.locators)
             )
             if original != unit.text:
                 fail("Original unit text differs from its verified locator spans")
@@ -199,14 +202,17 @@ def validate_bundle(
         if record.unit_id not in units:
             fail("Structured record belongs outside extraction")
         registry.validate_record(revision.kind_id, record.data_json)
-        for uid in record.data_json.get("foundation_ids", ()):
+        # The exact bound record schema has validated this optional string array.
+        for uid in cast(tuple[str, ...], record.data_json.get("foundation_ids", ())):
             if uid not in units or units[uid].text_origin != "source":
                 fail(
                     "Record foundation is not an original source unit in this extraction"
                 )
-        binding = registry.artifact["definition_schema_bindings"]["kinds"][
-            revision.kind_id
-        ]["record_schema"]
+        bindings = cast(
+            Mapping[str, Mapping[str, Mapping[str, str]]],
+            registry.artifact["definition_schema_bindings"],
+        )
+        binding = bindings["kinds"][revision.kind_id]["record_schema"]
         if record.schema_hash != registry.schema_digests[binding]:
             fail("Structured record schema hash differs from original kind binding")
         if revision.kind_id.split("@")[0] == "code_file":
