@@ -1,0 +1,21 @@
+src/tychora/adapters/files/cas.py
+  s_35b641b930a96d::t_a4e92584840377 87-95
+tests/storage/test_artifacts.py
+  s_35b641b930a96d::t_35e1322f26d058 242-282
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "41cd1b02472b238b22d770bb41705130ad6e11e8",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
