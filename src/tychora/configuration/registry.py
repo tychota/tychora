@@ -457,6 +457,10 @@ def _validate_definitions(data: dict[str, Any]) -> None:
         for field in ("allowed_lanes", "allowed_uses", "original_review_states"):
             if not _strings(mode.get(field), nonempty=False):
                 _invalid("Missing or invalid mode rules")
+        if "required_lanes" in mode and not _strings(
+            mode["required_lanes"], nonempty=False
+        ):
+            _invalid("Mode required lanes must be a unique string list")
         if set(mode["allowed_lanes"]) - data["lanes"].keys() or set(
             mode.get("required_lanes", [])
         ) - set(mode["allowed_lanes"]):
@@ -549,6 +553,15 @@ def _validate_definitions(data: dict[str, Any]) -> None:
             or relation.get("require_supports") is not True
         ):
             _invalid("Relations require directedness, origin and complete supports")
+        if "self_links" in relation and type(relation["self_links"]) is not bool:
+            _invalid("Relation self-link policy must be boolean")
+        if "cardinality" in relation and relation["cardinality"] not in (
+            "one_to_one",
+            "one_to_many",
+            "many_to_one",
+            "many_to_many",
+        ):
+            _invalid("Unsupported relation cardinality")
         for field in ("subject_unit_types", "object_unit_types", "methods"):
             if not _strings(relation.get(field)):
                 _invalid("Missing relation endpoint constraints or methods")

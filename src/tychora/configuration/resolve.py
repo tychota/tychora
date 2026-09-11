@@ -187,7 +187,12 @@ def _validate_schemas(schemas: dict[str, Any]) -> dict[str, dict[str, dict[str, 
         if node.get("format") not in (None, "date", "date-time"):
             raise ValueError("unsupported schema format")
         types = node.get("type", [])
-        if (types == "array" or isinstance(types, list) and "array" in types) and (
+        if (
+            types == "array"
+            or isinstance(types, list)
+            and "array" in types
+            or bool({"items", "minItems", "maxItems"} & node.keys())
+        ) and (
             type(node.get("maxItems")) is not int or not 0 <= node["maxItems"] <= 4096
         ):
             raise ValueError("unbounded schema array")

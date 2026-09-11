@@ -595,3 +595,117 @@ def test_schema_replay_preserves_literal_percent_in_pointer_keys():
     assert local.validate("literal@1", 4) == 4
     with pytest.raises(TychoraError):
         local.validate("literal@1", "wrong type")
+
+
+@pytest.mark.parametrize(
+    "constraints",
+    [
+        {"items": {"type": "integer"}},
+        {"minItems": 1},
+        {"items": {"type": "integer"}, "maxItems": 4097},
+        {"items": {"type": "integer"}, "maxItems": True},
+        {"items": {"type": "integer"}, "maxItems": -1},
+    ],
+)
+def test_implicit_array_applicators_require_bounded_max_items(constraints):
+    schema = {"$id": "bounded@1", **constraints}
+    with pytest.raises(TychoraError) as err:
+        LocalSchemas({"bounded@1": schema}, {"bounded@1": {}})
+    assert err.value.code == "INVALID_REQUEST"
+
+
+@pytest.mark.parametrize("explicit_type", [None, "array", ["array", "null"]])
+def test_bounded_array_forms_enforce_the_4096_item_boundary(explicit_type):
+    schema = {"$id": "bounded@1", "items": {"type": "integer"}, "maxItems": 4096}
+    if explicit_type is not None:
+        schema["type"] = explicit_type
+    local = LocalSchemas({"bounded@1": schema}, {"bounded@1": {}})
+    assert len(local.validate("bounded@1", [1] * 4096)) == 4096
+    with pytest.raises(TychoraError) as err:
+        local.validate("bounded@1", [1] * 4097)
+    assert err.value.code == "INVALID_REQUEST"
+
+
+def test_pack_resolution_rejects_unbounded_implicit_array_schema(tmp_path):
+    (tmp_path / "profile.toml").write_text(
+        'schema_version=1\nid="bounded"\nversion="1"\nschema_definitions=["array.json"]\n'
+    )
+    (tmp_path / "array.json").write_text(
+        '{"$id":"bounded@1","items":{"type":"integer"}}'
+    )
+    workspace = tmp_path / "workspace.toml"
+    workspace.write_text('schema_version=1\n[profiles.test]\npath="."\n')
+    with pytest.raises(TychoraError) as err:
+        resolve_config(workspace, "test", {})
+    assert err.value.code == "INVALID_REQUEST"
+
+
+@pytest.mark.parametrize(
+    "offset", ["+00:99", "-00:99", "+01:60", "-01:60", "+24:00", "-24:00"]
+)
+def test_date_time_rejects_invalid_timezone_components(offset):
+    schema = {"$id": "timestamp@1", "type": "string", "format": "date-time"}
+    local = LocalSchemas({"timestamp@1": schema}, {"timestamp@1": {}})
+    with pytest.raises(TychoraError) as err:
+        local.validate("timestamp@1", "2024-01-01T00:00:00" + offset)
+    assert err.value.code == "INVALID_REQUEST"
+
+
+@pytest.mark.parametrize(
+    "offset", ["Z", "z", "+00:00", "-00:00", "+23:59", "-23:59", "+05:45", "-03:30"]
+)
+def test_date_time_preserves_valid_timezone_boundaries(offset):
+    schema = {"$id": "timestamp@1", "type": "string", "format": "date-time"}
+    local = LocalSchemas({"timestamp@1": schema}, {"timestamp@1": {}})
+    value = "2024-02-29T23:59:59.123" + offset
+    assert local.validate("timestamp@1", value) == value
+
+
+@pytest.mark.parametrize(
+    "category,key,field,value",
+    [
+        ("relations", "supports@1", "self_links", "false"),
+        ("relations", "supports@1", "self_links", 0),
+        ("relations", "supports@1", "self_links", None),
+        ("relations", "supports@1", "cardinality", "invalid"),
+        ("relations", "supports@1", "cardinality", None),
+        ("modes", "compose", "required_lanes", {"standard": 17}),
+        ("modes", "compose", "required_lanes", ["standard", "standard"]),
+        ("modes", "compose", "required_lanes", [17]),
+        ("modes", "compose", "required_lanes", "standard"),
+    ],
+)
+def test_optional_relation_and_mode_fields_reject_malformed_values(
+    builtin_config, category, key, field, value
+):
+    config = changed_config(
+        builtin_config(), lambda data: data[category][key].update({field: value})
+    )
+    with pytest.raises(TychoraError) as err:
+        Registry.from_config(config)
+    assert err.value.code == "INVALID_REQUEST"
+
+
+@pytest.mark.parametrize(
+    "category,key,field,value",
+    [
+        ("relations", "supports@1", "self_links", False),
+        ("relations", "supports@1", "self_links", True),
+        ("relations", "supports@1", "cardinality", "one_to_one"),
+        ("relations", "supports@1", "cardinality", "one_to_many"),
+        ("relations", "supports@1", "cardinality", "many_to_one"),
+        ("relations", "supports@1", "cardinality", "many_to_many"),
+        ("modes", "compose", "required_lanes", []),
+        ("modes", "compose", "required_lanes", ["standard"]),
+    ],
+)
+def test_optional_relation_and_mode_fields_preserve_supported_values(
+    builtin_config, category, key, field, value
+):
+    config = changed_config(
+        builtin_config(), lambda data: data[category][key].update({field: value})
+    )
+    registry = Registry.from_config(config)
+    assert registry.artifact[category][key][field] == (
+        tuple(value) if isinstance(value, list) else value
+    )

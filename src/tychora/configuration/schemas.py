@@ -52,7 +52,7 @@ def _date_time(value: object) -> bool:
     if not isinstance(value, str):
         return True
     if not re.fullmatch(
-        r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-]\d{2}:\d{2})",
+        r"\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[Zz]|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])",
         value,
     ):
         return False
@@ -110,7 +110,10 @@ class LocalSchemas:
                     raise ValueError("Unsupported format")
                 types = node.get("type", [])
                 if (
-                    types == "array" or isinstance(types, list) and "array" in types
+                    types == "array"
+                    or isinstance(types, list)
+                    and "array" in types
+                    or bool({"items", "minItems", "maxItems"} & node.keys())
                 ) and (
                     type(node.get("maxItems")) is not int
                     or not 0 <= node["maxItems"] <= 4096
