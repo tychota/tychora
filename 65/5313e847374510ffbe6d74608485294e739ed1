@@ -1,0 +1,51 @@
+src/tychora/configuration/registry.py
+  s_35b641b930a96d::t_da02839630ae59 419-437,441-446
+src/tychora/contracts/extraction.py
+  s_35b641b930a96d::t_56ff6010ed7ee1 1-160
+src/tychora/ingestion/native.py
+  s_35b641b930a96d::t_86eb89e35aee08 1-338
+src/tychora/ingestion/normalize.py
+  s_35b641b930a96d::t_0ea1adf49356ed 1-485
+src/tychora/ports/parsers.py
+  s_35b641b930a96d::t_daae20a6b808eb 1-14
+src/tychora/profiles/documents/schemas/evidence-record.json
+  s_35b641b930a96d::t_eb611f173d520d 42-52
+src/tychora/profiles/documents/schemas/feedback-metadata.json
+  s_35b641b930a96d::t_49929d8815c4a4 63-66,81-84,89-92
+src/tychora/profiles/documents/schemas/feedback.json
+  s_35b641b930a96d::t_9ee72c3e9c5e93 12-15,20-23,38-41,46-47,57-83
+src/tychora/profiles/documents/schemas/rule.json
+  s_35b641b930a96d::t_9e0bbb7bd80ce7 12-15,30-33,38-39,49-83
+src/tychora/profiles/documents/schemas/template-slot.json
+  s_35b641b930a96d::t_f3467821e93254 17-20,35-38,43-44,54-64
+src/tychora/profiles/manifest.json
+  s_35b641b930a96d::t_2bf3cfaf628558 4
+tests/fixtures/documents/feedback.json
+  s_35b641b930a96d::t_946e3cdfc3a2e8 1-13
+tests/fixtures/documents/standards.md
+  s_35b641b930a96d::t_9c82871b59cc11 1-13
+tests/fixtures/documents/template.md
+  s_35b641b930a96d::t_f5eeb528627571 1-6
+tests/ingestion/conftest.py
+  s_35b641b930a96d::t_ced5ac4f368f73 1-96
+tests/ingestion/test_native.py
+  s_35b641b930a96d::t_f3e02e2959933c 1-318
+tests/ingestion/test_records.py
+  s_35b641b930a96d::t_81d44b86257387 1-357
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "655313e847374510ffbe6d74608485294e739ed1",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
