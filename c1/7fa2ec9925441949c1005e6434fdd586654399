@@ -1,0 +1,43 @@
+src/tychora/contracts/__init__.py
+  s_036a834257bcb8::t_9410869fbedeac 1-91
+src/tychora/contracts/base.py
+  s_35b641b930a96d::t_b4411a8f2f1941 1-139
+src/tychora/contracts/errors.py
+  s_35b641b930a96d::t_3cc03043558db6 1-71
+src/tychora/contracts/evidence.py
+  s_35b641b930a96d::t_5be58b65947000 1-236
+src/tychora/contracts/identity.py
+  s_35b641b930a96d::t_d90f8154dae548 1-137
+src/tychora/contracts/operations.py
+  s_35b641b930a96d::t_bfbeb45cdd8ea4 1-303
+src/tychora/contracts/requests.py
+  s_35b641b930a96d::t_f523f0af648d82 1-253
+tests/contracts/test_identity.py
+  s_35b641b930a96d::t_8b64b9bdf40e5a 1-78
+tests/contracts/test_models.py
+  s_35b641b930a96d::t_090737525e7199 1-456
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "c17fa2ec9925441949c1005e6434fdd586654399",
+  "prompts": {},
+  "sessions": {
+    "s_036a834257bcb8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    },
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
