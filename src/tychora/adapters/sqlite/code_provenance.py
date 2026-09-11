@@ -22,7 +22,7 @@ def _span_matches(span, locator, payloads):
     )
 
 
-def validate_code_record(record, unit, units, metadata, payloads):
+def validate_code_record(record, unit, original_units, metadata, payloads):
     data = record.data_json
     locators = [loc for loc in unit.locators if loc.type == "code"]
     if (
@@ -37,7 +37,7 @@ def validate_code_record(record, unit, units, metadata, payloads):
     ):
         _fail()
     for span in data["context_spans"]:
-        source = units.get(span["source_unit_id"])
+        source = original_units.get(span["source_unit_id"])
         deps = span["dependency_unit_ids"]
         if (
             source is None
@@ -45,9 +45,7 @@ def validate_code_record(record, unit, units, metadata, payloads):
             or source.text_origin != "source"
             or source.unit_id not in deps
             or len(deps) != len(set(deps))
-            or any(
-                uid not in units or units[uid].text_origin != "source" for uid in deps
-            )
+            or any(uid not in original_units for uid in deps)
             or not 0 <= span["char_start"] < span["char_end"] <= len(source.text)
             or span["reason"] == "parent_declaration"
             and source.unit_id != unit.parent_id

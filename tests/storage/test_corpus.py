@@ -178,8 +178,8 @@ def test_exact_retry_cannot_append_new_rows(corpus):
     assert corpus.db.execute("SELECT COUNT(*) FROM evidence_units").fetchone()[0] == 1
 
 
-def proxy_bundle():
-    b = seed_bundle()
+def proxy_bundle(kind="manual@1"):
+    b = seed_bundle(kind=kind)
     image = artifact(b"synthetic image payload", "image/png")
     derivation = artifact(b'{"method":"literal caption copy"}', "application/json")
     loc = ImageLocator(artifact_ref=image.sha256, native_ref="figure:1")
@@ -937,3 +937,336 @@ def test_original_text_must_match_its_verified_locator(corpus, format):
     b = b.model_copy(update={"units": tuple(units), "chunks": ()})
     with pytest.raises(TychoraError):
         corpus.commit_extraction(b)
+
+
+@pytest.mark.parametrize("change", ["add", "omit", "change_value"])
+def test_new_extraction_cannot_change_revision_facets(corpus, change):
+    from tychora.contracts.identity import extraction_id
+
+    b = seed_bundle()
+    original_facets = (
+        ()
+        if change == "add"
+        else (
+            FacetRow(
+                revision_id=b.revision.revision_id,
+                facet_key="scope.project",
+                value="original",
+            ),
+        )
+    )
+    b = b.model_copy(update={"facets": original_facets})
+    corpus.commit_extraction(b)
+    before = corpus.db.execute(
+        "SELECT revision_id,facet_key,ordinal,text_value FROM facet_values"
+    ).fetchall()
+    facets = (
+        ()
+        if change == "omit"
+        else (
+            FacetRow(
+                revision_id=b.revision.revision_id,
+                facet_key="scope.project",
+                value="changed",
+            ),
+        )
+    )
+    eid = extraction_id(
+        b.revision.revision_id, "parser@2", b.extraction.normalizer_fingerprint
+    )
+    second = b.model_copy(
+        update={
+            "extraction": b.extraction.model_copy(
+                update={"extraction_id": eid, "parser_fingerprint": "parser@2"}
+            ),
+            "units": (),
+            "locators": (),
+            "chunks": (),
+            "facets": facets,
+        }
+    )
+    second = type(b).model_validate_json(second.model_dump_json())
+    with pytest.raises(TychoraError):
+        corpus.commit_extraction(second)
+    assert (
+        corpus.db.execute(
+            "SELECT revision_id,facet_key,ordinal,text_value FROM facet_values"
+        ).fetchall()
+        == before
+    )
+    assert corpus.db.execute("SELECT COUNT(*) FROM extractions").fetchone()[0] == 1
+    assert epoch(corpus) == 0
+    assert corpus.commit_extraction(b) == b.extraction.extraction_id
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "text_bounds",
+        "text_binding",
+        "code_bytes",
+        "code_lines",
+        "image_binding",
+        "document_domain",
+    ],
+)
+def test_asset_locators_require_verified_source_bounds_and_binding(corpus, case):
+    from tychora.contracts.evidence import TextLocator
+
+    b = seed_bundle("αβ\nthird.")
+    image = artifact(b"synthetic asset", "image/png")
+    loc = TextLocator(
+        artifact_ref=b.revision.original_sha,
+        native_ref=b.source.source_key,
+        char_start=0,
+        char_end=len(b.units[0].text),
+    )
+    if case == "text_bounds":
+        loc = loc.model_copy(update={"char_end": 999})
+    elif case == "text_binding":
+        loc = loc.model_copy(update={"native_ref": "unrelated.txt"})
+    elif case in ("code_bytes", "code_lines"):
+        loc = CodeLocator(
+            artifact_ref=b.revision.original_sha,
+            native_ref=b.source.source_key,
+            relative_path=b.source.source_key,
+            char_start=0,
+            char_end=len(b.units[0].text),
+            byte_start=0,
+            byte_end=999 if case == "code_bytes" else len(b.units[0].text.encode()),
+            line_start=1,
+            line_end=999 if case == "code_lines" else 2,
+        )
+    elif case == "image_binding":
+        loc = ImageLocator(
+            artifact_ref=b.revision.original_sha, native_ref="unrelated-image"
+        )
+    else:
+        loc = DocumentLocator(
+            artifact_ref=b.revision.original_sha,
+            native_ref=b.source.source_key,
+            char_start=0,
+            char_end=1,
+        )
+    asset = AssetRow(
+        asset_id="asset",
+        extraction_id=b.extraction.extraction_id,
+        artifact_sha=image.sha256,
+        asset_type="figure",
+        native_ref="figure:1",
+        locator=loc,
+    )
+    b = b.model_copy(
+        update={
+            "units": (),
+            "locators": (),
+            "chunks": (),
+            "artifacts": (*b.artifacts, image),
+            "assets": (asset,),
+        }
+    )
+    b = type(b).model_validate_json(b.model_dump_json())
+    with pytest.raises(TychoraError):
+        corpus.commit_extraction(b)
+    assert corpus.db.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == 0
+    assert corpus.db.execute("SELECT COUNT(*) FROM revisions").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("format", ["text", "code", "image"])
+def test_asset_locator_valid_binding_without_unit_locator(corpus, format):
+    from tychora.contracts.evidence import TextLocator
+
+    b = seed_bundle("αβ\nthird.")
+    image = artifact(b"synthetic asset", "image/png")
+    if format == "text":
+        loc = TextLocator(
+            artifact_ref=b.revision.original_sha,
+            native_ref=b.source.source_key,
+            char_start=0,
+            char_end=len(b.units[0].text),
+        )
+    elif format == "code":
+        loc = CodeLocator(
+            artifact_ref=b.revision.original_sha,
+            native_ref=b.source.source_key,
+            relative_path=b.source.source_key,
+            char_start=0,
+            char_end=len(b.units[0].text),
+            byte_start=0,
+            byte_end=len(b.units[0].text.encode()),
+            line_start=1,
+            line_end=2,
+        )
+    else:
+        loc = ImageLocator(artifact_ref=image.sha256, native_ref="figure:1")
+    asset = AssetRow(
+        asset_id="asset",
+        extraction_id=b.extraction.extraction_id,
+        artifact_sha=image.sha256,
+        asset_type="figure",
+        native_ref="figure:1",
+        locator=loc,
+    )
+    b = b.model_copy(
+        update={
+            "units": (),
+            "locators": (),
+            "chunks": (),
+            "artifacts": (*b.artifacts, image),
+            "assets": (asset,),
+        }
+    )
+    corpus.commit_extraction(b)
+    assert (
+        corpus.db.execute("SELECT locator_json FROM assets").fetchone()[0] is not None
+    )
+
+
+@pytest.mark.parametrize("foundation", ["original", "proxy"])
+def test_record_foundation_excludes_source_labelled_proxy(corpus, foundation):
+    b = proxy_bundle("standard@1")
+    b = b.model_copy(
+        update={
+            "units": (
+                b.units[0],
+                b.units[1].model_copy(update={"text_origin": "source"}),
+            )
+        }
+    )
+    bindings = cast(
+        Mapping[str, Mapping[str, Mapping[str, str]]],
+        registry().artifact["definition_schema_bindings"],
+    )
+    schema = bindings["kinds"]["standard@1"]["record_schema"]
+    data = FrozenJsonMap(
+        {
+            "requirement": "Retain the source.",
+            "target": "record",
+            "provenance": [b.source.source_id],
+            "status": "recorded",
+            "foundation_ids": [
+                b.units[0].unit_id if foundation == "original" else "proxy-1"
+            ],
+        }
+    )
+    record = StructuredRecordRow(
+        unit_id=b.units[0].unit_id,
+        record_type="rule",
+        schema_hash=cast(str, registry().schema_digests[schema]),
+        data_json=data,
+    )
+    b = b.model_copy(update={"records": (record,)})
+    b = type(b).model_validate_json(b.model_dump_json())
+    if foundation == "proxy":
+        with pytest.raises(TychoraError):
+            corpus.commit_extraction(b)
+        assert (
+            corpus.db.execute("SELECT COUNT(*) FROM structured_records").fetchone()[0]
+            == 0
+        )
+        assert corpus.db.execute("SELECT COUNT(*) FROM extractions").fetchone()[0] == 0
+    else:
+        corpus.commit_extraction(b)
+        assert corpus.db.execute(
+            "SELECT text_origin,citable FROM evidence_units WHERE unit_id=?",
+            ("proxy-1",),
+        ).fetchone() == ("source", 0)
+
+
+@pytest.mark.parametrize("case", ["context_source", "context_dependency"])
+def test_code_context_excludes_source_labelled_proxies(corpus, case):
+    import json
+
+    b = code_bundle()
+    image = artifact(b"context image", "image/png")
+    derivation = artifact(b"context derivation", "application/json")
+    asset = AssetRow(
+        asset_id="context-asset",
+        extraction_id=b.extraction.extraction_id,
+        artifact_sha=image.sha256,
+        asset_type="figure",
+        native_ref="context-image",
+        locator=ImageLocator(artifact_ref=image.sha256, native_ref="context-image"),
+    )
+    if case == "context_source":
+        proxy_id = "import"
+        units = (b.units[0].model_copy(update={"citable": False}), b.units[1])
+    else:
+        proxy_id = "context-proxy"
+        units = (
+            *b.units,
+            b.units[0].model_copy(
+                update={
+                    "unit_id": proxy_id,
+                    "ordinal": 2,
+                    "citable": False,
+                    "locators": (),
+                }
+            ),
+        )
+        data = json.loads(b.records[0].model_dump_json())["data_json"]
+        data["context_spans"][0]["dependency_unit_ids"].append(proxy_id)
+        b = b.model_copy(
+            update={
+                "records": (
+                    b.records[0].model_copy(update={"data_json": FrozenJsonMap(data)}),
+                )
+            }
+        )
+    proxy = AssetProxyRow(
+        proxy_unit_id=proxy_id,
+        asset_id=asset.asset_id,
+        origin_type="caption_copy",
+        derivation_sha=derivation.sha256,
+        required_unit_ids=frozenset({"function"}),
+    )
+    b = b.model_copy(
+        update={
+            "units": units,
+            "assets": (asset,),
+            "proxies": (proxy,),
+            "artifacts": (*b.artifacts, image, derivation),
+        }
+    )
+    b = type(b).model_validate_json(b.model_dump_json())
+    with pytest.raises(TychoraError):
+        corpus.commit_extraction(b)
+    assert corpus.db.execute("SELECT COUNT(*) FROM extractions").fetchone()[0] == 0
+
+
+def test_new_extraction_preserves_unchanged_revision_facets(corpus):
+    from tychora.contracts.identity import extraction_id
+
+    b = seed_bundle()
+    b = b.model_copy(
+        update={
+            "facets": (
+                FacetRow(
+                    revision_id=b.revision.revision_id,
+                    facet_key="scope.project",
+                    value="original",
+                ),
+            )
+        }
+    )
+    corpus.commit_extraction(b)
+    eid = extraction_id(
+        b.revision.revision_id, "parser@2", b.extraction.normalizer_fingerprint
+    )
+    second = b.model_copy(
+        update={
+            "extraction": b.extraction.model_copy(
+                update={"extraction_id": eid, "parser_fingerprint": "parser@2"}
+            ),
+            "units": (),
+            "locators": (),
+            "chunks": (),
+        }
+    )
+    assert corpus.commit_extraction(second) == eid
+    assert corpus.commit_extraction(b) == b.extraction.extraction_id
+    assert corpus.db.execute("SELECT text_value FROM facet_values").fetchall() == [
+        ("original",)
+    ]
+    assert corpus.db.execute("SELECT COUNT(*) FROM extractions").fetchone()[0] == 2
+    assert epoch(corpus) == 0

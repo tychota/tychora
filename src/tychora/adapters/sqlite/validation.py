@@ -28,6 +28,11 @@ def verify_artifacts(
         for loc in bundle.locators
         if loc.locator.type in ("text", "code")
     }
+    needed.update(
+        asset.locator.artifact_ref
+        for asset in bundle.assets
+        if asset.locator.type in ("text", "code")
+    )
     refs = {ref.sha256: ref for ref in bundle.artifacts}
     if len(refs) != len(bundle.artifacts):
         fail("Duplicate artifact identity")
@@ -70,6 +75,27 @@ def verify_artifacts(
     return payloads
 
 
+def validate_source_locator(
+    loc: TextLocator | CodeLocator, payloads: dict[str, bytes]
+) -> None:
+    """Validate shared unit/asset source coordinates against verified original bytes."""
+    try:
+        text = payloads[loc.artifact_ref].decode("utf-8")
+    except UnicodeDecodeError:
+        fail("Text locator requires valid UTF-8 bytes")
+    if loc.char_end > len(text):
+        fail("Locator character range exceeds original text")
+    if loc.type == "code" and (
+        loc.relative_path != loc.native_ref
+        or normalize_source_key(loc.relative_path) != loc.relative_path
+        or loc.byte_start != len(text[: loc.char_start].encode("utf-8"))
+        or loc.byte_end != len(text[: loc.char_end].encode("utf-8"))
+        or loc.line_start != text[: loc.char_start].count("\n") + 1
+        or loc.line_end != text[: max(loc.char_start, loc.char_end - 1)].count("\n") + 1
+    ):
+        fail("Code byte, character, line or path coordinates differ")
+
+
 def validate_bundle(
     bundle: ExtractionBundle, registry: Registry, payloads: dict[str, bytes]
 ) -> None:
@@ -104,6 +130,12 @@ def validate_bundle(
     ):
         fail("Effective interval is empty or reversed")
     units = {unit.unit_id: unit for unit in bundle.units}
+    proxy_ids = {proxy.proxy_unit_id for proxy in bundle.proxies}
+    original_units = {
+        uid: unit
+        for uid, unit in units.items()
+        if unit.text_origin == "source" and uid not in proxy_ids
+    }
     if len(units) != len(bundle.units):
         fail("Duplicate evidence unit")
     for unit in units.values():
@@ -118,7 +150,9 @@ def validate_bundle(
                 fail("Parent is missing, cross-extraction, or cyclic")
             visited.add(parent)
             parent = units[parent].parent_id
-    bindings = {(row.source_ref, row.artifact_sha) for row in bundle.revision_artifacts}
+    source_bindings = {
+        (row.source_ref, row.artifact_sha) for row in bundle.revision_artifacts
+    }
     if any(
         row.revision_id != revision.revision_id for row in bundle.revision_artifacts
     ):
@@ -136,31 +170,14 @@ def validate_bundle(
             fail("Unit locator rows are incomplete or inconsistent")
         for row in locators:
             loc = row.locator
-            if (loc.native_ref, loc.artifact_ref) not in bindings:
+            if (loc.native_ref, loc.artifact_ref) not in source_bindings:
                 fail("Locator has no original revision artifact binding")
             if loc.type in ("text", "code"):
-                raw = payloads[loc.artifact_ref]
-                try:
-                    text = raw.decode("utf-8")
-                except UnicodeDecodeError:
-                    fail("Text locator requires valid UTF-8 bytes")
-                source_locator = cast(TextLocator | CodeLocator, loc)
-                if source_locator.char_end > len(text):
-                    fail("Locator character range exceeds original text")
-                if loc.type == "code" and (
-                    loc.relative_path != loc.native_ref
-                    or normalize_source_key(loc.relative_path) != loc.relative_path
-                    or loc.byte_start != len(text[: loc.char_start].encode("utf-8"))
-                    or loc.byte_end != len(text[: loc.char_end].encode("utf-8"))
-                    or loc.line_start != text[: loc.char_start].count("\n") + 1
-                    or loc.line_end
-                    != text[: max(loc.char_start, loc.char_end - 1)].count("\n") + 1
-                ):
-                    fail("Code byte, character, line or path coordinates differ")
+                validate_source_locator(cast(TextLocator | CodeLocator, loc), payloads)
             elif loc.type == "document" and loc.char_end > len(unit.text):
                 fail("Document character span exceeds unit text")
         if (
-            unit.text_origin == "source"
+            unit.unit_id in original_units
             and unit.locators
             and all(loc.type in ("text", "code") for loc in unit.locators)
             and not (
@@ -204,7 +221,7 @@ def validate_bundle(
         registry.validate_record(revision.kind_id, record.data_json)
         # The exact bound record schema has validated this optional string array.
         for uid in cast(tuple[str, ...], record.data_json.get("foundation_ids", ())):
-            if uid not in units or units[uid].text_origin != "source":
+            if uid not in original_units:
                 fail(
                     "Record foundation is not an original source unit in this extraction"
                 )
@@ -217,17 +234,32 @@ def validate_bundle(
             fail("Structured record schema hash differs from original kind binding")
         if revision.kind_id.split("@")[0] == "code_file":
             validate_code_record(
-                record, units[record.unit_id], units, revision.metadata_json, payloads
+                record,
+                units[record.unit_id],
+                original_units,
+                revision.metadata_json,
+                payloads,
             )
     if any(row.unit_id not in units for row in bundle.identifiers):
         fail("Identifier belongs outside extraction")
     assets = {asset.asset_id: asset for asset in bundle.assets}
-    proxy_ids = {proxy.proxy_unit_id for proxy in bundle.proxies}
     if len(assets) != len(bundle.assets) or len(proxy_ids) != len(bundle.proxies):
         fail("Duplicate asset or proxy")
     for asset in assets.values():
         if asset.extraction_id != extraction.extraction_id:
             fail("Asset belongs to a different extraction")
+        loc = asset.locator
+        if loc.type == "document":
+            fail("Asset document locator has no owning unit for its character domain")
+        own_image = (
+            loc.type == "image"
+            and loc.artifact_ref == asset.artifact_sha
+            and loc.native_ref == asset.native_ref
+        )
+        if not own_image and (loc.native_ref, loc.artifact_ref) not in source_bindings:
+            fail("Asset locator has no original revision or own-image binding")
+        if loc.type in ("text", "code"):
+            validate_source_locator(cast(TextLocator | CodeLocator, loc), payloads)
     for link in bundle.unit_assets:
         if link.unit_id not in units or link.asset_id not in assets:
             fail("Asset link crosses extraction boundary")
@@ -243,11 +275,7 @@ def validate_bundle(
         }:
             fail("Proxy requires a separate derivation artifact")
         for uid in proxy.required_unit_ids:
-            if (
-                uid not in units
-                or uid in proxy_ids
-                or units[uid].text_origin != "source"
-            ):
+            if uid not in original_units:
                 fail(
                     "Proxy dependencies must be original source units from its extraction"
                 )

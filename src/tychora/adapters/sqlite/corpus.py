@@ -283,6 +283,19 @@ class CorpusStore(PolicyRepository):
             }
             if existing != expected:
                 _fail("Immutable revision artifact membership differs")
+            existing_facets = set(
+                self.db.execute(
+                    "SELECT facet_key,ordinal FROM facet_values WHERE revision_id=?",
+                    (rid,),
+                )
+            )
+            expected_facets = {
+                (row.facet_key, row.ordinal)
+                for row in bundle.facets
+                if row.revision_id == rid
+            }
+            if existing_facets != expected_facets:
+                _fail("Immutable revision facet membership differs")
         if not self.db.execute(
             "SELECT 1 FROM extractions WHERE extraction_id=?", (eid,)
         ).fetchone():
@@ -333,12 +346,14 @@ class CorpusStore(PolicyRepository):
             ),
         )
         facets = {
-            (r.revision_id, r.unit_id, r.facet_key, r.ordinal) for r in bundle.facets
+            (r.unit_id, r.facet_key, r.ordinal)
+            for r in bundle.facets
+            if r.unit_id is not None
         }
         existing_facets = set(
             self.db.execute(
-                "SELECT revision_id,unit_id,facet_key,ordinal FROM facet_values WHERE revision_id=? OR unit_id IN (SELECT unit_id FROM evidence_units WHERE extraction_id=?)",
-                (bundle.revision.revision_id, eid),
+                "SELECT unit_id,facet_key,ordinal FROM facet_values WHERE unit_id IN (SELECT unit_id FROM evidence_units WHERE extraction_id=?)",
+                (eid,),
             )
         )
         if facets != existing_facets:
