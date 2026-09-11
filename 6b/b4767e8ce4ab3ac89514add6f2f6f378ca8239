@@ -1,0 +1,35 @@
+src/tychora/contracts/extraction.py
+  s_35b641b930a96d::t_b8350353b5b8b3 18,155-162,169-180
+src/tychora/ingestion/native.py
+  s_036a834257bcb8::t_01fd4a5c9ad3b7 24,26,221
+src/tychora/ingestion/normalize.py
+  s_35b641b930a96d::t_714d1cc6647ce8 8-9,59-66,240-284,286-289,295,298-304,307-309,312,315-323,325-331,333-336,392,506-521,527,535-538,540,542-550,552-553
+tests/ingestion/test_native.py
+  s_35b641b930a96d::t_edacab08be6bd6 319-355
+tests/ingestion/test_records.py
+  s_35b641b930a96d::t_2b0c95588443b4 358-521
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "6bb4767e8ce4ab3ac89514add6f2f6f378ca8239",
+  "prompts": {},
+  "sessions": {
+    "s_036a834257bcb8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    },
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
