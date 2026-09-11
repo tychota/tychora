@@ -60,7 +60,10 @@
       "maxLength": 65536
     },
     "author": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "minLength": 1,
       "maxLength": 65536
     },
@@ -75,12 +78,18 @@
       "maxItems": 4096
     },
     "target": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "minLength": 1,
       "maxLength": 65536
     },
     "decision": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "minLength": 1,
       "maxLength": 65536
     },

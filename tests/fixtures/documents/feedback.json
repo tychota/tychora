@@ -1,0 +1,13 @@
+[
+  {
+    "comment": "The chart needs a source.",
+    "author": null,
+    "target": null,
+    "decision": null,
+    "observation": "Reviewer supplied interpretation, not the annotation.",
+    "status": null,
+    "foundation_ids": [],
+    "foundation_refs": ["EXT-4"],
+    "provenance": ["Supplied annotation record"]
+  }
+]

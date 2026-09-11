@@ -416,15 +416,34 @@ def _validate_definitions(data: dict[str, Any]) -> None:
         ):
             _invalid("Invalid kind usage restrictions")
         options = kind.get("normalizer_options", {})
-        allowed = (
-            {"identifier_prefixes", "requirement_labels", "proof_labels"}
-            if kind["normalizer"] == "rule_records@1"
-            else set()
-        )
+        common = {"target_labels", "status_labels", "foundation_labels"}
+        allowed = {
+            "rule_records@1": common
+            | {
+                "identifier_prefixes",
+                "requirement_labels",
+                "proof_labels",
+                "control_labels",
+                "severity_labels",
+            },
+            "feedback_records@1": common
+            | {
+                "comment_labels",
+                "author_labels",
+                "decision_labels",
+                "observation_labels",
+            },
+            "template_slots@1": common | {"slot_labels", "instruction_labels"},
+        }.get(kind["normalizer"], set())
         if (
             not isinstance(options, dict)
             or set(options) - allowed
-            or any(not _strings(value) for value in options.values())
+            or any(
+                not _strings(value)
+                or len(value) > 64
+                or any(len(label) > 256 for label in value)
+                for value in options.values()
+            )
         ):
             _invalid("Unsupported normalizer options")
     for category in ("kinds", "relations"):

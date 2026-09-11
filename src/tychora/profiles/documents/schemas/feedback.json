@@ -9,12 +9,18 @@
       "maxLength": 65536
     },
     "decision": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "minLength": 1,
       "maxLength": 65536
     },
     "target": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "minLength": 1,
       "maxLength": 65536
     },
@@ -29,12 +35,16 @@
       "maxItems": 4096
     },
     "status": {
-      "type": "string",
+      "type": [
+        "string",
+        "null"
+      ],
       "enum": [
         "recorded",
         "proposed",
         "accepted",
-        "rejected"
+        "rejected",
+        null
       ]
     },
     "foundation_ids": {
@@ -44,7 +54,33 @@
         "minLength": 1,
         "maxLength": 65536
       },
-      "minItems": 1,
+      "minItems": 0,
+      "maxItems": 4096
+    },
+    "author": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "observation": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "foundation_refs": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 65536
+      },
+      "minItems": 0,
       "maxItems": 4096
     }
   },
