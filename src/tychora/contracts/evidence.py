@@ -44,6 +44,7 @@ class TextLocator(CodepointRange):
 
 
 class DocumentLocator(CodepointRange):
+    char_domain: Literal["unit"] = "unit"
     type: Literal["document"] = "document"
     artifact_ref: Identifier
     native_ref: NonEmptyStr
