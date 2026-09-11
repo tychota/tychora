@@ -81,10 +81,18 @@ class LocalArtifacts:
                         os.mkdir(part, 0o700, dir_fd=fd)
                     except FileExistsError:
                         pass
-                    os.fsync(fd)
                     next_fd = os.open(
                         part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd
                     )
+                if create:
+                    # A visible link can survive an interrupted mkdir without
+                    # its parent having been synced. Reestablish durability for
+                    # every constructor path component, including retry hits.
+                    try:
+                        os.fsync(fd)
+                    except BaseException:
+                        os.close(next_fd)
+                        raise
                 os.close(fd)
                 fd = next_fd
             if not create:

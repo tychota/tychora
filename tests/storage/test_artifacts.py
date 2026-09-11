@@ -239,3 +239,44 @@ def test_guard_blocks_completed_put_until_deletion_recheck_exits(tmp_path):
             with pytest.raises(TimeoutError):
                 future.result(timeout=0.1)
         assert future.result(timeout=2) == ref
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["root", "ancestor"])
+def test_initialization_retry_syncs_parent_of_interrupted_directory(
+    tmp_path, monkeypatch, nested
+):
+    interrupted_directory = tmp_path / "created"
+    root = interrupted_directory / "cas" if nested else interrupted_directory
+    parent_info = tmp_path.stat()
+    parent_identity = (parent_info.st_dev, parent_info.st_ino)
+    fsync = os.fsync
+
+    def interrupt_parent_sync(fd):
+        info = os.fstat(fd)
+        if (
+            info.st_dev,
+            info.st_ino,
+        ) == parent_identity and interrupted_directory.exists():
+            raise KeyboardInterrupt()
+        fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", interrupt_parent_sync)
+    with pytest.raises(KeyboardInterrupt):
+        LocalArtifacts(root)
+    assert interrupted_directory.is_dir()
+
+    synced = []
+
+    def record_sync(fd):
+        fsync(fd)
+        info = os.fstat(fd)
+        synced.append((info.st_dev, info.st_ino))
+
+    monkeypatch.setattr(os, "fsync", record_sync)
+    store = LocalArtifacts(root)
+    ref = store.put_stream(
+        io.BytesIO(b"durable after initialization retry"), "text/plain"
+    )
+    assert parent_identity in synced
+    with store.open_verified(ref) as stream:
+        assert stream.read() == b"durable after initialization retry"
