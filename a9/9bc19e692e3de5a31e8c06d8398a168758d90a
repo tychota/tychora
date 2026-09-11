@@ -1,0 +1,47 @@
+.gitattributes
+  s_35b641b930a96d::t_3f41a3ca25aaf6 1-2
+docs/superpowers/plans/2026-09-11-tychora-engine.md
+  s_35b641b930a96d::t_4b553059f0dace 597,626-672
+src/tychora/adapters/docling/mapping.py
+  s_35b641b930a96d::t_882c666bbc4c12 1-215
+src/tychora/adapters/docling/model-inventory.json
+  s_35b641b930a96d::t_2ffa6bcf2559a8 1-45
+src/tychora/adapters/docling/parser.py
+  s_35b641b930a96d::t_be45fb7bc7334a 1-379
+src/tychora/application/owner.py
+  s_35b641b930a96d::t_bb9c5cbae3d4d2 3,5,8,11-13,17,40-62,184-199,206-213,238,240-283,286-287,297-303,307-368
+src/tychora/contracts/documents.py
+  s_35b641b930a96d::t_2f786aadd87ac0 1-355
+src/tychora/contracts/extraction.py
+  s_35b641b930a96d::t_bcbc25867e8dfe 3,18-24,103,106,110,112-116,129-193,205,230-233,250-264,269
+src/tychora/ingestion/documents.py
+  s_35b641b930a96d::t_71264ee901279d 1-206
+src/tychora/ingestion/normalize.py
+  s_35b641b930a96d::t_999c73cbb0884c 25,37-40,52-53,55,58,82,84,154
+tests/fixtures/documents/create_rich_fixtures.py
+  s_35b641b930a96d::t_c5a95d9015930c 1-107
+tests/fixtures/documents/rich-manifest.json
+  s_35b641b930a96d::t_ccce26cdd65341 1-133
+tests/ingestion/test_docling_mapping.py
+  s_35b641b930a96d::t_07e8ddd9a97e1c 1-463
+tests/qualification/test_docling.py
+  s_35b641b930a96d::t_f27889036d1e91 1-220
+tests/runtime/test_owner.py
+  s_35b641b930a96d::t_a33251ad3fa928 484-584
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a99bc19e692e3de5a31e8c06d8398a168758d90a",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
