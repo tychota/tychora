@@ -1,0 +1,21 @@
+src/tychora/ingestion/document_parts.py
+  s_35b641b930a96d::t_4b33b9e991cd27 56-144,209,224,250,283-284,304-308,311,355-385
+tests/ingestion/test_document_records.py
+  s_35b641b930a96d::t_e8b618fca7ceaa 574-575,613-627,690-972
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "dff182f01a6f9ee1bab96cd8ca2fee265eab9ddc",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
