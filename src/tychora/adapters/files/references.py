@@ -11,6 +11,7 @@ from tychora.contracts.artifacts import (
     CAPTURE_TYPES,
     ArtifactRef,
     ManifestRef,
+    physical_identity,
     validate_manifest_schema,
 )
 from tychora.contracts.errors import TychoraError
@@ -124,9 +125,11 @@ def _parse_checked(manifest: JsonValue, *, capture_published: bool) -> _Referenc
             raise _fail("Required manifest exceeds reference limit")
         for ref in (*required, *originals, *(link.artifact for link in linked)):
             previous = declared_artifacts.get(ref.sha256)
-            if previous is not None and previous != ref:
+            if previous is not None and physical_identity(
+                previous
+            ) != physical_identity(ref):
                 raise _fail("Conflicting artifact declarations for one SHA")
-            declared_artifacts[ref.sha256] = ref
+            declared_artifacts.setdefault(ref.sha256, ref)
         for link in linked:
             schema = (link.type, str(link.schema_version))
             previous_schema = declared_schemas.get(link.artifact.sha256)
@@ -175,9 +178,11 @@ def required_closure(
 
     def remember(ref: ArtifactRef) -> None:
         previous = artifacts.get(ref.sha256)
-        if previous is not None and previous != ref:
+        if previous is not None and physical_identity(previous) != physical_identity(
+            ref
+        ):
             raise _fail("Conflicting artifact declarations for one SHA")
-        artifacts[ref.sha256] = ref
+        artifacts.setdefault(ref.sha256, ref)
 
     while pending:
         descriptor = pending.pop()

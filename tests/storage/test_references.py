@@ -347,3 +347,43 @@ def test_published_originals_still_count_toward_total_declared_work(monkeypatch)
     )
     with pytest.raises(TychoraError):
         required_refs(value, capture_published=True)
+
+
+def test_closure_deduplicates_physical_payloads_with_binding_mime_hints(tmp_path):
+    store = LocalArtifacts(tmp_path.resolve())
+    payload = store.put_stream(io.BytesIO(b"same bytes"), "text/plain")
+    other = payload.model_copy(update={"media_type": "application/custom"})
+    child = store_manifest(
+        store,
+        manifest("registry", required_artifacts=[payload.model_dump(mode="json")]),
+    )
+    root = store_manifest(
+        store,
+        manifest(
+            "job_capture",
+            original_artifacts=[
+                other.model_dump(mode="json"),
+                payload.model_dump(mode="json"),
+            ],
+            required_manifests=[
+                child.model_dump(mode="json"),
+                child.model_copy(
+                    update={
+                        "artifact": child.artifact.model_copy(
+                            update={"media_type": "application/octet-stream"}
+                        )
+                    }
+                ).model_dump(mode="json"),
+            ],
+        ),
+    )
+
+    def load(ref):
+        with store.open_verified(ref.artifact) as stream:
+            return json.load(stream)
+
+    assert references.required_closure((root,), load=load) == {
+        root.artifact.sha256,
+        child.artifact.sha256,
+        payload.sha256,
+    }

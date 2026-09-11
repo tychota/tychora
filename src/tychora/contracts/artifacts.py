@@ -8,10 +8,17 @@ from .base import Contract, NonEmptyStr, NonNegativeInt, Sha256
 
 
 class ArtifactRef(Contract):
+    """Physical bytes plus a binding-level media hint, never a format guarantee."""
+
     sha256: Sha256
     size_bytes: NonNegativeInt
     media_type: NonEmptyStr
     storage_key: NonEmptyStr
+
+
+def physical_identity(ref: ArtifactRef | None) -> tuple[str, int, str] | None:
+    """Media interpretation does not change physical identity or grant trust."""
+    return (ref.sha256, ref.size_bytes, ref.storage_key) if ref is not None else None
 
 
 class ArtifactStat(ArtifactRef):

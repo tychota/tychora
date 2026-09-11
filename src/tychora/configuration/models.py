@@ -1,8 +1,11 @@
 """Strict, immutable configuration values; definitions are preserved losslessly."""
 
+import ipaddress
+import re
+from pathlib import Path
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from tychora.contracts.base import (
     Contract,
@@ -106,6 +109,56 @@ class ExtractionSettings(Contract):
     representation_version: NonEmptyStr = "1"
 
 
+class AcquisitionCeilings(Contract):
+    max_file_bytes: PositiveInt = 104857600
+    max_files: Annotated[int, Field(gt=0, le=90000)] = 10000
+    max_total_bytes: PositiveInt = 1073741824
+    max_inline_bytes: PositiveInt = 10485760
+    max_redirects: Annotated[int, Field(ge=0, le=100)] = 3
+    download_timeout_seconds: Annotated[
+        float, Field(gt=0, le=3600, allow_inf_nan=False)
+    ] = 30.0
+
+
+class UrlAcquisitionSettings(Contract):
+    enabled: bool = False
+    allowed_hosts: Annotated[tuple[NonEmptyStr, ...], Field(max_length=1000)] = ()
+    allowed_schemes: tuple[Literal["https"], ...] = ("https",)
+
+    @field_validator("allowed_hosts")
+    @classmethod
+    def exact_hosts(cls, hosts: tuple[str, ...]) -> tuple[str, ...]:
+        for host in hosts:
+            try:
+                address = ipaddress.ip_address(host)
+                if str(address) != host or not address.is_global:
+                    raise ValueError("Allowed address must be canonical and public")
+            except ValueError:
+                if not re.fullmatch(
+                    r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?",
+                    host,
+                ):
+                    raise ValueError(
+                        "Allowed hosts must be exact normalized public hosts"
+                    ) from None
+        if len(set(hosts)) != len(hosts):
+            raise ValueError("Duplicate allowed host")
+        return hosts
+
+
+class AcquisitionSettings(Contract):
+    roots: Annotated[tuple[NonEmptyStr, ...], Field(max_length=100)] = ()
+    limits: AcquisitionCeilings = Field(default_factory=AcquisitionCeilings)
+    url: UrlAcquisitionSettings = Field(default_factory=UrlAcquisitionSettings)
+
+    @field_validator("roots")
+    @classmethod
+    def absolute_roots(cls, roots: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not Path(root).is_absolute() for root in roots):
+            raise ValueError("Acquisition roots must be absolute")
+        return roots
+
+
 class ConfigurationValues(Contract):
     offline: bool = True
     default_mode: NonEmptyStr | None = None
@@ -121,6 +174,7 @@ class ConfigurationValues(Contract):
     providers: ProviderSettings = Field(default_factory=ProviderSettings)
     index: IndexSettings = Field(default_factory=IndexSettings)
     extraction: ExtractionSettings = Field(default_factory=ExtractionSettings)
+    acquisition: AcquisitionSettings = Field(default_factory=AcquisitionSettings)
 
 
 class Dependency(Contract):
@@ -184,6 +238,7 @@ class ResolvedConfig(Contract):
     packs: tuple[PackIdentity, ...]
     registry_digest: Sha256
     config_sha: Sha256
+    acquire_fingerprint: Sha256
     extraction_fingerprint: Sha256
     index_fingerprint: Sha256
     eligibility_fingerprint: Sha256
@@ -194,6 +249,9 @@ class ResolvedConfig(Contract):
         """Expose effective configuration, redacting private origins and credentials."""
         result = self.model_dump(mode="json")
         if not owner_authorized:
+            result["values"]["acquisition"]["roots"] = ["[redacted]"] * len(
+                self.values.acquisition.roots
+            )
             for origin in result["origins"].values():
                 if origin["source"] not in ("engine", "request"):
                     origin["source"] = "[redacted]"

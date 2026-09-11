@@ -113,7 +113,7 @@ class CorpusStore(PolicyRepository):
                 )
                 for ref in bundle.artifacts:
                     current = self.db.execute(
-                        "SELECT payload_state,created_at FROM artifacts WHERE artifact_sha=?",
+                        "SELECT payload_state,created_at,media_type FROM artifacts WHERE artifact_sha=?",
                         (ref.sha256,),
                     ).fetchone()
                     if current and current[0] != "present":
@@ -123,7 +123,7 @@ class CorpusStore(PolicyRepository):
                         {
                             "artifact_sha": ref.sha256,
                             "size_bytes": ref.size_bytes,
-                            "media_type": ref.media_type,
+                            "media_type": current[2] if current else ref.media_type,
                             "storage_key": ref.storage_key,
                             "created_at": current[1]
                             if current

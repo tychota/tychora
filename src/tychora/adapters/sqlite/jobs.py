@@ -10,7 +10,7 @@ from typing import NoReturn
 from uuid import uuid4
 
 from tychora.adapters.files.references import MAX_MANIFEST_BYTES, required_closure
-from tychora.contracts.artifacts import ArtifactRef, ManifestRef
+from tychora.contracts.artifacts import ArtifactRef, ManifestRef, physical_identity
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import JsonValue, canonical_bytes, digest
 from tychora.contracts.jobs import JobAuthorization, JobStatus
@@ -90,10 +90,10 @@ class JobRepository:
 
     def _register(self, ref: ArtifactRef) -> None:
         current = self.db.execute(
-            "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
+            "SELECT size_bytes,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
             (ref.sha256,),
         ).fetchone()
-        expected = (ref.size_bytes, ref.media_type, ref.storage_key, "present")
+        expected = (ref.size_bytes, ref.storage_key, "present")
         if current is not None:
             if current != expected:
                 _fail("Artifact metadata or availability differs")
@@ -246,10 +246,10 @@ class JobRepository:
     def _require_registered(self, refs: tuple[ArtifactRef, ...]) -> None:
         for ref in refs:
             row = self.db.execute(
-                "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
+                "SELECT size_bytes,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
                 (ref.sha256,),
             ).fetchone()
-            if row != (ref.size_bytes, ref.media_type, ref.storage_key, "present"):
+            if row != (ref.size_bytes, ref.storage_key, "present"):
                 _fail("Required artifact metadata or availability differs")
 
     @contextmanager
@@ -264,9 +264,9 @@ class JobRepository:
 
             def remember(ref: ArtifactRef) -> None:
                 old = refs.get(ref.sha256)
-                if old is not None and old != ref:
+                if old is not None and physical_identity(old) != physical_identity(ref):
                     _fail("Conflicting artifact declarations")
-                refs[ref.sha256] = ref
+                refs.setdefault(ref.sha256, ref)
 
             def load(link: ManifestRef):
                 remember(link.artifact)
@@ -336,14 +336,15 @@ class JobRepository:
 
     def capture(self, job_id: str, manifest: ArtifactRef) -> None:
         status = self.get(job_id)
-        if status.captured_inputs is not None and status.captured_inputs != manifest:
+        if status.captured_inputs is not None and physical_identity(
+            status.captured_inputs
+        ) != physical_identity(manifest):
             _fail("Committed capture is immutable")
         with self._verified_manifest(manifest, "job_capture") as refs, self._write():
             current = self.get(job_id)
-            if (
-                current.captured_inputs is not None
-                and current.captured_inputs != manifest
-            ):
+            if current.captured_inputs is not None and physical_identity(
+                current.captured_inputs
+            ) != physical_identity(manifest):
                 _fail("Committed capture is immutable")
             for ref in refs:
                 self._register(ref)
@@ -574,7 +575,7 @@ class JobRepository:
         self._step_key(step_key, input_sha)
         previous = self.completed_step(job_id, step_key, input_sha)
         if previous is not None:
-            if previous != output:
+            if physical_identity(previous) != physical_identity(output):
                 _fail("Checkpoint output differs")
             return
         status = self.get(job_id)
@@ -604,7 +605,7 @@ class JobRepository:
                 status = self.get(job_id)
                 if status.state == "succeeded":
                     if (
-                        status.result != result
+                        physical_identity(status.result) != physical_identity(result)
                         or status.result_snapshot_id != result_snapshot_id
                     ):
                         _fail("Committed result differs")
@@ -729,10 +730,13 @@ class JobRepository:
             and status.result_snapshot_id != receipt.result_snapshot_id
         ):
             _fail("Publication receipt conflicts with committed result")
-        if status.result is not None and status.result != receipt.result_artifact:
+        if status.result is not None and physical_identity(
+            status.result
+        ) != physical_identity(receipt.result_artifact):
             _fail("Publication receipt conflicts with committed artifact")
         if status.state == "succeeded" and (
-            status.result != receipt.result_artifact
+            physical_identity(status.result)
+            != physical_identity(receipt.result_artifact)
             or status.result_snapshot_id != receipt.result_snapshot_id
         ):
             _fail("Publication receipt conflicts with terminal result")

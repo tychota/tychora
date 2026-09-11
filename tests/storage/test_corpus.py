@@ -1270,3 +1270,23 @@ def test_new_extraction_preserves_unchanged_revision_facets(corpus):
     ]
     assert corpus.db.execute("SELECT COUNT(*) FROM extractions").fetchone()[0] == 2
     assert epoch(corpus) == 0
+
+
+def test_corpus_keeps_first_physical_artifact_mime_label(corpus):
+    first = seed_bundle("Shared actual bytes.", source_key="first.md")
+    corpus.commit_extraction(first)
+    second = seed_bundle("Shared actual bytes.", source_key="second.md")
+    second = second.model_copy(
+        update={
+            "artifacts": tuple(
+                ref.model_copy(update={"media_type": "application/custom"})
+                for ref in second.artifacts
+            )
+        }
+    )
+    corpus.commit_extraction(second)
+    assert corpus.db.execute(
+        "SELECT media_type FROM artifacts WHERE artifact_sha=?",
+        (first.artifacts[0].sha256,),
+    ).fetchone() == (first.artifacts[0].media_type,)
+    assert corpus.hydrate((second.units[0].unit_id,)) == second.units

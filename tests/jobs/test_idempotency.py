@@ -283,3 +283,47 @@ def test_required_config_closure_remains_unavailable_when_metadata_deleted(jobs)
     with pytest.raises(TychoraError) as error:
         jobs.accept("add", jobs.scope, "key", {}, config)
     assert error.value.code == "INTEGRITY_ERROR"
+
+
+def test_binding_mime_hints_share_physical_job_artifacts(jobs):
+    from io import BytesIO
+
+    first = jobs.artifacts.put_stream(BytesIO(b"same payload"), "text/plain")
+    alternate = first.model_copy(update={"media_type": "application/custom"})
+    job = jobs.accept("add", jobs.scope, "mime-first", {}, jobs.config)
+    capture = jobs.manifest(
+        "job_capture",
+        original_artifacts=[
+            first.model_dump(mode="json"),
+            alternate.model_dump(mode="json"),
+        ],
+    )
+    jobs.repo.capture(job.id, capture)
+    jobs.repo.capture(
+        job.id, capture.model_copy(update={"media_type": "application/custom"})
+    )
+    assert jobs.repo.get(job.id).captured_inputs.sha256 == capture.sha256
+    row = jobs.db.execute(
+        "SELECT media_type FROM artifacts WHERE artifact_sha=?", (first.sha256,)
+    ).fetchone()
+    assert row == ("text/plain",)
+    jobs.repo.start(job.id)
+    jobs.repo.checkpoint(job.id, "step", "a" * 64, first)
+    jobs.repo.checkpoint(job.id, "step", "a" * 64, alternate)
+    jobs.repo.complete(job.id, result=alternate)
+    jobs.repo.complete(job.id, result=first)
+
+
+def test_acquired_bytes_can_equal_a_preexisting_generated_json_artifact(jobs):
+    job = jobs.accept("add", jobs.scope, "json-source", {}, jobs.config)
+    as_source = jobs.config.model_copy(
+        update={"media_type": "application/octet-stream"}
+    )
+    capture = jobs.manifest(
+        "job_capture", original_artifacts=[as_source.model_dump(mode="json")]
+    )
+    jobs.repo.capture(job.id, capture)
+    assert jobs.repo.get(job.id).captured_inputs.sha256 == capture.sha256
+    assert jobs.db.execute(
+        "SELECT media_type FROM artifacts WHERE artifact_sha=?", (jobs.config.sha256,)
+    ).fetchone() == ("application/json",)

@@ -9,6 +9,7 @@ from uuid import UUID
 
 from pydantic import ConfigDict, Field, RootModel, field_validator, model_validator
 
+from .acquisition import AcquisitionLimits
 from .base import (
     Contract,
     FrozenJsonMap,
@@ -109,6 +110,8 @@ class SourceBase(Contract):
     format: NonEmptyStr | None = None
     encoding: NonEmptyStr | None = None
     media_type: NonEmptyStr | None = None
+    sidecars: Annotated[tuple[NonEmptyStr, ...], Field(max_length=10000)] = ()
+    acquisition_limits: AcquisitionLimits | None = None
 
     @field_validator("source_key")
     @classmethod

@@ -469,6 +469,15 @@ def _resolve_config(
             "output_profile",
             "profile",
         )
+    canonical_roots = []
+    for registered in values["acquisition"]["roots"]:
+        root = Path(registered).resolve(strict=True)
+        if not root.is_dir():
+            raise TychoraError(
+                "INVALID_REQUEST", "Acquisition root must be a directory"
+            )
+        canonical_roots.append(str(root))
+    values["acquisition"]["roots"] = sorted(set(canonical_roots))
     typed = ConfigurationValues.from_mapping(values)
     for modality in ("text", "image"):
         provider = getattr(typed.providers, modality)
@@ -495,6 +504,9 @@ def _resolve_config(
         packs=tuple(packs),
         registry_digest=registry_sha,
         config_sha=digest("config-v1", registry_sha, values),
+        acquire_fingerprint=digest(
+            "acquisition-config-v1", values["acquisition"], values["offline"]
+        ),
         extraction_fingerprint=digest(
             "extraction-config-v1",
             values["extraction"],
