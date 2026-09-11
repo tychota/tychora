@@ -205,11 +205,14 @@ class JobRepository:
         }
         retry = meta.get("__tychora__/retry", (0, 0, "durable", None))
         result = meta.get("__tychora__/result", (0, 0, "durable", None))[3]
+        result_unavailable = result is not None and self.db.execute(
+            "SELECT payload_state FROM artifacts WHERE artifact_sha=?", (result,)
+        ).fetchone() in {("delete_pending",), ("deleted",)}
         return JobStatus(
             result=self._ref(result),
             latest_sequence=meta.get("__tychora__/sequence", (0,))[0],
             retry_count=retry[1],
-            retention_limited="__tychora__/retention" in meta,
+            retention_limited="__tychora__/retention" in meta or result_unavailable,
             id=job_id,
             operation=row[0],
             state=(
@@ -560,6 +563,7 @@ class JobRepository:
         ref = self._ref(row[1])
         if ref is None:
             _fail("Checkpoint output is missing")
+        self._require_registered((ref,))
         with self.artifacts.open_verified(ref):
             pass
         return ref

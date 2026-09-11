@@ -193,3 +193,86 @@ def test_cancelled_stage_cannot_publish_checkpoint(jobs):
         == 0
     )
     assert jobs.repo.get(job.id).state == "cancelled"
+
+
+@pytest.mark.parametrize("payload_state", ["deleted", "delete_pending"])
+@pytest.mark.parametrize("operation", ["completed_step", "checkpoint"])
+def test_unavailable_checkpoint_cannot_replay_existing_bytes(
+    jobs, payload_state, operation
+):
+    job = accepted(jobs)
+    output = jobs.manifest("extraction", data={"units": []})
+    jobs.repo.start(job.id)
+    jobs.repo.checkpoint(job.id, "extract", "a" * 64, output)
+    before = jobs.repo.get(job.id)
+    jobs.db.execute(
+        "UPDATE artifacts SET payload_state=?,payload_deleted_at=? WHERE artifact_sha=?",
+        (
+            payload_state,
+            "2026-01-02" if payload_state == "deleted" else None,
+            output.sha256,
+        ),
+    )
+    assert (jobs.artifacts.root / output.storage_key).is_file()
+    with pytest.raises(TychoraError) as error:
+        if operation == "completed_step":
+            jobs.repo.completed_step(job.id, "extract", "a" * 64)
+        else:
+            jobs.repo.checkpoint(job.id, "extract", "a" * 64, output)
+    assert error.value.code == "INTEGRITY_ERROR"
+    assert jobs.repo.get(job.id) == before
+
+
+@pytest.mark.parametrize("payload_state", ["deleted", "delete_pending"])
+@pytest.mark.parametrize("remove_bytes", [False, True])
+def test_result_only_retirement_reports_limitation_with_events_retained(
+    jobs, payload_state, remove_bytes
+):
+    job = accepted(jobs)
+    result = jobs.manifest("retained_run", data={"count": 1})
+    jobs.repo.start(job.id)
+    jobs.repo.complete(job.id, result=result)
+    before = jobs.repo.get(job.id)
+    events = jobs.repo.events_after(job.id, 0, 100)
+    assert events and not before.retention_limited
+    jobs.db.execute(
+        "UPDATE artifacts SET payload_state=?,payload_deleted_at=? WHERE artifact_sha=?",
+        (
+            payload_state,
+            "2026-01-02" if payload_state == "deleted" else None,
+            result.sha256,
+        ),
+    )
+    if remove_bytes:
+        (jobs.artifacts.root / result.storage_key).unlink()
+    assert jobs.accept("add", jobs.scope, "key", {}, jobs.config).state == "succeeded"
+    status = jobs.repo.get(job.id)
+    assert status.retention_limited
+    assert status.model_copy(update={"retention_limited": False}) == before
+    assert jobs.repo.events_after(job.id, 0, 100) == events
+    assert jobs.db.execute("SELECT count(*) FROM jobs").fetchone()[0] == 1
+    assert (
+        jobs.db.execute(
+            "SELECT 1 FROM job_steps WHERE step_key='__tychora__/retention'"
+        ).fetchone()
+        is None
+    )
+
+
+@pytest.mark.parametrize("damage", ["missing", "corrupt"])
+def test_result_damage_without_retirement_is_not_a_retention_limitation(jobs, damage):
+    job = accepted(jobs)
+    result = jobs.manifest("retained_run", data={"count": 1})
+    jobs.repo.start(job.id)
+    jobs.repo.complete(job.id, result=result)
+    path = jobs.artifacts.root / result.storage_key
+    if damage == "missing":
+        path.unlink()
+    else:
+        path.write_bytes(b"corrupt")
+    status = jobs.repo.get(job.id)
+    assert status.result == result
+    assert not status.retention_limited
+    with pytest.raises(TychoraError) as error, jobs.artifacts.open_verified(result):
+        pytest.fail("Damaged result bytes were readable")
+    assert error.value.code == "INTEGRITY_ERROR"
