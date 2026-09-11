@@ -1,0 +1,33 @@
+src/tychora/adapters/files/__init__.py
+  s_35b641b930a96d::t_dab43aacc5d40b 1
+src/tychora/adapters/files/cas.py
+  s_35b641b930a96d::t_bac1bd86ccd7b1 1-260
+src/tychora/adapters/files/references.py
+  s_35b641b930a96d::t_7c4861da5e451b 1-211
+src/tychora/contracts/artifacts.py
+  s_35b641b930a96d::t_dcf62e556b54b6 3-6,15-69
+src/tychora/ports/artifacts.py
+  s_35b641b930a96d::t_e615222e4e7aba 6,11-22
+tests/helpers/corpus.py
+  s_35b641b930a96d::t_b3034954bec46a 5,11,31,36,39-40,44
+tests/storage/test_artifacts.py
+  s_35b641b930a96d::t_e0456a1bad6e57 1-241
+tests/storage/test_references.py
+  s_35b641b930a96d::t_ffdd75bf7bc008 1-349
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "f6dc1ac1da81e3c1bc3c0269a06c5b3680617166",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
