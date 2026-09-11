@@ -15,7 +15,7 @@ from .base import (
     Sha256,
 )
 from .corpus import CollectionRow, RevisionRow, SourceRow, WorkspaceRow
-from .identity import digest, normalize_source_key
+from .identity import JsonValue, canonical_bytes, digest, normalize_source_key
 
 
 class ParsedUnit(Contract):
@@ -152,9 +152,29 @@ class ExtractionArtifact(Contract):
                         raise ValueError("Missing or cyclic parser parent")
                     visited.add(parent)
                     parent = refs[parent].parent_ref
+        encoded = extraction_document(
+            self.model_dump(mode="json", exclude={"raw_document_ref"})
+        )
+        if (
+            sha256(encoded).hexdigest() != self.raw_document_ref.sha256
+            or len(encoded) != self.raw_document_ref.size_bytes
+        ):
+            raise ValueError("Retained extraction artifact differs from parser facts")
         record_refs = [record.native_ref for record in self.records]
         if len(record_refs) != len(set(record_refs)) or set(record_refs) - {
             u.native_ref for u in self.units
         }:
             raise ValueError("Records require unique existing parser units")
         return self
+
+
+def extraction_document(data: JsonValue) -> bytes:
+    """Exact self-contained extraction-v1 framing; source refs are provenance."""
+    return canonical_bytes(
+        {
+            "type": "extraction",
+            "schema_version": "1",
+            "required_artifacts": [],
+            "data": data,
+        }
+    )

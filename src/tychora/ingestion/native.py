@@ -21,8 +21,9 @@ from tychora.contracts.extraction import (
     NativeRegistration,
     ParsedRecord,
     ParsedUnit,
+    extraction_document,
 )
-from tychora.contracts.identity import canonical_bytes, digest
+from tychora.contracts.identity import digest
 from tychora.ports.artifacts import Artifacts
 from tychora.ports.execution import ExecutionContext
 
@@ -217,14 +218,7 @@ class NativeParser:
             "records": [r.model_dump(mode="json") for r in records],
             "diagnostics": [d.model_dump(mode="json") for d in diagnostics],
         }
-        encoded = canonical_bytes(
-            {
-                "type": "extraction",
-                "schema_version": "1",
-                "required_artifacts": [],
-                "data": data,
-            }
-        )
+        encoded = extraction_document(data)
         if len(encoded) > MAX_DOCUMENT_BYTES:
             raise TychoraError(
                 "INVALID_REQUEST", "Parsed extraction exceeds manifest byte limit"

@@ -316,3 +316,40 @@ def test_canonical_table_retains_grid_and_explicit_empty_native_payloads(native_
     bundle = normalize(parsed, parsed.registration.revision.revision_id, registry)
     assert bundle.units[0].attributes["cells"] == (("Name", "Value"), ("sample", "2"))
     assert parsed.assets == () and parsed.assertions == ()
+
+
+def test_article_preserves_numbered_descendants_and_subordinate_heading(
+    native_case, tmp_path
+):
+    from tests.ingestion.test_records import commit_and_hydrate
+    from tychora.ingestion.normalize import normalize
+
+    text = "## Article 4\n\nIntroductory text.\n\n1. First numbered paragraph.\n   1. Nested paragraph.\n2. Second numbered paragraph.\n\n### 4.1 Detail\n\n3. Detail paragraph.\n\n## Article 5\n\nNext article.\n"
+    parsed, artifacts, registry = native_case(text, kind="law@1")
+    bundle = normalize(parsed, parsed.registration.revision.revision_id, registry)
+    assert [row.original_value for row in bundle.identifiers] == [
+        "Article 4",
+        "1.",
+        "1.",
+        "2.",
+        "4.1",
+        "3.",
+        "Article 5",
+    ]
+    article, first, nested, second, detail, third, next_article = bundle.units
+    assert article.text == text[: text.index("## Article 5")]
+    assert first.text == "1. First numbered paragraph.\n   1. Nested paragraph.\n"
+    assert nested.text == "   1. Nested paragraph.\n"
+    assert second.text == "2. Second numbered paragraph.\n\n"
+    assert detail.text == text[text.index("### 4.1") : text.index("## Article 5")]
+    assert first.parent_id == second.parent_id == detail.parent_id == article.unit_id
+    assert nested.parent_id == first.unit_id
+    assert third.parent_id == detail.unit_id
+    assert next_article.parent_id is None
+    assert len({u.boundary_key for u in bundle.units}) == 7
+    for unit in bundle.units:
+        loc = unit.locators[0]
+        assert loc.type == "text"
+        assert text[loc.char_start : loc.char_end] == unit.text
+    rows = commit_and_hydrate(tmp_path, bundle, artifacts, registry)
+    assert len(rows) == 7

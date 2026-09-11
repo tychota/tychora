@@ -5,6 +5,8 @@ from collections.abc import Mapping
 from hashlib import sha256
 from typing import Any, cast
 
+from markdown_it import MarkdownIt
+
 from tychora.configuration.registry import Registry
 from tychora.contracts import identity
 from tychora.contracts.base import FrozenJsonMap
@@ -54,6 +56,14 @@ def normalize(
                 "Duplicate native reference or impossible original range",
             )
         seen.add(unit.native_ref)
+    kind = cast(Mapping[str, Any], registry.kinds[registration.revision.kind_id])
+    if parsed.normalizer_fingerprint != identity.digest(
+        "native-normalizer-v1", kind, registry.schema_digests
+    ):
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Normalizer fingerprint differs from original registry/kind binding",
+        )
     eid = identity.extraction_id(
         revision_id, parsed.parser_fingerprint, parsed.normalizer_fingerprint
     )
@@ -227,37 +237,103 @@ RECORD_TYPES = {
 }
 
 
+def _label_span(
+    line: str, aliases: Mapping[str, list[str]], parser: MarkdownIt
+) -> tuple[list[str], int, bool]:
+    """Recognize inline label structure; return an offset into the original line."""
+    indent = len(line) - len(line.lstrip(" \t"))
+    raw = line[indent:]
+    children = [
+        token
+        for token in (parser.parseInline(raw)[0].children or ())
+        if token.type != "text" or token.content
+    ]
+    if not children:
+        return [], 0, False
+    first = children[0]
+    if first.type == "text":
+        label, separator, _ = raw.partition(":")
+        # A bare label must be literal text, not markup containing a colon.
+        if separator and first.content.startswith(label + ":"):
+            names = aliases.get(label, [])
+            return names, indent + len(label) + 1, False
+        return [], 0, False
+    if first.type not in ("strong_open", "em_open"):
+        return [], 0, False
+    if (
+        len(children) < 3
+        or children[1].type != "text"
+        or children[2].type != first.type.replace("_open", "_close")
+    ):
+        return [], 0, True
+    label = children[1].content
+    marker = first.markup
+    close = raw.find(marker, len(marker))
+    if close < 0:
+        return [], 0, True
+    end = close + len(marker)
+    if label.endswith((":", ".")):
+        label = label[:-1]
+    elif raw[end : end + 1] == ":":
+        end += 1
+    else:
+        return [], 0, label in aliases
+    names = aliases.get(label, [])
+    return names, indent + end, not bool(names)
+
+
 def _fields(
-    blocks: tuple[ParsedUnit, ...], names: tuple[str, ...], options: Mapping[str, Any]
+    blocks: tuple[ParsedUnit, ...],
+    names: tuple[str, ...],
+    options: Mapping[str, Any],
+    text: str,
 ) -> tuple[dict[str, str], bool]:
     aliases: dict[str, list[str]] = {}
     for name in names:
         for label in options.get(name + "_labels", DEFAULT_LABELS[name]):
             aliases.setdefault(label, []).append(name)
+    parser = MarkdownIt("commonmark")
     result: dict[str, str] = {}
     ambiguous = False
-    current = None
+    current: str | None = None
+    start = end = 0
+
+    def finish() -> None:
+        if current is not None:
+            result[current] = text[start:end]
+
     for block in blocks:
         if block.unit_type == "table" and current is not None:
-            result[current] += (
-                "\n\n" if result[current] else ""
-            ) + block.source_substring
+            if start == end:
+                start = block.char_start
+            end = block.char_end
             continue
         if block.unit_type != "paragraph" or block.parent_ref:
+            finish()
             current = None
             continue
-        for line in re.split(r"\r\n|\r|\n", block.source_substring.rstrip("\r\n")):
-            label, separator, value = line.partition(":")
-            matches = aliases.get(label.strip(), []) if separator else []
-            if matches:
-                if len(matches) != 1 or matches[0] in result:
+        for match in re.finditer(r"[^\r\n]+(?:\r\n|\r|\n|$)", block.source_substring):
+            line = match.group().rstrip("\r\n")
+            line_start = block.char_start + match.start()
+            line_end = line_start + len(line)
+            matches, value_offset, unsupported = _label_span(line, aliases, parser)
+            if matches or unsupported:
+                finish()
+                current = None
+                if unsupported or len(matches) != 1 or matches[0] in result:
                     ambiguous = True
-                    current = None
-                else:
-                    current = matches[0]
-                    result[current] = value.strip()
+                    continue
+                current = matches[0]
+                value_offset += len(line[value_offset:]) - len(
+                    line[value_offset:].lstrip(" \t")
+                )
+                start = line_start + value_offset
+                end = line_end
             elif current is not None:
-                result[current] += "\n" + line
+                if start == end:
+                    start = line_start
+                end = line_end
+    finish()
     return result, ambiguous
 
 
@@ -313,7 +389,7 @@ def prepare_records(
         while direct_end < end_index and units[direct_end].unit_type != "heading":
             direct_end += 1
         fields, ambiguous = _fields(
-            units[index + 1 : direct_end], RECORD_FIELDS[strategy], options
+            units[index + 1 : direct_end], RECORD_FIELDS[strategy], options, text
         )
         required = (
             ("requirement",)
@@ -427,26 +503,28 @@ def resolve_records(
 def numbered_provisions(
     units: tuple[ParsedUnit, ...], text: str
 ) -> tuple[ParsedUnit, ...]:
-    output = []
-    index = 0
-    while index < len(units):
-        unit = units[index]
+    """Keep every independently numbered original span and its enclosing provision."""
+    section_ends: dict[str, int] = {}
+    headings: list[ParsedUnit] = []
+    for unit in units:
+        if unit.unit_type != "heading":
+            continue
+        while headings and headings[-1].heading_level >= unit.heading_level:
+            section_ends[headings.pop().native_ref] = unit.char_start
+        headings.append(unit)
+    section_ends.update({unit.native_ref: len(text) for unit in headings})
+
+    output: list[ParsedUnit] = []
+    parents: list[ParsedUnit] = []
+    for unit in units:
+        while parents and unit.char_start >= parents[-1].char_end:
+            parents.pop()
         numbered = (
             re.match(r"^\s*([0-9]+[.)])\s", unit.source_substring)
             if unit.unit_type == "list_item"
             else None
         )
-        if numbered is not None:
-            output.append(
-                unit.model_copy(
-                    update={"unit_type": "paragraph", "identifier": numbered.group(1)}
-                )
-            )
-            index += 1
-            while index < len(units) and units[index].char_start < unit.char_end:
-                index += 1
-            continue
-        match = (
+        heading = (
             re.match(
                 r"^(Article [0-9]+(?:[.-][0-9]+)*|[0-9]+(?:\.[0-9]+)*[.)]?)(?:\s|$)",
                 unit.text,
@@ -454,30 +532,25 @@ def numbered_provisions(
             if unit.unit_type == "heading"
             else None
         )
-        if match is None:
-            output.append(unit)
-            index += 1
+        identifier = numbered or heading
+        if identifier is None:
+            if not parents:
+                output.append(unit)
             continue
-        end_index = index + 1
-        while end_index < len(units) and not (
-            units[end_index].unit_type == "heading"
-            and units[end_index].heading_level <= unit.heading_level
-        ):
-            end_index += 1
-        end = units[end_index].char_start if end_index < len(units) else len(text)
+        end = section_ends[unit.native_ref] if heading else unit.char_end
         raw = text[unit.char_start : end]
-        output.append(
-            unit.model_copy(
-                update={
-                    "unit_type": "section",
-                    "identifier": match.group(1),
-                    "source_substring": raw,
-                    "char_end": end,
-                    "line_end": unit.line_start + _physical_line_count(raw) - 1,
-                }
-            )
+        provision = unit.model_copy(
+            update={
+                "unit_type": "section" if heading else "paragraph",
+                "identifier": identifier.group(1),
+                "parent_ref": parents[-1].native_ref if parents else unit.parent_ref,
+                "source_substring": raw,
+                "char_end": end,
+                "line_end": unit.line_start + _physical_line_count(raw) - 1,
+            }
         )
-        index = end_index
+        output.append(provision)
+        parents.append(provision)
     return tuple(output)
 
 

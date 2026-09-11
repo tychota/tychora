@@ -355,3 +355,167 @@ def test_unicode_line_separator_remains_literal_inside_a_rule(native_case):
         bundle.records[0].data_json["requirement"] == "Keep\u2028the original wording."
     )
     assert next(u for u in parsed.units if u.unit_type == "rule").line_end == 3
+
+
+@pytest.mark.parametrize(
+    "change", ["raw_ref", "record", "normalizer", "rebound_normalizer"]
+)
+def test_retained_document_binding_rejects_substituted_facts_before_commit(
+    native_case, tmp_path, change
+):
+    import json
+    from io import BytesIO
+
+    from pydantic import ValidationError
+
+    from tychora.contracts.base import FrozenJsonMap
+    from tychora.contracts.errors import TychoraError
+    from tychora.contracts.identity import canonical_bytes
+
+    parsed, artifacts, registry = native_case(
+        "## STD-1\n\nRequirement: Keep the original requirement.\n", kind="standard@1"
+    )
+    db = open_corpus(tmp_path / "bound.sqlite3", initialize=True)
+    try:
+        store = CorpusStore(db, registry=registry, artifacts=artifacts)
+        if change == "raw_ref":
+            parsed = parsed.model_copy(update={"raw_document_ref": parsed.original_ref})
+        elif change == "record":
+            record = parsed.records[0]
+            parsed = parsed.model_copy(
+                update={
+                    "records": (
+                        record.model_copy(
+                            update={
+                                "value": FrozenJsonMap(
+                                    {
+                                        **dict(record.value),
+                                        "requirement": "An unrelated invented requirement.",
+                                    }
+                                )
+                            }
+                        ),
+                    )
+                }
+            )
+        else:
+            if change == "rebound_normalizer":
+                with artifacts.open_verified(parsed.raw_document_ref) as stream:
+                    manifest = json.load(stream)
+                manifest["data"]["normalizer_fingerprint"] = "0" * 64
+                ref = artifacts.put_stream(
+                    BytesIO(canonical_bytes(manifest)), "application/json"
+                )
+                parsed = parsed.model_copy(update={"raw_document_ref": ref})
+            parsed = parsed.model_copy(update={"normalizer_fingerprint": "0" * 64})
+        with pytest.raises((TychoraError, ValidationError)):
+            store.commit_extraction(
+                normalize(parsed, parsed.registration.revision.revision_id, registry)
+            )
+        assert db.execute("SELECT count(*) FROM extractions").fetchone()[0] == 0
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize(
+    "kind,label,field,prefix",
+    [
+        ("standard@1", "Requirement", "requirement", "## STD-1"),
+        ("feedback@1", "Comment", "comment", "## Note"),
+        ("template@1", "Instruction", "instruction", "## Summary\n\nSlot: Summary"),
+    ],
+)
+@pytest.mark.parametrize("newline", ["\n", "\r\n", "\r"])
+def test_literal_fields_preserve_paragraph_and_physical_line_separators(
+    native_case, kind, label, field, prefix, newline
+):
+    text = (
+        prefix
+        + "\n\n"
+        + label
+        + ": First paragraph.\n\nSecond paragraph.\nContinuation.\n"
+    ).replace("\n", newline)
+    parsed, _, registry = native_case(text, kind=kind)
+    bundle = normalize(parsed, parsed.registration.revision.revision_id, registry)
+    assert (
+        bundle.records[0].data_json[field]
+        == "First paragraph."
+        + newline
+        + newline
+        + "Second paragraph."
+        + newline
+        + "Continuation."
+    )
+
+
+@pytest.mark.parametrize(
+    "label",
+    [
+        "**Requirement:**",
+        "**Requirement**:",
+        "**Requirement.**",
+        "*Requirement:*",
+        "*Requirement*:",
+        "*Requirement.*",
+        "__Requirement:__",
+        "_Requirement._",
+    ],
+)
+def test_initial_formatted_label_preserves_exact_literal_value(native_case, label):
+    text = "## STD-1\n\n" + label + " Preserve **source** wording.\n"
+    parsed, _, registry = native_case(text, kind="standard@1")
+    bundle = normalize(parsed, parsed.registration.revision.revision_id, registry)
+    assert len(bundle.records) == 1
+    assert bundle.records[0].data_json["requirement"] == "Preserve **source** wording."
+
+
+def test_mixed_bare_and_bold_labels_are_separate_fields(native_case):
+    parsed, _, registry = native_case(
+        "## STD-1\n\nRequirement: Keep it.\r\n**Control:** Inspect it.\r\n",
+        kind="standard@1",
+    )
+    bundle = normalize(parsed, parsed.registration.revision.revision_id, registry)
+    assert bundle.records[0].data_json["requirement"] == "Keep it."
+    assert bundle.records[0].data_json["control"] == "Inspect it."
+
+
+def test_unsupported_formatted_field_continuation_is_diagnosed(native_case):
+    parsed, _, _ = native_case(
+        "## STD-1\n\nRequirement: Keep it.\n**Control** - Inspect it.\n",
+        kind="standard@1",
+    )
+    assert parsed.records == ()
+    assert any(d.code == "ambiguous_record" for d in parsed.diagnostics)
+
+
+def test_retained_extraction_facts_replay_without_original_payload(
+    native_case, tmp_path
+):
+    import json
+
+    from tychora.contracts.extraction import ExtractionArtifact
+
+    parsed, artifacts, registry = native_case(
+        "## STD-1\n\nRequirement: Keep the evidence.\n", kind="standard@1"
+    )
+    original_bundle = normalize(
+        parsed, parsed.registration.revision.revision_id, registry
+    )
+    commit_and_hydrate(tmp_path, original_bundle, artifacts, registry)
+    # Controlled payload loss proves this pure replay boundary needs no original read;
+    # owner-authorized purge lifecycle itself belongs to the later maintenance task.
+    (artifacts.root / parsed.original_ref.storage_key).unlink()
+    with artifacts.open_verified(parsed.raw_document_ref) as stream:
+        manifest = json.load(stream)
+    restored = ExtractionArtifact.model_validate_json(
+        json.dumps(
+            {
+                **manifest["data"],
+                "raw_document_ref": parsed.raw_document_ref.model_dump(mode="json"),
+            }
+        )
+    )
+    assert (
+        normalize(restored, restored.registration.revision.revision_id, registry)
+        == original_bundle
+    )
