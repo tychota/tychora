@@ -214,7 +214,7 @@ def test_missing_registered_root_binding(workspace):
 
 
 @pytest.mark.parametrize(
-    "limits", [{"max_tokens": 3001}, {"limit": 9}, {"max_graph_depth": 3}]
+    "limits", [{"max_tokens": 3001}, {"limit": 9}, {"semantic_hops": 3}]
 )
 def test_request_cannot_raise_profile_ceilings(workspace, limits):
     from tychora.configuration.resolve import resolve_config
@@ -417,11 +417,11 @@ def test_requested_output_profile_and_default_mode_are_resolved(workspace):
     config = resolve_config(
         workspace,
         "child",
-        {"output_profile": "compact", "limits": {"max_graph_nodes": 0}},
+        {"output_profile": "compact", "limits": {"graph_work_limit": 0}},
     )
     assert config.values.mode == "lookup"
     assert config.values.output.title == "Compact evidence"
-    assert config.values.limits.max_graph_nodes == 0
+    assert config.values.limits.graph_work_limit == 0
 
 
 def test_public_mapping_boundary_accepts_immutable_primitive_mappings(workspace):
@@ -429,9 +429,10 @@ def test_public_mapping_boundary_accepts_immutable_primitive_mappings(workspace)
 
     from tychora.configuration.resolve import resolve_config
 
-    overrides = MappingProxyType({"limits": MappingProxyType({"max_graph_nodes": 0})})
+    overrides = MappingProxyType({"limits": MappingProxyType({"graph_work_limit": 0})})
     assert (
-        resolve_config(workspace, "child", overrides).values.limits.max_graph_nodes == 0
+        resolve_config(workspace, "child", overrides).values.limits.graph_work_limit
+        == 0
     )
 
 
@@ -608,3 +609,70 @@ def test_kind_use_restrictions_change_eligibility_identity(workspace):
     )
     after = resolve_config(workspace, "base", {})
     assert after.eligibility_fingerprint != before.eligibility_fingerprint
+
+
+def test_graph_search_work_and_inspection_budgets_are_independent(workspace):
+    from tychora.configuration.resolve import resolve_config
+
+    config = resolve_config(
+        workspace,
+        "child",
+        {
+            "limits": {
+                "graph_work_limit": 1000,
+                "graph_candidate_limit": 16,
+                "inspection_edges": 80,
+            }
+        },
+    )
+    limits = config.values.limits
+    assert limits.graph_seed_limit == 5
+    assert limits.graph_candidate_limit == 16
+    assert limits.graph_work_limit == 1000
+    assert limits.semantic_hops == 1
+    assert limits.inspection_hops == 2
+    assert limits.inspection_edges == 80
+
+
+@pytest.mark.parametrize(
+    "name, ceiling",
+    [
+        ("graph_seed_limit", 5),
+        ("graph_candidate_limit", 32),
+        ("graph_work_limit", 2000),
+        ("semantic_hops", 1),
+        ("inspection_hops", 2),
+        ("inspection_edges", 100),
+    ],
+)
+def test_each_graph_budget_can_disable_work_but_cannot_raise_its_ceiling(
+    workspace, name, ceiling
+):
+    from tychora.configuration.resolve import resolve_config
+
+    assert (
+        getattr(resolve_config(workspace, "child", {}).values.limits, name) == ceiling
+    )
+    assert (
+        getattr(
+            resolve_config(workspace, "child", {"limits": {name: 0}}).values.limits,
+            name,
+        )
+        == 0
+    )
+    with pytest.raises(TychoraError, match="ceiling"):
+        resolve_config(workspace, "child", {"limits": {name: ceiling + 1}})
+
+
+def test_graph_request_respects_lower_workspace_ceiling(workspace):
+    from tychora.configuration.resolve import resolve_config
+
+    workspace.write_text(
+        workspace.read_text() + "\n[configuration.limits]\ngraph_work_limit = 100\n"
+    )
+    config = resolve_config(workspace, "child", {"limits": {"graph_work_limit": 50}})
+    assert config.values.limits.graph_work_limit == 50
+    assert config.values.limits.graph_candidate_limit == 32
+    assert config.values.limits.inspection_edges == 100
+    with pytest.raises(TychoraError, match="ceiling"):
+        resolve_config(workspace, "child", {"limits": {"graph_work_limit": 101}})

@@ -57,9 +57,12 @@ class ResourceLimits(Contract):
     limit: Annotated[int, Field(ge=1, le=1000)] = 8
     max_tokens: PositiveInt = 6000
     max_response_bytes: PositiveInt = 1048576
-    max_graph_nodes: NonNegativeInt = 200
-    max_graph_edges: NonNegativeInt = 500
-    max_graph_depth: NonNegativeInt = 2
+    graph_seed_limit: NonNegativeInt = 5
+    graph_candidate_limit: NonNegativeInt = 32
+    graph_work_limit: NonNegativeInt = 2000
+    semantic_hops: NonNegativeInt = 1
+    inspection_hops: NonNegativeInt = 2
+    inspection_edges: NonNegativeInt = 100
 
 
 class EmbeddingSettings(Contract):
