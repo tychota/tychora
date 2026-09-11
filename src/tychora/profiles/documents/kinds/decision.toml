@@ -1,0 +1,11 @@
+schema_version = 1
+id = "decision@1"
+key = "decision"
+label = "Decision"
+description = "Published decision retaining original passages and separately supplied findings."
+role = "primary_authority"
+default_lane = "authority"
+metadata_schema = "schemas/decision-metadata.json"
+normalizer = "structured_sections@1"
+allowed_uses = ["compose", "audit", "lookup"]
+examples = ["Find the passage explaining the published decision."]

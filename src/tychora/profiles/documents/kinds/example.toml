@@ -1,0 +1,11 @@
+schema_version = 1
+id = "example@1"
+key = "example"
+label = "Example"
+description = "Illustrative material whose approval never grants normative authority."
+role = "illustrative_material"
+default_lane = "example"
+metadata_schema = "schemas/example-metadata.json"
+normalizer = "structured_sections@1"
+allowed_uses = ["compose", "audit", "lookup"]
+examples = ["Find a previous illustrative report."]

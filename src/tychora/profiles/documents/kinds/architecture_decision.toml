@@ -1,0 +1,11 @@
+schema_version = 1
+id = "architecture_decision@1"
+key = "architecture_decision"
+label = "Architecture Decision"
+description = "A recorded design decision with context, status and alternatives."
+role = "maintenance_context"
+default_lane = "maintenance"
+metadata_schema = "schemas/architecture_decision-metadata.json"
+normalizer = "structured_sections@1"
+allowed_uses = ["compose", "audit", "lookup"]
+examples = ["Find the recorded reason for the storage design."]

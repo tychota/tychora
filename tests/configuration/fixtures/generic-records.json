@@ -1,0 +1,17 @@
+{
+  "law@1": {"metadata": {"title": "Records Act", "publisher": "Example Assembly", "jurisdiction": "Example Territory", "publication_date": "2024-02-29"}},
+  "regulation@1": {"metadata": {"title": "Records Regulation", "publisher": "Example Office", "jurisdiction": "Example Territory", "publication_date": null}},
+  "decision@1": {"metadata": {"title": "Published Decision", "deciding_body": "Example Board", "publication_date": "2024-03-01", "reference": "DEC-4"}},
+  "standard@1": {"metadata": {"title": "Records Standard", "issuer": "Example Standards Group", "edition": "1"}, "record": {"requirement": "Retain the original source.", "target": "record", "provenance": ["source-1"], "status": "recorded", "foundation_ids": ["unit-1"]}},
+  "guidance@1": {"metadata": {"title": "Records Guidance", "publisher": "Example Office", "edition": "1"}},
+  "manual@1": {"metadata": {"title": "Operations Manual", "publisher": "Example Team", "edition": "1"}},
+  "template@1": {"metadata": {"title": "Report Template", "owner": "Example Team", "edition": "1"}, "record": {"slot": "summary", "instruction": "Describe the recorded observation.", "target": "report", "provenance": ["source-2"], "status": "recorded", "foundation_ids": ["unit-2"]}},
+  "procedure@1": {"metadata": {"title": "Review Procedure", "owner": "Example Team", "edition": "1"}},
+  "feedback@1": {"metadata": {"title": "Review Note", "author": "Example Reviewer", "target": "draft-1", "decision": "Clarification requested"}, "record": {"comment": "Identify the original source.", "decision": "Clarification requested", "target": "draft-1", "provenance": ["source-3"], "status": "recorded", "foundation_ids": ["unit-3"]}},
+  "evidence@1": {"metadata": {"title": "Measurement", "author": "Example Observer", "provenance": ["source-4"]}, "record": {"claim": "The recorded count was four.", "target": "measurement-1", "provenance": ["source-4"], "status": "recorded", "foundation_ids": ["unit-4"]}},
+  "example@1": {"metadata": {"title": "Illustrative Report", "author": "Example Author", "approval": "accepted"}},
+  "rationale@1": {"metadata": {"title": "Requirement Rationale", "author": "Example Maintainer", "reference": "STD-12"}},
+  "research_note@1": {"metadata": {"title": "Experiment Observation", "author": "Example Researcher", "provenance": ["source-5"]}},
+  "code_file@1": {"metadata": {"title": "Parser Source", "relative_path": "src/parser.py", "language": "python"}, "record": {"relative_path": "src/parser.py", "language": "python", "symbol_kind": "function", "name": "parse", "qualified_name": "parse", "declaration_span": {"char_start": 0, "char_end": 12, "byte_start": 0, "byte_end": 12, "line_start": 1, "line_end": 1, "coordinate_domain": "original_file"}, "parent_unit_id": null, "overload_discriminator": null, "definition_key": "definition-1", "context_spans": [{"source_unit_id": "import-1", "char_start": 0, "char_end": 10, "original_file_locator": {"char_start": 0, "char_end": 10, "byte_start": 0, "byte_end": 10, "line_start": 1, "line_end": 1, "coordinate_domain": "original_file"}, "reason": "referenced_import", "dependency_unit_ids": ["import-1"]}], "adapter_fingerprint": "adapter-1"}},
+  "architecture_decision@1": {"metadata": {"title": "Storage Decision", "author": "Example Designer", "reference": "ADR-1", "decision": "Use embedded storage"}}
+}

@@ -15,6 +15,7 @@ from tychora.contracts.requests import FilterExpr, QueryInput
 
 
 class GraphSettings(Contract):
+    structural: Literal["none", "code_context@1"] = "none"
     semantic: bool = False
     predicates: tuple[NonEmptyStr, ...] = ()
     directions: tuple[Literal["outgoing", "incoming"], ...] = ("outgoing",)

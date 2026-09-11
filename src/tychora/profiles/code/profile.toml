@@ -1,0 +1,17 @@
+schema_version = 1
+id = "code"
+version = "1"
+extends = ["builtin:documents@1"]
+
+[extraction]
+parser = "code"
+
+[retrieval.graph]
+structural = "code_context@1"
+semantic = false
+predicates = ["contains@1", "precedes@1", "calls@1", "imports@1", "inherits@1"]
+directions = ["outgoing", "incoming"]
+statuses = ["recorded", "confirmed"]
+
+[index]
+graph = "ladybug"

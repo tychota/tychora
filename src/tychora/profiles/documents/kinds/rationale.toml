@@ -1,0 +1,11 @@
+schema_version = 1
+id = "rationale@1"
+key = "rationale"
+label = "Rationale"
+description = "Explanation of a rule or known failure, excluded from composition by default."
+role = "maintenance_context"
+default_lane = "maintenance"
+metadata_schema = "schemas/rationale-metadata.json"
+normalizer = "structured_sections@1"
+allowed_uses = ["audit", "lookup"]
+examples = ["Find why the requirement was introduced."]

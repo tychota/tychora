@@ -1,0 +1,597 @@
+"""Configuration semantics against real installed and synthetic local packs."""
+
+import pytest
+
+from tychora.configuration.schemas import LocalSchemas, import_inclusive_end
+from tychora.contracts.errors import TychoraError
+
+
+def test_schema_replay_uses_persisted_transitive_targets():
+    schemas = {
+        "root@1": {"$id": "root@1", "$ref": "renamed.json"},
+        "middle@1": {
+            "$id": "middle@1",
+            "$defs": {"part": {"$ref": "other.json#/$defs/value"}},
+        },
+        "target@1": {
+            "$id": "target@1",
+            "$defs": {"value": {"type": "integer", "minimum": 4}},
+        },
+    }
+    refs = {
+        "root@1": {"/$ref": {"schema_id": "middle@1", "fragment": "/$defs/part"}},
+        "middle@1": {
+            "/$defs/part/$ref": {"schema_id": "target@1", "fragment": "/$defs/value"}
+        },
+        "target@1": {},
+    }
+    validators = LocalSchemas(schemas, refs)
+    assert validators.validate("root@1", 4) == 4
+    with pytest.raises(TychoraError, match="schema"):
+        validators.validate("root@1", 3)
+    assert schemas["root@1"]["$ref"] == "renamed.json"
+
+
+@pytest.mark.parametrize(
+    "schema,refs",
+    [
+        ({"$id": "bad@1", "pattern": "x"}, {}),
+        ({"$id": "bad@1", "$ref": "https://example.invalid/schema"}, {}),
+        ({"$id": "bad@1", "$ref": "../escape.json"}, {}),
+        ({"$id": "bad@1", "$ref": "local.json"}, {}),
+        ({"$id": "bad@1", "type": "array", "items": {"type": "string"}}, {}),
+        ({"$id": "bad@1", "format": "uri"}, {}),
+        (
+            {"$id": "bad@1", "$ref": "#"},
+            {"/$ref": {"schema_id": "bad@1", "fragment": ""}},
+        ),
+        ({"$id": "bad@1", "$defs": {"x": {"$id": "nested@1"}}}, {}),
+    ],
+)
+def test_schema_replay_rejects_unbounded_or_ambient_resolution(schema, refs):
+    with pytest.raises(TychoraError) as err:
+        LocalSchemas({"bad@1": schema}, {"bad@1": refs})
+    assert err.value.code == "INVALID_REQUEST"
+
+
+def test_schema_enforces_dates_unknown_fields_and_bounds():
+    schema = {
+        "$id": "dated@1",
+        "type": "object",
+        "properties": {"date": {"type": "string", "format": "date"}},
+        "required": ["date"],
+        "additionalProperties": False,
+    }
+    validators = LocalSchemas({"dated@1": schema}, {"dated@1": {}})
+    for value in ({"date": "2025-02-29"}, {"date": "2024-02-29", "extra": 1}, {}):
+        with pytest.raises(TychoraError):
+            validators.validate("dated@1", value)
+    assert validators.validate("dated@1", {"date": "2024-02-29"}) == {
+        "date": "2024-02-29"
+    }
+    deep = {"type": "string"}
+    for _ in range(34):
+        deep = {"type": "object", "properties": {"child": deep}}
+    with pytest.raises(TychoraError):
+        LocalSchemas({"deep@1": {"$id": "deep@1", **deep}}, {"deep@1": {}})
+
+
+def test_import_inclusive_date_preserves_original_and_rejects_invalid():
+    assert dict(import_inclusive_end("2024-02-29")) == {
+        "original_inclusive_end": "2024-02-29",
+        "exclusive_end": "2024-03-01",
+    }
+    assert import_inclusive_end(None)["exclusive_end"] is None
+    for value in ("2025-02-29", "9999-12-31", "20240101"):
+        with pytest.raises(TychoraError):
+            import_inclusive_end(value)
+
+
+from pathlib import Path
+
+from tychora.configuration.registry import Registry
+from tychora.configuration.resolve import resolve_config
+from tychora.contracts.base import FrozenJsonMap
+from tychora.contracts.identity import digest
+from tychora.contracts.requests import AndFilter, EqFilter, OrFilter
+
+
+@pytest.fixture
+def builtin_config(tmp_path):
+    def load(name="documents"):
+        workspace = tmp_path / "workspace.toml"
+        workspace.write_text(
+            f'schema_version = 1\n[profiles.test]\nbuiltin = "{name}@1"\n'
+        )
+        return resolve_config(workspace, "test", {})
+
+    return load
+
+
+def test_installed_packs_discover_complete_zero_count_definitions(builtin_config):
+    expected = {
+        "law",
+        "regulation",
+        "decision",
+        "standard",
+        "guidance",
+        "manual",
+        "template",
+        "procedure",
+        "feedback",
+        "evidence",
+        "example",
+        "rationale",
+        "research_note",
+        "code_file",
+        "architecture_decision",
+    }
+    for profile in ("documents", "code", "verified"):
+        registry = Registry.from_config(builtin_config(profile))
+        rows = registry.discover_kinds({})
+        assert {row["key"] for row in rows} == expected
+        for row in rows:
+            assert row["count"] == 0
+            assert row["description"] and row["examples"] and row["metadata_schema"]
+            with pytest.raises(TychoraError):
+                registry.validate_metadata(row["id"], {})
+        assert set(registry.lanes) == {
+            "authority",
+            "standard",
+            "feedback",
+            "evidence",
+            "example",
+            "maintenance",
+        }
+        assert set(registry.normalizers) == {
+            "structured_sections@1",
+            "numbered_provisions@1",
+            "rule_records@1",
+            "feedback_records@1",
+            "template_slots@1",
+            "code_symbols@1",
+        }
+        assert set(registry.relations) == {
+            f"{name}@1"
+            for name in (
+                "supports",
+                "contradicts",
+                "limits",
+                "supersedes",
+                "reviews",
+                "illustrates",
+                "derived_from",
+                "contains",
+                "precedes",
+                "calls",
+                "imports",
+                "inherits",
+                "cites",
+                "continues_table",
+            )
+        }
+        expected_states = (
+            ("accepted",) if profile == "verified" else ("unreviewed", "accepted")
+        )
+        assert registry.modes["compose"]["original_review_states"] == expected_states
+        assert "maintenance" not in registry.modes["compose"]["allowed_lanes"]
+        assert "maintenance" in registry.modes["audit"]["allowed_lanes"]
+        assert registry.modes["lookup"]["allowed_uses"] == ("lookup",)
+
+
+def test_builtin_record_schemas_retain_literal_requirements(builtin_config):
+    registry = Registry.from_config(builtin_config())
+    rule = {
+        "requirement": "Retain the recorded source.",
+        "target": "record",
+        "provenance": ["source-1"],
+        "status": "recorded",
+        "foundation_ids": ["unit-1"],
+    }
+    assert registry.validate_record("standard@1", rule) == rule
+    for field in rule:
+        with pytest.raises(TychoraError):
+            registry.validate_record(
+                "standard@1", {k: v for k, v in rule.items() if k != field}
+            )
+    with pytest.raises(TychoraError):
+        registry.validate_metadata(
+            "law@1",
+            {
+                "publisher": "Assembly",
+                "jurisdiction": "Example",
+                "publication_date": "2025-02-29",
+            },
+        )
+
+
+def changed_config(config, change):
+    data = config.model_dump(mode="json")["registry"]
+    change(data)
+    return config.model_copy(
+        update={
+            "registry": FrozenJsonMap(data),
+            "registry_digest": digest("registry-v1", data),
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "category,key,field",
+    [
+        ("kinds", "standard@1", field)
+        for field in (
+            "key",
+            "label",
+            "description",
+            "role",
+            "metadata_schema",
+            "normalizer",
+            "examples",
+        )
+    ]
+    + [
+        ("roles", "normative_reference", "intended_use"),
+        ("lanes", "standard", "citation_prefix"),
+        ("modes", "compose", "original_review_states"),
+        ("relations", "supports@1", "require_origin"),
+        ("relations", "supports@1", "subject_unit_types"),
+        ("facets", "scope.project", "missing"),
+    ],
+)
+def test_missing_semantic_definition_requirements_fail(
+    builtin_config, category, key, field
+):
+    config = changed_config(
+        builtin_config(), lambda data: data[category][key].pop(field)
+    )
+    with pytest.raises(TychoraError) as err:
+        Registry.from_config(config)
+    assert err.value.code == "INVALID_REQUEST"
+
+
+@pytest.mark.parametrize(
+    "category,key,field,value",
+    [
+        ("kinds", "standard@1", "normalizer", "execute@1"),
+        ("kinds", "standard@1", "role", "unknown"),
+        ("kinds", "standard@1", "normalizer_options", {"regex": ".*"}),
+        ("relations", "supports@1", "require_origin", False),
+        ("relations", "supports@1", "require_supports", False),
+        ("relations", "supports@1", "methods", ["llm"]),
+        ("relations", "supports@1", "object_kinds", ["missing@1"]),
+        ("relations", "contains@1", "structural_semantics", "all_descendants"),
+        ("relations", "precedes@1", "require_endpoint_supports", False),
+        ("lanes", "standard", "citation_prefix", "A"),
+        ("modes", "compose", "allowed_lanes", ["missing"]),
+        ("modes", "compose", "derived_proxy_review_states", ["rejected"]),
+        ("facets", "scope.project", "key", "project"),
+        ("facets", "scope.project", "source_binding", "policy.allowed_uses"),
+        ("facets", "code.symbol_kind", "filter_scope", "all_units"),
+    ],
+)
+def test_invalid_semantics_fail_closed(builtin_config, category, key, field, value):
+    config = changed_config(
+        builtin_config(), lambda data: data[category][key].update({field: value})
+    )
+    with pytest.raises(TychoraError) as err:
+        Registry.from_config(config)
+    assert err.value.code == "INVALID_REQUEST"
+
+
+def test_custom_kind_and_predicate_load_without_code_changes(tmp_path):
+    import json
+
+    pack = tmp_path / "custom"
+    pack.mkdir()
+    (pack / "profile.toml").write_text("""schema_version=1
+id="custom"
+version="1"
+extends=["builtin:documents@1"]
+kind_definitions=["kind.toml"]
+relation_definitions=["relation.toml"]
+[lanes.evidence]
+kinds=["evidence@1", "research_note@1", "code_file@1", "observation@1"]
+""")
+    (pack / "meta.json").write_text(
+        json.dumps(
+            {
+                "$id": "observation-meta@1",
+                "type": "object",
+                "properties": {"observer": {"type": "string"}},
+                "required": ["observer"],
+                "additionalProperties": False,
+            }
+        )
+    )
+    (pack / "kind.toml").write_text("""schema_version=1
+id="observation@1"
+key="observation"
+label="Observation"
+description="An attributed field observation."
+role="supporting_evidence"
+metadata_schema="meta.json"
+normalizer="structured_sections@1"
+examples=["Find the field observation."]
+""")
+    (pack / "relation.toml").write_text("""schema_version=1
+id="substantiates@1"
+key="substantiates"
+label="Substantiates"
+description="Explicit support for an observation."
+directed=true
+subject_unit_types=["paragraph"]
+object_unit_types=["paragraph"]
+methods=["human"]
+default_status="recorded"
+revision_binding="explicit"
+require_origin=true
+require_supports=true
+search_directions=["outgoing"]
+""")
+    workspace = tmp_path / "workspace.toml"
+    workspace.write_text('schema_version=1\n[profiles.test]\npath="custom"\n')
+    registry = Registry.from_config(resolve_config(workspace, "test", {}))
+    assert registry.validate_metadata("observation@1", {"observer": "Survey team"}) == {
+        "observer": "Survey team"
+    }
+    assert registry.relations["substantiates@1"]["methods"] == ("human",)
+    with pytest.raises(TychoraError):
+        registry.validate_metadata("observation@1", {"unregistered": "value"})
+
+
+def test_filters_separate_candidate_selectors_from_context_constraints(builtin_config):
+    from tychora.configuration.registry import compile_filter
+
+    registry = Registry.from_config(builtin_config("code"))
+    expr = AndFilter(
+        children=(
+            EqFilter(field="symbol_kind", value="method"),
+            EqFilter(field="code.language", value="python"),
+        )
+    )
+    scoped = compile_filter(expr, registry)
+    assert scoped.matched_candidates == EqFilter(
+        field="code.symbol_kind", value="method"
+    )
+    assert scoped.all_units == EqFilter(field="code.language", value="python")
+    with pytest.raises(TychoraError):
+        compile_filter(OrFilter(children=expr.children), registry)
+    with pytest.raises(TychoraError):
+        compile_filter(
+            OrFilter(children=(expr, EqFilter(field="code.language", value="python"))),
+            registry,
+        )
+    for expression in (
+        EqFilter(field="unregistered", value="x"),
+        EqFilter(field="language", value=1),
+    ):
+        with pytest.raises(TychoraError):
+            compile_filter(expression, registry)
+
+
+def test_global_is_explicit_and_cannot_broaden_source_scope(builtin_config):
+    registry = Registry.from_config(builtin_config())
+    assert registry.facet_matches("project", "red", "red")
+    assert not registry.facet_matches("project", "red", None, include_global=True)
+    assert not registry.facet_matches("project", "red", None, explicit_global=True)
+    assert registry.facet_matches(
+        "project", "red", None, explicit_global=True, include_global=True
+    )
+    assert not registry.facet_matches(
+        "project", "red", "blue", child_value="red", include_global=True
+    )
+    assert not registry.facet_matches("project", "red", "red", child_value="blue")
+    assert not registry.facet_matches(
+        "language", "python", None, explicit_global=True, include_global=True
+    )
+
+
+def test_hint_contributions_are_exact_non_policy_and_capped(builtin_config):
+    registry = Registry.from_config(builtin_config())
+    hints = {"project": "red", "language": "python", "symbol_kind": "method"}
+    values = {
+        "scope.project": "red",
+        "code.language": "python",
+        "code.symbol_kind": "method",
+    }
+    assert registry.hint_contributions(hints, values) == FrozenJsonMap()
+    contributions = registry.hint_contributions(hints, values, bonus=0.008)
+    assert sum(contributions.values()) == pytest.approx(0.01)
+    assert (
+        registry.hint_contributions({"project": "blue"}, values, bonus=0.008)
+        == FrozenJsonMap()
+    )
+    with pytest.raises(TychoraError):
+        registry.hint_contributions({"access": "public"}, values, bonus=0.008)
+    with pytest.raises(TychoraError):
+        registry.hint_contributions(hints, values, bonus=0.02)
+
+
+def test_historical_exports_and_owner_activation_require_known_bindings(builtin_config):
+    from tychora.configuration.compatibility import require_kind_coverage
+
+    registry = Registry.from_config(builtin_config())
+    envelopes = registry.historical_definitions()
+    require_kind_coverage(frozenset(registry.kinds), registry.lane_bindings, envelopes)
+    registry.validate_activation(frozenset(registry.kinds), envelopes)
+    config = changed_config(
+        builtin_config(),
+        lambda data: data["compatibility"].update(
+            {"kind_lanes": {"missing@0": "standard"}}
+        ),
+    )
+    upgraded = Registry.from_config(config)
+    # Unrelated invisible/retained history is not disclosed during a scoped query.
+    require_kind_coverage(frozenset({"standard@1"}), upgraded.lane_bindings, envelopes)
+    with pytest.raises(TychoraError) as err:
+        upgraded.validate_activation(frozenset({"standard@1"}), envelopes)
+    assert err.value.code == "PROFILE_INCOMPATIBLE"
+
+
+def test_historical_lane_conflicts_fail_before_selection(builtin_config):
+    config = changed_config(
+        builtin_config(),
+        lambda data: data["compatibility"].update(
+            {"kind_lanes": {"standard@1": "maintenance"}}
+        ),
+    )
+    with pytest.raises(TychoraError):
+        Registry.from_config(config)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("value_type", "integer"),
+        ("source_binding", "metadata.other"),
+        ("filter_scope", "matched_candidates"),
+        ("allow_global", False),
+    ],
+)
+def test_persisted_facet_semantics_cannot_be_redefined_in_workspace(
+    tmp_path, field, value
+):
+    import json
+
+    workspace = tmp_path / "workspace.toml"
+    workspace.write_text(
+        'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n[configuration.facets."scope.project"]\n'
+        + field
+        + "="
+        + json.dumps(value)
+        + "\n"
+    )
+    with pytest.raises(TychoraError) as err:
+        resolve_config(workspace, "test", {})
+    assert err.value.code == "INVALID_REQUEST"
+
+
+def test_code_profile_enables_only_structural_graph_context(builtin_config):
+    documents = builtin_config("documents")
+    code = builtin_config("code")
+    assert documents.values.retrieval.graph.structural == "none"
+    assert not documents.values.retrieval.graph.semantic
+    assert code.values.retrieval.graph.structural == "code_context@1"
+    assert not code.values.retrieval.graph.semantic
+    assert code.values.index.graph == "ladybug"
+
+
+def test_code_structural_context_requires_compatible_backend(tmp_path):
+    workspace = tmp_path / "workspace.toml"
+    workspace.write_text(
+        'schema_version=1\n[profiles.test]\nbuiltin="code@1"\n[configuration.index]\ngraph="disabled"\n'
+    )
+    with pytest.raises(TychoraError) as err:
+        resolve_config(workspace, "test", {})
+    assert err.value.code == "INVALID_REQUEST"
+
+
+def test_complete_generic_golden_records_validate_and_keep_required_fields(
+    builtin_config,
+):
+    import json
+
+    fixtures = json.loads(
+        (Path(__file__).parent / "fixtures" / "generic-records.json").read_text()
+    )
+    registry = Registry.from_config(builtin_config())
+    assert set(fixtures) == set(registry.kinds)
+    for kind, fixture in fixtures.items():
+        assert (
+            registry.validate_metadata(kind, fixture["metadata"]) == fixture["metadata"]
+        )
+        with pytest.raises(TychoraError):
+            registry.validate_metadata(
+                kind, {**fixture["metadata"], "unknown": "not registered"}
+            )
+        if "record" in fixture:
+            assert (
+                registry.validate_record(kind, fixture["record"]) == fixture["record"]
+            )
+            for field in fixture["record"]:
+                with pytest.raises(TychoraError):
+                    registry.validate_record(
+                        kind,
+                        {
+                            key: value
+                            for key, value in fixture["record"].items()
+                            if key != field
+                        },
+                    )
+
+
+def test_activation_rejects_changed_definition_of_retained_version(builtin_config):
+    original = Registry.from_config(builtin_config())
+    changed = changed_config(
+        builtin_config(),
+        lambda data: data["kinds"]["standard@1"].update({"allowed_uses": ["lookup"]}),
+    )
+    proposed = Registry.from_config(changed)
+    with pytest.raises(TychoraError) as err:
+        proposed.validate_activation(
+            frozenset({"standard@1"}), original.historical_definitions()
+        )
+    assert err.value.code == "PROFILE_INCOMPATIBLE"
+
+
+@pytest.mark.parametrize(
+    "category,key",
+    [
+        ("modes", "compose"),
+        ("relations", "supports@1"),
+        ("roles", "normative_reference"),
+        ("facets", "scope.project"),
+        ("lanes", "standard"),
+        ("kinds", "standard@1"),
+    ],
+)
+def test_malformed_definition_returns_typed_error(builtin_config, category, key):
+    config = changed_config(
+        builtin_config(), lambda data: data[category].update({key: None})
+    )
+    with pytest.raises(TychoraError) as err:
+        Registry.from_config(config)
+    assert err.value.code == "INVALID_REQUEST"
+
+
+def test_kind_discovery_materializes_bound_original_schemas(builtin_config):
+    registry = Registry.from_config(builtin_config())
+    row = next(
+        row
+        for row in registry.discover_kinds({"standard@1": 2})
+        if row["id"] == "standard@1"
+    )
+    assert row["count"] == 2
+    assert row["schema_ids"]["metadata_schema"] == "standard-metadata@1"
+    assert row["metadata_schema_definition"]["required"] == (
+        "title",
+        "issuer",
+        "edition",
+    )
+    assert row["record_schema_definition"]["required"] == (
+        "requirement",
+        "target",
+        "provenance",
+        "status",
+        "foundation_ids",
+    )
+
+
+def test_schema_replay_preserves_literal_percent_in_pointer_keys():
+    schema = {
+        "$id": "literal@1",
+        "$ref": "#/$defs/x%2Fy",
+        "$defs": {"x%2Fy": {"type": "integer"}},
+    }
+    local = LocalSchemas(
+        {"literal@1": schema},
+        {
+            "literal@1": {
+                "/$ref": {"schema_id": "literal@1", "fragment": "/$defs/x%2Fy"}
+            }
+        },
+    )
+    assert local.validate("literal@1", 4) == 4
+    with pytest.raises(TychoraError):
+        local.validate("literal@1", "wrong type")

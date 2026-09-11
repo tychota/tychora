@@ -1,0 +1,12 @@
+schema_version = 1
+id = "code_file@1"
+key = "code_file"
+label = "Code File"
+description = "Implementation source with exact definition ranges and original source provenance."
+role = "implementation_evidence"
+default_lane = "evidence"
+metadata_schema = "schemas/code_file-metadata.json"
+normalizer = "code_symbols@1"
+allowed_uses = ["compose", "audit", "lookup"]
+examples = ["Find the implementation of the parser function."]
+record_schema = "schemas/code-symbol.json"

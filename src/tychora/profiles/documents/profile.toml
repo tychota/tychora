@@ -1,0 +1,207 @@
+schema_version = 1
+id = "documents"
+version = "1"
+kind_definitions = ["kinds/law.toml", "kinds/regulation.toml", "kinds/decision.toml", "kinds/standard.toml", "kinds/guidance.toml", "kinds/manual.toml", "kinds/template.toml", "kinds/procedure.toml", "kinds/feedback.toml", "kinds/evidence.toml", "kinds/example.toml", "kinds/rationale.toml", "kinds/research_note.toml", "kinds/code_file.toml", "kinds/architecture_decision.toml"]
+relation_definitions = ["relations/supports.toml", "relations/contradicts.toml", "relations/limits.toml", "relations/supersedes.toml", "relations/reviews.toml", "relations/illustrates.toml", "relations/derived_from.toml", "relations/contains.toml", "relations/precedes.toml", "relations/calls.toml", "relations/imports.toml", "relations/inherits.toml", "relations/cites.toml", "relations/continues_table.toml"]
+schema_definitions = ["schemas/metadata.json"]
+default_mode = "compose"
+
+[roles.primary_authority]
+id = "primary_authority@1"
+key = "primary_authority"
+label = "Primary Authority"
+description = "Primary normative material; classification alone grants no authority or access."
+intended_use = "Primary normative material; classification alone grants no authority or access."
+
+[roles.normative_reference]
+id = "normative_reference@1"
+key = "normative_reference"
+label = "Normative Reference"
+description = "Requirements used as references under separately granted permissions."
+intended_use = "Requirements used as references under separately granted permissions."
+
+[roles.explanatory_reference]
+id = "explanatory_reference@1"
+key = "explanatory_reference"
+label = "Explanatory Reference"
+description = "Explanations and instructions with separately declared authority."
+intended_use = "Explanations and instructions with separately declared authority."
+
+[roles.output_convention]
+id = "output_convention@1"
+key = "output_convention"
+label = "Output Convention"
+description = "Output shapes and completion instructions."
+intended_use = "Output shapes and completion instructions."
+
+[roles.review_observation]
+id = "review_observation@1"
+key = "review_observation"
+label = "Review Observation"
+description = "Attributed comments and recorded review decisions."
+intended_use = "Attributed comments and recorded review decisions."
+
+[roles.supporting_evidence]
+id = "supporting_evidence@1"
+key = "supporting_evidence"
+label = "Supporting Evidence"
+description = "Declared facts, observations and implementation evidence."
+intended_use = "Declared facts, observations and implementation evidence."
+
+[roles.illustrative_material]
+id = "illustrative_material@1"
+key = "illustrative_material"
+label = "Illustrative Material"
+description = "Examples whose approval does not grant authority."
+intended_use = "Examples whose approval does not grant authority."
+
+[roles.maintenance_context]
+id = "maintenance_context@1"
+key = "maintenance_context"
+label = "Maintenance Context"
+description = "Maintenance explanations and recorded design context."
+intended_use = "Maintenance explanations and recorded design context."
+
+[roles.implementation_evidence]
+id = "implementation_evidence@1"
+key = "implementation_evidence"
+label = "Implementation Evidence"
+description = "Original implementation source and exact source ranges."
+intended_use = "Original implementation source and exact source ranges."
+
+[lanes.authority]
+key = "authority"
+label = "Primary sources"
+description = "Primary normative text and published decisions."
+citation_prefix = "A"
+kinds = ["law@1", "regulation@1", "decision@1"]
+
+[lanes.standard]
+key = "standard"
+label = "Standards and instructions"
+description = "Requirements, guidance, workflows and output conventions."
+citation_prefix = "S"
+kinds = ["standard@1", "guidance@1", "manual@1", "template@1", "procedure@1"]
+
+[lanes.feedback]
+key = "feedback"
+label = "Feedback"
+description = "Attributed comments and recorded decisions."
+citation_prefix = "F"
+kinds = ["feedback@1"]
+
+[lanes.evidence]
+key = "evidence"
+label = "Evidence"
+description = "Facts, research and original implementation source."
+citation_prefix = "E"
+kinds = ["evidence@1", "research_note@1", "code_file@1"]
+
+[lanes.example]
+key = "example"
+label = "Examples"
+description = "Illustrations whose approval does not grant authority."
+citation_prefix = "X"
+kinds = ["example@1"]
+
+[lanes.maintenance]
+key = "maintenance"
+label = "Maintenance"
+description = "Rationale and recorded design context."
+citation_prefix = "M"
+kinds = ["rationale@1", "architecture_decision@1"]
+
+[modes.compose]
+allowed_lanes = ["authority", "standard", "feedback", "evidence", "example"]
+allowed_uses = ["compose"]
+original_review_states = ["unreviewed", "accepted"]
+derived_proxy_policy = "permitted"
+allow_derived_proxies = true
+derived_proxy_review_states = ["unreviewed", "needs_review", "accepted"]
+required_lanes = []
+
+[modes.audit]
+allowed_lanes = ["authority", "standard", "feedback", "evidence", "example", "maintenance"]
+allowed_uses = ["audit"]
+original_review_states = ["unreviewed", "accepted"]
+derived_proxy_policy = "permitted"
+allow_derived_proxies = true
+derived_proxy_review_states = ["unreviewed", "needs_review", "accepted"]
+required_lanes = []
+
+[modes.lookup]
+allowed_lanes = ["authority", "standard", "feedback", "evidence", "example", "maintenance"]
+allowed_uses = ["lookup"]
+original_review_states = ["unreviewed", "accepted"]
+derived_proxy_policy = "permitted"
+allow_derived_proxies = true
+derived_proxy_review_states = ["unreviewed", "needs_review", "accepted"]
+required_lanes = []
+
+[facets."scope.project"]
+key = "scope.project"
+alias = "project"
+value_type = "string"
+operators = ["eq", "in"]
+source_binding = "metadata.scope.project"
+filter_scope = "all_units"
+missing = "exclude"
+allow_global = true
+hint = true
+
+[facets."code.language"]
+key = "code.language"
+alias = "language"
+value_type = "string"
+operators = ["eq", "in"]
+source_binding = "metadata.language"
+filter_scope = "all_units"
+missing = "exclude"
+allow_global = false
+hint = true
+
+[facets."code.path"]
+key = "code.path"
+alias = "path"
+value_type = "string"
+operators = ["eq", "in"]
+source_binding = "metadata.relative_path"
+filter_scope = "all_units"
+missing = "exclude"
+allow_global = false
+hint = true
+
+[facets."code.symbol_kind"]
+key = "code.symbol_kind"
+alias = "symbol_kind"
+value_type = "string"
+operators = ["eq", "in"]
+source_binding = "record.symbol_kind"
+filter_scope = "matched_candidates"
+missing = "exclude"
+allow_global = false
+hint = true
+
+[facets."code.qualified_name"]
+key = "code.qualified_name"
+alias = "qualified_name"
+value_type = "string"
+operators = ["eq", "in"]
+source_binding = "record.qualified_name"
+filter_scope = "matched_candidates"
+missing = "exclude"
+allow_global = false
+hint = true
+
+[renderers."hierarchical-evidence@1"]
+id = "hierarchical-evidence@1"
+label = "Hierarchical evidence"
+description = "Deterministic evidence grouped by configured lanes."
+
+[output]
+renderer = "hierarchical-evidence@1"
+lane_order = ["authority", "standard", "feedback", "evidence", "example", "maintenance"]
+include_empty_lanes = true
+locale = "en"
+title = "Evidence pack"
+envelope_tag = "evidence_context"

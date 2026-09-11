@@ -1,0 +1,54 @@
+{
+  "$id": "evidence-record@1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "claim": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "target": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "provenance": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 65536
+      },
+      "minItems": 1,
+      "maxItems": 4096
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "recorded",
+        "proposed",
+        "accepted",
+        "rejected"
+      ]
+    },
+    "foundation_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 65536
+      },
+      "minItems": 1,
+      "maxItems": 4096
+    }
+  },
+  "required": [
+    "claim",
+    "target",
+    "provenance",
+    "status",
+    "foundation_ids"
+  ],
+  "additionalProperties": false
+}

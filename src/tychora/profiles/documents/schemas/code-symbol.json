@@ -1,0 +1,209 @@
+{
+  "$id": "code-symbol@1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "language": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "symbol_kind": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "qualified_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "declaration_span": {
+      "type": "object",
+      "properties": {
+        "char_start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "char_end": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "byte_start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "byte_end": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "line_start": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "line_end": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "coordinate_domain": {
+          "type": "string",
+          "enum": [
+            "original_file"
+          ]
+        }
+      },
+      "required": [
+        "char_start",
+        "char_end",
+        "byte_start",
+        "byte_end",
+        "line_start",
+        "line_end",
+        "coordinate_domain"
+      ],
+      "additionalProperties": false
+    },
+    "parent_unit_id": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 4096
+    },
+    "overload_discriminator": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 4096
+    },
+    "definition_key": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "context_spans": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source_unit_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 65536
+          },
+          "char_start": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "char_end": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "original_file_locator": {
+            "type": "object",
+            "properties": {
+              "char_start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "char_end": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "byte_start": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "byte_end": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "line_start": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "line_end": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "coordinate_domain": {
+                "type": "string",
+                "enum": [
+                  "original_file"
+                ]
+              }
+            },
+            "required": [
+              "char_start",
+              "char_end",
+              "byte_start",
+              "byte_end",
+              "line_start",
+              "line_end",
+              "coordinate_domain"
+            ],
+            "additionalProperties": false
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "parent_declaration",
+              "referenced_import"
+            ]
+          },
+          "dependency_unit_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 65536
+            },
+            "minItems": 1,
+            "maxItems": 4096
+          }
+        },
+        "required": [
+          "source_unit_id",
+          "char_start",
+          "char_end",
+          "original_file_locator",
+          "reason",
+          "dependency_unit_ids"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 0,
+      "maxItems": 4096
+    },
+    "adapter_fingerprint": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    }
+  },
+  "required": [
+    "relative_path",
+    "language",
+    "symbol_kind",
+    "name",
+    "qualified_name",
+    "declaration_span",
+    "parent_unit_id",
+    "overload_discriminator",
+    "definition_key",
+    "context_spans",
+    "adapter_fingerprint"
+  ],
+  "additionalProperties": false
+}

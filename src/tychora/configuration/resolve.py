@@ -385,6 +385,22 @@ def _resolve_config(
                 raise TychoraError(
                     "INVALID_REQUEST", "Conflicting immutable schema reference binding"
                 )
+        for key, facet in overlay.get("facets", {}).items():
+            previous = registry["facets"].get(key)
+            if previous is not None:
+                for field in (
+                    "key",
+                    "value_type",
+                    "source_binding",
+                    "filter_scope",
+                    "allow_global",
+                    "missing",
+                    "operators",
+                ):
+                    if field in facet and facet[field] != previous.get(field):
+                        raise TychoraError(
+                            "INVALID_REQUEST", "Conflicting immutable facet semantics"
+                        )
         record(overlay)
         values = merge_values(
             values,
@@ -460,6 +476,11 @@ def _resolve_config(
             raise TychoraError(
                 "INVALID_REQUEST", "Vector index requires a matching modality provider"
             )
+    if typed.retrieval.graph.structural != "none" and typed.index.graph != "ladybug":
+        raise TychoraError(
+            "INVALID_REQUEST",
+            "Code structural context requires the Ladybug graph backend",
+        )
     registry_sha = digest("registry-v1", registry)
     return ResolvedConfig(
         profile=profile,

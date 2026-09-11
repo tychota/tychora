@@ -1,0 +1,11 @@
+schema_version = 1
+id = "law@1"
+key = "law"
+label = "Law"
+description = "Primary enacted normative text with a publisher, jurisdiction and declared dates."
+role = "primary_authority"
+default_lane = "authority"
+metadata_schema = "schemas/law-metadata.json"
+normalizer = "numbered_provisions@1"
+allowed_uses = ["compose", "audit", "lookup"]
+examples = ["Find the original wording of article 4."]

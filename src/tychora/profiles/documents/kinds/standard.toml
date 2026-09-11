@@ -1,0 +1,17 @@
+schema_version = 1
+id = "standard@1"
+key = "standard"
+label = "Standard"
+description = "Published or internal requirements identified by issuer and edition."
+role = "normative_reference"
+default_lane = "standard"
+metadata_schema = "schemas/standard-metadata.json"
+normalizer = "rule_records@1"
+allowed_uses = ["compose", "audit", "lookup"]
+examples = ["Find the requirement identified by STD-12."]
+record_schema = "schemas/rule.json"
+
+[normalizer_options]
+identifier_prefixes = ["STD-"]
+requirement_labels = ["Requirement"]
+proof_labels = ["Expected evidence"]

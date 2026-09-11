@@ -1,0 +1,139 @@
+{
+  "$id": "example-metadata@1",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "publisher": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "jurisdiction": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "publication_date": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "effective_start": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "effective_end": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date"
+    },
+    "issuer": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "edition": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "deciding_body": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "author": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "provenance": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 65536
+      },
+      "minItems": 1,
+      "maxItems": 4096
+    },
+    "target": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "decision": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "language": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "relative_path": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    },
+    "approval": {
+      "type": "string",
+      "enum": [
+        "unreviewed",
+        "accepted",
+        "rejected"
+      ]
+    },
+    "scope": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 65536
+        },
+        "global_facets": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 65536
+          },
+          "minItems": 0,
+          "maxItems": 4096
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "title",
+    "author",
+    "approval"
+  ],
+  "additionalProperties": false
+}

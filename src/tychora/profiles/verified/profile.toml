@@ -1,0 +1,19 @@
+schema_version = 1
+id = "verified"
+version = "1"
+extends = ["builtin:documents@1"]
+
+[modes.compose]
+original_review_states = ["accepted"]
+derived_proxy_policy = "accepted_only"
+derived_proxy_review_states = ["accepted"]
+
+[modes.audit]
+original_review_states = ["accepted"]
+derived_proxy_policy = "accepted_only"
+derived_proxy_review_states = ["accepted"]
+
+[modes.lookup]
+original_review_states = ["accepted"]
+derived_proxy_policy = "accepted_only"
+derived_proxy_review_states = ["accepted"]

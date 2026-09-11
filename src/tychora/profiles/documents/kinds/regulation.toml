@@ -1,0 +1,11 @@
+schema_version = 1
+id = "regulation@1"
+key = "regulation"
+label = "Regulation"
+description = "Primary regulatory provisions issued by an identified public body."
+role = "primary_authority"
+default_lane = "authority"
+metadata_schema = "schemas/regulation-metadata.json"
+normalizer = "numbered_provisions@1"
+allowed_uses = ["compose", "audit", "lookup"]
+examples = ["Find the numbered provision on record retention."]

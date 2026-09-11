@@ -1,0 +1,12 @@
+schema_version = 1
+id = "feedback@1"
+key = "feedback"
+label = "Feedback"
+description = "Attributed comments with explicit targets and recorded decisions."
+role = "review_observation"
+default_lane = "feedback"
+metadata_schema = "schemas/feedback-metadata.json"
+normalizer = "feedback_records@1"
+allowed_uses = ["compose", "audit", "lookup"]
+examples = ["Find the recorded review comment for the draft."]
+record_schema = "schemas/feedback.json"

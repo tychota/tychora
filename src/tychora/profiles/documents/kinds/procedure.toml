@@ -1,0 +1,11 @@
+schema_version = 1
+id = "procedure@1"
+key = "procedure"
+label = "Procedure"
+description = "Ordered workflow with declared preconditions, controls and linked rules."
+role = "normative_reference"
+default_lane = "standard"
+metadata_schema = "schemas/procedure-metadata.json"
+normalizer = "structured_sections@1"
+allowed_uses = ["compose", "audit", "lookup"]
+examples = ["Find the verification steps in the procedure."]
