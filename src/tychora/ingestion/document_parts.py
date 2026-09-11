@@ -53,6 +53,95 @@ class _Budget:
         self.pending = 0
 
 
+def _part_locators(
+    item: DocumentUnit,
+    part: DocumentSourcePart,
+    source_key: str,
+    artifact_sha: str,
+) -> tuple[DocumentLocator, ...]:
+    """Project a proven original field slice into its canonical unit range."""
+    projected: list[DocumentLocator] = []
+    native_locators = item.locators
+    if part.field == "marker" and item.provenance:
+        native_locators = tuple(
+            DocumentLocator(
+                artifact_ref=artifact_sha,
+                native_ref=source_key,
+                char_start=max(part.source_start, prov.charspan[0])
+                if prov.char_domain == "docling_orig_text_item"
+                else part.source_start,
+                char_end=min(part.source_end, prov.charspan[1])
+                if prov.char_domain == "docling_orig_text_item"
+                else part.source_end,
+                physical_page=prov.physical_page,
+                geometry=prov.geometry,
+            )
+            for prov in item.provenance
+            if prov.char_domain != "docling_orig_text_item"
+            or min(part.source_end, prov.charspan[1])
+            > max(part.source_start, prov.charspan[0])
+        )
+    for loc in native_locators:
+        if part.field in ("text", "marker") and item.provenance:
+            left, right = (
+                max(part.source_start, loc.char_start),
+                min(part.source_end, loc.char_end),
+            )
+            if right <= left:
+                continue
+            canonical_start, canonical_end = (
+                part.unit_start + left - part.source_start,
+                part.unit_start + right - part.source_start,
+            )
+        else:
+            canonical_start, canonical_end = part.unit_start, part.unit_end
+        projected.append(
+            loc.model_copy(
+                update={
+                    "native_ref": source_key,
+                    "char_start": canonical_start,
+                    "char_end": canonical_end,
+                }
+            )
+        )
+    return tuple(projected)
+
+
+def _point_locators(
+    item: DocumentUnit, offset: int, source_key: str
+) -> tuple[DocumentLocator, ...]:
+    return tuple(
+        loc.model_copy(
+            update={"native_ref": source_key, "char_start": offset, "char_end": offset}
+        )
+        for loc in item.locators
+    )
+
+
+def _source_field_order(
+    item: DocumentUnit, domain: str, cell_index: int | None
+) -> tuple[int, int, int, int, int]:
+    """Order by retained source structure, independently of canonical offsets."""
+    if domain == "table_cell":
+        cells = cast(
+            tuple[Mapping[str, Any], ...],
+            cast(Mapping[str, Any], item.raw_item.get("data", {})).get(
+                "table_cells", ()
+            ),
+        )
+        if cell_index is None or cell_index >= len(cells):
+            raise ValueError("Missing original table cell")
+        cell = cells[cell_index]
+        return (
+            item.ordinal,
+            0,
+            cell["start_row_offset_idx"],
+            cell["start_col_offset_idx"],
+            cell_index,
+        )
+    return item.ordinal, 0 if domain == "marker" else 1, 0, 0, 0
+
+
 def represent_document_parts(
     originals: tuple[DocumentUnit, ...],
     revision: str,
@@ -117,49 +206,7 @@ def represent_document_parts(
         budget.reserve(len(canonical_bytes(part.model_dump(mode="json"))))
         parts.append(part)
         fragments.append(value)
-        native_locators = item.locators
-        if domain == "marker" and item.provenance:
-            native_locators = tuple(
-                DocumentLocator(
-                    artifact_ref=artifact_sha,
-                    native_ref=source_key,
-                    char_start=max(start, prov.charspan[0])
-                    if prov.char_domain == "docling_orig_text_item"
-                    else start,
-                    char_end=min(start + len(value), prov.charspan[1])
-                    if prov.char_domain == "docling_orig_text_item"
-                    else start + len(value),
-                    physical_page=prov.physical_page,
-                    geometry=prov.geometry,
-                )
-                for prov in item.provenance
-                if prov.char_domain != "docling_orig_text_item"
-                or min(start + len(value), prov.charspan[1])
-                > max(start, prov.charspan[0])
-            )
-        for loc in native_locators:
-            if domain in ("text", "marker") and item.provenance:
-                left, right = (
-                    max(start, loc.char_start),
-                    min(start + len(value), loc.char_end),
-                )
-                if right <= left:
-                    continue
-                canonical_start, canonical_end = (
-                    offset + left - start,
-                    offset + right - start,
-                )
-            else:
-                canonical_start, canonical_end = offset, offset + len(value)
-            locators.append(
-                loc.model_copy(
-                    update={
-                        "native_ref": source_key,
-                        "char_start": canonical_start,
-                        "char_end": canonical_end,
-                    }
-                )
-            )
+        locators.extend(_part_locators(item, part, source_key, artifact_sha))
         offset += len(value)
 
     for index, item in enumerate(originals):
@@ -174,10 +221,7 @@ def represent_document_parts(
             )
             ordered = sorted(
                 enumerate(cells),
-                key=lambda pair: (
-                    pair[1]["start_row_offset_idx"],
-                    pair[1]["start_col_offset_idx"],
-                ),
+                key=lambda pair: _source_field_order(item, "table_cell", pair[0]),
             )
             row = None
             for cell_index, cell in ordered:
@@ -203,16 +247,7 @@ def represent_document_parts(
             "table",
             "document_index",
         ):
-            locators.extend(
-                loc.model_copy(
-                    update={
-                        "native_ref": source_key,
-                        "char_start": offset,
-                        "char_end": offset,
-                    }
-                )
-                for loc in item.locators
-            )
+            locators.extend(_point_locators(item, offset, source_key))
     return "".join(fragments), tuple(parts), tuple(separators), tuple(locators)
 
 
@@ -245,7 +280,8 @@ def _validate_source_parts(
     )
     ranges = []
     seen: dict[tuple[str, str, int | None], list[tuple[int, int]]] = {}
-    previous_order = (-1, -1)
+    previous_order: tuple[int, ...] = (-1,)
+    previous_end = 0
     represented = set()
     for part in parts:
         if part.native_ref not in ref_set:
@@ -265,10 +301,14 @@ def _validate_source_parts(
             source = item.raw_item.get(part.field)
         if not isinstance(source, str) or part.source_end > len(source):
             raise ValueError("Missing or out-of-range original field")
-        order = item.ordinal, part.unit_start
-        if order < previous_order:
+        order = (
+            *_source_field_order(item, part.field, part.cell_index),
+            part.source_start,
+        )
+        if order < previous_order or part.unit_start < previous_end:
             raise ValueError("Document source part order differs")
         previous_order = order
+        previous_end = part.unit_end
         if (
             part.unit_end > len(unit.text)
             or source[part.source_start : part.source_end]
@@ -311,6 +351,37 @@ def _validate_source_parts(
         items[ref].text and ref not in represented for ref in refs
     ):
         raise ValueError("Incomplete grouped document source ownership")
+
+    by_ref: dict[str, list[DocumentSourcePart]] = {ref: [] for ref in refs}
+    for part in parts:
+        by_ref[part.native_ref].append(part)
+    expected_locators: list[DocumentLocator] = []
+    offset = 0
+    for index, ref in enumerate(refs):
+        item = items[ref]
+        if index:
+            offset += 2  # The canonical item boundary is structural "\n\n".
+        for part in by_ref[ref]:
+            expected_locators.extend(
+                _part_locators(
+                    item,
+                    part,
+                    parsed.registration.source.source_key,
+                    parsed.original_ref.sha256,
+                )
+            )
+            offset = part.unit_end
+        if "text" not in item.raw_item and item.unit_type not in (
+            "table",
+            "document_index",
+        ):
+            expected_locators.extend(
+                _point_locators(item, offset, parsed.registration.source.source_key)
+            )
+    if unit.locators != tuple(expected_locators):
+        raise ValueError(
+            "Canonical document locator projection differs from original source"
+        )
 
 
 def document_overlap_owners(

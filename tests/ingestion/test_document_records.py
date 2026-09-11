@@ -571,7 +571,8 @@ def test_rehashed_extraction_cannot_substitute_list_facts(document_record_case, 
         rebind(data)
 
 
-def test_marker_only_provenance_retains_its_physical_locator(source_case):
+def test_marker_only_provenance_retains_its_physical_locator(document_record_case):
+    source_case = document_record_case("standard@1", "pdf")
     from tychora.ingestion.document_parts import _Budget, represent_document_parts
 
     export = export_case(source_case, [(0, "Record the sample.")])
@@ -608,6 +609,21 @@ def test_marker_only_provenance_retains_its_physical_locator(source_case):
         (0, 2, 1)
     ]
     assert parts[0].field == "marker" and parts[0].provenance[0].charspan == (0, 2)
+
+    from tychora.ingestion.document_parts import validate_document_source_parts
+
+    parsed = artifact_from_export(source_case, export)
+    unit = normalize(
+        parsed, parsed.registration.revision.revision_id, source_case.registry
+    ).units[0]
+    validate_document_source_parts(unit, parsed)
+    assert [
+        (loc.char_start, loc.char_end)
+        for loc in unit.locators
+        if loc.type == "document"
+    ] == [(0, 2)]
+    with pytest.raises(ValueError, match="locator"):
+        validate_document_source_parts(unit.model_copy(update={"locators": ()}), parsed)
 
 
 def test_exact_alias_collision_is_diagnostic(source_case, tmp_path):
@@ -671,3 +687,286 @@ def test_numbered_item_keeps_non_numbered_line_continuation(document_record_case
         row.unit_id == child.unit_id and row.normalized_value == "1."
         for row in bundle.identifiers
     )
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["page", "geometry", "range", "artifact", "source", "missing", "extra", "order"],
+)
+def test_canonical_locator_forgery_fails_normalization(
+    source_case, monkeypatch, change
+):
+    from tychora.contracts.evidence import Geometry
+    from tychora.ingestion import document_records
+
+    real = document_records.represent_document_parts
+
+    def corrupt(*args, **kwargs):
+        text, parts, separators, locators = real(*args, **kwargs)
+        first = locators[0]
+        updates = {
+            "page": {"physical_page": 99},
+            "geometry": {
+                "geometry": Geometry(domain="points", x0=0.0, y0=0.0, x1=1.0, y1=1.0)
+            },
+            "range": {"char_start": first.char_start + 1},
+            "artifact": {"artifact_ref": "0" * 64},
+            "source": {"native_ref": "another-source.docx"},
+        }
+        if change == "missing":
+            locators = locators[1:]
+        elif change == "extra":
+            locators = (*locators, first)
+        elif change == "order":
+            locators = tuple(reversed(locators))
+        else:
+            locators = (first.model_copy(update=updates[change]), *locators[1:])
+        return text, parts, separators, locators
+
+    monkeypatch.setattr(document_records, "represent_document_parts", corrupt)
+    with pytest.raises(ValueError, match="locator"):
+        normalize(
+            source_case.parsed,
+            source_case.bundle.revision.revision_id,
+            source_case.registry,
+        )
+
+
+def test_retained_unit_locator_substitution_fails_pure_validator(source_case):
+    from tychora.ingestion.document_parts import validate_document_source_parts
+
+    unit = source_case.bundle.units[0]
+    validate_document_source_parts(unit, source_case.parsed)
+    changed = unit.model_copy(
+        update={
+            "locators": (
+                unit.locators[0].model_copy(update={"physical_page": 99}),
+                *unit.locators[1:],
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="locator"):
+        validate_document_source_parts(changed, source_case.parsed)
+
+
+def table_order_export(source_case):
+    export = export_case(source_case, [(1, "STD-8 Sample"), (0, "Requirement: Keep.")])
+    # SDK array order is deliberately not row-major: ordinal fields are authoritative.
+    cells = [
+        {
+            "text": text,
+            "start_row_offset_idx": row,
+            "end_row_offset_idx": row + 1,
+            "start_col_offset_idx": col,
+            "end_col_offset_idx": col + 1,
+        }
+        for text, row, col in (("Down", 1, 0), ("Left", 0, 0), ("Rght", 0, 1))
+    ]
+    export["tables"] = [
+        {
+            "self_ref": "#/tables/0",
+            "parent": {"$ref": "#/body"},
+            "children": [],
+            "label": "table",
+            "prov": [],
+            "data": {"num_rows": 2, "num_cols": 2, "table_cells": cells},
+        }
+    ]
+    export["body"]["children"].append({"$ref": "#/tables/0"})
+    return export
+
+
+def test_table_cell_order_uses_source_rows_not_sdk_array_order(source_case):
+    import json
+
+    from tychora.ingestion.document_parts import validate_document_source_parts
+
+    parsed = artifact_from_export(source_case, table_order_export(source_case))
+    bundle = normalize(
+        parsed, parsed.registration.revision.revision_id, source_case.registry
+    )
+    unit = bundle.units[0]
+    assert unit.text.endswith("Left\tRght\nDown")
+    assert [
+        p["cell_index"]
+        for p in json.loads(canonical_bytes(unit.attributes))["source_parts"]
+        if p["field"] == "table_cell"
+    ] == [1, 2, 0]
+    validate_document_source_parts(unit, parsed)
+
+
+@pytest.mark.parametrize("preserve_source_order", [False, True])
+def test_consistent_table_cell_reordering_fails_pure_validator(
+    source_case, preserve_source_order
+):
+    import json
+
+    from tychora.ingestion.document_parts import validate_document_source_parts
+
+    parsed = artifact_from_export(source_case, table_order_export(source_case))
+    bundle = normalize(
+        parsed, parsed.registration.revision.revision_id, source_case.registry
+    )
+    unit = bundle.units[0]
+    attrs = json.loads(canonical_bytes(unit.attributes))
+    first, second, _ = [
+        i
+        for i, part in enumerate(attrs["source_parts"])
+        if part["field"] == "table_cell"
+    ]
+    a, b = attrs["source_parts"][first], attrs["source_parts"][second]
+    attrs["source_parts"][first] = {
+        **b,
+        "unit_start": a["unit_start"],
+        "unit_end": a["unit_end"],
+    }
+    attrs["source_parts"][second] = {
+        **a,
+        "unit_start": b["unit_start"],
+        "unit_end": b["unit_end"],
+    }
+    text = (
+        unit.text[: a["unit_start"]]
+        + "Rght"
+        + unit.text[a["unit_end"] : b["unit_start"]]
+        + "Left"
+        + unit.text[b["unit_end"] :]
+    )
+    changed = unit.model_copy(
+        update={
+            "text": text,
+            "text_sha": sha256(text.encode()).hexdigest(),
+            "attributes": FrozenJsonMap(attrs),
+        }
+    )
+    if preserve_source_order:
+        attrs["source_parts"][first], attrs["source_parts"][second] = (
+            attrs["source_parts"][second],
+            attrs["source_parts"][first],
+        )
+        locators = list(unit.locators)
+        locators[first] = locators[first].model_copy(
+            update={"char_start": b["unit_start"], "char_end": b["unit_end"]}
+        )
+        locators[second] = locators[second].model_copy(
+            update={"char_start": a["unit_start"], "char_end": a["unit_end"]}
+        )
+        changed = changed.model_copy(
+            update={"attributes": FrozenJsonMap(attrs), "locators": tuple(locators)}
+        )
+    with pytest.raises(ValueError, match="order"):
+        validate_document_source_parts(changed, parsed)
+
+
+def test_nontext_source_locators_are_complete_and_ordered(document_record_case):
+    source_case = document_record_case("standard@1", "pdf")
+    import json
+
+    from tychora.ingestion.document_parts import validate_document_source_parts
+
+    export = export_case(source_case, [(1, "STD-8 Sample"), (0, "Requirement: Keep.")])
+    export["pages"] = {"1": {"page_no": 1, "size": {"width": 100.0, "height": 100.0}}}
+    for index in range(2):
+        ref = f"#/pictures/{index}"
+        export["pictures"].append(
+            {
+                "self_ref": ref,
+                "parent": {"$ref": "#/body"},
+                "children": [],
+                "label": "picture",
+                "prov": [
+                    {
+                        "page_no": 1,
+                        "charspan": [0, 0],
+                        "bbox": {
+                            "l": 1.0,
+                            "t": 10.0,
+                            "r": 80.0,
+                            "b": 20.0,
+                            "coord_origin": "TOPLEFT",
+                        },
+                    }
+                ],
+            }
+        )
+        export["body"]["children"].append({"$ref": ref})
+    parsed = artifact_from_export(source_case, export)
+    unit = normalize(
+        parsed, parsed.registration.revision.revision_id, source_case.registry
+    ).units[0]
+    assert all(
+        part["native_ref"] not in ("#/pictures/0", "#/pictures/1")
+        for part in json.loads(canonical_bytes(unit.attributes))["source_parts"]
+    )
+    assert [
+        (loc.char_start, loc.char_end)
+        for loc in unit.locators[-2:]
+        if loc.type == "document"
+    ] == [
+        (len(unit.text) - 2, len(unit.text) - 2),
+        (len(unit.text), len(unit.text)),
+    ]
+    validate_document_source_parts(unit, parsed)
+    for locators in (
+        unit.locators[:-1],
+        (*unit.locators[:-2], unit.locators[-1], unit.locators[-2]),
+    ):
+        with pytest.raises(ValueError, match="locator"):
+            validate_document_source_parts(
+                unit.model_copy(update={"locators": locators}), parsed
+            )
+
+
+def test_partial_source_span_retains_exact_locator_projection(source_case):
+    import json
+
+    from tychora.ingestion.document_parts import validate_document_source_parts
+
+    parsed = artifact_from_export(
+        source_case, export_case(source_case, [(0, "abcdef")])
+    )
+    unit = normalize(
+        parsed, parsed.registration.revision.revision_id, source_case.registry
+    ).units[0]
+    attrs = json.loads(canonical_bytes(unit.attributes))
+    attrs["source_parts"][0].update(
+        source_start=2, source_end=4, unit_start=0, unit_end=2
+    )
+    sliced = unit.model_copy(
+        update={
+            "text": "cd",
+            "text_sha": sha256(b"cd").hexdigest(),
+            "attributes": FrozenJsonMap(attrs),
+            "locators": (unit.locators[0].model_copy(update={"char_end": 2}),),
+        }
+    )
+    validate_document_source_parts(sliced, parsed)
+
+
+def test_consistent_marker_text_reordering_fails_pure_validator(source_case):
+    import json
+
+    from tychora.ingestion.document_parts import validate_document_source_parts
+
+    export = export_case(source_case, [(0, "Hi")])
+    export["texts"][0].update(label="list_item", marker="1.", orig="1. Hi")
+    parsed = artifact_from_export(source_case, export)
+    unit = normalize(
+        parsed, parsed.registration.revision.revision_id, source_case.registry
+    ).units[0]
+    attrs = json.loads(canonical_bytes(unit.attributes))
+    a, b = attrs["source_parts"]
+    attrs["source_parts"] = [
+        {**b, "unit_start": a["unit_start"], "unit_end": a["unit_end"]},
+        {**a, "unit_start": b["unit_start"], "unit_end": b["unit_end"]},
+    ]
+    text = "Hi 1."
+    changed = unit.model_copy(
+        update={
+            "text": text,
+            "text_sha": sha256(text.encode()).hexdigest(),
+            "attributes": FrozenJsonMap(attrs),
+        }
+    )
+    with pytest.raises(ValueError, match="order"):
+        validate_document_source_parts(changed, parsed)
