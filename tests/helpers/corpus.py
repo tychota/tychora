@@ -2,11 +2,13 @@
 
 from functools import lru_cache
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
 from uuid import UUID
 
+from tychora.adapters.files.cas import LocalArtifacts
 from tychora.configuration.registry import Registry
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts import identity
@@ -26,26 +28,20 @@ from tychora.contracts.corpus import (
 from tychora.contracts.evidence import EvidenceUnit, TextLocator
 
 _TEMP = TemporaryDirectory(prefix="synthetic-corpus-")
-_ROOT = Path(_TEMP.name)
+_ROOT = Path(_TEMP.name).resolve()
 CREATED = "2024-01-01T00:00:00Z"
 COLLECTION = "55825936-6a6a-4d29-945a-327d771a76b7"
 
 
-class TemporaryArtifactReader:
-    def open_verified(self, ref: ArtifactRef):
-        return (_ROOT / ref.storage_key).open("rb")
+_ARTIFACTS = LocalArtifacts(_ROOT / "artifacts")
 
 
-def reader():
-    return TemporaryArtifactReader()
+def reader() -> LocalArtifacts:
+    return _ARTIFACTS
 
 
 def artifact(data: bytes, media_type="text/plain") -> ArtifactRef:
-    sha = sha256(data).hexdigest()
-    (_ROOT / sha).write_bytes(data)
-    return ArtifactRef(
-        sha256=sha, size_bytes=len(data), media_type=media_type, storage_key=sha
-    )
+    return _ARTIFACTS.put_stream(BytesIO(data), media_type)
 
 
 @lru_cache(maxsize=1)

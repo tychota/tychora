@@ -1,0 +1,1 @@
+"""Local canonical file adapters."""
