@@ -23,6 +23,7 @@ from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.extraction import ExtractionArtifact
 from tychora.contracts.identity import canonical_bytes, digest, extraction_id, unit_id
 
+from .document_identity import DocumentNormalizationContext
 from .document_parts import (
     _Budget,
     document_overlap_owners,
@@ -288,7 +289,11 @@ def _groups(
 
 
 def normalize_document_records(
-    parsed: ExtractionArtifact, revision_id: str, registry: Registry
+    parsed: ExtractionArtifact,
+    revision_id: str,
+    registry: Registry,
+    *,
+    context: DocumentNormalizationContext | None = None,
 ) -> ExtractionBundle:
     parsed = ExtractionArtifact.model_validate(parsed.model_dump())
     registration = cast(DocumentRegistration, parsed.registration)
@@ -310,11 +315,14 @@ def normalize_document_records(
         raise TychoraError(
             "INTEGRITY_ERROR", "Document semantic normalizer fingerprint differs"
         )
-    eid = extraction_id(
-        revision_id, parsed.parser_fingerprint, parsed.normalizer_fingerprint
+    if context is not None:
+        context.verify(parsed, registry)
+    fingerprint = (
+        context.normalizer_fingerprint if context else parsed.normalizer_fingerprint
     )
+    eid = extraction_id(revision_id, parsed.parser_fingerprint, fingerprint)
     base = assemble_document_bundle(
-        parsed, (), (), {u.native_ref: () for u in parsed.units}
+        parsed, (), (), {u.native_ref: () for u in parsed.units}, context=context
     )
     budget = _Budget()
     budget.add(size=len(canonical_bytes(base.model_dump(mode="json"))))
@@ -480,6 +488,7 @@ def normalize_document_records(
         {ref: tuple(ids) for ref, ids in owners.items()},
         tuple(records),
         tuple(identifiers),
+        context=context,
     )
     for index, row in enumerate(bundle.unit_assets):
         budget.account("unit_assets", index, row)

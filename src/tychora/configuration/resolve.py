@@ -531,6 +531,7 @@ def _resolve_config(
             registry["compatibility"],
             values["mode"],
             values["filters"],
+            values["retrieval"]["table_continuations"],
         ),
         query_fingerprint=digest("query-config-v1", registry_sha, values),
         output_fingerprint=digest(

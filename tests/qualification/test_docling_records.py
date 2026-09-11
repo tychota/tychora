@@ -33,8 +33,16 @@ def document_record_case(tmp_path_factory):
     cache = {}
     with ExitStack() as stack:
 
-        def make(kind, format, *, custom=False, page_break_at=None):
-            key = kind, format, custom, page_break_at
+        def make(
+            kind,
+            format,
+            *,
+            custom=False,
+            page_break_at=None,
+            source_builder=None,
+            commit=True,
+        ):
+            key = kind, format, custom, page_break_at, source_builder, commit
             if key in cache:
                 return cache[key]
             folder = root / str(len(list(root.iterdir())))
@@ -76,7 +84,10 @@ def document_record_case(tmp_path_factory):
                 with (pack / "profile.toml").open("a") as out:
                     out.write('\n[extraction]\nparser="docling"\n')
             source = folder / ("source." + format)
-            create_record_document(source, content, page_break_at=page_break_at)
+            if source_builder is None:
+                create_record_document(source, content, page_break_at=page_break_at)
+            else:
+                source_builder(source, content)
             config_path = folder / "workspace.toml"
             config_path.write_text(
                 'schema_version=1\n[profiles.test]\npath="pack"\n[configuration.acquisition]\nroots='
@@ -185,8 +196,13 @@ def document_record_case(tmp_path_factory):
                     captured.original_ref, config, ctx
                 )
             registry = Registry.from_config(config)
-            bundle = normalize(parsed, revision.revision_id, registry)
-            owner.run_blocking_sync(lambda: owner.store.commit_extraction(bundle), ctx)
+            bundle = (
+                normalize(parsed, revision.revision_id, registry) if commit else None
+            )
+            if bundle is not None:
+                owner.run_blocking_sync(
+                    lambda: owner.store.commit_extraction(bundle), ctx
+                )
             result = SimpleNamespace(
                 parsed=parsed,
                 bundle=bundle,

@@ -3,6 +3,9 @@ id = "verified"
 version = "1"
 extends = ["builtin:documents@1"]
 
+[retrieval]
+table_continuations = "confirmed_only"
+
 [modes.compose]
 original_review_states = ["accepted"]
 derived_proxy_policy = "accepted_only"

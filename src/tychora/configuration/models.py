@@ -26,6 +26,7 @@ class GraphSettings(Contract):
 
 
 class RetrievalSettings(Contract):
+    table_continuations: Literal["derived", "confirmed_only", "none"] = "derived"
     graph: GraphSettings = Field(default_factory=GraphSettings)
     scoped_rrf_bonus: Annotated[float, Field(ge=0, le=0.01)] = 0.0
     allow_degraded: bool = False

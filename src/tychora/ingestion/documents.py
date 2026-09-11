@@ -24,6 +24,8 @@ from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.extraction import ExtractionArtifact
 from tychora.contracts.identity import canonical_bytes, digest, extraction_id, unit_id
 
+from .document_identity import DocumentNormalizationContext
+
 
 def normalize_document(
     parsed: ExtractionArtifact, revision_id: str, registry: Registry
@@ -116,13 +118,16 @@ def assemble_document_bundle(
     source_owners: Mapping[str, tuple[str, ...]],
     records: tuple[StructuredRecordRow, ...] = (),
     identifiers: tuple[IdentifierRow, ...] = (),
+    *,
+    context: DocumentNormalizationContext | None = None,
 ) -> ExtractionBundle:
     """Assemble shared original/asset bindings for canonical document units."""
     registration = cast(DocumentRegistration, parsed.registration)
     revision_id = registration.revision.revision_id
-    eid = extraction_id(
-        revision_id, parsed.parser_fingerprint, parsed.normalizer_fingerprint
+    fingerprint = (
+        context.normalizer_fingerprint if context else parsed.normalizer_fingerprint
     )
+    eid = extraction_id(revision_id, parsed.parser_fingerprint, fingerprint)
     assets = []
     unit_assets = []
     for asset in parsed.assets:
@@ -188,7 +193,7 @@ def assemble_document_bundle(
             extraction_id=eid,
             revision_id=revision_id,
             parser_fingerprint=parsed.parser_fingerprint,
-            normalizer_fingerprint=parsed.normalizer_fingerprint,
+            normalizer_fingerprint=fingerprint,
             document_artifact_sha=parsed.raw_document_ref.sha256,
             created_at=registration.revision.captured_at,
         ),
