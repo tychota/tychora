@@ -21,7 +21,6 @@ from .base import (
     Identifier,
     NonEmptyStr,
     NonNegativeInt,
-    _schema_id,
 )
 from .evidence import EvidenceUnit, RelationPath
 from .identity import canonical_bytes
@@ -215,7 +214,7 @@ type MaintenanceVariant = Annotated[
 
 
 class MaintenanceRequest(RootModel[MaintenanceVariant]):
-    model_config = ConfigDict(frozen=True, strict=True, json_schema_extra=_schema_id)
+    model_config = ConfigDict(frozen=True, strict=True)
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> Self:

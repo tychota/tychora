@@ -16,7 +16,6 @@ from .base import (
     NonEmptyStr,
     NonNegativeInt,
     PositiveInt,
-    _schema_id,
 )
 from .errors import TychoraError
 from .identity import canonical_bytes, normalize_source_key
@@ -154,7 +153,7 @@ type SourceVariant = Annotated[
 
 
 class SourceInput(RootModel[SourceVariant]):
-    model_config = ConfigDict(frozen=True, strict=True, json_schema_extra=_schema_id)
+    model_config = ConfigDict(frozen=True, strict=True)
 
     # RootModel's keyword constructor already passes the supplied mapping as root.
     # Inheriting it also preserves Pydantic's strict JSON UUID/bytes normalization.

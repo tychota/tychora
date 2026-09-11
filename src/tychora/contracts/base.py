@@ -93,10 +93,6 @@ class FrozenJsonMap(Mapping[str, FrozenJsonValue]):
         )
 
 
-def _schema_id(schema: dict[str, Any], model: type[BaseModel]) -> None:
-    schema["$id"] = f"urn:tychora:contracts:{model.__name__}:1"
-
-
 class Contract(BaseModel):
     model_config = ConfigDict(
         frozen=True,
@@ -106,7 +102,6 @@ class Contract(BaseModel):
         validate_default=True,
         ser_json_bytes="base64",
         val_json_bytes="base64",
-        json_schema_extra=_schema_id,
     )
 
     @classmethod

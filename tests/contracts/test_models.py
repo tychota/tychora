@@ -454,3 +454,49 @@ def test_relation_inspection_cannot_raise_spec_ceiling(limits):
 
     with pytest.raises(ValidationError):
         RelationRequest(unit_ids=("u",), **limits)
+
+
+@pytest.mark.parametrize("model_name", ["QueryRequest", "QueryResult"])
+def test_exported_schema_validates_populated_nested_instances(model_name):
+    from jsonschema import Draft202012Validator
+
+    from tychora.contracts import QueryRequest, QueryResult, public_schemas
+
+    target = {
+        "renderer": "canonical-json@1",
+        "profile_digest": "profile:1",
+        "schema_digest": "schema:1",
+        "serialization": "canonical-json-v1",
+    }
+    if model_name == "QueryRequest":
+        instance = QueryRequest.from_mapping(
+            {
+                "question": "find evidence",
+                "budgets": {"render_targets": [target]},
+                "filters": {
+                    "op": "and",
+                    "children": [
+                        {"op": "eq", "field": "kind", "value": "manual"},
+                        {
+                            "op": "or",
+                            "children": [
+                                {"op": "in", "field": "language", "values": ["en"]}
+                            ],
+                        },
+                    ],
+                },
+            }
+        )
+    else:
+        instance = QueryResult.from_mapping(
+            {
+                "run_id": "run:1",
+                "snapshot_id": "snapshot:1",
+                "applied_scope": {"principal_id": "reader"},
+                "coverage": {"status": "complete"},
+                "budget_contract": {"render_targets": [target]},
+                "trace": {"stages": [{"name": "lexical", "counts": [1, 2]}]},
+            }
+        )
+    schema = public_schemas()[model_name]
+    Draft202012Validator(schema).validate(instance.model_dump(mode="json"))

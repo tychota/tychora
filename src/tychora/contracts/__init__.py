@@ -88,4 +88,10 @@ def public_schemas() -> dict[str, dict[str, Any]]:
         EvaluationReport,
         ErrorEnvelope,
     )
-    return {model.__name__: model.model_json_schema() for model in models}
+    schemas = {}
+    for model in models:
+        schema = model.model_json_schema()
+        # Nested definitions share this document's $defs and reference base.
+        schema["$id"] = f"urn:tychora:contracts:{model.__name__}:1"
+        schemas[model.__name__] = schema
+    return schemas
