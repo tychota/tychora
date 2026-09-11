@@ -5,7 +5,12 @@ from typing import Any, cast
 
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
-from tychora.contracts.documents import DocumentProvenance, DocumentUnit, MappedDocument
+from tychora.contracts.documents import (
+    DocumentProvenance,
+    DocumentUnit,
+    MappedDocument,
+    document_text_domain,
+)
 from tychora.contracts.evidence import DocumentLocator, Geometry
 from tychora.contracts.identity import JsonValue
 
@@ -145,9 +150,11 @@ def map_document(export: JsonValue, original: ArtifactRef) -> MappedDocument:
             else:
                 raise ValueError("Unknown Docling coordinate origin")
             span = tuple(prov["charspan"])
-            domain = "docling_text_item" if "text" in item else "docling_nontext_item"
-            if domain == "docling_text_item" and not (
-                0 <= span[0] <= span[1] <= len(text)
+            domain, source_length, text_offset = document_text_domain(
+                FrozenJsonMap(item)
+            )
+            if domain != "docling_nontext_item" and not (
+                0 <= span[0] <= span[1] <= source_length
             ):
                 raise ValueError("Impossible Docling text-item charspan")
             geometry = Geometry(
@@ -165,17 +172,28 @@ def map_document(export: JsonValue, original: ArtifactRef) -> MappedDocument:
                     transform=transform,
                 )
             )
-            locators.append(
-                DocumentLocator(
-                    artifact_ref=original.sha256,
-                    native_ref=ref,
-                    char_start=span[0] if domain == "docling_text_item" else 0,
-                    char_end=span[1] if domain == "docling_text_item" else len(text),
-                    physical_page=prov["page_no"],
-                    geometry=geometry,
-                )
+            start = (
+                max(span[0], text_offset) - text_offset
+                if domain != "docling_nontext_item"
+                else 0
             )
-        if not locators:
+            end = (
+                min(span[1], text_offset + len(text)) - text_offset
+                if domain != "docling_nontext_item"
+                else len(text)
+            )
+            if domain != "docling_orig_text_item" or end > start:
+                locators.append(
+                    DocumentLocator(
+                        artifact_ref=original.sha256,
+                        native_ref=ref,
+                        char_start=start,
+                        char_end=end,
+                        physical_page=prov["page_no"],
+                        geometry=geometry,
+                    )
+                )
+        if not item.get("prov"):
             locators.append(
                 DocumentLocator(
                     artifact_ref=original.sha256,

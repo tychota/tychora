@@ -12,8 +12,10 @@ from tychora.contracts.corpus import (
     AssetRow,
     ExtractionBundle,
     ExtractionRow,
+    IdentifierRow,
     LocatorRow,
     RevisionArtifactRow,
+    StructuredRecordRow,
     UnitAssetRow,
 )
 from tychora.contracts.documents import DocumentRegistration, DocumentUnit
@@ -40,9 +42,9 @@ def normalize_document(
     )
     kind = cast(Mapping[str, Any], registry.kinds[registration.revision.kind_id])
     if kind["normalizer"] != "structured_sections@1":
-        raise TychoraError(
-            "CAPABILITY_MISSING", "Requested rich-document normalizer is not qualified"
-        )
+        from .document_records import normalize_document_records
+
+        return normalize_document_records(parsed, revision_id, registry)
     if parsed.normalizer_fingerprint != digest(
         "docling-normalizer-v1", kind, registry.schema_digests
     ):
@@ -99,6 +101,28 @@ def normalize_document(
             )
             for ordinal, locator in enumerate(locators)
         )
+    return assemble_document_bundle(
+        parsed,
+        tuple(units),
+        tuple(locator_rows),
+        {ref: (uid,) for ref, uid in ids.items()},
+    )
+
+
+def assemble_document_bundle(
+    parsed: ExtractionArtifact,
+    units: tuple[EvidenceUnit, ...],
+    locators: tuple[LocatorRow, ...],
+    source_owners: Mapping[str, tuple[str, ...]],
+    records: tuple[StructuredRecordRow, ...] = (),
+    identifiers: tuple[IdentifierRow, ...] = (),
+) -> ExtractionBundle:
+    """Assemble shared original/asset bindings for canonical document units."""
+    registration = cast(DocumentRegistration, parsed.registration)
+    revision_id = registration.revision.revision_id
+    eid = extraction_id(
+        revision_id, parsed.parser_fingerprint, parsed.normalizer_fingerprint
+    )
     assets = []
     unit_assets = []
     for asset in parsed.assets:
@@ -115,16 +139,17 @@ def normalize_document(
             )
         )
         for ref in asset.source_units:
-            if ref not in ids:
+            if ref not in source_owners:
                 raise TychoraError(
                     "INTEGRITY_ERROR", "Document asset references missing source unit"
                 )
-            unit_assets.append(
+            unit_assets.extend(
                 UnitAssetRow(
-                    unit_id=ids[ref],
+                    unit_id=uid,
                     asset_id=aid,
                     role="source" if ref == asset.native_ref else "caption",
                 )
+                for uid in source_owners[ref]
             )
     refs = {
         ref.sha256: ref
@@ -168,9 +193,11 @@ def normalize_document(
             created_at=registration.revision.captured_at,
         ),
         units=tuple(units),
-        locators=tuple(locator_rows),
+        locators=locators,
         assets=tuple(assets),
         unit_assets=tuple(unit_assets),
+        records=records,
+        identifiers=identifiers,
     )
 
 

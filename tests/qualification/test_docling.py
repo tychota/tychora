@@ -297,7 +297,8 @@ def test_docx_pixel_limit_precedes_decode_and_survives_sdk_fallback(tmp_path, ce
         sender.close()
         assert receiver.poll(40), "Capacity qualification process did not finish"
         result = receiver.recv()
-        child.join(2)
+        # SDK interpreter teardown can exceed two seconds after sending results.
+        child.join(10)
         assert child.exitcode == 0
         assert result["restored"]
         assert result["sdk_returned"]
@@ -383,7 +384,8 @@ def test_pdf_pixel_metadata_is_checked_before_conversion(tmp_path, kind):
         sender.close()
         assert receiver.poll(40), "PDF capacity qualification process did not finish"
         result = receiver.recv()
-        child.join(2)
+        # SDK interpreter teardown can exceed two seconds after sending results.
+        child.join(10)
         assert child.exitcode == 0
         assert result == (
             {"entered": True, "rejected": False}

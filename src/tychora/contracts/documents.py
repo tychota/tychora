@@ -53,7 +53,9 @@ class DocumentRegistration(Contract):
 
 
 class DocumentProvenance(Contract):
-    char_domain: Literal["docling_text_item", "docling_nontext_item"]
+    char_domain: Literal[
+        "docling_text_item", "docling_orig_text_item", "docling_nontext_item"
+    ]
     charspan: tuple[NonNegativeInt, NonNegativeInt]
     physical_page: PositiveInt
     page_width: float
@@ -92,6 +94,45 @@ class DocumentUnit(Contract):
     cells: tuple[tuple[str, ...], ...] = ()
 
 
+class DocumentSourcePart(Contract):
+    """An original SDK field interval represented in a canonical unit."""
+
+    native_ref: NonEmptyStr
+    field: Literal["text", "marker", "table_cell"]
+    cell_index: NonNegativeInt | None = None
+    source_start: NonNegativeInt
+    source_end: NonNegativeInt
+    unit_start: NonNegativeInt
+    unit_end: NonNegativeInt
+    source_domain: NonEmptyStr
+    provenance: tuple[DocumentProvenance, ...] = ()
+
+    @model_validator(mode="after")
+    def spans(self) -> Self:
+        if (
+            self.source_end < self.source_start
+            or self.unit_end < self.unit_start
+            or self.source_end - self.source_start != self.unit_end - self.unit_start
+            or (self.field == "table_cell") != (self.cell_index is not None)
+        ):
+            raise ValueError("Invalid document source-part spans or cell domain")
+        return self
+
+
+class DocumentSeparator(Contract):
+    """Canonical punctuation supplied by source structure, with no original span."""
+
+    unit_start: NonNegativeInt
+    unit_end: NonNegativeInt
+    text: Literal["\n\n", "\n", "\t", " "]
+
+    @model_validator(mode="after")
+    def span(self) -> Self:
+        if self.unit_end - self.unit_start != len(self.text):
+            raise ValueError("Invalid structural separator span")
+        return self
+
+
 class DocumentAsset(Contract):
     native_ref: NonEmptyStr
     asset_type: Literal["page", "picture", "table"]
@@ -111,6 +152,34 @@ class MappedDocument(Contract):
     # the canonical owner lane and replaces them with verified CAS references.
     image_items: tuple[str, ...] = ()
     diagnostics: tuple[FrozenJsonMap, ...] = ()
+
+
+def document_text_domain(
+    item: FrozenJsonMap,
+) -> tuple[
+    Literal["docling_text_item", "docling_orig_text_item", "docling_nontext_item"],
+    int,
+    int,
+]:
+    """Prove a list's original marker prefix before projecting its text suffix."""
+    text = item.get("text")
+    if not isinstance(text, str):
+        return "docling_nontext_item", 0, 0
+    original, marker = item.get("orig"), item.get("marker")
+    if item.get("label") == "list_item" and marker and original != text:
+        if not isinstance(original, str) or not isinstance(marker, str) or not text:
+            raise ValueError("Unsupported Docling list original/text relationship")
+        offset = len(original) - len(text)
+        whitespace = original[len(marker) : offset]
+        if (
+            not original.startswith(marker)
+            or not original.endswith(text)
+            or not whitespace
+            or not whitespace.isspace()
+        ):
+            raise ValueError("Unsupported Docling list original/text relationship")
+        return "docling_orig_text_item", len(original), offset
+    return "docling_text_item", len(text), 0
 
 
 def validate_document_units(
@@ -232,11 +301,10 @@ def validate_document_units(
         if parent != unit.parent_ref:
             raise ValueError("Document parent differs from retained hierarchy")
         native_prov = item.get("prov", ())
-        if len(native_prov) != len(unit.provenance) or len(unit.locators) != max(
-            1, len(native_prov)
-        ):
+        if len(native_prov) != len(unit.provenance):
             raise ValueError("Document provenance coverage differs")
-        for native, prov, loc in zip(native_prov, unit.provenance, unit.locators):
+        expected_locators = []
+        for native, prov in zip(native_prov, unit.provenance):
             page = raw["pages"][str(native["page_no"])]
             if page.get("page_no") != native["page_no"]:
                 raise ValueError(
@@ -254,27 +322,51 @@ def validate_document_units(
                 y0=height - box["t"] if bottom else box["t"],
                 y1=height - box["b"] if bottom else box["b"],
             )
-            text_domain = "text" in item
+            domain, source_length, text_offset = document_text_domain(
+                FrozenJsonMap(item)
+            )
+            span = tuple(native["charspan"])
+            if (
+                domain != "docling_nontext_item"
+                and not 0 <= span[0] <= span[1] <= source_length
+            ):
+                raise ValueError("Impossible retained Docling item span")
             if (
                 prov.physical_page != native["page_no"]
                 or prov.page_width != width
                 or prov.page_height != height
                 or prov.raw_bbox != box
                 or prov.charspan != tuple(native["charspan"])
-                or prov.char_domain
-                != ("docling_text_item" if text_domain else "docling_nontext_item")
+                or prov.char_domain != domain
                 or prov.transform
                 != ("bottom_left_to_top_left" if bottom else "identity_top_left")
                 or prov.geometry != expected
-                or loc.geometry != expected
-                or loc.physical_page != prov.physical_page
-                or loc.char_start != (prov.charspan[0] if text_domain else 0)
-                or loc.char_end != (prov.charspan[1] if text_domain else len(unit.text))
-                or loc.char_end > len(unit.text)
             ):
                 raise ValueError("Document coordinates differ from retained provenance")
+            start = (
+                max(span[0], text_offset) - text_offset
+                if domain != "docling_nontext_item"
+                else 0
+            )
+            end = (
+                min(span[1], text_offset + len(unit.text)) - text_offset
+                if domain != "docling_nontext_item"
+                else len(unit.text)
+            )
+            if domain != "docling_orig_text_item" or end > start:
+                expected_locators.append((start, end, prov.physical_page, expected))
+        if (
+            native_prov
+            and [
+                (loc.char_start, loc.char_end, loc.physical_page, loc.geometry)
+                for loc in unit.locators
+            ]
+            != expected_locators
+        ):
+            raise ValueError("Document coordinates differ from retained provenance")
         if not native_prov and (
-            unit.locators[0].physical_page is not None
+            len(unit.locators) != 1
+            or unit.locators[0].physical_page is not None
             or unit.locators[0].geometry is not None
             or unit.locators[0].char_start != 0
             or unit.locators[0].char_end != len(unit.text)

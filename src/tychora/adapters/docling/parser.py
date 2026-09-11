@@ -281,10 +281,16 @@ class DoclingParser:
         registry.validate_metadata(
             self.registration.revision.kind_id, self.registration.revision.metadata_json
         )
-        if kind["normalizer"] != "structured_sections@1":
+        if kind["normalizer"] not in (
+            "structured_sections@1",
+            "rule_records@1",
+            "template_slots@1",
+            "feedback_records@1",
+            "numbered_provisions@1",
+        ):
             raise TychoraError(
                 "CAPABILITY_MISSING",
-                "This rich-document adapter requires structured_sections@1; the requested document normalizer is not qualified",
+                "The requested rich-document normalizer is not qualified",
             )
         inventory = validate_models(self.model_path)
         return registry, kind, inventory
@@ -448,7 +454,7 @@ class DoclingParser:
                 )
             )
         parser = digest(
-            "docling-parser-v1",
+            "docling-parser-v2",
             {
                 name: version(name)
                 for name in ("docling", "docling-core", "docling-ibm-models")
@@ -458,7 +464,9 @@ class DoclingParser:
             config.values.extraction.model_dump(mode="json"),
             {"ocr": False, "image_scale": 1.0, "tables": "accurate", "device": "cpu"},
         )
-        normalizer = digest("docling-normalizer-v1", kind, registry.schema_digests)
+        from tychora.ingestion.document_records import document_normalizer_fingerprint
+
+        normalizer = document_normalizer_fingerprint(kind, registry)
         data = {
             "registration": self.registration.model_dump(mode="json"),
             "original_ref": original.model_dump(mode="json"),

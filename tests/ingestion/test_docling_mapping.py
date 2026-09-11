@@ -369,7 +369,7 @@ def test_unsupported_normalizer_fails_before_model_preflight(execution, rich_cap
     pack.write_text(
         pack.read_text().replace(
             'normalizer = "structured_sections@1"',
-            'normalizer = "numbered_provisions@1"',
+            'normalizer = "code_symbols@1"',
         )
     )
     config = resolve_config(execution.owner.path.parent / "workspace.toml", "test", {})
