@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tychora"
+version = "0.1.0a1"
+requires-python = ">=3.12,<3.13"
+dependencies = ["pydantic>=2,<3", "typer", "rich", "markdown-it-py", "jsonschema", "platformdirs", "filelock", "tiktoken", "anyio"]
+
+[project.scripts]
+tychora = "tychora.interfaces.cli:main"
+
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio", "httpx", "ruff", "ty"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tychora"]
+
+[tool.ruff]
+target-version = "py312"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+markers = ["qualification: real local adapters", "live: explicitly authorized remote synthetic inputs", "release: installed artifact"]
