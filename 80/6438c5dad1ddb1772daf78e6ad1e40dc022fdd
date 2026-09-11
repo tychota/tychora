@@ -1,0 +1,45 @@
+src/tychora/adapters/sqlite/jobs.py
+  s_036a834257bcb8::t_8b3ad200363345 1-783
+src/tychora/application/jobs.py
+  s_35b641b930a96d::t_0204852aa94330 1-126
+src/tychora/contracts/errors.py
+  s_036a834257bcb8::t_ec68184038ebf9 21
+src/tychora/contracts/jobs.py
+  s_036a834257bcb8::t_30c4cec5287dc3 1-35
+src/tychora/ports/jobs.py
+  s_036a834257bcb8::t_5a48bf89e01568 1-54
+tests/jobs/conftest.py
+  s_35b641b930a96d::t_cec57f18044039 1-74
+tests/jobs/test_events.py
+  s_036a834257bcb8::t_2bb900973bc63b 1-195
+tests/jobs/test_idempotency.py
+  s_036a834257bcb8::t_0a0502ddbf0798 1-285
+tests/jobs/test_recovery.py
+  s_036a834257bcb8::t_13a9f8e67ce89e 1-188
+tests/jobs/test_service.py
+  s_35b641b930a96d::t_effd877dde68b5 1-136
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "806438c5dad1ddb1772daf78e6ad1e40dc022fdd",
+  "prompts": {},
+  "sessions": {
+    "s_036a834257bcb8": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    },
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
