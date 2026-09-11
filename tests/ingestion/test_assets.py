@@ -280,3 +280,144 @@ def test_supported_pillow_formats_use_actual_bytes(format, mime):
         validate_image(validated.data, mime, expected_size=(4, 3)).output_sha
         == validated.output_sha
     )
+
+
+@pytest.fixture
+def multi_caption_source(proxy_source):
+    from hashlib import sha256
+
+    from tychora.contracts.corpus import UnitAssetRow
+    from tychora.contracts.identity import unit_id
+
+    first = proxy_source.units[0]
+    text = "Independent second original caption."
+    ref = "caption:2"
+    second = first.model_copy(
+        update={
+            "unit_id": unit_id(
+                first.extraction_id, ref, 1, sha256(text.encode()).hexdigest()
+            ),
+            "ordinal": 1,
+            "native_ref": ref,
+            "boundary_key": ref,
+            "text": text,
+            "text_sha": sha256(text.encode()).hexdigest(),
+        }
+    )
+    asset = proxy_source.assets[0].model_copy(
+        update={"caption": first.text + "\n" + second.text}
+    )
+    return proxy_source.model_copy(
+        update={
+            "units": (first, second),
+            "assets": (asset,),
+            "unit_assets": (
+                *proxy_source.unit_assets,
+                UnitAssetRow(
+                    unit_id=second.unit_id, asset_id=asset.asset_id, role="caption"
+                ),
+            ),
+        }
+    )
+
+
+def test_caption_copy_retains_every_disjoint_literal_caption_owner(
+    multi_caption_source,
+):
+    from tests.helpers.corpus import artifact
+    from tychora.ingestion.assets import ProxyFactory
+
+    source = multi_caption_source
+    asset = source.assets[0]
+    copied = ProxyFactory(source).make_proxy(
+        asset.asset_id,
+        "caption_copy",
+        asset.caption,
+        (source.units[0].unit_id,),
+        artifact(b"complete caption receipt", "text/plain"),
+    )
+    assert copied.unit.text == "\n".join(unit.text for unit in source.units)
+    assert copied.binding.required_unit_ids == frozenset(
+        unit.unit_id for unit in source.units
+    )
+    assert all(unit.citable for unit in source.units) and not copied.unit.citable
+
+
+@pytest.mark.parametrize("invalid", ["missing", "foreign", "proxy"])
+def test_every_implicit_caption_dependency_must_be_original(
+    multi_caption_source, invalid
+):
+    from tests.helpers.corpus import artifact
+    from tychora.contracts.corpus import AssetProxyRow
+    from tychora.ingestion.assets import ProxyFactory
+
+    source = multi_caption_source
+    first, second = source.units
+    receipt = artifact(b"complete caption receipt", "text/plain")
+    if invalid == "missing":
+        source = source.model_copy(update={"units": (first,)})
+    elif invalid == "foreign":
+        source = source.model_copy(
+            update={
+                "units": (first, second.model_copy(update={"extraction_id": "foreign"}))
+            }
+        )
+    else:
+        # Source-origin copied text is still authoritatively a proxy.
+        source = source.model_copy(
+            update={
+                "proxies": (
+                    AssetProxyRow(
+                        proxy_unit_id=second.unit_id,
+                        asset_id=source.assets[0].asset_id,
+                        origin_type="caption_copy",
+                        derivation_sha=receipt.sha256,
+                        required_unit_ids=frozenset({first.unit_id}),
+                    ),
+                )
+            }
+        )
+    with pytest.raises(ValueError, match="original"):
+        ProxyFactory(source).make_proxy(
+            source.assets[0].asset_id,
+            "caption_copy",
+            source.assets[0].caption,
+            (first.unit_id,),
+            receipt,
+        )
+
+
+def test_implicit_caption_owner_expands_its_overlapping_sources(multi_caption_source):
+    from tests.helpers.corpus import artifact
+    from tychora.contracts.base import FrozenJsonMap
+    from tychora.ingestion.assets import ProxyFactory
+
+    first, second = multi_caption_source.units
+    enclosing = second.model_copy(
+        update={
+            "unit_id": "enclosing-caption-owner",
+            "ordinal": 2,
+            "native_ref": "enclosing:caption",
+            "boundary_key": "enclosing:caption",
+        }
+    )
+    second = second.model_copy(
+        update={
+            "attributes": FrozenJsonMap(
+                {"overlapping_owner_ids": [second.unit_id, enclosing.unit_id]}
+            )
+        }
+    )
+    source = multi_caption_source.model_copy(
+        update={"units": (first, second, enclosing)}
+    )
+    copied = ProxyFactory(source).make_proxy(
+        source.assets[0].asset_id,
+        "caption_copy",
+        source.assets[0].caption,
+        (first.unit_id,),
+        artifact(b"complete caption receipt", "text/plain"),
+    )
+    assert copied.binding.required_unit_ids == frozenset(
+        {first.unit_id, second.unit_id, enclosing.unit_id}
+    )

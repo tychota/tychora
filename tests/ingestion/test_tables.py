@@ -1071,3 +1071,142 @@ def test_proxy_expansion_stops_before_constructing_oversized_whole_result(
             {**inputs, receipt.sha256: b"bounded derived input"},
         )
     assert 0 < calls < len(planned)
+
+
+@pytest.mark.qualification
+def test_build_at_exact_input_ceiling_replays_retained_closure(
+    document_record_case, monkeypatch
+):
+    from tychora.contracts.composition import DocumentCompositionPlan
+    from tychora.ingestion import composition
+
+    source = document_record_case(
+        "standard@1", "pdf", source_builder=create_table_source, commit=False
+    )
+    plan = DocumentCompositionPlan(
+        base_normalizer_fingerprint=source.parsed.normalizer_fingerprint
+    )
+    inputs = composed_inputs(source)
+    ceiling = sum(len(payload) for payload in inputs.values())
+    monkeypatch.setattr(composition, "MAX_COMPOSITION_INPUT_BYTES", ceiling)
+    result = composition.build_composed_document(
+        source.parsed, source.registry, plan, inputs
+    )
+    retained = {**inputs, **result.payloads}
+
+    def raw_payload():
+        with source.owner.artifacts.open_verified(
+            source.parsed.docling_json_ref
+        ) as stream:
+            return stream.read()
+
+    retained[source.parsed.docling_json_ref.sha256] = source.owner.run_blocking_sync(
+        raw_payload, source.ctx
+    )
+    assert (
+        composition.replay_composed_document(
+            result.payloads[result.manifest_ref.sha256],
+            result.manifest_ref,
+            source.parsed,
+            source.registry,
+            retained,
+        ).bundle
+        == result.bundle
+    )
+    assert (
+        source.owner.run_blocking_sync(
+            lambda: composition.compose_document(
+                source.parsed, source.registry, plan, source.owner.artifacts, source.ctx
+            ),
+            source.ctx,
+        ).bundle
+        == result.bundle
+    )
+    monkeypatch.setattr(composition, "MAX_COMPOSITION_INPUT_BYTES", ceiling - 1)
+    with pytest.raises(ValueError, match="inputs exceed"):
+        composition.build_composed_document(
+            source.parsed, source.registry, plan, retained
+        )
+    with pytest.raises(ValueError, match="inputs exceed"):
+        composition.replay_composed_document(
+            result.payloads[result.manifest_ref.sha256],
+            result.manifest_ref,
+            source.parsed,
+            source.registry,
+            retained,
+        )
+
+
+@pytest.mark.qualification
+def test_replay_has_its_own_exact_required_payload_bound(
+    document_record_case, monkeypatch
+):
+    from tychora.contracts.composition import DocumentCompositionPlan
+    from tychora.ingestion import composition
+
+    source = document_record_case(
+        "standard@1", "pdf", source_builder=create_table_source, commit=False
+    )
+    result = composition.build_composed_document(
+        source.parsed,
+        source.registry,
+        DocumentCompositionPlan(
+            base_normalizer_fingerprint=source.parsed.normalizer_fingerprint
+        ),
+        composed_inputs(source),
+    )
+    retained = {**composed_inputs(source), **result.payloads}
+    required_size = sum(len(payload) for payload in retained.values())
+    monkeypatch.setattr(composition, "MAX_COMPOSITION_REPLAY_BYTES", required_size)
+    assert (
+        composition.replay_composed_document(
+            result.payloads[result.manifest_ref.sha256],
+            result.manifest_ref,
+            source.parsed,
+            source.registry,
+            retained,
+        ).bundle
+        == result.bundle
+    )
+    monkeypatch.setattr(composition, "MAX_COMPOSITION_REPLAY_BYTES", required_size - 1)
+    with pytest.raises(ValueError, match="replay.*capacity"):
+        composition.replay_composed_document(
+            result.payloads[result.manifest_ref.sha256],
+            result.manifest_ref,
+            source.parsed,
+            source.registry,
+            retained,
+        )
+
+
+@pytest.mark.qualification
+def test_required_build_inputs_reject_conflicting_duplicate_refs(document_record_case):
+    from hashlib import sha256
+
+    from tychora.contracts.composition import (
+        DocumentCompositionPlan,
+        PlannedProxy,
+        SourceSelector,
+    )
+    from tychora.ingestion.composition import build_composed_document
+
+    source = document_record_case(
+        "standard@1", "pdf", source_builder=create_table_source, commit=False
+    )
+    ref = source.parsed.assets[0].artifact_ref
+    proxy = PlannedProxy(
+        asset_native_ref=source.parsed.assets[0].native_ref,
+        kind="description",
+        text="Observed",
+        text_sha=sha256(b"Observed").hexdigest(),
+        dependencies=(SourceSelector(native_ref=source.parsed.units[0].native_ref),),
+        derivation=ref.model_copy(update={"size_bytes": ref.size_bytes + 1}),
+    )
+    plan = DocumentCompositionPlan(
+        base_normalizer_fingerprint=source.parsed.normalizer_fingerprint,
+        proxies=(proxy,),
+    )
+    with pytest.raises(ValueError, match="Conflicting"):
+        build_composed_document(
+            source.parsed, source.registry, plan, composed_inputs(source)
+        )

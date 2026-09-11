@@ -9,7 +9,7 @@ from itertools import pairwise
 from typing import Any, cast
 
 from tychora.configuration.registry import Registry
-from tychora.contracts.artifacts import ArtifactRef, ManifestRef
+from tychora.contracts.artifacts import ArtifactRef, ManifestRef, physical_identity
 from tychora.contracts.assets import ProxyRecord
 from tychora.contracts.composition import DocumentCompositionPlan, SourceSelector
 from tychora.contracts.corpus import ExtractionBundle, LocatorRow
@@ -30,6 +30,9 @@ from .tables import continuation, continuation_assertion, validate_assertion
 
 MAX_COMPOSED_MANIFEST_BYTES = 16 * 1024 * 1024
 MAX_COMPOSITION_INPUT_BYTES = 256 * 1024 * 1024
+# Required input bytes plus bounded generated products; unrelated raw closure
+# payloads are already validated by raw replay and are not consumed here.
+MAX_COMPOSITION_REPLAY_BYTES = 512 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -123,6 +126,25 @@ def _bundle_projection(bundle: ExtractionBundle) -> dict[str, Any]:
     return data
 
 
+def _input_references(
+    parsed: ExtractionArtifact, plan: DocumentCompositionPlan
+) -> dict[str, ArtifactRef]:
+    references: dict[str, ArtifactRef] = {}
+    for ref in (
+        *(asset.artifact_ref for asset in parsed.assets),
+        *(proxy.derivation for proxy in plan.proxies),
+    ):
+        previous = references.get(ref.sha256)
+        if previous is not None and physical_identity(previous) != physical_identity(
+            ref
+        ):
+            raise ValueError("Conflicting composition input artifact declarations")
+        references.setdefault(ref.sha256, ref)
+    if sum(ref.size_bytes for ref in references.values()) > MAX_COMPOSITION_INPUT_BYTES:
+        raise ValueError("Composition retained inputs exceed aggregate capacity")
+    return references
+
+
 def build_composed_document(
     parsed: ExtractionArtifact,
     registry: Registry,
@@ -132,8 +154,9 @@ def build_composed_document(
     """Pure build from validated raw SDK facts and explicit retained derived inputs."""
     context = DocumentNormalizationContext.bind(parsed, registry, plan)
     plan = context.plan
-    if sum(len(payload) for payload in inputs.values()) > MAX_COMPOSITION_INPUT_BYTES:
-        raise ValueError("Composition retained inputs exceed aggregate capacity")
+    references = _input_references(parsed, plan)
+    for ref in references.values():
+        _checked(ref, inputs)
     for asset in parsed.assets:
         validate_image(
             _checked(asset.artifact_ref, inputs),
@@ -387,20 +410,12 @@ def compose_document(
     """Materialize all composed products before the caller's first corpus commit."""
     ctx.checkpoint()
     plan = DocumentNormalizationContext.bind(parsed, registry, plan).plan
-    refs = {
-        ref.sha256: ref
-        for ref in (
-            *(asset.artifact_ref for asset in parsed.assets),
-            *(proxy.derivation for proxy in plan.proxies),
-        )
-    }
-    if sum(ref.size_bytes for ref in refs.values()) > MAX_COMPOSITION_INPUT_BYTES:
-        raise ValueError("Composition retained inputs exceed aggregate capacity")
+    refs = _input_references(parsed, plan)
     inputs = {}
     for sha, ref in refs.items():
         ctx.checkpoint()
         with artifacts.open_verified(ref) as stream:
-            inputs[sha] = stream.read(MAX_COMPOSITION_INPUT_BYTES + 1)
+            inputs[sha] = stream.read(ref.size_bytes + 1)
     result = build_composed_document(parsed, registry, plan, inputs)
     bound_refs = {ref.sha256: ref for ref in result.bundle.artifacts}
     for sha, payload in result.payloads.items():
@@ -450,8 +465,21 @@ def replay_composed_document(
         or result.payloads[manifest_ref.sha256] != manifest
     ):
         raise ValueError("Composed extraction differs from verified replay inputs")
-    references = {ref.sha256: ref for ref in result.bundle.artifacts}
+    references = _input_references(parsed, plan)
+    artifacts = {ref.sha256: ref for ref in result.bundle.artifacts}
     for sha in result.payloads:
-        if sha != manifest_ref.sha256:
-            _checked(references[sha], inputs)
+        ref = artifacts[sha]
+        previous = references.get(sha)
+        if previous is not None and physical_identity(previous) != physical_identity(
+            ref
+        ):
+            raise ValueError("Conflicting composed replay artifact declarations")
+        references.setdefault(sha, ref)
+    if (
+        sum(ref.size_bytes for ref in references.values())
+        > MAX_COMPOSITION_REPLAY_BYTES
+    ):
+        raise ValueError("Composed replay required payloads exceed capacity")
+    for sha, ref in references.items():
+        _checked(ref, {sha: manifest} if sha == manifest_ref.sha256 else inputs)
     return result

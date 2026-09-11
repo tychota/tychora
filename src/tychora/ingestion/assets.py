@@ -125,18 +125,24 @@ class ProxyFactory:
             raise ValueError(
                 "Proxy requires one asset and original same-extraction dependencies"
             )
-        if kind == "caption_copy" and (
-            text != asset.caption
-            or not any(
-                link.asset_id == asset_id
-                and link.role == "caption"
-                and link.unit_id in dependencies
-                for link in self.bundle.unit_assets
-            )
-        ):
-            raise ValueError("Caption copy must retain the linked original caption")
         required = set(dependencies)
-        for uid in dependencies:
+        if kind == "caption_copy":
+            captions = {
+                link.unit_id
+                for link in self.bundle.unit_assets
+                if link.asset_id == asset_id and link.role == "caption"
+            }
+            if text != asset.caption or not captions.intersection(required):
+                raise ValueError("Caption copy must retain the linked original caption")
+            required.update(captions)
+        if any(
+            uid not in self.originals or self.originals[uid].extraction_id != eid
+            for uid in required
+        ):
+            raise ValueError(
+                "Caption dependencies must be original same-extraction units"
+            )
+        for uid in tuple(required):
             required.update(
                 cast(
                     tuple[str, ...],
