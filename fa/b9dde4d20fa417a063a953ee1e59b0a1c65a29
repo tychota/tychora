@@ -1,0 +1,22 @@
+tests/ingestion/test_vision.py
+  s_35b641b930a96d::t_f90528240879cf 501,517-520,522-523,526,529-549,556,563-570,1217
+  s_35b641b930a96d::t_8deb931159ee3a 941,1018-1023,1027-1028,1033-1108,1203,1205-1208,1210-1214
+src/tychora/adapters/vision/anthropic.py
+  s_35b641b930a96d::t_b5ad5246e98037 14,109-116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "fab9dde4d20fa417a063a953ee1e59b0a1c65a29",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
