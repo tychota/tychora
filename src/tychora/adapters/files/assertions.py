@@ -3,10 +3,11 @@
 import json
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from hashlib import sha256
 
 from tychora.contracts.artifacts import ArtifactRef, ManifestRef
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.identity import canonical_bytes, digest
+from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.relationships import RelationshipAssertion
 from tychora.ports.artifacts import ArtifactReader
 
@@ -20,6 +21,40 @@ class VerifiedAssertion:
     record_id: str
     assertion_id: str
     assertion: RelationshipAssertion | None
+
+
+@dataclass(frozen=True)
+class VerifiedAssertionLeaf:
+    artifact: ArtifactRef
+    record_count: int
+    assertion_ids_digest: str
+
+
+@dataclass(frozen=True)
+class VerifiedAssertionClosure:
+    root_ref: ArtifactRef
+    leaves: tuple[VerifiedAssertionLeaf, ...]
+    assertion_count: int
+    assertion_ids_digest: str
+    extraction_id: str | None
+    require_typed: bool
+
+
+class _OrderedIdentityDigest:
+    def __init__(self) -> None:
+        self._hash = sha256(b'["assertion-index-ids-v1",[')
+        self._count = 0
+
+    def add(self, assertion_id: str) -> None:
+        if self._count:
+            self._hash.update(b",")
+        self._hash.update(canonical_bytes(assertion_id))
+        self._count += 1
+
+    def hexdigest(self) -> str:
+        value = self._hash.copy()
+        value.update(b"]]")
+        return value.hexdigest()
 
 
 def _fail(message: str) -> TychoraError:
@@ -99,13 +134,13 @@ def _assertion(
     return record_id, assertion_id, value
 
 
-def iter_verified_assertions(
+def verify_assertion_closure(
     root_ref: ArtifactRef,
     artifacts: ArtifactReader,
     *,
     expected_extraction_id: str | None = None,
-) -> Iterator[VerifiedAssertion]:
-    """Yield assertions only while fully verifying one immutable root closure."""
+) -> VerifiedAssertionClosure:
+    """Verify a complete immutable assertion closure before exposing records."""
     root_payload = _read_bounded(root_ref, artifacts)
     links: tuple[ManifestRef, ...]
     expected_count: int | None = None
@@ -136,8 +171,6 @@ def iter_verified_assertions(
                     link.type != "assertion" or link.schema_version != "1"
                     for link in links
                 )
-                or data["extraction_id"] != expected_extraction_id
-                and expected_extraction_id is not None
                 or data["leaf_shas"]
                 != [link.artifact.sha256 for link in links]
                 or len({link.artifact.sha256 for link in links}) != len(links)
@@ -146,13 +179,20 @@ def iter_verified_assertions(
                 or expected_count <= 0
             ):
                 raise ValueError("Invalid assertion index")
-            expected_extraction_id = data["extraction_id"]
+            index_extraction_id = data["extraction_id"]
         except (KeyError, TypeError, ValueError):
             raise _fail("Assertion index is malformed") from None
+        if (
+            expected_extraction_id is not None
+            and index_extraction_id != expected_extraction_id
+        ):
+            raise _fail("Assertion index belongs to a foreign extraction")
+        expected_extraction_id = index_extraction_id
 
     assertion_ids: set[str] = set()
     record_ids: set[str] = set()
-    ordered_ids: list[str] = []
+    ordered_ids = _OrderedIdentityDigest()
+    verified_leaves = []
     count = 0
     for link in links:
         payload = (
@@ -161,6 +201,8 @@ def iter_verified_assertions(
             else _read_bounded(link.artifact, artifacts)
         )
         leaf_references = 0
+        leaf_count = 0
+        leaf_ids = _OrderedIdentityDigest()
         for record in _records(payload):
             artifact_refs = record.get("required_artifacts", [])
             manifest_refs = record.get("required_manifests", [])
@@ -186,13 +228,67 @@ def iter_verified_assertions(
                 raise _fail("Assertion index contains duplicate or foreign records")
             assertion_ids.add(assertion_id)
             record_ids.add(record_id)
-            ordered_ids.append(assertion_id)
+            ordered_ids.add(assertion_id)
+            leaf_ids.add(assertion_id)
             count += 1
-            yield VerifiedAssertion(
-                root_ref, link.artifact, record_id, assertion_id, assertion
+            leaf_count += 1
+        verified_leaves.append(
+            VerifiedAssertionLeaf(
+                artifact=link.artifact,
+                record_count=leaf_count,
+                assertion_ids_digest=leaf_ids.hexdigest(),
             )
+        )
+    actual_digest = ordered_ids.hexdigest()
     if expected_count is not None and (
-        count != expected_count
-        or digest("assertion-index-ids-v1", ordered_ids) != expected_digest
+        count != expected_count or actual_digest != expected_digest
     ):
         raise _fail("Assertion index count or ordered identity digest differs")
+    return VerifiedAssertionClosure(
+        root_ref=root_ref,
+        leaves=tuple(verified_leaves),
+        assertion_count=count,
+        assertion_ids_digest=actual_digest,
+        extraction_id=expected_extraction_id,
+        require_typed=indexed or expected_extraction_id is not None,
+    )
+
+
+def iter_verified_assertions(
+    root_ref: ArtifactRef,
+    artifacts: ArtifactReader,
+    *,
+    expected_extraction_id: str | None = None,
+) -> Iterator[VerifiedAssertion]:
+    """Yield records only after their complete root closure has been verified."""
+    closure = verify_assertion_closure(
+        root_ref,
+        artifacts,
+        expected_extraction_id=expected_extraction_id,
+    )
+    for leaf in closure.leaves:
+        payload = _read_bounded(leaf.artifact, artifacts)
+        leaf_count = 0
+        leaf_ids = _OrderedIdentityDigest()
+        for record in _records(payload):
+            record_id, assertion_id, assertion = _assertion(
+                record, require_typed=closure.require_typed
+            )
+            if closure.extraction_id is not None and (
+                assertion is None or assertion.extraction_id != closure.extraction_id
+            ):
+                raise _fail("Assertion closure changed after verification")
+            leaf_count += 1
+            leaf_ids.add(assertion_id)
+            yield VerifiedAssertion(
+                closure.root_ref,
+                leaf.artifact,
+                record_id,
+                assertion_id,
+                assertion,
+            )
+        if (
+            leaf_count != leaf.record_count
+            or leaf_ids.hexdigest() != leaf.assertion_ids_digest
+        ):
+            raise _fail("Assertion closure changed after verification")

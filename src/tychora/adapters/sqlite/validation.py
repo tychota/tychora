@@ -7,7 +7,7 @@ from hashlib import sha256
 from types import SimpleNamespace
 from typing import Any, NoReturn, cast
 
-from tychora.adapters.files.assertions import iter_verified_assertions
+from tychora.adapters.files.assertions import verify_assertion_closure
 from tychora.adapters.files.references import MAX_MANIFEST_BYTES
 from tychora.configuration.registry import Registry, compile_filter
 from tychora.contracts.code import CODE_RESOLVER_FINGERPRINT
@@ -61,11 +61,6 @@ def verify_artifacts(
     if bundle.code_files:
         needed.add(bundle.extraction.document_artifact_sha)
         needed.update(item.artifact_ref for item in bundle.code_files)
-        needed.update(
-            ref.sha256
-            for ref in bundle.artifacts
-            if ref.media_type == "application/json"
-        )
     refs = {ref.sha256: ref for ref in bundle.artifacts}
     if len(refs) != len(bundle.artifacts):
         fail("Duplicate artifact identity")
@@ -105,22 +100,47 @@ def verify_artifacts(
     )
     if required - refs.keys():
         fail("Bundle omits required artifact references")
+    if bundle.code_files:
+        try:
+            retained = json.loads(payloads[bundle.extraction.document_artifact_sha])
+            partition_shas = tuple(
+                link["artifact"]["sha256"]
+                for link in retained.get("required_manifests", [])
+                if link.get("type") == "extraction"
+            )
+        except (AttributeError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            fail("Retained code extraction manifest is malformed")
+        for artifact_sha in partition_shas:
+            ref = refs.get(artifact_sha)
+            if ref is None:
+                fail("Bundle omits a retained code extraction partition")
+            if ref.size_bytes > MAX_MANIFEST_BYTES:
+                fail("Retained code extraction partition exceeds byte capacity")
+            try:
+                with reader.open_verified(ref) as stream:
+                    child_payload = stream.read(MAX_MANIFEST_BYTES + 1)
+            except OSError:
+                fail("Artifact payload is unavailable")
+            if (
+                len(child_payload) > MAX_MANIFEST_BYTES
+                or len(child_payload) != ref.size_bytes
+            ):
+                fail("Retained code extraction partition exceeds byte capacity")
+            payloads[artifact_sha] = child_payload
     if (
         bundle.extraction.assertions_artifact_sha is not None
         and refs[bundle.extraction.assertions_artifact_sha].media_type
         == "application/json"
     ):
         root = refs[bundle.extraction.assertions_artifact_sha]
-        locations = tuple(
-            iter_verified_assertions(
-                root,
-                reader,
-                expected_extraction_id=(
-                    bundle.extraction.extraction_id if bundle.code_files else None
-                ),
-            )
+        closure = verify_assertion_closure(
+            root,
+            reader,
+            expected_extraction_id=bundle.extraction.extraction_id,
         )
-        if any(item.leaf_ref.sha256 not in refs for item in locations):
+        if any(
+            refs.get(item.artifact.sha256) != item.artifact for item in closure.leaves
+        ):
             fail("Bundle omits an assertion partition artifact")
     return payloads
 

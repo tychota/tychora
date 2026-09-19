@@ -9,7 +9,7 @@ from io import BytesIO
 from itertools import pairwise
 from typing import Any, cast
 
-from tychora.adapters.files.assertions import iter_verified_assertions
+from tychora.adapters.files.assertions import verify_assertion_closure
 from tychora.adapters.files.references import MAX_MANIFEST_BYTES, required_refs
 from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef, ManifestRef
@@ -968,29 +968,23 @@ def replay_code_extraction(
     if assertions_ref is not None:
         if not assertion_roots or assertion_roots[0].artifact != assertions_ref:
             raise ValueError("Code assertion root differs from retained closure")
-        locations = tuple(
-            iter_verified_assertions(
-                assertions_ref,
-                artifacts,
-                expected_extraction_id=extraction_id(
-                    registration.revision.revision_id,
-                    data["parser_fingerprint"],
-                    data["normalizer_fingerprint"],
-                ),
-            )
+        closure = verify_assertion_closure(
+            assertions_ref,
+            artifacts,
+            expected_extraction_id=extraction_id(
+                registration.revision.revision_id,
+                data["parser_fingerprint"],
+                data["normalizer_fingerprint"],
+            ),
         )
         if assertion_roots[0].type == "assertion_index":
-            unique_leaves = {
-                location.leaf_ref.sha256: location.leaf_ref
-                for location in locations
-            }
             assertion_partition_refs = tuple(
                 ManifestRef(
-                    artifact=leaf,
+                    artifact=leaf.artifact,
                     type="assertion",
                     schema_version="1",
                 )
-                for leaf in unique_leaves.values()
+                for leaf in closure.leaves
             )
     elif assertion_roots:
         raise ValueError("Code extraction closure has an unexpected assertion root")
