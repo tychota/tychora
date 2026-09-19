@@ -55,6 +55,32 @@ def test_whole_capture_never_runs_git_helpers(repo, capture, monkeypatch):
     assert all(marker.exists() is False for marker in markers.values())
 
 
+def test_missing_promised_tree_never_runs_transport_helper(repo, capture):
+    marker = repo.parent / "transport-ran"
+    helper = repo.parent / "transport-helper"
+    helper.write_text(f"#!/bin/sh\nprintf invoked > '{marker}'\nexit 1\n")
+    helper.chmod(0o755)
+    tree_oid = subprocess.run(
+        ["/usr/bin/git", "-C", str(repo), "rev-parse", "HEAD^{tree}"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    tree_object = repo / ".git" / "objects" / tree_oid[:2] / tree_oid[2:]
+    assert tree_object.is_file()
+    tree_object.unlink()
+    git(repo, "config", "extensions.partialClone", "origin")
+    git(repo, "config", "remote.origin.promisor", "true")
+    git(repo, "config", "remote.origin.partialclonefilter", "blob:none")
+    git(repo, "config", "remote.origin.url", f"ext::{helper}")
+    git(repo, "config", "protocol.ext.allow", "always")
+
+    with pytest.raises(TychoraError) as exc:
+        capture(repo)
+    assert exc.value.code == "INVALID_REQUEST"
+    assert marker.exists() is False
+
+
 def test_symlink_is_rejected_without_reading_its_target(repo, capture):
     outside = repo.parent / "outside.txt"
     outside.write_text("must not be captured\n")

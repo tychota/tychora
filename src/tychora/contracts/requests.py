@@ -144,9 +144,15 @@ class RepositorySource(SourceBase):
             or "\x00" in item
             or item.startswith("/")
             or ".." in item.split("/")
+            or any(
+                not segment or segment == "." or ("**" in segment and segment != "**")
+                for segment in item.split("/")
+            )
             for item in excludes
         ):
-            raise ValueError("Repository excludes must be relative POSIX globs")
+            raise ValueError(
+                "Repository excludes must be relative POSIX globs; ** must be a complete segment"
+            )
         return excludes
 
 

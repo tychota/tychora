@@ -72,6 +72,30 @@ def test_dirty_scope_ignores_excluded_only_changes(repo, capture):
     assert "private/generated.py" not in entries(changed)
 
 
+def test_exclude_star_is_segment_bounded_while_double_star_crosses_directories(
+    repo, capture
+):
+    from tests.code.conftest import git
+
+    private = repo / "private"
+    nested = private / "nested"
+    nested.mkdir(parents=True)
+    (private / "direct.py").write_text("direct = True\n")
+    (nested / "deep.py").write_text("deep = True\n")
+    git(repo, "add", "private/direct.py", "private/nested/deep.py")
+    git(repo, "commit", "-qm", "add exclude fixtures")
+
+    direct_only = capture(repo, excludes=("private/*",))
+    assert "private/direct.py" not in entries(direct_only)
+    assert "private/nested/deep.py" in entries(direct_only)
+    assert direct_only.dirty is False
+
+    whole_subtree = capture(repo, excludes=("private/**",))
+    assert "private/direct.py" not in entries(whole_subtree)
+    assert "private/nested/deep.py" not in entries(whole_subtree)
+    assert whole_subtree.dirty is False
+
+
 def test_staged_and_unstaged_included_changes_are_dirty(repo, capture):
     from tests.code.conftest import git
 

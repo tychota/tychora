@@ -11,6 +11,7 @@ import signal
 import stat
 import subprocess
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 
 from tychora.adapters.files.cas import LocalArtifacts
@@ -230,14 +231,32 @@ class RepositoryCapture:
 
     @staticmethod
     def _excluded(path: str, patterns: tuple[str, ...]) -> bool:
-        return any(
-            fnmatch.fnmatchcase(path, pattern)
-            or (
-                pattern.startswith("**/")
-                and fnmatch.fnmatchcase(path, pattern.removeprefix("**/"))
-            )
-            for pattern in patterns
-        )
+        path_parts = tuple(path.split("/"))
+
+        def match_pattern(pattern: str) -> bool:
+            pattern_parts = tuple(pattern.split("/"))
+
+            @cache
+            def matches(pattern_index: int, path_index: int) -> bool:
+                if pattern_index == len(pattern_parts):
+                    return path_index == len(path_parts)
+                segment = pattern_parts[pattern_index]
+                if segment == "**":
+                    if pattern_index == len(pattern_parts) - 1:
+                        return path_index < len(path_parts)
+                    return matches(pattern_index + 1, path_index) or (
+                        path_index < len(path_parts)
+                        and matches(pattern_index, path_index + 1)
+                    )
+                return (
+                    path_index < len(path_parts)
+                    and fnmatch.fnmatchcase(path_parts[path_index], segment)
+                    and matches(pattern_index + 1, path_index + 1)
+                )
+
+            return matches(0, 0)
+
+        return any(match_pattern(pattern) for pattern in patterns)
 
     def _paths(self, value: bytes, patterns: tuple[str, ...]) -> tuple[str, ...]:
         result = []
@@ -343,6 +362,10 @@ class RepositoryCapture:
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_ATTR_NOSYSTEM": "1",
             "GIT_OPTIONAL_LOCKS": "0",
+            # Git >=2.30 checks this before transport-helper setup. Repository
+            # inspection is local-only, so deny every transport and fail closed
+            # if a promised object is absent instead of running lazy-fetch code.
+            "GIT_ALLOW_PROTOCOL": "",
         }
         try:
             process = subprocess.Popen(
