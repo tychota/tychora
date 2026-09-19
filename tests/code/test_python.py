@@ -46,6 +46,27 @@ def test_nested_classes_repeated_names_and_docstrings_are_distinct():
     assert data[doc.byte_start : doc.byte_end] == b'"""First run."""'
 
 
+def test_repeated_definitions_do_not_share_local_import_context():
+    data = (
+        b"def load():\n"
+        b"    import os\n"
+        b"    return os.getcwd()\n"
+        b"def load():\n"
+        b"    return 2\n"
+    )
+    adapter = PythonAdapter()
+    syntax = adapter.parse(data, {})
+    loads = [item for item in adapter.definitions(syntax) if item.name == "load"]
+
+    assert len(loads) == 2
+    assert [
+        [span.reason for span in adapter.context_spans(definition)]
+        for definition in loads
+    ] == [["referenced_import"], []]
+    call = next(item for item in adapter.references(syntax) if item.form == "call")
+    assert call.source_scope_ref == loads[0].native_ref
+
+
 def test_import_call_inheritance_references_supply_exact_definition_context():
     data = (
         b"from pkg.client import Client as ApiClient, Other\n"
@@ -122,6 +143,28 @@ def test_calls_in_decorators_defaults_and_bodies_keep_definition_scope():
     assert data[context[0].byte_start : context[0].byte_end] == (
         b"from helpers import logged, build"
     )
+
+
+def test_chained_calls_keep_nested_static_callees_without_duplicates():
+    data = (
+        b"def chained():\n"
+        b"    return factory()()\n"
+        b"def attributed():\n"
+        b"    return factory().value()\n"
+    )
+    adapter = PythonAdapter()
+    calls = [
+        item
+        for item in adapter.references(adapter.parse(data, {}))
+        if item.form == "call"
+    ]
+
+    assert [(item.spelling, item.supported, item.source_scope) for item in calls] == [
+        ("factory()", False, ("chained",)),
+        ("factory", True, ("chained",)),
+        ("factory().value", False, ("attributed",)),
+        ("factory", True, ("attributed",)),
+    ]
 
 
 def test_syntax_recovery_is_diagnostic_and_does_not_invent_calls():
@@ -218,6 +261,18 @@ def test_invalid_default_utf8_is_a_labelled_faithful_fallback():
     assert [item.code for item in syntax.diagnostics] == ["invalid_source_encoding"]
 
 
+def test_invalid_utf8_after_encoding_probe_lines_is_a_faithful_fallback():
+    data = b"# coding: utf-8\n\nlabel = '\xff'\n"
+    syntax = PythonAdapter().parse(data, {})
+
+    assert syntax.coverage == "text_fallback"
+    assert syntax.encoding == "latin-1"
+    assert syntax.text.encode("latin-1") == data
+    assert [item.code for item in syntax.diagnostics] == ["invalid_source_encoding"]
+    assert syntax.definitions_found == ()
+    assert syntax.references_found == ()
+
+
 def test_utf8_bom_and_multibyte_identifier_round_trip_original_offsets():
     body = "def caf\N{LATIN SMALL LETTER E WITH ACUTE}():\n    return '\N{LATIN SMALL LETTER E WITH ACUTE}'\n".encode()
     data = b"\xef\xbb\xbf" + body
@@ -240,6 +295,27 @@ def test_utf8_bom_and_multibyte_identifier_round_trip_original_offsets():
     assert definition.char_start == 0
     assert definition.line_start == 1
     assert definition.line_end == 2
+
+
+def test_cr_only_source_has_exact_lines_and_explicit_parser_fallback():
+    data = b"def one():\r    return 1\rdef two():\r    return 2\r"
+    syntax = PythonAdapter().parse(data, {})
+
+    assert syntax.coverage == "text_fallback"
+    assert syntax.text.encode("utf-8") == data
+    assert syntax.line_starts == (0, 11, 24, 35, 48)
+    assert syntax.line_for_byte(24) == 3
+    assert [item.code for item in syntax.diagnostics] == [
+        "unsupported_parser_line_endings"
+    ]
+    assert syntax.definitions_found == ()
+
+    crlf = PythonAdapter().parse(
+        b"def one():\r\n    pass\r\ndef two():\r\n    pass\r\n", {}
+    )
+    assert crlf.coverage == "parsed"
+    assert crlf.line_starts == (0, 12, 22, 34, 44)
+    assert [item.line_start for item in crlf.definitions_found] == [1, 3]
 
 
 def test_empty_file_is_explicit_immutable_coverage():

@@ -36,9 +36,20 @@ def source_maps(
         byte_to_codepoint[byte_offset] = char_offset
 
     line_starts = [0]
-    line_starts.extend(
-        index + 1 for index, value in enumerate(file_bytes) if value == 10
-    )
+    index = 0
+    while index < len(file_bytes):
+        value = file_bytes[index]
+        if value == 13:
+            index += (
+                2 if index + 1 < len(file_bytes) and file_bytes[index + 1] == 10 else 1
+            )
+            line_starts.append(index)
+            continue
+        if value == 10:
+            index += 1
+            line_starts.append(index)
+            continue
+        index += 1
     byte_to_line = [
         bisect_right(line_starts, byte_offset)
         for byte_offset in range(len(file_bytes) + 1)

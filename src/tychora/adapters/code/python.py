@@ -56,33 +56,30 @@ class PythonAdapter:
         try:
             encoding, _ = tokenize.detect_encoding(io.BytesIO(file_bytes).readline)
         except (LookupError, SyntaxError, UnicodeError) as error:
-            text = file_bytes.decode("latin-1")
-            fallback = base_syntax_result(
-                language="python",
-                grammar=self._grammar_name(),
-                adapter_fingerprint=adapter_fingerprint,
-                file_bytes=file_bytes,
-                text=text,
-                encoding="latin-1",
-                coverage="text_fallback",
-                options=options,
-                root_type="text_fallback",
-            )
-            diagnostic = SyntaxDiagnostic(
+            return self._invalid_encoding_fallback(
+                file_bytes,
+                options,
+                adapter_fingerprint,
                 code=(
                     "unsupported_source_encoding"
                     if "unknown encoding" in str(error).lower()
                     else "invalid_source_encoding"
                 ),
                 message=f"Python encoding detection failed; retained bytes exactly: {error}",
-                severity="error",
-                byte_start=0,
-                byte_end=len(file_bytes),
-                line_start=1,
-                line_end=fallback.line_for_byte(max(0, len(file_bytes) - 1)),
             )
-            return fallback.model_copy(update={"diagnostics": (diagnostic,)})
-        text = file_bytes.decode(encoding)
+        try:
+            text = file_bytes.decode(encoding)
+        except UnicodeError as error:
+            return self._invalid_encoding_fallback(
+                file_bytes,
+                options,
+                adapter_fingerprint,
+                code="invalid_source_encoding",
+                message=(
+                    f"Python source is not valid {encoding}; retained bytes exactly: "
+                    f"{error}"
+                ),
+            )
         if encoding.lower().replace("_", "-") not in ("utf-8", "utf-8-sig"):
             fallback = base_syntax_result(
                 language="python",
@@ -100,6 +97,32 @@ class PythonAdapter:
                 message=(
                     f"The installed Python grammar cannot safely parse {encoding} "
                     "bytes; retained an exact decoded text fallback"
+                ),
+                severity="warning",
+                byte_start=0,
+                byte_end=len(file_bytes),
+                line_start=1,
+                line_end=fallback.line_for_byte(max(0, len(file_bytes) - 1)),
+            )
+            return fallback.model_copy(update={"diagnostics": (diagnostic,)})
+
+        if self._has_lone_carriage_return(file_bytes):
+            fallback = base_syntax_result(
+                language="python",
+                grammar=self._grammar_name(),
+                adapter_fingerprint=adapter_fingerprint,
+                file_bytes=file_bytes,
+                text=text,
+                encoding=encoding,
+                coverage="text_fallback",
+                options=options,
+                root_type="text_fallback",
+            )
+            diagnostic = SyntaxDiagnostic(
+                code="unsupported_parser_line_endings",
+                message=(
+                    "The installed Python grammar does not preserve CR-only source "
+                    "structure; retained an exact decoded text fallback"
                 ),
                 severity="warning",
                 byte_start=0,
@@ -128,7 +151,19 @@ class PythonAdapter:
                 update={"diagnostics": self._syntax_diagnostics(tree.root_node, base)}
             )
         definitions = tuple(self._definition_nodes(tree.root_node, base))
-        references = tuple(self._reference_nodes(tree.root_node, base, ()))
+        definition_by_range = {
+            (definition.declaration_span.byte_start, definition.byte_end): definition
+            for definition in definitions
+        }
+        references = tuple(
+            self._reference_nodes(
+                tree.root_node,
+                base,
+                (),
+                None,
+                definition_by_range,
+            )
+        )
         uncovered = tuple(self._uncovered_spans(tree.root_node, base))
         definitions = tuple(
             definition.model_copy(
@@ -167,6 +202,47 @@ class PythonAdapter:
         return f"{_GRAMMAR}@{version(_GRAMMAR)}"
 
     @staticmethod
+    def _has_lone_carriage_return(file_bytes: bytes) -> bool:
+        index = file_bytes.find(b"\r")
+        while index >= 0:
+            if index + 1 == len(file_bytes) or file_bytes[index + 1] != 10:
+                return True
+            index = file_bytes.find(b"\r", index + 1)
+        return False
+
+    def _invalid_encoding_fallback(
+        self,
+        file_bytes: bytes,
+        options: JsonValue,
+        adapter_fingerprint: str,
+        *,
+        code: str,
+        message: str,
+    ) -> SyntaxResult:
+        text = file_bytes.decode("latin-1")
+        fallback = base_syntax_result(
+            language="python",
+            grammar=self._grammar_name(),
+            adapter_fingerprint=adapter_fingerprint,
+            file_bytes=file_bytes,
+            text=text,
+            encoding="latin-1",
+            coverage="text_fallback",
+            options=options,
+            root_type="text_fallback",
+        )
+        diagnostic = SyntaxDiagnostic(
+            code=code,
+            message=message,
+            severity="error",
+            byte_start=0,
+            byte_end=len(file_bytes),
+            line_start=1,
+            line_end=fallback.line_for_byte(max(0, len(file_bytes) - 1)),
+        )
+        return fallback.model_copy(update={"diagnostics": (diagnostic,)})
+
+    @staticmethod
     def _require_python(syntax: SyntaxResult) -> None:
         if syntax.language != "python":
             raise ValueError("PythonAdapter requires Python syntax facts")
@@ -195,7 +271,14 @@ class PythonAdapter:
                 node.end_byte,
             )
 
-    def _reference_nodes(self, node, syntax: SyntaxResult, scope: tuple[str, ...]):
+    def _reference_nodes(
+        self,
+        node,
+        syntax: SyntaxResult,
+        scope: tuple[str, ...],
+        scope_ref: str | None,
+        definition_by_range: dict[tuple[int, int], Definition],
+    ):
         for child in node.named_children:
             if child.type == "ERROR" or child.is_missing:
                 continue
@@ -212,12 +295,22 @@ class PythonAdapter:
                 name_node = definition_node.child_by_field_name("name")
                 if name_node is None:
                     continue
+                definition = definition_by_range.get(
+                    (definition_node.start_byte, definition_node.end_byte)
+                )
+                if definition is None:
+                    continue
                 definition_scope = (*scope, self._text(name_node, syntax))
+                definition_scope_ref = definition.native_ref
                 if child.type == "decorated_definition":
                     for decorator in child.named_children:
                         if decorator.type == "decorator":
                             yield from self._reference_nodes(
-                                decorator, syntax, definition_scope
+                                decorator,
+                                syntax,
+                                definition_scope,
+                                definition_scope_ref,
+                                definition_by_range,
                             )
                 if definition_node.type == "class_definition":
                     superclasses = definition_node.child_by_field_name("superclasses")
@@ -227,30 +320,84 @@ class PythonAdapter:
                                 superclass,
                                 syntax,
                                 definition_scope,
+                                definition_scope_ref,
                                 "inheritance",
                             )
                 for header_child in definition_node.named_children:
                     if header_child not in (name_node, body):
                         yield from self._reference_nodes(
-                            header_child, syntax, definition_scope
+                            header_child,
+                            syntax,
+                            definition_scope,
+                            definition_scope_ref,
+                            definition_by_range,
                         )
-                yield from self._reference_nodes(body, syntax, definition_scope)
+                yield from self._reference_nodes(
+                    body,
+                    syntax,
+                    definition_scope,
+                    definition_scope_ref,
+                    definition_by_range,
+                )
                 continue
             if child.type in ("import_statement", "import_from_statement"):
-                yield from self._import_references(child, syntax, scope)
+                yield from self._import_references(child, syntax, scope, scope_ref)
                 continue
             if child.type == "call":
-                if not child.has_error:
-                    function = child.child_by_field_name("function")
-                    if function is not None:
-                        yield self._expression_reference(
-                            function, syntax, scope, "call"
-                        )
-                arguments = child.child_by_field_name("arguments")
-                if arguments is not None:
-                    yield from self._reference_nodes(arguments, syntax, scope)
+                yield from self._call_references(
+                    child,
+                    syntax,
+                    scope,
+                    scope_ref,
+                    definition_by_range,
+                )
                 continue
-            yield from self._reference_nodes(child, syntax, scope)
+            yield from self._reference_nodes(
+                child,
+                syntax,
+                scope,
+                scope_ref,
+                definition_by_range,
+            )
+
+    def _call_references(
+        self,
+        call,
+        syntax: SyntaxResult,
+        scope: tuple[str, ...],
+        scope_ref: str | None,
+        definition_by_range: dict[tuple[int, int], Definition],
+    ):
+        if call.has_error:
+            return
+        function = call.child_by_field_name("function")
+        if function is not None:
+            yield self._expression_reference(function, syntax, scope, scope_ref, "call")
+            if function.type == "call":
+                yield from self._call_references(
+                    function,
+                    syntax,
+                    scope,
+                    scope_ref,
+                    definition_by_range,
+                )
+            else:
+                yield from self._reference_nodes(
+                    function,
+                    syntax,
+                    scope,
+                    scope_ref,
+                    definition_by_range,
+                )
+        arguments = call.child_by_field_name("arguments")
+        if arguments is not None:
+            yield from self._reference_nodes(
+                arguments,
+                syntax,
+                scope,
+                scope_ref,
+                definition_by_range,
+            )
 
     def _walk_definitions(self, node, syntax: SyntaxResult, parents):
         for child in node.named_children:
@@ -276,7 +423,11 @@ class PythonAdapter:
             yield from self._walk_definitions(child, syntax, parents)
 
     def _import_references(
-        self, statement, syntax: SyntaxResult, scope: tuple[str, ...]
+        self,
+        statement,
+        syntax: SyntaxResult,
+        scope: tuple[str, ...],
+        scope_ref: str | None,
     ):
         module_node = (
             statement.child_by_field_name("module_name")
@@ -330,6 +481,7 @@ class PythonAdapter:
                 binding,
                 syntax,
                 scope,
+                scope_ref,
                 form="import",
                 spelling=self._text(binding, syntax),
                 import_module=import_module,
@@ -345,6 +497,7 @@ class PythonAdapter:
         node,
         syntax: SyntaxResult,
         scope: tuple[str, ...],
+        scope_ref: str | None,
         form: str,
     ) -> Reference:
         spelling = self._text(node, syntax)
@@ -358,6 +511,7 @@ class PythonAdapter:
             node,
             syntax,
             scope,
+            scope_ref,
             form=form,
             spelling=spelling,
             candidate_names=candidates,
@@ -369,6 +523,7 @@ class PythonAdapter:
         node,
         syntax: SyntaxResult,
         scope: tuple[str, ...],
+        scope_ref: str | None,
         *,
         form: str,
         spelling: str,
@@ -384,6 +539,7 @@ class PythonAdapter:
             spelling=spelling,
             native_ref=f"python:reference:{form}:{node.start_byte}:{node.end_byte}",
             source_scope=scope,
+            source_scope_ref=scope_ref,
             byte_start=node.start_byte,
             byte_end=node.end_byte,
             char_start=syntax.char_offset(node.start_byte),
@@ -443,8 +599,14 @@ class PythonAdapter:
             for item in references
             if item.form != "import"
             and item.supported
-            and item.source_scope == definition_scope
+            and item.source_scope_ref == definition.native_ref
         }
+        definitions_by_ref = {item.native_ref: item for item in definitions}
+        visible_scope_refs: set[str | None] = {None, definition.native_ref}
+        parent_ref = definition.parent_native_ref
+        while parent_ref is not None:
+            visible_scope_refs.add(parent_ref)
+            parent_ref = definitions_by_ref[parent_ref].parent_native_ref
         selected_imports: list[Reference] = []
         for name in sorted(used_names):
             visible = [
@@ -452,6 +614,7 @@ class PythonAdapter:
                 for item in references
                 if item.form == "import"
                 and item.local_name == name
+                and item.source_scope_ref in visible_scope_refs
                 and definition_scope[: len(item.source_scope)] == item.source_scope
             ]
             if visible:

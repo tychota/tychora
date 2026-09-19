@@ -135,6 +135,7 @@ class Reference(Contract):
     spelling: NonEmptyStr
     native_ref: NonEmptyStr
     source_scope: tuple[str, ...]
+    source_scope_ref: str | None = None
     byte_start: NonNegativeInt
     byte_end: NonNegativeInt
     char_start: NonNegativeInt
