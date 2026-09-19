@@ -114,6 +114,11 @@ def vector_record_id(
     return digest("vector-v1", family_id, chunk_or_asset_id, exact_input_sha)
 
 
+def family_id(workspace_id: str, config_sha: str, creation_uuid: str) -> str:
+    """Bind one physical family to its persisted creation-job nonce."""
+    return digest("family-v1", workspace_id, config_sha, creation_uuid)
+
+
 def new_family_nonce() -> str:
     """Persist this fresh nonce once per backend family creation."""
     return str(uuid4())
