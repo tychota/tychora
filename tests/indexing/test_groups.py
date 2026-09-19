@@ -281,6 +281,40 @@ def test_group_and_request_caps_split_only_between_windows(config_factory) -> No
     assert all(group.token_count <= 180 for group in groups)
 
 
+def test_split_joint_groups_use_only_subgroup_capsule_owners(config_factory) -> None:
+    config = config_factory(max_group_tokens=260, max_request_tokens=1_000)
+    counter = ExactCounter("voyage-context-4")
+    windows = tuple(
+        _window(
+            str(index),
+            chr(97 + index) * 120,
+            ordinal=index,
+            heading=(f"Restricted path {index}",),
+            dependencies=frozenset(
+                {"revision-a", f"unit-{index}-revision-a", f"owner-{index}"}
+            ),
+        )
+        for index in range(3)
+    )
+
+    groups = build_groups(windows, config, counter)
+
+    assert [group.window_ids for group in groups] == [
+        (window.chunk_id,) for window in windows
+    ]
+    for index, group in enumerate(groups):
+        assert f"Restricted path {index}" in group.capsule
+        assert all(
+            f"Restricted path {other}" not in group.capsule
+            for other in range(3)
+            if other != index
+        )
+        assert group.dependency_ids == windows[index].dependency_ids
+        assert group.token_count == sum(
+            counter.count(text) for text in group.input_texts
+        )
+
+
 def test_oversized_atomic_group_input_fails_explicitly(config_factory) -> None:
     config = config_factory(max_group_tokens=100, max_request_tokens=120)
     counter = ExactCounter("voyage-context-4")

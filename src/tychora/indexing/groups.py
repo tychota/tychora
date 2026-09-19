@@ -129,30 +129,36 @@ def _split_joint(
     counter: TokenCounter,
 ) -> tuple[ContextGroup, ...]:
     limit = config.values.providers.text.max_group_tokens
-    capsule = _capsule(windows)
-    capsule_tokens = counter.count(capsule)
-    if capsule_tokens <= 0 or capsule_tokens >= limit:
-        raise TychoraError(
-            "INVALID_REQUEST", "Context capsule exceeds the group token limit"
-        )
     output = []
     current: list[SearchWindow] = []
-    current_tokens = capsule_tokens
     for window in windows:
-        if capsule_tokens + window.token_count > limit:
+        candidate = (*current, window)
+        capsule = _capsule(candidate)
+        candidate_tokens = counter.count(capsule) + sum(
+            item.token_count for item in candidate
+        )
+        if candidate_tokens <= limit:
+            current.append(window)
+            continue
+        if not current:
             raise TychoraError(
                 "INVALID_REQUEST", "One atomic window exceeds the group token limit"
             )
-        if current and current_tokens + window.token_count > limit:
-            output.append(
-                _make_group(tuple(current), capsule, config, counter, "joint")
+        subgroup = tuple(current)
+        output.append(
+            _make_group(subgroup, _capsule(subgroup), config, counter, "joint")
+        )
+        current = [window]
+        single_capsule = _capsule((window,))
+        if counter.count(single_capsule) + window.token_count > limit:
+            raise TychoraError(
+                "INVALID_REQUEST", "One atomic window exceeds the group token limit"
             )
-            current = []
-            current_tokens = capsule_tokens
-        current.append(window)
-        current_tokens += window.token_count
     if current:
-        output.append(_make_group(tuple(current), capsule, config, counter, "joint"))
+        subgroup = tuple(current)
+        output.append(
+            _make_group(subgroup, _capsule(subgroup), config, counter, "joint")
+        )
     return tuple(output)
 
 
