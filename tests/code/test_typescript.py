@@ -173,6 +173,9 @@ def test_malformed_declaration_is_diagnostic_while_valid_siblings_survive():
     assert [item.name for item in adapter.definitions(syntax)] == ["good", "later"]
     assert [item.code for item in syntax.diagnostics] == ["typescript_syntax_error"]
     assert adapter.references(syntax) == ()
+    assert [
+        source[item.byte_start : item.byte_end] for item in syntax.uncovered_spans
+    ] == [b"function broken(,) {}"]
 
 
 def test_bom_unicode_and_line_endings_keep_original_coordinate_maps():

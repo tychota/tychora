@@ -305,8 +305,7 @@ class TypeScriptAdapter:
                 node.end_byte,
             )
 
-    @staticmethod
-    def _top_level_is_definition(node) -> bool:
+    def _top_level_is_definition(self, node) -> bool:
         declaration = (
             node.child_by_field_name("declaration")
             if node.type == "export_statement"
@@ -320,7 +319,7 @@ class TypeScriptAdapter:
             "function_declaration",
             "function_signature",
         ):
-            return True
+            return self._valid_declaration(declaration)
         if declaration.type not in ("lexical_declaration", "variable_declaration"):
             return False
         declarators = [
@@ -492,6 +491,17 @@ class TypeScriptAdapter:
             None,
         )
         if clause is None:
+            yield self._reference(
+                source_node,
+                syntax,
+                scope,
+                scope_ref,
+                form="import",
+                spelling=self._text(source_node, syntax),
+                import_module=module,
+                candidate_names=(module,),
+                statement_span=statement_span,
+            )
             return
         for binding in clause.named_children:
             if binding.type == "identifier":
@@ -552,13 +562,54 @@ class TypeScriptAdapter:
                 )
 
     def _export_references(self, statement, syntax, scope, scope_ref):
+        source_node = statement.child_by_field_name("source")
         clause = next(
             (item for item in statement.named_children if item.type == "export_clause"),
             None,
         )
         if clause is None:
+            if source_node is None:
+                return
+            module = self._module_text(source_node, syntax)
+            statement_span = self._span(
+                syntax,
+                f"{self._dialect}:export_statement:{statement.start_byte}:{statement.end_byte}",
+                "export_statement",
+                statement.start_byte,
+                statement.end_byte,
+            )
+            namespace = next(
+                (
+                    item
+                    for item in statement.named_children
+                    if item.type == "namespace_export"
+                ),
+                None,
+            )
+            reference_node = namespace or next(
+                (item for item in statement.children if item.type == "*"), None
+            )
+            if reference_node is None:
+                return
+            alias = (
+                namespace.named_children[-1]
+                if namespace is not None and namespace.named_children
+                else None
+            )
+            yield self._reference(
+                reference_node,
+                syntax,
+                scope,
+                scope_ref,
+                form="export",
+                spelling=self._text(reference_node, syntax),
+                import_module=module,
+                import_name="*",
+                local_name=self._text(alias, syntax) if alias is not None else None,
+                candidate_names=(module,),
+                statement_span=statement_span,
+            )
             return
-        source_node = statement.child_by_field_name("source")
         module = self._module_text(source_node, syntax) if source_node else None
         statement_span = self._span(
             syntax,

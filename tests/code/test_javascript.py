@@ -133,3 +133,40 @@ def test_recovered_method_does_not_invent_references_from_its_error_region():
     assert [
         item.spelling for item in adapter.references(syntax) if item.form == "call"
     ] == ["okay"]
+
+
+def test_side_effect_import_and_wildcard_reexports_keep_exact_static_references():
+    source = (
+        b'import "./setup";\nexport * from "./api";\nexport * as api from "./named";\n'
+    )
+    adapter = TypeScriptAdapter("javascript")
+
+    references = adapter.references(adapter.parse(source, {}))
+
+    assert [
+        (
+            item.form,
+            item.spelling,
+            item.import_module,
+            item.import_name,
+            item.local_name,
+        )
+        for item in references
+    ] == [
+        ("import", '"./setup"', "./setup", None, None),
+        ("export", "*", "./api", "*", None),
+        ("export", "* as api", "./named", "*", "api"),
+    ]
+    assert all(
+        source[item.byte_start : item.byte_end].decode() == item.spelling
+        for item in references
+    )
+    assert [
+        source[item.statement_span.byte_start : item.statement_span.byte_end]
+        for item in references
+        if item.statement_span is not None
+    ] == [
+        b'import "./setup";',
+        b'export * from "./api";',
+        b'export * as api from "./named";',
+    ]
