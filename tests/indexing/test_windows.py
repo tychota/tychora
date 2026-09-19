@@ -516,9 +516,28 @@ def test_proxy_windows_bind_asset_revision_and_every_original_owner(counter) -> 
             ),
         ),
     )
+    empty_sha = sha256(b"").hexdigest()
+    unrelated = EvidenceUnit(
+        unit_id=unit_id(
+            bundle.extraction.extraction_id, "unrelated-image", 2, empty_sha
+        ),
+        extraction_id=bundle.extraction.extraction_id,
+        parent_id=None,
+        ordinal=2,
+        unit_type="image_original",
+        native_ref="unrelated-image",
+        boundary_key="unrelated-image",
+        text="",
+        text_sha=empty_sha,
+        locators=(
+            ImageLocator(
+                artifact_ref="unrelated-image-ref", native_ref="unrelated.png"
+            ),
+        ),
+    )
     asset_id = "asset-a"
     image_locator = ImageLocator(artifact_ref="image-ref", native_ref="image.png")
-    bundle = _replace_units(bundle, (original, context)).model_copy(
+    bundle = _replace_units(bundle, (original, context, unrelated)).model_copy(
         update={
             "assets": (
                 AssetRow(
@@ -535,6 +554,11 @@ def test_proxy_windows_bind_asset_revision_and_every_original_owner(counter) -> 
                     unit_id=original.unit_id,
                     asset_id=asset_id,
                     role="source",
+                ),
+                UnitAssetRow(
+                    unit_id=unrelated.unit_id,
+                    asset_id=asset_id,
+                    role="thumbnail",
                 ),
             ),
         }
@@ -575,7 +599,9 @@ def test_proxy_windows_bind_asset_revision_and_every_original_owner(counter) -> 
         }
     )
     with pytest.raises(ValueError, match="proxy unit.*binding"):
-        prepare_extraction(_replace_units(bundle, (original, context, mismatched_unit)))
+        prepare_extraction(
+            _replace_units(bundle, (original, context, unrelated, mismatched_unit))
+        )
 
     omitted_owner = bundle.model_copy(
         update={

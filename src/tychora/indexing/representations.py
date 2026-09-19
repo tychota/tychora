@@ -218,7 +218,8 @@ def _bundle_index(bundle: ExtractionBundle) -> _RetainedIndex:
         ):
             raise ValueError("Canonical unit-asset ownership differs")
         seen_links.add(key)
-        asset_owners[link.asset_id].add(link.unit_id)
+        if link.role in {"source", "caption"}:
+            asset_owners[link.asset_id].add(link.unit_id)
     documents: dict[str, tuple[DocumentSourcePart, ...]] = {}
     for unit in bundle.units:
         if unit.attributes.get("document_representation") == "docling-source-parts@1":
