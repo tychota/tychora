@@ -1,0 +1,27 @@
+src/tychora/adapters/voyage/validation.py
+  s_35b641b930a96d::t_884cb21fb70646 1-82
+src/tychora/application/owner.py
+  s_35b641b930a96d::t_f079c8a046b70d 18,28,58-62,207-210,477-514,967-1020
+tests/providers/test_text.py
+  s_35b641b930a96d::t_275e4028b2ae7c 1-788
+tests/providers/test_validation.py
+  s_35b641b930a96d::t_7d4c4f59d53c34 1-83
+uv.lock
+  s_35b641b930a96d::t_fc26a32b0b5534 447,472-473,476,479-480,486,489,492-495,498-499,502,505,508,893-894,1258,1509,1548,1560,1590-1592,1604,3192,3230
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "fc0e992079150cf4786f8164f75d37a220a7a853",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
