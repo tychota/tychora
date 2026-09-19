@@ -1,0 +1,69 @@
+src/tychora/contracts/extraction.py
+  s_35b641b930a96d::t_20fd53ee5821b1 241-246
+tests/code/test_structure.py
+  s_35b641b930a96d::t_7f6438032fda3f 272-274
+  s_35b641b930a96d::t_ddd9844204e26d 280,282,365-381
+  s_35b641b930a96d::t_7f294a36e6bb58 281
+  s_35b641b930a96d::t_90484e9bb941a3 1-271,275-279,283-364,382-405
+src/tychora/adapters/sqlite/validation.py
+  s_35b641b930a96d::t_663d385663e322 3,7,11,26-45,59-66,110,113-119,125-148,167-184,232-275,281,287-302,304-353,370-374,385-393,419-454,473-478,483
+  s_35b641b930a96d::t_12d7c0d7d5ddc8 8,303
+  s_35b641b930a96d::t_ae4c71403d3761 276-280,282-286
+src/tychora/adapters/code/normalize.py
+  s_35b641b930a96d::t_1358f18c0afb66 1-16,18-155,157-764,766-954,956-964
+  s_35b641b930a96d::t_663d385663e322 17,156,765,955
+src/tychora/contracts/code.py
+  s_35b641b930a96d::t_663d385663e322 1-353
+src/tychora/adapters/code/resolve.py
+  s_35b641b930a96d::t_33259de95154df 1-180
+src/tychora/adapters/sqlite/code_provenance.py
+  s_35b641b930a96d::t_2c67f27cd2474d 12,17-21,25,32-33,36,63
+src/tychora/configuration/registry.py
+  s_418ca577fd31c4::t_5ab7f0bc573f00 377-378
+src/tychora/contracts/code_storage.py
+  s_35b641b930a96d::t_bb81ed1fb30807 1-47
+src/tychora/contracts/corpus.py
+  s_35b641b930a96d::t_aa84876f659ede 17,173
+src/tychora/profiles/documents/profile.toml
+  s_418ca577fd31c4::t_5fa1dd2ac0180c 157,168
+src/tychora/profiles/documents/schemas/code_file-metadata.json
+  s_418ca577fd31c4::t_304bfbccfc066c 134
+src/tychora/profiles/manifest.json
+  s_95ca6ceed19302::t_af3165ecd06b22 4
+tests/code/test_dependencies.py
+  s_35b641b930a96d::t_cd8cad30e1c37d 1-38
+tests/code/test_resolution.py
+  s_418ca577fd31c4::t_7737bce32fcfef 1-185
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "6bd4498826c282138fc37b1f8d2926f41697e60e",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    },
+    "s_418ca577fd31c4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a095c7-f621-71f1-84e6-244d9e427b3b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    },
+    "s_95ca6ceed19302": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a095c7-f621-71f1-84e6-244d9e427b3b",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
