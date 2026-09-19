@@ -1,0 +1,29 @@
+tests/code/test_javascript.py
+  s_35b641b930a96d::t_214b71690002cd 136-172
+tests/code/test_typescript.py
+  s_418ca577fd31c4::t_9f9eaf45c132ab 176-178
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "4ae3301e146089b00a6ab3ca7af73d280db84b00",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    },
+    "s_418ca577fd31c4": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a095c7-f621-71f1-84e6-244d9e427b3b",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
