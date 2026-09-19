@@ -24,7 +24,11 @@ from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef, physical_identity
 from tychora.contracts.base import FrozenJsonMap
-from tychora.contracts.documents import DocumentAsset, DocumentRegistration
+from tychora.contracts.documents import (
+    DocumentAsset,
+    DocumentRegistration,
+    OriginalImage,
+)
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import Geometry, ImageLocator
 from tychora.contracts.extraction import (
@@ -34,6 +38,7 @@ from tychora.contracts.extraction import (
 )
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.ports.execution import ExecutionContext
+from tychora.ports.vision import pixel_identity
 
 from .mapping import MAX_ITEMS, map_document
 
@@ -215,14 +220,20 @@ class _Convert:
             ),
         )
         converter = DocumentConverter(
-            allowed_formats=[InputFormat.PDF, InputFormat.DOCX],
+            allowed_formats=[InputFormat.PDF, InputFormat.DOCX, InputFormat.IMAGE],
             format_options={
                 InputFormat.PDF: PdfFormatOption(
                     pipeline_options=options,
                     backend_options=ThreadedDoclingParseBackendOptions(
                         render_scale=1.0
                     ),
-                )
+                ),
+                InputFormat.IMAGE: PdfFormatOption(
+                    pipeline_options=options,
+                    backend_options=ThreadedDoclingParseBackendOptions(
+                        render_scale=1.0
+                    ),
+                ),
             },
         )
         with _image_decode_guard():
@@ -293,26 +304,66 @@ class DoclingParser:
                 "The requested rich-document normalizer is not qualified",
             )
         inventory = validate_models(self.model_path)
-        return registry, kind, inventory
+        image = self._original_image(original)
+        return registry, kind, inventory, image
+
+    def _original_image(self, original: ArtifactRef) -> OriginalImage | None:
+        if self.registration.format not in ("png", "jpeg"):
+            return None
+        from PIL import Image, ImageOps
+
+        with (
+            self.owner.artifacts.open_verified(original) as stream,
+            Image.open(stream) as encoded,
+        ):
+            expected = "PNG" if self.registration.format == "png" else "JPEG"
+            if (
+                encoded.format != expected
+                or encoded.width * encoded.height > MAX_IMAGE_PIXELS
+            ):
+                raise TychoraError(
+                    "INVALID_REQUEST", "Image MIME, format or pixel capacity differs"
+                )
+            oriented = ImageOps.exif_transpose(encoded).convert("RGB")
+            oriented.load()
+            width, height = oriented.size
+            pixels = oriented.tobytes()
+        transform = "exif-transpose-rgb-v1"
+        native_ref = "image-original:" + self.registration.source.source_key
+        return OriginalImage(
+            native_ref=native_ref,
+            artifact_ref=original,
+            encoded_sha256=original.sha256,
+            pixel_sha256=pixel_identity(pixels, width, height, "RGB", transform),
+            width=width,
+            height=height,
+            color_mode="RGB",
+            pixel_transform=transform,
+            locator=ImageLocator(
+                artifact_ref=original.sha256,
+                native_ref=self.registration.source.source_key,
+                geometry=Geometry(domain="pixels", x0=0, y0=0, x1=width, y1=height),
+            ),
+        )
 
     def extract(
         self, original: ArtifactRef, config: ResolvedConfig, ctx: ExecutionContext
     ) -> ExtractionArtifact:
         self.owner._sync_thread()
-        registry, kind, inventory = self._prepare(original, config, ctx)
+        registry, kind, inventory, image = self._prepare(original, config, ctx)
         return self.owner.run_parser_sync(
             _Convert(str(self.model_path), self.registration.format),
             (original,),
             ctx,
             collector=lambda outputs: self._retain(
-                outputs, original, config, registry, kind, inventory
+                outputs, original, config, registry, kind, inventory, image
             ),
         )
 
     async def aextract(
         self, original: ArtifactRef, config: ResolvedConfig, ctx: ExecutionContext
     ) -> ExtractionArtifact:
-        registry, kind, inventory = await self.owner.run_blocking(
+        registry, kind, inventory, image = await self.owner.run_blocking(
             lambda: self._prepare(original, config, ctx), ctx
         )
         return await self.owner.run_parser(
@@ -320,7 +371,7 @@ class DoclingParser:
             (original,),
             ctx,
             collector=lambda outputs: self._retain(
-                outputs, original, config, registry, kind, inventory
+                outputs, original, config, registry, kind, inventory, image
             ),
         )
 
@@ -332,6 +383,7 @@ class DoclingParser:
         registry: Registry,
         kind: Mapping[str, Any],
         inventory: FrozenJsonMap,
+        original_image: OriginalImage | None = None,
     ) -> ExtractionArtifact:
         if len(outputs) != 1 or outputs[0][0].name != "document.json":
             raise TychoraError("INTEGRITY_ERROR", "Unexpected Docling output")
@@ -348,6 +400,10 @@ class DoclingParser:
             raise TychoraError(
                 "INTEGRITY_ERROR",
                 "Unrendered DOCX unexpectedly supplied physical pages",
+            )
+        if original_image is not None and mapped.units:
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Standalone image conversion invented source text"
             )
         artifacts = self.owner.artifacts
         raw_ref = artifacts.put_stream(
@@ -405,6 +461,9 @@ class DoclingParser:
                 )
             )
             page = unit.locators[0].physical_page if unit else page
+            if original_image is not None and native_ref.startswith("#/pages/"):
+                page = None
+                geometry = original_image.locator.geometry
             captions = [r["$ref"] for r in node.get("captions", [])]
             caption = "\n".join(
                 u.text for u in mapped.units if u.native_ref in captions
@@ -427,7 +486,15 @@ class DoclingParser:
                     width=width,
                     height=height,
                     caption=caption,
-                    source_units=tuple(([unit.native_ref] if unit else []) + captions),
+                    source_units=tuple(
+                        (
+                            [original_image.native_ref]
+                            if original_image is not None
+                            else []
+                        )
+                        + ([unit.native_ref] if unit else [])
+                        + captions
+                    ),
                 )
             )
         diagnostics = [Diagnostic.model_validate(d) for d in mapped.diagnostics]
@@ -481,6 +548,9 @@ class DoclingParser:
             "records": [],
             "diagnostics": [d.model_dump(mode="json") for d in diagnostics],
             "docling_json_ref": raw_ref.model_dump(mode="json"),
+            "original_image": original_image.model_dump(mode="json")
+            if original_image is not None
+            else None,
         }
         encoded = extraction_document(data)
         if len(encoded) > MAX_EXTRACTION_BYTES:

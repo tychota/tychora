@@ -1,0 +1,294 @@
+{
+  "schema_version": "1",
+  "notices": [
+    {
+      "selection": "ocr",
+      "attribution": "PaddleOCR models by Baidu, converted and distributed by RapidAI/RapidOCR",
+      "license": "Apache-2.0",
+      "notice_url": "https://github.com/RapidAI/RapidOCR/blob/v3.9.2/LICENSE",
+      "model_card_url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/README.md"
+    },
+    {
+      "selection": "documents",
+      "attribution": "Docling model assets published by the Docling project",
+      "license": "Apache-2.0 and CDLA-Permissive-2.0 as recorded per asset",
+      "notice_url": "https://github.com/docling-project/docling/blob/v2.126.0/LICENSE",
+      "model_card_url": "https://huggingface.co/docling-project/docling-models"
+    },
+    {
+      "selection": "output-tokenizer",
+      "attribution": "cl100k_base encoding published with tiktoken by OpenAI",
+      "license": "MIT",
+      "notice_url": "https://github.com/openai/tiktoken/blob/0.14.0/LICENSE",
+      "model_card_url": "https://github.com/openai/tiktoken/issues/92#issuecomment-1497875652"
+    },
+    {
+      "selection": "voyage-context-4",
+      "attribution": "Model-bound tokenizer assets published by Voyage AI",
+      "license": "Apache-2.0",
+      "notice_url": "https://huggingface.co/voyageai/voyage-context-4/blob/8ca946072a18e398cd61f2ad0243b56d0350b1db/README.md",
+      "model_card_url": "https://huggingface.co/voyageai/voyage-context-4"
+    },
+    {
+      "selection": "voyage-code-4",
+      "attribution": "Model-bound tokenizer assets published by Voyage AI",
+      "license": "Apache-2.0",
+      "notice_url": "https://huggingface.co/voyageai/voyage-code-4/blob/ac780b405e54ff8b3aff681270e0e03840fed2f3/README.md",
+      "model_card_url": "https://huggingface.co/voyageai/voyage-code-4"
+    }
+  ],
+  "assets": [
+    {
+      "id": "rapidocr-det-pp-ocrv6-small",
+      "selection": "ocr",
+      "path": "rapidocr/3.9.2/PP-OCRv6_det_small.onnx",
+      "sha256": "090f04abcd9d9a7498bc4ebf677e4cb9bdce1fe4197ddb7e529f1ef44e1ff94f",
+      "size_bytes": 9929594,
+      "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/onnx/PP-OCRv6/det/PP-OCRv6_det_small.onnx",
+      "license": "Apache-2.0",
+      "owner": "rapidocr==3.9.2",
+      "revision": "v3.9.2",
+      "notice_url": "https://github.com/RapidAI/RapidOCR/blob/v3.9.2/LICENSE"
+    },
+    {
+      "id": "rapidocr-rec-pp-ocrv6-small",
+      "selection": "ocr",
+      "path": "rapidocr/3.9.2/PP-OCRv6_rec_small.onnx",
+      "sha256": "6f327246b50388f3c176ae304bd95767ea6dc0c9ae92153ef8cbe210b3c14884",
+      "size_bytes": 21234383,
+      "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/onnx/PP-OCRv6/rec/PP-OCRv6_rec_small.onnx",
+      "license": "Apache-2.0",
+      "owner": "rapidocr==3.9.2",
+      "revision": "v3.9.2",
+      "notice_url": "https://github.com/RapidAI/RapidOCR/blob/v3.9.2/LICENSE"
+    },
+    {
+      "id": "rapidocr-cls-pp-ocrv2-mobile",
+      "selection": "ocr",
+      "path": "rapidocr/3.9.2/ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+      "sha256": "e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c",
+      "size_bytes": 585532,
+      "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/onnx/PP-OCRv4/cls/ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+      "license": "Apache-2.0",
+      "owner": "rapidocr==3.9.2",
+      "revision": "v3.9.2",
+      "notice_url": "https://github.com/RapidAI/RapidOCR/blob/v3.9.2/LICENSE"
+    },
+    {
+      "id": "docling-layout-config",
+      "selection": "documents",
+      "path": "docling-project--docling-layout-heron/config.json",
+      "sha256": "fdea30805ce2f5666b147fca941dcdd27ad468e27d6ed21902207d3da056a97d",
+      "size_bytes": 3268,
+      "url": "https://huggingface.co/docling-project/docling-layout-heron/resolve/8f39ad3c0b4c58e9c2d2c84a38465abf757272d8/config.json",
+      "license": "Apache-2.0",
+      "owner": "docling==2.126.0",
+      "revision": "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8",
+      "notice_url": "https://huggingface.co/docling-project/docling-layout-heron/tree/8f39ad3c0b4c58e9c2d2c84a38465abf757272d8"
+    },
+    {
+      "id": "docling-layout-preprocessor",
+      "selection": "documents",
+      "path": "docling-project--docling-layout-heron/preprocessor_config.json",
+      "sha256": "cd38cd59999e7a95d68e487fbe5132df3d4e5c32a0836add57e6126ba0c4eaf1",
+      "size_bytes": 444,
+      "url": "https://huggingface.co/docling-project/docling-layout-heron/resolve/8f39ad3c0b4c58e9c2d2c84a38465abf757272d8/preprocessor_config.json",
+      "license": "Apache-2.0",
+      "owner": "docling==2.126.0",
+      "revision": "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8",
+      "notice_url": "https://huggingface.co/docling-project/docling-layout-heron/tree/8f39ad3c0b4c58e9c2d2c84a38465abf757272d8"
+    },
+    {
+      "id": "docling-layout-weights",
+      "selection": "documents",
+      "path": "docling-project--docling-layout-heron/model.safetensors",
+      "sha256": "00333a43451945aaf89db8ca9c0a17e75d1537c17db60fdb91aa95f4c7929e0c",
+      "size_bytes": 171658996,
+      "url": "https://huggingface.co/docling-project/docling-layout-heron/resolve/8f39ad3c0b4c58e9c2d2c84a38465abf757272d8/model.safetensors",
+      "license": "Apache-2.0",
+      "owner": "docling==2.126.0",
+      "revision": "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8",
+      "notice_url": "https://huggingface.co/docling-project/docling-layout-heron/tree/8f39ad3c0b4c58e9c2d2c84a38465abf757272d8"
+    },
+    {
+      "id": "docling-table-config",
+      "selection": "documents",
+      "path": "docling-project--docling-models/model_artifacts/tableformer/accurate/tm_config.json",
+      "sha256": "984e122ceb8ccf84d84c9d2882f6f2302a44b4f1e577babd6289892c36f3cffd",
+      "size_bytes": 7060,
+      "url": "https://huggingface.co/docling-project/docling-models/resolve/fc0f2d45e2218ea24bce5045f58a389aed16dc23/model_artifacts/tableformer/accurate/tm_config.json",
+      "license": "CDLA-Permissive-2.0",
+      "owner": "docling==2.126.0",
+      "revision": "fc0f2d45e2218ea24bce5045f58a389aed16dc23",
+      "notice_url": "https://huggingface.co/docling-project/docling-models/tree/fc0f2d45e2218ea24bce5045f58a389aed16dc23"
+    },
+    {
+      "id": "docling-table-weights",
+      "selection": "documents",
+      "path": "docling-project--docling-models/model_artifacts/tableformer/accurate/tableformer_accurate.safetensors",
+      "sha256": "2a7d6c924b3cd12fb99a09280ca9c33a89c5d60b93253617d2e088c1a40374d9",
+      "size_bytes": 212758388,
+      "url": "https://huggingface.co/docling-project/docling-models/resolve/fc0f2d45e2218ea24bce5045f58a389aed16dc23/model_artifacts/tableformer/accurate/tableformer_accurate.safetensors",
+      "license": "CDLA-Permissive-2.0",
+      "owner": "docling==2.126.0",
+      "revision": "fc0f2d45e2218ea24bce5045f58a389aed16dc23",
+      "notice_url": "https://huggingface.co/docling-project/docling-models/tree/fc0f2d45e2218ea24bce5045f58a389aed16dc23"
+    },
+    {
+      "id": "cl100k-base-ranks",
+      "selection": "output-tokenizer",
+      "path": "tiktoken/0.14.0/cl100k_base.tiktoken",
+      "sha256": "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7",
+      "size_bytes": 1681126,
+      "url": "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken",
+      "license": "MIT",
+      "owner": "tiktoken==0.14.0",
+      "revision": "cl100k_base@0.14.0",
+      "notice_url": "https://github.com/openai/tiktoken/issues/92#issuecomment-1497875652"
+    },
+    {
+      "id": "voyage-context-4-readme",
+      "selection": "voyage-context-4",
+      "path": "voyage-context-4/8ca946072a18e398cd61f2ad0243b56d0350b1db/README.md",
+      "sha256": "4bcf87ecfbbb8e07a01b21415a970c8b53a5283bf6872b657040d3f45c9241f7",
+      "size_bytes": 31,
+      "url": "https://huggingface.co/voyageai/voyage-context-4/resolve/8ca946072a18e398cd61f2ad0243b56d0350b1db/README.md",
+      "license": "Apache-2.0",
+      "owner": "voyageai==0.5.0",
+      "revision": "8ca946072a18e398cd61f2ad0243b56d0350b1db",
+      "notice_url": "https://huggingface.co/voyageai/voyage-context-4/tree/8ca946072a18e398cd61f2ad0243b56d0350b1db"
+    },
+    {
+      "id": "voyage-context-4-config",
+      "selection": "voyage-context-4",
+      "path": "voyage-context-4/8ca946072a18e398cd61f2ad0243b56d0350b1db/config.json",
+      "sha256": "bfbfe9a4e24f9f7369bcbec32629758e428eb9cd144c318697690f97232c24f1",
+      "size_bytes": 808,
+      "url": "https://huggingface.co/voyageai/voyage-context-4/resolve/8ca946072a18e398cd61f2ad0243b56d0350b1db/config.json",
+      "license": "Apache-2.0",
+      "owner": "voyageai==0.5.0",
+      "revision": "8ca946072a18e398cd61f2ad0243b56d0350b1db",
+      "notice_url": "https://huggingface.co/voyageai/voyage-context-4/tree/8ca946072a18e398cd61f2ad0243b56d0350b1db"
+    },
+    {
+      "id": "voyage-context-4-tokenizer",
+      "selection": "voyage-context-4",
+      "path": "voyage-context-4/8ca946072a18e398cd61f2ad0243b56d0350b1db/tokenizer.json",
+      "sha256": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
+      "size_bytes": 7031645,
+      "url": "https://huggingface.co/voyageai/voyage-context-4/resolve/8ca946072a18e398cd61f2ad0243b56d0350b1db/tokenizer.json",
+      "license": "Apache-2.0",
+      "owner": "voyageai==0.5.0",
+      "revision": "8ca946072a18e398cd61f2ad0243b56d0350b1db",
+      "notice_url": "https://huggingface.co/voyageai/voyage-context-4/tree/8ca946072a18e398cd61f2ad0243b56d0350b1db"
+    },
+    {
+      "id": "voyage-context-4-tokenizer-config",
+      "selection": "voyage-context-4",
+      "path": "voyage-context-4/8ca946072a18e398cd61f2ad0243b56d0350b1db/tokenizer_config.json",
+      "sha256": "58c4abbc36eeccd8b3c8453f262225e8f2803855c88790760b618f4cd9e43be9",
+      "size_bytes": 7228,
+      "url": "https://huggingface.co/voyageai/voyage-context-4/resolve/8ca946072a18e398cd61f2ad0243b56d0350b1db/tokenizer_config.json",
+      "license": "Apache-2.0",
+      "owner": "voyageai==0.5.0",
+      "revision": "8ca946072a18e398cd61f2ad0243b56d0350b1db",
+      "notice_url": "https://huggingface.co/voyageai/voyage-context-4/tree/8ca946072a18e398cd61f2ad0243b56d0350b1db"
+    },
+    {
+      "id": "voyage-context-4-vocab",
+      "selection": "voyage-context-4",
+      "path": "voyage-context-4/8ca946072a18e398cd61f2ad0243b56d0350b1db/vocab.json",
+      "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+      "size_bytes": 2776833,
+      "url": "https://huggingface.co/voyageai/voyage-context-4/resolve/8ca946072a18e398cd61f2ad0243b56d0350b1db/vocab.json",
+      "license": "Apache-2.0",
+      "owner": "voyageai==0.5.0",
+      "revision": "8ca946072a18e398cd61f2ad0243b56d0350b1db",
+      "notice_url": "https://huggingface.co/voyageai/voyage-context-4/tree/8ca946072a18e398cd61f2ad0243b56d0350b1db"
+    },
+    {
+      "id": "voyage-context-4-merges",
+      "selection": "voyage-context-4",
+      "path": "voyage-context-4/8ca946072a18e398cd61f2ad0243b56d0350b1db/merges.txt",
+      "sha256": "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3",
+      "size_bytes": 1671839,
+      "url": "https://huggingface.co/voyageai/voyage-context-4/resolve/8ca946072a18e398cd61f2ad0243b56d0350b1db/merges.txt",
+      "license": "Apache-2.0",
+      "owner": "voyageai==0.5.0",
+      "revision": "8ca946072a18e398cd61f2ad0243b56d0350b1db",
+      "notice_url": "https://huggingface.co/voyageai/voyage-context-4/tree/8ca946072a18e398cd61f2ad0243b56d0350b1db"
+    },
+    {
+      "id": "voyage-code-4-readme",
+      "selection": "voyage-code-4",
+      "path": "voyage-code-4/ac780b405e54ff8b3aff681270e0e03840fed2f3/README.md",
+      "sha256": "4bcf87ecfbbb8e07a01b21415a970c8b53a5283bf6872b657040d3f45c9241f7",
+      "size_bytes": 31,
+      "url": "https://huggingface.co/voyageai/voyage-code-4/resolve/ac780b405e54ff8b3aff681270e0e03840fed2f3/README.md",
+      "license": "Apache-2.0",
+      "owner": "voyageai==0.5.0",
+      "revision": "ac780b405e54ff8b3aff681270e0e03840fed2f3",
+      "notice_url": "https://huggingface.co/voyageai/voyage-code-4/tree/ac780b405e54ff8b3aff681270e0e03840fed2f3"
+    },
+    {
+      "id": "voyage-code-4-config",
+      "selection": "voyage-code-4",
+      "path": "voyage-code-4/ac780b405e54ff8b3aff681270e0e03840fed2f3/config.json",
+      "sha256": "bfbfe9a4e24f9f7369bcbec32629758e428eb9cd144c318697690f97232c24f1",
+      "size_bytes": 808,
+      "url": "https://huggingface.co/voyageai/voyage-code-4/resolve/ac780b405e54ff8b3aff681270e0e03840fed2f3/config.json",
+      "license": "Apache-2.0",
+      "owner": "voyageai==0.5.0",
+      "revision": "ac780b405e54ff8b3aff681270e0e03840fed2f3",
+      "notice_url": "https://huggingface.co/voyageai/voyage-code-4/tree/ac780b405e54ff8b3aff681270e0e03840fed2f3"
+    },
+    {
+      "id": "voyage-code-4-tokenizer",
+      "selection": "voyage-code-4",
+      "path": "voyage-code-4/ac780b405e54ff8b3aff681270e0e03840fed2f3/tokenizer.json",
+      "sha256": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
+      "size_bytes": 7031645,
+      "url": "https://huggingface.co/voyageai/voyage-code-4/resolve/ac780b405e54ff8b3aff681270e0e03840fed2f3/tokenizer.json",
+      "license": "Apache-2.0",
+      "owner": "voyageai==0.5.0",
+      "revision": "ac780b405e54ff8b3aff681270e0e03840fed2f3",
+      "notice_url": "https://huggingface.co/voyageai/voyage-code-4/tree/ac780b405e54ff8b3aff681270e0e03840fed2f3"
+    },
+    {
+      "id": "voyage-code-4-tokenizer-config",
+      "selection": "voyage-code-4",
+      "path": "voyage-code-4/ac780b405e54ff8b3aff681270e0e03840fed2f3/tokenizer_config.json",
+      "sha256": "58c4abbc36eeccd8b3c8453f262225e8f2803855c88790760b618f4cd9e43be9",
+      "size_bytes": 7228,
+      "url": "https://huggingface.co/voyageai/voyage-code-4/resolve/ac780b405e54ff8b3aff681270e0e03840fed2f3/tokenizer_config.json",
+      "license": "Apache-2.0",
+      "owner": "voyageai==0.5.0",
+      "revision": "ac780b405e54ff8b3aff681270e0e03840fed2f3",
+      "notice_url": "https://huggingface.co/voyageai/voyage-code-4/tree/ac780b405e54ff8b3aff681270e0e03840fed2f3"
+    },
+    {
+      "id": "voyage-code-4-vocab",
+      "selection": "voyage-code-4",
+      "path": "voyage-code-4/ac780b405e54ff8b3aff681270e0e03840fed2f3/vocab.json",
+      "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+      "size_bytes": 2776833,
+      "url": "https://huggingface.co/voyageai/voyage-code-4/resolve/ac780b405e54ff8b3aff681270e0e03840fed2f3/vocab.json",
+      "license": "Apache-2.0",
+      "owner": "voyageai==0.5.0",
+      "revision": "ac780b405e54ff8b3aff681270e0e03840fed2f3",
+      "notice_url": "https://huggingface.co/voyageai/voyage-code-4/tree/ac780b405e54ff8b3aff681270e0e03840fed2f3"
+    },
+    {
+      "id": "voyage-code-4-merges",
+      "selection": "voyage-code-4",
+      "path": "voyage-code-4/ac780b405e54ff8b3aff681270e0e03840fed2f3/merges.txt",
+      "sha256": "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3",
+      "size_bytes": 1671839,
+      "url": "https://huggingface.co/voyageai/voyage-code-4/resolve/ac780b405e54ff8b3aff681270e0e03840fed2f3/merges.txt",
+      "license": "Apache-2.0",
+      "owner": "voyageai==0.5.0",
+      "revision": "ac780b405e54ff8b3aff681270e0e03840fed2f3",
+      "notice_url": "https://huggingface.co/voyageai/voyage-code-4/tree/ac780b405e54ff8b3aff681270e0e03840fed2f3"
+    }
+  ]
+}

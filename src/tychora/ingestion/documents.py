@@ -43,6 +43,15 @@ def normalize_document(
         registration.revision.kind_id, registration.revision.metadata_json
     )
     kind = cast(Mapping[str, Any], registry.kinds[registration.revision.kind_id])
+    from .document_records import document_normalizer_fingerprint
+
+    if parsed.normalizer_fingerprint != document_normalizer_fingerprint(kind, registry):
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Document normalizer fingerprint differs from registry binding",
+        )
+    if registration.format in ("png", "jpeg"):
+        return normalize_standalone_image(parsed, revision_id, registry)
     if kind["normalizer"] != "structured_sections@1":
         from .document_records import normalize_document_records
 
@@ -111,6 +120,79 @@ def normalize_document(
     )
 
 
+def normalize_standalone_image(
+    parsed: ExtractionArtifact,
+    revision_id: str,
+    registry: Registry,
+    *,
+    context: DocumentNormalizationContext | None = None,
+) -> ExtractionBundle:
+    registration = cast(DocumentRegistration, parsed.registration)
+    image = parsed.original_image
+    if (
+        image is None
+        or revision_id != registration.revision.revision_id
+        or registry.registry_digest != parsed.registry_digest
+    ):
+        raise TychoraError("INTEGRITY_ERROR", "Standalone image binding differs")
+    kind = cast(Mapping[str, Any], registry.kinds[registration.revision.kind_id])
+    from .document_records import document_normalizer_fingerprint
+
+    if parsed.normalizer_fingerprint != document_normalizer_fingerprint(kind, registry):
+        raise TychoraError(
+            "INTEGRITY_ERROR", "Standalone image normalizer binding differs"
+        )
+    registry.validate_metadata(
+        revision_id and registration.revision.kind_id,
+        registration.revision.metadata_json,
+    )
+    fingerprint = (
+        context.normalizer_fingerprint if context else parsed.normalizer_fingerprint
+    )
+    eid = extraction_id(revision_id, parsed.parser_fingerprint, fingerprint)
+    text_sha = sha256(b"").hexdigest()
+    uid = unit_id(eid, image.native_ref, 0, text_sha)
+    unit = EvidenceUnit(
+        unit_id=uid,
+        extraction_id=eid,
+        parent_id=None,
+        ordinal=0,
+        unit_type="image_original",
+        native_ref=image.native_ref,
+        boundary_key=image.native_ref,
+        text="",
+        text_sha=text_sha,
+        text_origin="source",
+        citable=True,
+        locators=(image.locator,),
+        attributes=FrozenJsonMap(
+            {
+                "encoded_sha256": image.encoded_sha256,
+                "pixel_sha256": image.pixel_sha256,
+                "width": image.width,
+                "height": image.height,
+                "color_mode": image.color_mode,
+                "pixel_transform": image.pixel_transform,
+                "document_representation": "docling-image-source@1",
+            }
+        ),
+    )
+    return assemble_document_bundle(
+        parsed,
+        (unit,),
+        (
+            LocatorRow(
+                locator_id=digest("locator-v1", uid, 0),
+                unit_id=uid,
+                fragment_ordinal=0,
+                locator=image.locator,
+            ),
+        ),
+        {image.native_ref: (uid,)},
+        context=context,
+    )
+
+
 def assemble_document_bundle(
     parsed: ExtractionArtifact,
     units: tuple[EvidenceUnit, ...],
@@ -152,7 +234,11 @@ def assemble_document_bundle(
                 UnitAssetRow(
                     unit_id=uid,
                     asset_id=aid,
-                    role="source" if ref == asset.native_ref else "caption",
+                    role="source"
+                    if ref == asset.native_ref
+                    or parsed.original_image is not None
+                    and ref == parsed.original_image.native_ref
+                    else "caption",
                 )
                 for uid in source_owners[ref]
             )

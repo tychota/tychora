@@ -11,7 +11,13 @@ from typing import Any, cast
 from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef, ManifestRef, physical_identity
 from tychora.contracts.assets import ProxyRecord
-from tychora.contracts.composition import DocumentCompositionPlan, SourceSelector
+from tychora.contracts.composition import (
+    DocumentCompositionPlan,
+    PlannedProxy,
+    PlannedRegion,
+    SourceSelector,
+    source_context_identity,
+)
 from tychora.contracts.corpus import ExtractionBundle, LocatorRow
 from tychora.contracts.documents import DocumentUnit
 from tychora.contracts.extraction import ExtractionArtifact
@@ -26,7 +32,9 @@ from .document_identity import DocumentNormalizationContext
 from .document_parts import _Budget
 from .document_records import normalize_document_records
 from .document_views import source_views
+from .documents import normalize_standalone_image
 from .tables import continuation, continuation_assertion, validate_assertion
+from .vision import _materialize_pixel_source_view
 
 MAX_COMPOSED_MANIFEST_BYTES = 16 * 1024 * 1024
 MAX_COMPOSITION_INPUT_BYTES = 256 * 1024 * 1024
@@ -97,9 +105,11 @@ def _selected(
             )
     selected = []
     for unit in bundle.units:
+        if unit.text_origin != "source" or not unit.citable:
+            continue
         if selector.field is None:
             match = selector.native_ref in cast(
-                tuple[str, ...], unit.attributes["source_refs"]
+                tuple[str, ...], unit.attributes.get("source_refs", ())
             )
         else:
             match = any(
@@ -109,7 +119,8 @@ def _selected(
                 and part["source_start"] < selector.source_end
                 and part["source_end"] > selector.source_start
                 for part in cast(
-                    tuple[Mapping[str, Any], ...], unit.attributes["source_parts"]
+                    tuple[Mapping[str, Any], ...],
+                    unit.attributes.get("source_parts", ()),
                 )
             )
         if match:
@@ -133,6 +144,16 @@ def _input_references(
     for ref in (
         *(asset.artifact_ref for asset in parsed.assets),
         *(proxy.derivation for proxy in plan.proxies),
+        *(proxy.region.image_ref for proxy in plan.proxies if proxy.region is not None),
+        *(
+            (parsed.original_ref,)
+            if any(
+                proxy.region is not None
+                and proxy.region.original_image_sha256 == parsed.original_ref.sha256
+                for proxy in plan.proxies
+            )
+            else ()
+        ),
     ):
         previous = references.get(ref.sha256)
         if previous is not None and physical_identity(previous) != physical_identity(
@@ -143,6 +164,90 @@ def _input_references(
     if sum(ref.size_bytes for ref in references.values()) > MAX_COMPOSITION_INPUT_BYTES:
         raise ValueError("Composition retained inputs exceed aggregate capacity")
     return references
+
+
+def _region_input(region: PlannedRegion, image: bytes):
+    from tychora.ports.vision import RegionInput
+
+    return RegionInput.model_validate(
+        {
+            **region.model_dump(
+                exclude={
+                    "model",
+                    "prompt_schema_version",
+                    "task_schema_sha256",
+                    "prompt_renderer_identity",
+                    "prompt_identity",
+                }
+            ),
+            "image": image,
+        }
+    )
+
+
+def _verify_region_derivation(proxy: PlannedProxy, payload: bytes) -> None:
+    region = proxy.region
+    assert region is not None
+    try:
+        root = json.loads(payload)
+        data = root["data"]
+        result = data["result"]
+        expected = {
+            "task": region.task,
+            "source_native_ref": region.source_native_ref,
+            "image_sha256": region.image_sha256,
+            "original_image_sha256": region.original_image_sha256,
+            "original_pixel_sha256": region.original_pixel_sha256,
+            "region_pixel_sha256": region.region_pixel_sha256,
+            "context_sha256": region.context_sha256,
+            "source_context_sha256": source_context_identity(proxy.source_context),
+            "dependency_ids": sorted(region.dependency_ids),
+            "model": region.model,
+            "prompt_schema_version": region.prompt_schema_version,
+            "task_schema_sha256": region.task_schema_sha256,
+            "prompt_identity": region.prompt_identity,
+        }
+        if region.prompt_renderer_identity is not None:
+            expected["prompt_renderer_identity"] = region.prompt_renderer_identity
+        if (
+            canonical_bytes(root) != payload
+            or root.get("type") != "vision_derivation"
+            or root.get("schema_version") != "1"
+            or not isinstance(data, dict)
+            or not isinstance(result, dict)
+            or any(data.get(key) != value for key, value in expected.items())
+            or region.task == "ocr"
+            and result.get("literal_transcription") != proxy.text
+            or region.task != "ocr"
+            and canonical_bytes(result.get("interpretation")).decode("utf-8")
+            != proxy.text
+        ):
+            raise ValueError
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        raise ValueError(
+            "Vision derivation differs from the retained observation"
+        ) from None
+
+
+def _verified_region_context_ids(
+    proxy: PlannedProxy,
+    parsed: ExtractionArtifact,
+    final: ExtractionBundle,
+) -> tuple[str, ...]:
+    if not proxy.source_context:
+        return ()
+    from tychora.ports.vision import verify_retained_source_context
+
+    verify_retained_source_context(parsed, proxy.source_context)
+    return tuple(
+        sorted(
+            {
+                unit_id
+                for selected in proxy.source_context
+                for unit_id in _selected(selected.selector, parsed, final)
+            }
+        )
+    )
 
 
 def build_composed_document(
@@ -166,22 +271,39 @@ def build_composed_document(
     for proxy in plan.proxies:
         _checked(proxy.derivation, inputs)
     kind = cast(Mapping[str, Any], registry.kinds[parsed.registration.revision.kind_id])
-    base = (
-        None
-        if kind["normalizer"] == "structured_sections@1"
-        else normalize_document_records(
-            parsed, parsed.registration.revision.revision_id, registry, context=context
+    if parsed.original_image is not None:
+        bundle = normalize_standalone_image(
+            parsed,
+            parsed.registration.revision.revision_id,
+            registry,
+            context=context,
         )
-    )
-    bundle, fragments = source_views(parsed, context, base)
+        fragments = ()
+    else:
+        base = (
+            None
+            if kind["normalizer"] == "structured_sections@1"
+            else normalize_document_records(
+                parsed,
+                parsed.registration.revision.revision_id,
+                registry,
+                context=context,
+            )
+        )
+        bundle, fragments = source_views(parsed, context, base)
     payloads: dict[str, bytes] = {}
     refs: dict[str, ArtifactRef] = {}
     budget = _Budget()
     for unit in bundle.units:
         budget.add(
             work=1
-            + len(cast(tuple[Any, ...], unit.attributes["source_parts"]))
-            + len(cast(tuple[Any, ...], unit.attributes["structural_separators"]))
+            + len(cast(tuple[Any, ...], unit.attributes.get("source_parts", ())))
+            + len(
+                cast(
+                    tuple[Any, ...],
+                    unit.attributes.get("structural_separators", ()),
+                )
+            )
         )
     for collection in (
         "units",
@@ -232,6 +354,60 @@ def build_composed_document(
         if assertions
         else None
     )
+    assets = {asset.native_ref: asset.asset_id for asset in bundle.assets}
+    parsed_assets = {asset.native_ref: asset for asset in parsed.assets}
+    region_dependencies: dict[bytes, tuple[str, ...]] = {}
+    for proxy in plan.proxies:
+        if proxy.region is None:
+            continue
+        from tychora.ports.vision import verify_region_source
+
+        region = proxy.region
+        selected_asset = parsed_assets.get(region.source_native_ref)
+        standalone = (
+            parsed.original_image is not None
+            and region.source_native_ref == parsed.original_image.native_ref
+        )
+        if (
+            selected_asset is None and not standalone
+        ) or proxy.asset_native_ref not in assets:
+            raise ValueError("Vision region has no retained source asset")
+        region_bytes = _checked(region.image_ref, inputs)
+        original_ref = (
+            parsed.original_ref
+            if standalone
+            else cast(Any, selected_asset).artifact_ref
+        )
+        original_bytes = _checked(original_ref, inputs)
+        verify_region_source(
+            _region_input(region, region_bytes),
+            original_bytes,
+            original_ref,
+            region.source_native_ref,
+        )
+        _verify_region_derivation(proxy, _checked(proxy.derivation, inputs))
+        if standalone:
+            owner_id = next(
+                unit.unit_id
+                for unit in bundle.units
+                if unit.native_ref == region.source_native_ref
+                and unit.text_origin == "source"
+                and unit.citable
+            )
+        else:
+            bundle, owner_id = _materialize_pixel_source_view(
+                bundle, assets[proxy.asset_native_ref], region
+            )
+        region_dependencies[canonical_bytes(proxy.model_dump(mode="json"))] = tuple(
+            sorted(
+                {
+                    owner_id,
+                    *_verified_region_context_ids(
+                        proxy, parsed, bundle
+                    ),
+                }
+            )
+        )
     factory = ProxyFactory(bundle)
     proxies: list[ProxyRecord] = []
 
@@ -278,19 +454,23 @@ def build_composed_document(
                         receipt,
                     )
                 )
-    assets = {asset.native_ref: asset.asset_id for asset in bundle.assets}
     for proxy in plan.proxies:
         if proxy.asset_native_ref not in assets:
             raise ValueError("Composition proxy target has no original asset")
-        dependencies = tuple(
-            sorted(
-                {
-                    uid
-                    for selector in proxy.dependencies
-                    for uid in _selected(selector, parsed, bundle)
-                }
+        if proxy.region is None:
+            dependencies = tuple(
+                sorted(
+                    {
+                        uid
+                        for selector in proxy.dependencies
+                        for uid in _selected(selector, parsed, bundle)
+                    }
+                )
             )
-        )
+        else:
+            dependencies = region_dependencies[
+                canonical_bytes(proxy.model_dump(mode="json"))
+            ]
         if proxy.derivation.sha256 not in refs:
             retain(inputs[proxy.derivation.sha256], proxy.derivation.media_type)
         keep_proxy(
@@ -370,7 +550,7 @@ def build_composed_document(
             "required_manifests": [link.model_dump(mode="json") for link in links],
             "data": {
                 "representation": "document-composition@1",
-                "plan": plan.model_dump(mode="json"),
+                "plan": plan.semantic_data(),
                 "extraction_id": bundle.extraction.extraction_id,
                 "revision_id": bundle.revision.revision_id,
                 "source_fingerprint": context.source_fingerprint,

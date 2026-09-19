@@ -50,13 +50,15 @@ class DocumentNormalizationContext:
         # Capture times, source paths outside registration, and raw-manifest SHA
         # are observation links, not semantic inputs. These mapped facts retain
         # source text/structure/geometry and actual asset pixels without them.
-        source = digest(
-            "document-composition-source-v1",
+        source_inputs = [
             [unit.model_dump(mode="json") for unit in parsed.units],
             [asset.model_dump(mode="json") for asset in parsed.assets],
-        )
+        ]
+        if parsed.original_image is not None:
+            source_inputs.append(parsed.original_image.model_dump(mode="json"))
+        source = digest("document-composition-source-v1", *source_inputs)
         fingerprint = digest(
-            "document-composition-normalizer-v1", source, plan.model_dump(mode="json")
+            "document-composition-normalizer-v1", source, plan.semantic_data()
         )
         return cls(plan, parsed.raw_document_ref.sha256, source, fingerprint)
 

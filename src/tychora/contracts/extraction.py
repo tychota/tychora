@@ -19,6 +19,7 @@ from .documents import (
     DocumentAsset,
     DocumentRegistration,
     DocumentUnit,
+    OriginalImage,
     validate_document_assets,
     validate_document_units,
 )
@@ -114,6 +115,7 @@ class ExtractionArtifact(Contract):
     assets: tuple[DocumentAsset, ...] = ()
     document_json: FrozenJsonMap | None = None
     docling_json_ref: ArtifactRef | None = None
+    original_image: OriginalImage | None = None
     assertions: tuple[()] = ()
     records: tuple[ParsedRecord, ...] = ()
     diagnostics: tuple[Diagnostic, ...] = ()
@@ -135,7 +137,12 @@ class ExtractionArtifact(Contract):
                 or self.docling_json_ref is None
                 or physical_identity(self.original_ref)
                 != physical_identity(self.registration.capture.original_ref)
+                or self.original_image is not None
+                and physical_identity(self.original_image.artifact_ref)
+                != physical_identity(self.original_ref)
                 or any(not isinstance(unit, DocumentUnit) for unit in self.units)
+                or (self.registration.format in ("png", "jpeg"))
+                != (self.original_image is not None)
             ):
                 raise ValueError("Invalid binary document extraction domains")
             raw = canonical_bytes(self.document_json)
@@ -152,6 +159,7 @@ class ExtractionArtifact(Contract):
                 self.assets,
                 self.original_ref,
                 self.registration.source.source_key,
+                self.original_image,
             )
             if any(
                 loc.artifact_ref != self.original_ref.sha256
@@ -187,6 +195,7 @@ class ExtractionArtifact(Contract):
             or self.document_json is not None
             or self.docling_json_ref is not None
             or self.assets
+            or self.original_image is not None
         ):
             raise ValueError("Native extraction has incompatible document fields")
         if any(not isinstance(unit, ParsedUnit) for unit in self.units):

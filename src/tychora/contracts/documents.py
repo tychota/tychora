@@ -6,10 +6,33 @@ from pydantic import model_validator
 
 from .acquisition import CaptureManifest
 from .artifacts import ArtifactRef, physical_identity
-from .base import Contract, FrozenJsonMap, NonEmptyStr, NonNegativeInt, PositiveInt
+from .base import (
+    Contract,
+    FrozenJsonMap,
+    NonEmptyStr,
+    NonNegativeInt,
+    PositiveInt,
+    Sha256,
+)
 from .corpus import CollectionRow, RevisionRow, SourceRow, WorkspaceRow
 from .evidence import DocumentLocator, Geometry, ImageLocator
 from .identity import digest, normalize_source_key
+
+
+def image_pixel_identity(
+    pixels: bytes, width: int, height: int, color_mode: str, transform: str
+) -> str:
+    """Versioned decoded-pixel identity including shape, color and transform."""
+    from hashlib import sha256
+
+    return digest(
+        "image-pixels-v1",
+        width,
+        height,
+        color_mode,
+        transform,
+        sha256(pixels).hexdigest(),
+    )
 
 
 class DocumentRegistration(Contract):
@@ -18,7 +41,7 @@ class DocumentRegistration(Contract):
     collection: CollectionRow
     source: SourceRow
     revision: RevisionRow
-    format: Literal["pdf", "docx"]
+    format: Literal["pdf", "docx", "png", "jpeg"]
 
     @model_validator(mode="after")
     def binding(self) -> Self:
@@ -45,6 +68,10 @@ class DocumentRegistration(Contract):
             or c.source.get("metadata") != r.metadata_json
             or c.original_sha != r.original_sha
             or r.metadata_sha != digest("metadata-v1", r.metadata_json)
+            or c.source.get("format") not in (None, self.format)
+            or self.format in ("png", "jpeg")
+            and c.source.get("media_type")
+            not in (None, "image/png" if self.format == "png" else "image/jpeg")
         ):
             raise ValueError(
                 "Document registration differs from captured source identity"
@@ -142,6 +169,36 @@ class DocumentAsset(Contract):
     height: PositiveInt
     caption: str = ""
     source_units: tuple[str, ...] = ()
+
+
+class OriginalImage(Contract):
+    """Pixel-grounded owner for a standalone encoded image original."""
+
+    native_ref: NonEmptyStr
+    artifact_ref: ArtifactRef
+    encoded_sha256: Sha256
+    pixel_sha256: Sha256
+    width: PositiveInt
+    height: PositiveInt
+    color_mode: Literal["RGB"]
+    pixel_transform: Literal["exif-transpose-rgb-v1"]
+    locator: ImageLocator
+
+    @model_validator(mode="after")
+    def exact_source(self) -> Self:
+        geometry = self.locator.geometry
+        if (
+            self.encoded_sha256 != self.artifact_ref.sha256
+            or self.artifact_ref.storage_key != self.encoded_sha256
+            or self.locator.artifact_ref != self.encoded_sha256
+            or self.locator.physical_page is not None
+            or geometry is None
+            or geometry.domain != "pixels"
+            or (geometry.x0, geometry.y0, geometry.x1, geometry.y1)
+            != (0, 0, self.width, self.height)
+        ):
+            raise ValueError("Standalone image source differs from its pixel owner")
+        return self
 
 
 class MappedDocument(Contract):
@@ -380,9 +437,11 @@ def validate_document_assets(
     assets: tuple[DocumentAsset, ...],
     original: ArtifactRef,
     source_key: str,
+    original_image: OriginalImage | None = None,
 ) -> None:
     import base64
     from hashlib import sha256
+    from io import BytesIO
     from typing import Any, cast
 
     raw = cast(dict[str, Any], document)
@@ -423,8 +482,36 @@ def validate_document_assets(
                 y1=node["size"]["height"],
             )
         )
+        if original_image is not None and asset.native_ref.startswith("#/pages/"):
+            page = None
+            geometry = original_image.locator.geometry
         captions = tuple(r["$ref"] for r in node.get("captions", ()))
         caption = "\n".join(u.text for u in units if u.native_ref in captions)
+        pixel_owner_matches = True
+        if original_image is not None and asset.native_ref.startswith("#/pages/"):
+            from PIL import Image, ImageOps
+
+            with Image.open(BytesIO(payload)) as encoded_image:
+                if encoded_image.width * encoded_image.height > 40_000_000:
+                    raise ValueError("Retained image pixels exceed capacity")
+                decoded = ImageOps.exif_transpose(encoded_image).convert("RGB")
+                decoded.load()
+            pixel_owner_matches = (
+                original_image.artifact_ref == original
+                and original_image.encoded_sha256 == original.sha256
+                and original_image.locator.artifact_ref == original.sha256
+                and original_image.locator.native_ref == source_key
+                and decoded.size == (original_image.width, original_image.height)
+                and original_image.color_mode == "RGB"
+                and image_pixel_identity(
+                    decoded.tobytes(),
+                    decoded.width,
+                    decoded.height,
+                    "RGB",
+                    original_image.pixel_transform,
+                )
+                == original_image.pixel_sha256
+            )
         if (
             sha256(payload).hexdigest() != ref.sha256
             or len(payload) != ref.size_bytes
@@ -438,7 +525,12 @@ def validate_document_assets(
             or asset.locator.artifact_ref != original.sha256
             or asset.locator.native_ref != source_key
             or asset.caption != caption
-            or asset.source_units != ((unit.native_ref,) if unit else ()) + captions
+            or asset.source_units
+            != (
+                ((original_image.native_ref,) if original_image is not None else ())
+                + ((unit.native_ref,) if unit else ())
+                + captions
+            )
             or asset.asset_type
             != (
                 "page"
@@ -447,7 +539,8 @@ def validate_document_assets(
                 if asset.native_ref.startswith("#/tables/")
                 else "picture"
             )
+            or not pixel_owner_matches
         ):
             raise ValueError(
-                "Document asset facts differ from retained image and source geometry"
+                "Document asset or pixel facts differ from retained image and source geometry"
             )

@@ -41,8 +41,19 @@ def document_record_case(tmp_path_factory):
             page_break_at=None,
             source_builder=None,
             commit=True,
+            online=False,
+            scope=None,
         ):
-            key = kind, format, custom, page_break_at, source_builder, commit
+            key = (
+                kind,
+                format,
+                custom,
+                page_break_at,
+                source_builder,
+                commit,
+                online,
+                None if scope is None else scope.model_dump_json(),
+            )
             if key in cache:
                 return cache[key]
             folder = root / str(len(list(root.iterdir())))
@@ -95,9 +106,17 @@ def document_record_case(tmp_path_factory):
                 + "\n"
             )
             config = resolve_config(config_path, "test", {})
+            if online:
+                config = config.model_copy(
+                    update={
+                        "values": config.values.model_copy(update={"offline": False})
+                    }
+                )
             owner = stack.enter_context(
                 WorkspaceOwner.open(
-                    folder / "data", config, RequestScope(principal_id="fixture")
+                    folder / "data",
+                    config,
+                    scope or RequestScope(principal_id="fixture"),
                 )
             )
             ctx = ExecutionContext()

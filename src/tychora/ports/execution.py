@@ -1,5 +1,7 @@
 """Cooperative execution and upload-authorization ports."""
 
+from __future__ import annotations
+
 import math
 import time
 from dataclasses import dataclass, field
@@ -34,3 +36,28 @@ class UploadPolicy(Protocol):
         dependencies: frozenset[str],
         policy_epoch: int,
     ) -> None: ...
+
+    def register_captured_source(
+        self,
+        registration: CapturedSourceRegistration,
+        scope: RequestScope,
+        *,
+        policy_epoch: int,
+    ) -> None: ...
+
+    def authorize_captured(
+        self,
+        scope: RequestScope,
+        provider: str,
+        authorization: CapturedRegionAuthorization,
+        policy_epoch: int,
+    ) -> None: ...
+
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tychora.ports.vision import (
+        CapturedRegionAuthorization,
+        CapturedSourceRegistration,
+    )
