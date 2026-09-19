@@ -1,0 +1,59 @@
+tests/providers/test_text.py
+  s_35b641b930a96d::t_f2f48382aade9b 1119-1152
+  s_35b641b930a96d::t_626c87b623c53b 1153-1192
+  s_35b641b930a96d::t_f83d7d53527b45 50,52,65,74-75,79-81,87,989-1051,1053-1059,1061
+  s_35b641b930a96d::t_d16505436bcaaf 5,488-498,514-522
+  s_35b641b930a96d::t_0318dda44648d5 755-850
+  s_35b641b930a96d::t_04275ecb374764 430-439,475-483,523-593
+  s_35b641b930a96d::t_d3050b96035848 988,1062-1118
+  s_35b641b930a96d::t_8ef1ce134e227c 25
+  s_35b641b930a96d::t_bbfd50fb3ae009 1052,1060
+  s_35b641b930a96d::t_0d89abdba9dfde 486-487,750,986-987
+src/tychora/contracts/embeddings.py
+  s_35b641b930a96d::t_21b301ce25e5d1 121,128-130,133-135
+  s_35b641b930a96d::t_545f92a753bae7 131,137
+  s_35b641b930a96d::t_2546929f19f73e 113-117,122-127,132,136,138
+  s_35b641b930a96d::t_7c9f8ecca324c7 118-120
+src/tychora/ports/embeddings.py
+  s_35b641b930a96d::t_2546929f19f73e 5-9,24-27
+tests/operations/test_setup.py
+  s_35b641b930a96d::t_e52059ec91f54b 144-167
+  s_35b641b930a96d::t_28ab6b3e5e1d48 74-90
+src/tychora/application/owner.py
+  s_35b641b930a96d::t_7c9f8ecca324c7 526-528,531-534
+  s_35b641b930a96d::t_21b301ce25e5d1 529-530,539-541
+  s_35b641b930a96d::t_2546929f19f73e 28,40,516-525,535-538,542-548
+  s_35b641b930a96d::t_d81d9e959b6313 549
+src/tychora/adapters/voyage/text.py
+  s_35b641b930a96d::t_6d44f89d19951a 370
+  s_35b641b930a96d::t_843e9a1306ab88 226-233,466-467,743,745,775-794
+  s_35b641b930a96d::t_21b301ce25e5d1 331,339,363,420
+  s_35b641b930a96d::t_186ff65edc72ce 607,609
+  s_35b641b930a96d::t_7c9f8ecca324c7 327,334-335,342
+  s_35b641b930a96d::t_1eb9601c45d44f 287,290,294
+  s_35b641b930a96d::t_9a68ac7ac884d0 653,670-671,673-674
+  s_35b641b930a96d::t_1c7a3baee6a8f2 728-734
+  s_35b641b930a96d::t_16b1b1b20eb355 325,328-330,332-333,336-338,340-341
+  s_35b641b930a96d::t_058e3aa2a9c751 19,42-52,276-286,288-289,291-293,295-324,326,343-362,364-368,386,388-391,393-402,410-419
+  s_35b641b930a96d::t_71803bad80bf4e 735-736
+src/tychora/resources/model-assets.json
+  s_35b641b930a96d::t_e52059ec91f54b 25-31,48-59
+src/tychora/application/setup.py
+  s_35b641b930a96d::t_e52059ec91f54b 498
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "cec169ff0550abc3b5ca2abae15067b9b7280eb6",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
