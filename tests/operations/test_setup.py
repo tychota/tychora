@@ -71,6 +71,23 @@ def test_plan_is_read_only_and_selects_only_requested_assets(tmp_path: Path):
     assert calls == []
 
 
+def test_code3_plan_uses_explicit_verified_tokenizer_provenance(tmp_path: Path):
+    from tychora.application.setup import SetupService, load_voyage_tokenizer
+
+    plan = SetupService(tmp_path / "cache", offline=True).plan(("voyage-code-3",))
+
+    (asset,) = plan.assets
+    assert asset.path.startswith("voyage-code-3/")
+    assert asset.sha256 == (
+        "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539"
+    )
+    assert "voyage-context-4" in asset.url
+    assert "voyage-code-3" in plan.notices[0].model_card_url
+    with pytest.raises(TychoraError) as exc:
+        load_voyage_tokenizer(tmp_path / "cache", "voyage-code-3")
+    assert exc.value.code == "CAPABILITY_MISSING"
+
+
 def test_setup_plan_rejects_bundle_path_traversal(tmp_path: Path, monkeypatch):
     from tychora.application import setup
     from tychora.application.setup import SetupService
@@ -122,6 +139,30 @@ def test_verified_local_tokenizer_loaders_do_not_use_sdk_download_helpers(
     code = load_voyage_tokenizer(cache, "voyage-code-4")
     assert context.decode(context.encode("bonjour source").ids) == "bonjour source"
     assert code.decode(code.encode("def source(): pass").ids) == "def source(): pass"
+
+
+@pytest.mark.qualification
+def test_verified_code3_tokenizer_loads_from_explicit_local_asset(
+    tmp_path: Path,
+):
+    import shutil
+
+    asset_value = __import__("os").environ.get("TYCHORA_TEST_CODE3_TOKENIZER_ASSET")
+    if not asset_value:
+        pytest.skip("requires explicitly provisioned code3 tokenizer research asset")
+    from tychora.application.setup import SetupService, load_voyage_tokenizer
+
+    cache = tmp_path / "cache"
+    (asset,) = SetupService(cache, offline=True).plan(("voyage-code-3",)).assets
+    target = cache / asset.path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(Path(asset_value), target)
+
+    tokenizer = load_voyage_tokenizer(cache, "voyage-code-3")
+
+    assert tokenizer.decode(tokenizer.encode("def source(): pass").ids) == (
+        "def source(): pass"
+    )
 
 
 @pytest.mark.asyncio

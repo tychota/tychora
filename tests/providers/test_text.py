@@ -2,6 +2,7 @@
 
 import json
 from hashlib import sha256
+from threading import Event, get_ident
 
 import httpx
 import pytest
@@ -21,6 +22,7 @@ from tychora.configuration.resolve import resolve_config
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.embeddings import (
     EmbeddingCapabilities,
+    EmbeddingRecord,
     QueryUploadAuthorization,
 )
 from tychora.contracts.errors import TychoraError
@@ -45,8 +47,9 @@ def _group(
     contextualization="independent",
     dimensions=1024,
     windows=("def example():\n    return 1",),
+    key="",
 ):
-    capsule = "path: src/example.py"
+    capsule = f"path: src/example{key}.py"
     options = FrozenJsonMap({"output": "float32"})
     input_sha = digest(
         "embedding-input-v1",
@@ -59,7 +62,7 @@ def _group(
         contextualization,
         options,
     )
-    window_ids = tuple(f"window-{index}" for index in range(len(windows)))
+    window_ids = tuple(f"window{key}-{index}" for index in range(len(windows)))
     window_input_shas = (
         (input_sha,) * len(windows)
         if contextualization == "joint"
@@ -68,20 +71,20 @@ def _group(
     return ContextGroup(
         group_id=digest(
             "context-group-input-v1",
-            "extraction-a",
-            "context-a",
+            f"extraction{key}-a",
+            f"context{key}-a",
             window_ids,
             input_sha,
         ),
-        context_group_key="context-a",
-        extraction_id="extraction-a",
-        revision_id="revision-a",
+        context_group_key=f"context{key}-a",
+        extraction_id=f"extraction{key}-a",
+        revision_id=f"revision{key}-a",
         capsule=capsule,
         input_texts=(capsule, *windows),
         window_ids=window_ids,
         window_input_shas=window_input_shas,
         input_sha=input_sha,
-        dependency_ids=frozenset({"revision-a", "unit-a"}),
+        dependency_ids=frozenset({f"revision{key}-a", f"unit{key}-a"}),
         token_count=len(capsule) + sum(map(len, windows)),
         tokenizer_id=f"{model}:qualified",
         provider="voyage",
@@ -424,7 +427,16 @@ def test_query_cache_hit_needs_no_remote_construction_or_authorization():
             posts.append((path, body))
             return RawVoyageResponse(
                 200,
-                json.dumps({"data": [{"index": 0, "embedding": [8.0, 15.0]}]}).encode(),
+                json.dumps(
+                    {
+                        "data": [
+                            {
+                                "index": 0,
+                                "data": [{"index": 0, "embedding": [8.0, 15.0]}],
+                            }
+                        ]
+                    }
+                ).encode(),
             )
 
         def close(self):
@@ -460,8 +472,30 @@ def test_query_cache_hit_needs_no_remote_construction_or_authorization():
     first = embedder.embed_queries(("Where is the example?",), ExecutionContext())
     assert len(first) == 1
     assert len(created) == len(posts) == len(authorized) == 1
+    assert posts[0][0] == "/v1/contextualizedembeddings"
+    assert json.loads(posts[0][1]) == {
+        "enable_auto_chunking": False,
+        "input_type": "query",
+        "inputs": [["Where is the example?"]],
+        "model": "voyage-context-4",
+        "output_dimension": 2,
+        "output_dtype": "float",
+    }
     assert authorized[0].payload_sha == sha256(posts[0][1]).hexdigest()
     assert authorized[0].input_shas == (first[0].input_sha,)
+    document_group = _group(
+        model="voyage-context-4",
+        contextualization="joint",
+        dimensions=2,
+        windows=("document window",),
+    )
+    (document_record,) = map_contextual_response(
+        (document_group,),
+        b'{"data":[{"index":0,"data":[{"index":0,'
+        b'"embedding":[1.0,0.0]},{"index":1,"embedding":[0.0,1.0]}]}]}',
+        capabilities,
+    )
+    assert first[0].space_id == document_record.space_id == capabilities.space_id
 
     offline_hit = VoyageTextEmbedder(
         capabilities=capabilities,
@@ -476,6 +510,86 @@ def test_query_cache_hit_needs_no_remote_construction_or_authorization():
     second = offline_hit.embed_queries(("Where is the example?",), ExecutionContext())
     assert second == first
     assert len(created) == len(posts) == len(authorized) == 1
+
+    cancelled = Event()
+    cancelled.set()
+    with pytest.raises(TychoraError) as exc:
+        offline_hit.probe_queries(
+            ("Where is the example?",), ExecutionContext(cancelled=cancelled)
+        )
+    assert exc.value.code == "CANCELLED"
+
+
+@pytest.mark.parametrize(
+    ("data", "valid"),
+    [
+        (
+            [
+                {"index": 1, "data": [{"index": 0, "embedding": [0.0, 2.0]}]},
+                {"index": 0, "data": [{"index": 0, "embedding": [3.0, 4.0]}]},
+            ],
+            True,
+        ),
+        ([{"index": 0, "data": [{"index": 0, "embedding": [3.0, 4.0]}]}], False),
+        (
+            [
+                {"index": 0, "data": [{"index": 0, "embedding": [3.0, 4.0]}]},
+                {"index": 0, "data": [{"index": 0, "embedding": [0.0, 2.0]}]},
+            ],
+            False,
+        ),
+        (
+            [
+                {
+                    "index": 0,
+                    "data": [
+                        {"index": 0, "embedding": [3.0, 4.0]},
+                        {"index": 0, "embedding": [0.0, 2.0]},
+                    ],
+                },
+                {"index": 1, "data": [{"index": 0, "embedding": [0.0, 2.0]}]},
+            ],
+            False,
+        ),
+    ],
+)
+def test_context_query_response_requires_one_complete_nested_vector(data, valid):
+    class Transport:
+        def post_json(self, path, body, timeout):
+            return RawVoyageResponse(200, json.dumps({"data": data}).encode())
+
+        def close(self):
+            pass
+
+    embedder = VoyageTextEmbedder(
+        capabilities=_capabilities(
+            model="voyage-context-4", contextualization="joint", dimensions=2
+        ),
+        counter=CharacterCounter("voyage-context-4"),
+        runtime=VoyageRuntime(
+            lambda: Transport(),
+            workspace_id="workspace-a",
+            credential_binding_id="credential-a",
+        ),
+        authorize_document=lambda payload_sha, dependencies, ctx: None,
+        query_binding=QueryOperationBinding(
+            principal_upload_scope_sha="a" * 64,
+            collection_ids=frozenset({"collection-a"}),
+            dependency_ids=frozenset(),
+            policy_epoch=0,
+        ),
+        authorize_query=lambda authorization, ctx: None,
+    )
+
+    if not valid:
+        with pytest.raises(TychoraError) as exc:
+            embedder.embed_queries(("first", "second"), ExecutionContext())
+        assert exc.value.code == "PROVIDER_FAILURE"
+        return
+
+    records = embedder.embed_queries(("first", "second"), ExecutionContext())
+    assert records[0].values == pytest.approx((0.6, 0.8))
+    assert records[1].values == pytest.approx((0.0, 1.0))
 
 
 @pytest.mark.asyncio
@@ -563,13 +677,6 @@ async def test_query_retry_reauthorizes_after_backoff_with_real_owner(tmp_path):
         access_ceiling=1,
         upload_providers=frozenset({"voyage"}),
     )
-    authorization = QueryUploadAuthorization(
-        payload_sha="a" * 64,
-        input_shas=("b" * 64,),
-        collection_ids=frozenset({"collection-a"}),
-        dependency_ids=frozenset(),
-        policy_epoch=0,
-    )
     with WorkspaceOwner.open(tmp_path / "data", settings, scope) as owner:
         await owner.run_blocking(
             lambda: owner.db.execute(
@@ -640,15 +747,105 @@ async def test_query_retry_reauthorizes_after_backoff_with_real_owner(tmp_path):
         )
 
         with pytest.raises(TychoraError) as changed:
-            await owner.run_query_provider(
-                "voyage",
-                lambda: embedder.embed_queries(("query",), ctx),
-                ctx,
-                scope=scope,
-                authorization=authorization,
-            )
+            await owner.embed_queries(embedder, ("query",), ctx, scope=scope)
         assert changed.value.code == "SCOPE_CHANGED"
         assert posts == [True]
+
+
+@pytest.mark.asyncio
+async def test_owner_admits_query_cache_miss_but_offline_hit_bypasses_remote_lane(
+    tmp_path,
+):
+    settings_path = tmp_path / "workspace.toml"
+    settings_path.write_text(
+        'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
+    )
+    settings = resolve_config(settings_path, "test", {})
+    settings = settings.model_copy(
+        update={"values": settings.values.model_copy(update={"offline": False})}
+    )
+    scope = RequestScope(
+        principal_id="principal-a",
+        collection_ids=frozenset({"collection-a"}),
+        access_ceiling=1,
+        upload_providers=frozenset({"voyage"}),
+    )
+    with WorkspaceOwner.open(tmp_path / "data", settings, scope) as owner:
+        await owner.run_blocking(
+            lambda: owner.db.execute(
+                "INSERT INTO collections "
+                "(collection_id,workspace_id,slug,title,access_floor,policy_json) "
+                "VALUES (?,?,?,?,?,?)",
+                (
+                    "collection-a",
+                    owner.workspace_id,
+                    "manuals",
+                    "Manuals",
+                    1,
+                    '{"schema_version":1,"upload_providers":["voyage"]}',
+                ),
+            ),
+            ExecutionContext(),
+        )
+        caller_thread = get_ident()
+        post_threads = []
+        authorizations = []
+
+        class Transport:
+            def post_json(self, path, body, timeout):
+                post_threads.append(get_ident())
+                return RawVoyageResponse(
+                    200,
+                    b'{"data":[{"index":0,"data":[{"index":0,'
+                    b'"embedding":[3.0,4.0]}]}]}',
+                )
+
+            def close(self):
+                pass
+
+        runtime = VoyageRuntime(
+            lambda: Transport(),
+            workspace_id=owner.workspace_id,
+            credential_binding_id="credential-a",
+        )
+        binding = QueryOperationBinding(
+            principal_upload_scope_sha=digest("scope", "principal-a", "voyage"),
+            collection_ids=frozenset({"collection-a"}),
+            dependency_ids=frozenset(),
+            policy_epoch=0,
+        )
+
+        def authorize(authorization, attempt_ctx):
+            authorizations.append(authorization)
+            owner.run_blocking_sync(
+                lambda: owner.upload_policy.authorize_query(
+                    scope, "voyage", authorization
+                ),
+                attempt_ctx,
+            )
+
+        embedder = VoyageTextEmbedder(
+            capabilities=_capabilities(
+                model="voyage-context-4", contextualization="joint", dimensions=2
+            ),
+            counter=CharacterCounter("voyage-context-4"),
+            runtime=runtime,
+            authorize_document=lambda payload_sha, dependencies, ctx: None,
+            query_binding=binding,
+            authorize_query=authorize,
+        )
+        ctx = ExecutionContext()
+        first = await owner.embed_queries(embedder, ("query",), ctx, scope=scope)
+        assert post_threads and post_threads[0] != caller_thread
+        assert len(authorizations) == 1
+
+        owner.config = owner.config.model_copy(
+            update={"values": owner.config.values.model_copy(update={"offline": True})}
+        )
+        second = await owner.embed_queries(embedder, ("query",), ctx, scope=scope)
+
+        assert second == first
+        assert len(post_threads) == len(authorizations) == 1
 
 
 def test_httpx_transport_posts_exact_bytes_without_redirect_or_hidden_retry():
@@ -786,3 +983,210 @@ def test_actual_capsule_and_window_wire_tokens_are_enforced_before_transport(
     with pytest.raises(TychoraError, match="limit"):
         embedder.embed_groups((group,), ExecutionContext())
     assert created == []
+
+
+def test_invalid_utf8_provider_body_is_a_sanitized_mapping_failure():
+    group = _group(
+        model="voyage-context-4",
+        contextualization="joint",
+        dimensions=2,
+        windows=("first",),
+    )
+
+    with pytest.raises(TychoraError) as exc:
+        map_contextual_response(
+            (group,),
+            b"\xffprivate-provider-body",
+            _capabilities(
+                model="voyage-context-4", contextualization="joint", dimensions=2
+            ),
+        )
+
+    assert exc.value.code == "PROVIDER_FAILURE"
+    assert "private-provider-body" not in exc.value.message
+
+
+def test_contextual_response_validates_every_group_before_sealing_records(monkeypatch):
+    groups = tuple(
+        _group(
+            model="voyage-context-4",
+            contextualization="joint",
+            dimensions=2,
+            windows=(f"window {index}",),
+            key=f"-{index}",
+        )
+        for index in range(2)
+    )
+    body = json.dumps(
+        {
+            "data": [
+                {
+                    "index": 0,
+                    "data": [
+                        {"index": 0, "embedding": [1.0, 0.0]},
+                        {"index": 1, "embedding": [0.0, 1.0]},
+                    ],
+                },
+                {
+                    "index": 1,
+                    "data": [
+                        {"index": 0, "embedding": [1.0, 0.0]},
+                        {"index": 1, "embedding": [0.0]},
+                    ],
+                },
+            ]
+        }
+    ).encode()
+    sealed = []
+    original = EmbeddingRecord.from_normalized_bytes
+
+    def capture(**kwargs):
+        sealed.append(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(EmbeddingRecord, "from_normalized_bytes", capture)
+
+    with pytest.raises(TychoraError) as exc:
+        map_contextual_response(
+            groups,
+            body,
+            _capabilities(
+                model="voyage-context-4", contextualization="joint", dimensions=2
+            ),
+        )
+    assert exc.value.code == "PROVIDER_FAILURE"
+    assert sealed == []
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"provider": "other"},
+        {"model": "voyage-code-4"},
+        {"dimensions": 3},
+        {"dtype": "other"},
+        {"options": FrozenJsonMap({"output": "other"})},
+        {"tokenizer_id": "other:qualified"},
+    ],
+)
+def test_joint_group_capability_mismatch_is_rejected_before_transport(change):
+    group = _group(
+        model="voyage-context-4",
+        contextualization="joint",
+        dimensions=2,
+        windows=("first",),
+    ).model_copy(update=change)
+    created = []
+    embedder = VoyageTextEmbedder(
+        capabilities=_capabilities(
+            model="voyage-context-4", contextualization="joint", dimensions=2
+        ),
+        counter=CharacterCounter("voyage-context-4"),
+        runtime=VoyageRuntime(
+            lambda: created.append(True),  # type: ignore[arg-type,func-returns-value]
+            workspace_id="workspace-a",
+            credential_binding_id="credential-a",
+        ),
+        authorize_document=lambda payload_sha, dependencies, ctx: None,
+    )
+
+    with pytest.raises(TychoraError, match="capabilities"):
+        embedder.embed_groups((group,), ExecutionContext())
+    assert created == []
+
+
+@pytest.mark.parametrize("counter_model", ["voyage-code-4", "other"])
+def test_counter_mismatch_is_rejected_before_transport(counter_model):
+    created = []
+    with pytest.raises(TychoraError) as exc:
+        VoyageTextEmbedder(
+            capabilities=_capabilities(
+                model="voyage-context-4", contextualization="joint", dimensions=2
+            ),
+            counter=CharacterCounter(counter_model),
+            runtime=VoyageRuntime(
+                lambda: created.append(True),  # type: ignore[arg-type,func-returns-value]
+                workspace_id="workspace-a",
+                credential_binding_id="credential-a",
+            ),
+            authorize_document=lambda payload_sha, dependencies, ctx: None,
+        )
+    assert exc.value.code == "CAPABILITY_MISSING"
+    assert created == []
+
+
+def test_query_count_over_256_is_rejected_before_tokenization_or_transport():
+    calls = []
+
+    class CountingCounter(CharacterCounter):
+        def count(self, text):
+            calls.append(text)
+            return super().count(text)
+
+    created = []
+    embedder = VoyageTextEmbedder(
+        capabilities=_capabilities(dimensions=2),
+        counter=CountingCounter(),
+        runtime=VoyageRuntime(
+            lambda: created.append(True),  # type: ignore[arg-type,func-returns-value]
+            workspace_id="workspace-a",
+            credential_binding_id="credential-a",
+        ),
+        authorize_document=lambda payload_sha, dependencies, ctx: None,
+        query_binding=QueryOperationBinding(
+            principal_upload_scope_sha="a" * 64,
+            collection_ids=frozenset({"collection-a"}),
+            dependency_ids=frozenset(),
+            policy_epoch=0,
+        ),
+        authorize_query=lambda authorization, ctx: None,
+    )
+
+    with pytest.raises(TychoraError) as exc:
+        embedder.embed_queries(("q",) * 257, ExecutionContext())
+    assert exc.value.code == "INVALID_REQUEST"
+    assert calls == []
+    assert created == []
+
+
+def test_exactly_256_queries_are_accepted():
+    class Transport:
+        def post_json(self, path, body, timeout):
+            return RawVoyageResponse(
+                200,
+                json.dumps(
+                    {
+                        "data": [
+                            {"index": index, "embedding": [1.0, 0.0]}
+                            for index in range(256)
+                        ]
+                    }
+                ).encode(),
+            )
+
+        def close(self):
+            pass
+
+    embedder = VoyageTextEmbedder(
+        capabilities=_capabilities(dimensions=2),
+        counter=CharacterCounter(),
+        runtime=VoyageRuntime(
+            lambda: Transport(),
+            workspace_id="workspace-a",
+            credential_binding_id="credential-a",
+        ),
+        authorize_document=lambda payload_sha, dependencies, ctx: None,
+        query_binding=QueryOperationBinding(
+            principal_upload_scope_sha="a" * 64,
+            collection_ids=frozenset({"collection-a"}),
+            dependency_ids=frozenset(),
+            policy_epoch=0,
+        ),
+        authorize_query=lambda authorization, ctx: None,
+    )
+
+    records = embedder.embed_queries(
+        tuple(f"query-{index}" for index in range(256)), ExecutionContext()
+    )
+
+    assert len(records) == 256

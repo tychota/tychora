@@ -495,7 +495,7 @@ def load_output_tokenizer(cache_root: Path):
 
 def load_voyage_tokenizer(cache_root: Path, model: str):
     """Load a model-bound Voyage tokenizer only from a verified local inventory."""
-    if model not in ("voyage-context-4", "voyage-code-4"):
+    if model not in ("voyage-context-4", "voyage-code-4", "voyage-code-3"):
         raise TychoraError("INVALID_REQUEST", "Unknown local Voyage tokenizer model")
     assets = _verified_selection(cache_root, model)
     tokenizer = next(

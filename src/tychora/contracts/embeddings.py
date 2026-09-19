@@ -110,3 +110,29 @@ class EmbeddingRecord(Contract):
             space_id=space_id,
             values=values,
         )
+
+
+class QueryEmbeddingProbe(Contract):
+    """Immutable local-cache outcome for one owner-admitted query operation."""
+
+    workspace_id: Identifier
+    provider: NonEmptyStr
+    query_batch_sha: Sha256
+    input_count: Annotated[NonNegativeInt, Field(le=256)]
+    state: Literal["hit", "miss"]
+    records: tuple[EmbeddingRecord, ...] = ()
+    authorization: QueryUploadAuthorization | None = None
+
+    @model_validator(mode="after")
+    def exact_outcome(self) -> Self:
+        if self.state == "hit" and (
+            self.authorization is not None or len(self.records) != self.input_count
+        ):
+            raise ValueError("Query cache hit outcome is inconsistent")
+        if self.state == "miss" and (
+            self.authorization is None
+            or bool(self.records)
+            or len(self.authorization.input_shas) > self.input_count
+        ):
+            raise ValueError("Query cache miss outcome is inconsistent")
+        return self

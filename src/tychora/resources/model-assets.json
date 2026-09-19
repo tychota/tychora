@@ -23,6 +23,13 @@
       "model_card_url": "https://github.com/openai/tiktoken/issues/92#issuecomment-1497875652"
     },
     {
+      "selection": "voyage-code-3",
+      "attribution": "Tokenizer bytes sourced from Apache-2.0 voyage-context-4 revision 8ca946072a18e398cd61f2ad0243b56d0350b1db and verified identical to voyage-code-3 revision fc45be56eee91614eb32585585acf252197b53a1",
+      "license": "Apache-2.0 for the sourced tokenizer asset only",
+      "notice_url": "https://huggingface.co/voyageai/voyage-context-4/blob/8ca946072a18e398cd61f2ad0243b56d0350b1db/tokenizer.json",
+      "model_card_url": "https://huggingface.co/voyageai/voyage-code-3/blob/fc45be56eee91614eb32585585acf252197b53a1/README.md"
+    },
+    {
       "selection": "voyage-context-4",
       "attribution": "Model-bound tokenizer assets published by Voyage AI",
       "license": "Apache-2.0",
@@ -38,6 +45,18 @@
     }
   ],
   "assets": [
+    {
+      "id": "voyage-code-3-tokenizer",
+      "selection": "voyage-code-3",
+      "path": "voyage-code-3/fc45be56eee91614eb32585585acf252197b53a1/tokenizer.json",
+      "sha256": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
+      "size_bytes": 7031645,
+      "url": "https://huggingface.co/voyageai/voyage-context-4/resolve/8ca946072a18e398cd61f2ad0243b56d0350b1db/tokenizer.json",
+      "license": "Apache-2.0",
+      "owner": "voyageai==0.5.0",
+      "revision": "8ca946072a18e398cd61f2ad0243b56d0350b1db",
+      "notice_url": "https://huggingface.co/voyageai/voyage-context-4/blob/8ca946072a18e398cd61f2ad0243b56d0350b1db/tokenizer.json"
+    },
     {
       "id": "rapidocr-det-pp-ocrv6-small",
       "selection": "ocr",

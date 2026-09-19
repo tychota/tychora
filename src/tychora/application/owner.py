@@ -25,7 +25,7 @@ from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
-from tychora.contracts.embeddings import QueryUploadAuthorization
+from tychora.contracts.embeddings import EmbeddingRecord, QueryUploadAuthorization
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.extraction import extraction_document
 from tychora.contracts.identity import (
@@ -37,6 +37,7 @@ from tychora.contracts.identity import (
     source_id,
 )
 from tychora.contracts.requests import RequestScope
+from tychora.ports.embeddings import TextEmbedder
 from tychora.ports.execution import ExecutionContext
 from tychora.ports.vision import (
     CapturedOriginalRegionProof,
@@ -511,6 +512,40 @@ class WorkspaceOwner:
             return call()
 
         return await drain_result(lane.submit(invoke), ctx)
+
+    async def embed_queries(
+        self,
+        embedder: TextEmbedder,
+        queries: tuple[str, ...],
+        ctx: ExecutionContext,
+        *,
+        scope: RequestScope,
+    ) -> tuple[EmbeddingRecord, ...]:
+        """Return local query hits directly and admit only remote misses."""
+        probe = embedder.probe_queries(queries, ctx)
+        if (
+            probe.workspace_id != self.workspace_id
+            or probe.provider != embedder.capabilities.provider
+            or probe.input_count != len(queries)
+            or probe.query_batch_sha != digest("query-embedding-probe-v1", queries)
+        ):
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Query probe differs from owner operation."
+            )
+        if probe.state == "hit":
+            return probe.records
+        authorization = probe.authorization
+        if authorization is None:
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Query probe authorization is absent."
+            )
+        return await self.run_query_provider(
+            embedder.capabilities.provider,
+            lambda: embedder.embed_queries(queries, ctx),
+            ctx,
+            scope=scope,
+            authorization=authorization,
+        )
 
 
 def _deny() -> NoReturn:

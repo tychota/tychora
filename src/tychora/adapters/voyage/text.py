@@ -16,6 +16,7 @@ from tychora.adapters.voyage.validation import normalize_vector
 from tychora.contracts.embeddings import (
     EmbeddingCapabilities,
     EmbeddingRecord,
+    QueryEmbeddingProbe,
     QueryUploadAuthorization,
 )
 from tychora.contracts.errors import TychoraError
@@ -36,6 +37,17 @@ class RenderedInput:
     utf8_sha: str
     input_sha: str
     token_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class QueryPlan:
+    prepared: tuple[RenderedInput, ...]
+    keys: tuple[tuple[object, ...], ...]
+    stored: tuple[bytes | None, ...]
+    missing: tuple[int, ...]
+    path: str | None
+    body: bytes | None
+    authorization: QueryUploadAuthorization | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,6 +223,14 @@ class VoyageTextEmbedder:
         authorize_query: QueryAuthorizer | None = None,
         backoff: Callable[[int], float] | None = None,
     ) -> None:
+        if (
+            counter.model != capabilities.model
+            or counter.tokenizer_id != capabilities.tokenizer_id
+        ):
+            raise TychoraError(
+                "CAPABILITY_MISSING",
+                "Configured embedding tokenizer is unavailable.",
+            )
         self.capabilities = capabilities
         self._counter = counter
         self._runtime = runtime
@@ -253,58 +273,77 @@ class VoyageTextEmbedder:
     def embed_queries(
         self, queries: tuple[str, ...], ctx: ExecutionContext
     ) -> tuple[EmbeddingRecord, ...]:
-        if not queries:
-            return ()
-        binding, authorizer = self._query_binding, self._authorize_query
-        if binding is None or authorizer is None:
-            raise TychoraError(
-                "CAPABILITY_MISSING", "Query embedding is not bound for this operation."
-            )
-        prepared = tuple(self._prepare_query(query) for query in queries)
-        if sum(item.token_count for item in prepared) > (
-            self.capabilities.max_request_tokens
+        plan = self._query_plan(queries, ctx)
+        if not plan.missing:
+            return self._query_records(plan)
+        authorizer = self._authorize_query
+        if (
+            authorizer is None
+            or plan.authorization is None
+            or plan.path is None
+            or plan.body is None
         ):
-            raise TychoraError(
-                "INVALID_REQUEST", "Embedding request exceeds qualified limits."
-            )
-        keys = tuple(
-            self._query_cache_key(binding, item.input_sha) for item in prepared
-        )
-        stored: list[bytes | None] = [self._runtime.cached_query(key) for key in keys]
-        missing = tuple(index for index, value in enumerate(stored) if value is None)
-        if missing:
-            payload: dict[str, JsonValue] = {
-                "input": [prepared[index].text for index in missing],
-                "model": self.capabilities.model,
-                "input_type": "query",
-                "output_dimension": self.capabilities.dimensions,
-                "output_dtype": "float",
-                "truncation": False,
-            }
-            body = canonical_bytes(payload)
-            input_shas = tuple(prepared[index].input_sha for index in missing)
+            raise TychoraError("INTEGRITY_ERROR", "Query upload plan is incomplete.")
+        authorization = plan.authorization
 
-            def authorize(payload_sha: str, attempt_ctx: ExecutionContext) -> None:
-                authorizer(
-                    QueryUploadAuthorization(
-                        payload_sha=payload_sha,
-                        input_shas=input_shas,
-                        collection_ids=binding.collection_ids,
-                        dependency_ids=binding.dependency_ids,
-                        policy_epoch=binding.policy_epoch,
-                    ),
-                    attempt_ctx,
+        def authorize(payload_sha: str, attempt_ctx: ExecutionContext) -> None:
+            if payload_sha != authorization.payload_sha:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Query upload payload identity changed."
                 )
+            authorizer(authorization, attempt_ctx)
 
-            response = self._post("/v1/embeddings", body, authorize, ctx)
-            returned = _flat_stored_response(
-                response.body, len(missing), self.capabilities.dimensions
+        response = self._post(plan.path, plan.body, authorize, ctx)
+        mapper = (
+            _contextual_query_stored_response
+            if self.capabilities.contextualization == "joint"
+            else _flat_stored_response
+        )
+        returned = mapper(
+            response.body, len(plan.missing), self.capabilities.dimensions
+        )
+        stored = list(plan.stored)
+        for index, value in zip(plan.missing, returned, strict=True):
+            stored[index] = value
+            self._runtime.cache_query(plan.keys[index], value)
+        return self._query_records(
+            QueryPlan(
+                prepared=plan.prepared,
+                keys=plan.keys,
+                stored=tuple(stored),
+                missing=(),
+                path=None,
+                body=None,
+                authorization=None,
             )
-            for index, value in zip(missing, returned, strict=True):
-                stored[index] = value
-                self._runtime.cache_query(keys[index], value)
+        )
+
+    def probe_queries(
+        self, queries: tuple[str, ...], ctx: ExecutionContext
+    ) -> QueryEmbeddingProbe:
+        plan = self._query_plan(queries, ctx)
+        query_batch_sha = digest("query-embedding-probe-v1", queries)
+        if not plan.missing:
+            return QueryEmbeddingProbe(
+                workspace_id=self._runtime.workspace_id,
+                provider=self.capabilities.provider,
+                query_batch_sha=query_batch_sha,
+                input_count=len(queries),
+                state="hit",
+                records=self._query_records(plan),
+            )
+        return QueryEmbeddingProbe(
+            workspace_id=self._runtime.workspace_id,
+            provider=self.capabilities.provider,
+            query_batch_sha=query_batch_sha,
+            input_count=len(queries),
+            state="miss",
+            authorization=plan.authorization,
+        )
+
+    def _query_records(self, plan: QueryPlan) -> tuple[EmbeddingRecord, ...]:
         output = []
-        for item, value in zip(prepared, stored, strict=True):
+        for item, value in zip(plan.prepared, plan.stored, strict=True):
             if value is None:
                 raise TychoraError("INTEGRITY_ERROR", "Query cache value is absent.")
             output.append(
@@ -320,6 +359,65 @@ class VoyageTextEmbedder:
                 )
             )
         return tuple(output)
+
+    def _query_plan(self, queries: tuple[str, ...], ctx: ExecutionContext) -> QueryPlan:
+        ctx.checkpoint()
+        if len(queries) > 256:
+            raise TychoraError(
+                "INVALID_REQUEST", "At most 256 queries may be embedded."
+            )
+        if not queries:
+            return QueryPlan((), (), (), (), None, None, None)
+        binding, authorizer = self._query_binding, self._authorize_query
+        if binding is None or authorizer is None:
+            raise TychoraError(
+                "CAPABILITY_MISSING", "Query embedding is not bound for this operation."
+            )
+        prepared = tuple(self._prepare_query(query) for query in queries)
+        if sum(item.token_count for item in prepared) > (
+            self.capabilities.max_request_tokens
+        ):
+            raise TychoraError(
+                "INVALID_REQUEST", "Embedding request exceeds qualified limits."
+            )
+        keys = tuple(
+            self._query_cache_key(binding, item.input_sha) for item in prepared
+        )
+        stored = tuple(self._runtime.cached_query(key) for key in keys)
+        missing = tuple(index for index, value in enumerate(stored) if value is None)
+        if not missing:
+            ctx.checkpoint()
+            return QueryPlan(prepared, keys, stored, (), None, None, None)
+        if self.capabilities.contextualization == "joint":
+            payload: dict[str, JsonValue] = {
+                "inputs": [[prepared[index].text] for index in missing],
+                "model": self.capabilities.model,
+                "input_type": "query",
+                "output_dimension": self.capabilities.dimensions,
+                "output_dtype": "float",
+                "enable_auto_chunking": False,
+            }
+            path = "/v1/contextualizedembeddings"
+        else:
+            payload = {
+                "input": [prepared[index].text for index in missing],
+                "model": self.capabilities.model,
+                "input_type": "query",
+                "output_dimension": self.capabilities.dimensions,
+                "output_dtype": "float",
+                "truncation": False,
+            }
+            path = "/v1/embeddings"
+        body = canonical_bytes(payload)
+        authorization = QueryUploadAuthorization(
+            payload_sha=sha256(body).hexdigest(),
+            input_shas=tuple(prepared[index].input_sha for index in missing),
+            collection_ids=binding.collection_ids,
+            dependency_ids=binding.dependency_ids,
+            policy_epoch=binding.policy_epoch,
+        )
+        ctx.checkpoint()
+        return QueryPlan(prepared, keys, stored, missing, path, body, authorization)
 
     def _prepare_query(self, query: str) -> RenderedInput:
         if not query:
@@ -365,6 +463,8 @@ class VoyageTextEmbedder:
         self, groups: tuple[ContextGroup, ...], ctx: ExecutionContext
     ) -> tuple[EmbeddingRecord, ...]:
         if self.capabilities.contextualization == "joint":
+            for group in groups:
+                _validate_group(group, self.capabilities, "joint")
             token_counts = tuple(
                 sum(self._counter.count(text) for text in group.input_texts)
                 for group in groups
@@ -504,9 +604,9 @@ def _response_object(body: bytes) -> Mapping[str, Any]:
         _invalid_mapping()
     try:
         result = json.loads(body, object_pairs_hook=_unique_object)
-    except (TychoraError, UnicodeDecodeError):
+    except TychoraError:
         raise
-    except (json.JSONDecodeError, TypeError, ValueError):
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
         _invalid_mapping()
     if not isinstance(result, dict):
         _invalid_mapping()
@@ -550,7 +650,7 @@ def map_contextual_response(
     """Validate raw document/chunk indices before projecting window vectors."""
     response = _response_object(body)
     documents = _indexed(response.get("data"), len(groups), nested_key="data")
-    output: list[EmbeddingRecord] = []
+    validated: list[tuple[bytes, ...]] = []
     for group, document in zip(groups, documents, strict=True):
         if (
             group.contextualization != "joint"
@@ -567,9 +667,11 @@ def map_contextual_response(
                 "Embedding group differs from provider capabilities.",
             )
         chunks = _indexed(document["data"], len(group.input_texts))
-        stored = tuple(
-            _stored_vector(chunk, capabilities.dimensions) for chunk in chunks
+        validated.append(
+            tuple(_stored_vector(chunk, capabilities.dimensions) for chunk in chunks)
         )
+    output: list[EmbeddingRecord] = []
+    for group, stored in zip(groups, validated, strict=True):
         for window_id, value in zip(group.window_ids, stored[1:], strict=True):
             output.append(
                 EmbeddingRecord.from_normalized_bytes(
@@ -623,22 +725,24 @@ def _flat_stored_response(
     return tuple(_stored_vector(entry, dimension) for entry in entries)
 
 
+def _contextual_query_stored_response(
+    body: bytes, expected: int, dimension: int
+) -> tuple[bytes, ...]:
+    response = _response_object(body)
+    documents = _indexed(response.get("data"), expected, nested_key="data")
+    chunks = tuple(_indexed(document["data"], 1) for document in documents)
+    return tuple(_stored_vector(chunk[0], dimension) for chunk in chunks)
+
+
 def render_independent_input(
     group: ContextGroup,
     counter: TokenCounter,
     capabilities: EmbeddingCapabilities,
 ) -> RenderedInput:
     """Render and measure one independent capsule/window provider input."""
+    _validate_group(group, capabilities, "independent")
     if (
-        group.contextualization != "independent"
-        or capabilities.contextualization != "independent"
-        or len(group.window_ids) != 1
-        or group.provider != capabilities.provider
-        or group.model != capabilities.model
-        or group.dimensions != capabilities.dimensions
-        or group.dtype != capabilities.dtype
-        or group.options != capabilities.options
-        or group.tokenizer_id != capabilities.tokenizer_id
+        len(group.window_ids) != 1
         or counter.model != capabilities.model
         or counter.tokenizer_id != capabilities.tokenizer_id
     ):
@@ -668,3 +772,23 @@ def render_independent_input(
             "INVALID_REQUEST", "One rendered input exceeds the provider token limit."
         )
     return RenderedInput(text, encoded_sha, input_sha, token_count)
+
+
+def _validate_group(
+    group: ContextGroup,
+    capabilities: EmbeddingCapabilities,
+    contextualization: str,
+) -> None:
+    if (
+        group.contextualization != contextualization
+        or capabilities.contextualization != contextualization
+        or group.provider != capabilities.provider
+        or group.model != capabilities.model
+        or group.dimensions != capabilities.dimensions
+        or group.dtype != capabilities.dtype
+        or group.options != capabilities.options
+        or group.tokenizer_id != capabilities.tokenizer_id
+    ):
+        raise TychoraError(
+            "INVALID_REQUEST", "Embedding group differs from provider capabilities."
+        )
