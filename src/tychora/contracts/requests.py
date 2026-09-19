@@ -132,6 +132,22 @@ class FolderSource(SourceBase):
 class RepositorySource(SourceBase):
     type: Literal["repository"] = "repository"
     path: NonEmptyStr
+    excludes: Annotated[tuple[NonEmptyStr, ...], Field(max_length=1000)] = ()
+
+    @field_validator("excludes")
+    @classmethod
+    def safe_excludes(cls, excludes: tuple[str, ...]) -> tuple[str, ...]:
+        if len(set(excludes)) != len(excludes):
+            raise ValueError("Duplicate repository exclude")
+        if any(
+            "\\" in item
+            or "\x00" in item
+            or item.startswith("/")
+            or ".." in item.split("/")
+            for item in excludes
+        ):
+            raise ValueError("Repository excludes must be relative POSIX globs")
+        return excludes
 
 
 class TextSource(SourceBase):

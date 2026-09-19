@@ -607,11 +607,11 @@ def test_relative_source_never_uses_cwd_or_chooses_an_ambiguous_root(tmp_path):
     assert exc.value.code == "INVALID_REQUEST"
 
 
-def test_repository_capture_is_explicitly_missing(tmp_path):
+def test_missing_repository_path_is_typed_not_found(tmp_path):
     _, acquirer, _ = local_acquirer(tmp_path)
     with pytest.raises(TychoraError) as exc:
         acquirer.capture(item(type="repository", path="anywhere"), ExecutionContext())
-    assert exc.value.code == "CAPABILITY_MISSING"
+    assert exc.value.code == "NOT_FOUND"
 
 
 def test_symlink_swap_between_resolution_and_open_cannot_read_outside(

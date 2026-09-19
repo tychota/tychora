@@ -7,8 +7,9 @@ from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryFile
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
+from tychora.adapters.code.capture import RepositoryCapture
 from tychora.adapters.files.cas import LocalArtifacts
 from tychora.adapters.files.references import MAX_MANIFEST_BYTES, required_refs
 from tychora.configuration.models import AcquisitionCeilings, ResolvedConfig
@@ -18,7 +19,13 @@ from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes, digest, normalize_source_key
-from tychora.contracts.requests import BytesSource, FileSource, FolderSource, TextSource
+from tychora.contracts.requests import (
+    BytesSource,
+    FileSource,
+    FolderSource,
+    RepositorySource,
+    TextSource,
+)
 from tychora.ports.acquisition import UrlReader
 from tychora.ports.execution import ExecutionContext
 
@@ -52,6 +59,7 @@ class Acquirer:
         self.artifacts = artifacts
         self.config = config
         self.urls = urls
+        self._repositories = RepositoryCapture(artifacts)
         ceiling = config.values.acquisition.limits
         if (
             max(ceiling.max_file_bytes, ceiling.max_inline_bytes)
@@ -230,8 +238,6 @@ class Acquirer:
         ctx.checkpoint()
         limits = self._limits(source)
         value = source.root
-        if value.type == "repository":
-            raise TychoraError("CAPABILITY_MISSING", "Source acquisition unavailable")
         if value.type == "url" and (
             self.config.values.offline
             or not self.config.values.acquisition.url.enabled
@@ -243,15 +249,34 @@ class Acquirer:
             )
         path = (
             self._path(value.path)
-            if isinstance(value, (FileSource, FolderSource))
+            if isinstance(value, (FileSource, FolderSource, RepositorySource))
             else None
         )
         base = path if value.type == "folder" else path.parent if path else None
         sidecars = [self._path(name, base) for name in value.sidecars]
         if len(set(sidecars)) != len(sidecars) or path in sidecars:
             raise TychoraError("INVALID_REQUEST", "Duplicate source key in capture")
+        if isinstance(value, RepositorySource) and sidecars:
+            raise TychoraError(
+                "INVALID_REQUEST", "Repository sources do not accept sidecars"
+            )
+        repository_stamp = None
+        if isinstance(value, RepositorySource):
+            assert path is not None
+            with self._open(path) as descriptor:
+                repository_info = os.fstat(descriptor)
+                repository_stamp = (repository_info.st_dev, repository_info.st_ino)
+            if not stat.S_ISDIR(repository_info.st_mode):
+                raise TychoraError(
+                    "INVALID_REQUEST", "Repository source must be a directory"
+                )
         for _attempt in range(3):
             try:
+                if isinstance(value, RepositorySource):
+                    assert path is not None and repository_stamp is not None
+                    return self._capture_repository(
+                        source, path, repository_stamp, limits, ctx
+                    )
                 return self._capture(source, path, sidecars, limits, ctx)
             except _MovingSource:
                 ctx.checkpoint()
@@ -262,6 +287,139 @@ class Acquirer:
         raise TychoraError(
             "INTEGRITY_ERROR", "Source remained unstable after three capture attempts"
         )
+
+    def _capture_repository(
+        self,
+        source: SourceInput,
+        path: Path,
+        root_stamp: tuple[int, int],
+        limits: AcquisitionCeilings,
+        ctx: ExecutionContext,
+    ) -> CaptureManifest:
+        value = source.root
+        assert isinstance(value, RepositorySource)
+        with self._open(path) as descriptor:
+            if _stamp(os.fstat(descriptor))[:2] != root_stamp:
+                raise _MovingSource
+        snapshot = self._repositories.snapshot(
+            path, value.excludes, ctx, max_files=limits.max_files
+        )
+        entries = []
+        originals = []
+        total = 0
+        for relative in snapshot.present_paths:
+            ref, stamp = self._file(
+                path / relative,
+                value.media_type or "application/octet-stream",
+                min(limits.max_file_bytes, limits.max_total_bytes - total),
+                ctx,
+            )
+            total += ref.size_bytes
+            originals.append(ref)
+            entries.append(
+                CapturedFile(
+                    relative_path=relative,
+                    source_key=normalize_source_key(f"{value.source_key}/{relative}"),
+                    mode=stat.S_IMODE(stamp[2]),
+                    blob_sha=ref.sha256,
+                    artifact_ref=ref,
+                )
+            )
+        captured_entries = tuple(entries)
+        dirty = self._repositories.dirty(snapshot, captured_entries, ctx)
+        current = self._repositories.snapshot(
+            path, value.excludes, ctx, max_files=limits.max_files
+        )
+        if current != snapshot:
+            raise _MovingSource
+        with self._open(path) as descriptor:
+            if _stamp(os.fstat(descriptor))[:2] != root_stamp:
+                raise _MovingSource
+        original = self._repository_manifest(captured_entries, snapshot.commit, dirty)
+        captured = CaptureManifest(
+            source_key=value.source_key,
+            original_ref=original,
+            original_sha=original.sha256,
+            entries=captured_entries,
+            commit=snapshot.commit,
+            dirty=dirty,
+            captured_at=datetime.now(UTC),
+            acquire_fingerprint=digest(
+                "acquisition-request-v1",
+                self.config.acquire_fingerprint,
+                limits.model_dump(mode="json"),
+                {"repository_excludes": value.excludes},
+            ),
+            config_sha=self.config.config_sha,
+            manifest_ref=original,
+            source=FrozenJsonMap(value.model_dump(mode="json")),
+        )
+        manifest = self._manifest(captured, [*originals, original])
+        ctx.checkpoint()
+        return captured.model_copy(update={"manifest_ref": manifest})
+
+    def _repository_manifest(
+        self,
+        entries: tuple[CapturedFile, ...],
+        commit: str | None,
+        dirty: bool,
+    ) -> ArtifactRef:
+        def files(part: tuple[CapturedFile, ...]):
+            return [
+                {
+                    "relative_path": entry.relative_path,
+                    "mode": entry.mode,
+                    "blob_sha": entry.blob_sha,
+                    "artifact_ref": entry.artifact_ref.model_dump(mode="json"),
+                }
+                for entry in part
+            ]
+
+        data = {
+            "files": files(entries),
+            "commit": commit,
+            "dirty": dirty,
+            "dirty_scope": "captured_paths_vs_head",
+        }
+        repository = {
+            "type": "repository_capture",
+            "schema_version": "1",
+            "data": data,
+            "original_artifacts": [
+                ref.model_dump(mode="json")
+                for ref in dict.fromkeys(entry.artifact_ref for entry in entries)
+            ],
+        }
+        if len(entries) <= 4000:
+            required_refs(repository, capture_published=False)
+            return self._json(repository)
+        data["files"] = []
+        data["files_partitioned"] = True
+        repository["original_artifacts"] = []
+        links = []
+        for offset in range(0, len(entries), 4000):
+            part = entries[offset : offset + 4000]
+            child = {
+                "type": "repository_capture",
+                "schema_version": "1",
+                "data": {"files": files(part)},
+                "original_artifacts": [
+                    ref.model_dump(mode="json")
+                    for ref in dict.fromkeys(entry.artifact_ref for entry in part)
+                ],
+            }
+            required_refs(child, capture_published=False)
+            ref = self._json(child)
+            links.append(
+                {
+                    "artifact": ref.model_dump(mode="json"),
+                    "type": "repository_capture",
+                    "schema_version": "1",
+                }
+            )
+        repository["required_manifests"] = links
+        required_refs(repository, capture_published=False)
+        return self._json(repository)
 
     def _capture(
         self,
@@ -391,7 +549,11 @@ class Acquirer:
         self, captured: CaptureManifest, originals: list[ArtifactRef]
     ) -> ArtifactRef:
         data = captured.model_dump(mode="json", exclude={"manifest_ref", "entries"})
-        manifest = {"type": "job_capture", "schema_version": "1", "data": data}
+        manifest: dict[str, Any] = {
+            "type": "job_capture",
+            "schema_version": "1",
+            "data": data,
+        }
         if len(captured.entries) <= 4000 and len(originals) <= 4000:
             data["entries"] = [
                 entry.model_dump(mode="json") for entry in captured.entries
@@ -453,6 +615,14 @@ class Acquirer:
             manifest["original_artifacts"] = [
                 captured.original_ref.model_dump(mode="json")
             ]
+        if captured.source.get("type") == "repository":
+            manifest.setdefault("required_manifests", []).append(
+                {
+                    "artifact": captured.original_ref.model_dump(mode="json"),
+                    "type": "repository_capture",
+                    "schema_version": "1",
+                }
+            )
         required_refs(manifest, capture_published=False)
         return self._json(manifest)
 
