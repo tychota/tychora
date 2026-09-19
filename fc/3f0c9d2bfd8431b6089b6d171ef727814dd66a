@@ -1,0 +1,21 @@
+tests/indexing/test_windows.py
+  s_35b641b930a96d::t_24c3efbd07ca79 519-537,540,558-562,602-604
+src/tychora/indexing/representations.py
+  s_35b641b930a96d::t_311121b42da654 221-222
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "fc3f0c9d2bfd8431b6089b6d171ef727814dd66a",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
