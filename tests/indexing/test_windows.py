@@ -442,6 +442,96 @@ def test_post_sql_code_rows_prepare_without_transient_file_maps(
         )
 
 
+@pytest.fixture
+def retained_code_bundle(tmp_path):
+    from tests.code.test_structure import _registration
+    from tests.helpers.corpus import registry
+    from tychora.adapters.code.normalize import normalize_code, retain_code_extraction
+
+    artifacts, registration, parsed = _registration(tmp_path)
+    retained = retain_code_extraction(registration, parsed, registry(), artifacts)
+    bundle = normalize_code(retained, registry()).model_copy(update={"code_files": ()})
+    prepare_extraction(bundle)
+    return bundle
+
+
+@pytest.mark.parametrize(
+    "corruption", ["missing_file", "extra_binding", "path_conflict", "extra_container"]
+)
+def test_retained_code_requires_complete_file_bindings(
+    retained_code_bundle, corruption
+):
+    bundle = retained_code_bundle
+    binding = next(
+        row for row in bundle.revision_artifacts if row.role == "source_file"
+    )
+    if corruption == "missing_file":
+        kept = tuple(
+            unit for unit in bundle.units if unit.boundary_key != binding.source_ref
+        )
+        kept_ids = {unit.unit_id for unit in kept}
+        bundle = _replace_units(bundle, kept).model_copy(
+            update={
+                "records": tuple(
+                    row for row in bundle.records if row.unit_id in kept_ids
+                ),
+                "identifiers": tuple(
+                    row for row in bundle.identifiers if row.unit_id in kept_ids
+                ),
+            }
+        )
+    elif corruption == "extra_container":
+        bundle = bundle.model_copy(
+            update={
+                "revision_artifacts": tuple(
+                    row for row in bundle.revision_artifacts if row != binding
+                )
+            }
+        )
+    else:
+        extra = binding.model_copy(
+            update={
+                "source_ref": "omitted.py"
+                if corruption == "extra_binding"
+                else binding.source_ref,
+                "artifact_sha": binding.artifact_sha
+                if corruption == "extra_binding"
+                else bundle.revision.original_sha,
+            }
+        )
+        bundle = bundle.model_copy(
+            update={"revision_artifacts": (*bundle.revision_artifacts, extra)}
+        )
+    with pytest.raises(ValueError, match="Retained code file"):
+        prepare_extraction(bundle)
+
+
+@pytest.mark.parametrize("target", ["orphan", "container", "duplicate", "missing"])
+def test_retained_code_requires_complete_definition_identifiers(
+    retained_code_bundle, target
+):
+    bundle = retained_code_bundle
+    identifier = next(
+        row for row in bundle.identifiers if row.namespace == "code.definition_key"
+    )
+    target_id = identifier.unit_id
+    if target == "orphan":
+        target_id = "foreign-unit"
+    elif target == "container":
+        target_id = next(
+            unit.unit_id for unit in bundle.units if unit.unit_type == "code_file"
+        )
+    identifiers = (
+        tuple(row for row in bundle.identifiers if row != identifier)
+        if target == "missing"
+        else (*bundle.identifiers, identifier.model_copy(update={"unit_id": target_id}))
+    )
+    with pytest.raises(
+        ValueError, match="Retained code (definition identifiers|declaration binding)"
+    ):
+        prepare_extraction(bundle.model_copy(update={"identifiers": identifiers}))
+
+
 def test_retained_code_ranges_handle_bom_unicode_and_crlf_without_maps(
     counter,
 ) -> None:

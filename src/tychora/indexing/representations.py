@@ -237,6 +237,8 @@ def _retained_code_files(
             coverage=coverage,
             adapter_fingerprint=adapter,
         )
+    if {(path, artifact) for artifact, path in files} != source_bindings:
+        raise ValueError("Retained code file containers do not cover source bindings")
     return files
 
 
@@ -406,6 +408,14 @@ def _validate_retained_code_records(
     }
     if set(records) != symbol_ids:
         raise ValueError("Retained code symbol records are incomplete")
+
+    definition_ids = [
+        row.unit_id
+        for row in bundle.identifiers
+        if row.namespace == "code.definition_key"
+    ]
+    if set(definition_ids) != symbol_ids or len(definition_ids) != len(symbol_ids):
+        raise ValueError("Retained code definition identifiers are incomplete")
 
     for uid, record in records.items():
         unit = units[uid]
