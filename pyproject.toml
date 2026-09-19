@@ -13,7 +13,7 @@ documents = ["docling", "pillow"]
 code = ["tree-sitter", "tree-sitter-python", "tree-sitter-typescript", "tree-sitter-javascript", "pathspec"]
 vector = ["chromadb==1.5.9"]
 graph = ["ladybug==0.20.3"]
-voyage = ["voyageai==0.5.0"]
+voyage = ["voyageai==0.5.0", "httpx"]
 vision = ["anthropic"]
 server = ["fastapi", "uvicorn", "httpx", "mcp==2.2.0"]
 full = [

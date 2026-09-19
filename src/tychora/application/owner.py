@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from threading import Lock, get_ident
-from typing import BinaryIO, NoReturn, cast, overload
+from typing import BinaryIO, NoReturn, Protocol, cast, overload
 from uuid import UUID, uuid4
 
 from tychora.adapters.files.cas import LocalArtifacts
@@ -25,6 +25,7 @@ from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
+from tychora.contracts.embeddings import QueryUploadAuthorization
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.extraction import extraction_document
 from tychora.contracts.identity import (
@@ -53,6 +54,11 @@ from .runtime import (
     parser_process,
     private_directory,
 )
+
+
+class CloseableRuntime(Protocol):
+    def close(self) -> None: ...
+
 
 MAX_PARSER_OUTPUT_BYTES = 256 * 1024 * 1024
 
@@ -197,6 +203,10 @@ class WorkspaceOwner:
                 "INTEGRITY_ERROR", "Register resources on the owner thread"
             )
         self._handles.callback(close)
+
+    def register_runtime(self, runtime: CloseableRuntime) -> None:
+        """Transfer a generic provider runtime's lifecycle to this owner."""
+        self.register_close(runtime.close)
 
     def _sync_thread(self) -> None:
         if get_ident() == self._thread_id:
@@ -457,6 +467,44 @@ class WorkspaceOwner:
             self._worker.submit(
                 lambda: self.upload_policy.authorize_captured(
                     scope, provider, authorization, policy_epoch
+                )
+            ).result()
+            ctx.checkpoint()
+            return call()
+
+        return await drain_result(lane.submit(invoke), ctx)
+
+    async def run_query_provider[T](
+        self,
+        provider: str,
+        call: Callable[[], T],
+        ctx: ExecutionContext,
+        *,
+        scope: RequestScope,
+        authorization: QueryUploadAuthorization,
+    ) -> T:
+        """Run a query upload miss after fresh bounded-lane authorization."""
+        ctx.checkpoint()
+        granted = self.scope.narrow(scope)
+        if self.config.values.offline or provider not in granted.upload_providers:
+            _deny()
+        with self._admission:
+            if self._closing:
+                raise TychoraError(
+                    "WORKSPACE_BUSY",
+                    "Workspace is closing; retry shortly",
+                    retryable=True,
+                )
+            lane = self._providers.get(provider)
+            if lane is None:
+                lane = BoundedWorker(workers=2)
+                self._providers[provider] = lane
+
+        def invoke() -> T:
+            ctx.checkpoint()
+            self._worker.submit(
+                lambda: self.upload_policy.authorize_query(
+                    scope, provider, authorization
                 )
             ).result()
             ctx.checkpoint()
@@ -911,6 +959,60 @@ class CanonicalUploadPolicy:
         try:
             self._check_epoch(policy_epoch)
             self._authorize_dependencies(dependencies, provider, granted)
+        except (ValueError, TypeError, KeyError):
+            _deny()
+        finally:
+            owner.db.rollback()
+
+    def authorize_query(
+        self,
+        scope: RequestScope,
+        provider: str,
+        authorization: QueryUploadAuthorization,
+    ) -> None:
+        """Authorize caller query text against explicit current collections."""
+        owner = self._owner
+        granted = owner.scope.narrow(scope)
+        if (
+            owner.config.values.offline
+            or provider not in granted.upload_providers
+            or not authorization.collection_ids
+            or not authorization.collection_ids <= granted.collection_ids
+        ):
+            _deny()
+        if owner.db.in_transaction:
+            raise TychoraError(
+                "INTEGRITY_ERROR",
+                "Upload authorization requires a fresh canonical read",
+            )
+        owner.db.execute("BEGIN")
+        try:
+            self._check_epoch(authorization.policy_epoch)
+            for collection_id in sorted(authorization.collection_ids):
+                row = owner.db.execute(
+                    "SELECT workspace_id,access_floor,policy_json "
+                    "FROM collections WHERE collection_id=?",
+                    (collection_id,),
+                ).fetchone()
+                if (
+                    row is None
+                    or row[0] != owner.workspace_id
+                    or row[1] > granted.access_ceiling
+                ):
+                    _deny()
+                policy = json.loads(row[2], object_pairs_hook=_unique_object)
+                if (
+                    not isinstance(policy, dict)
+                    or set(policy) != {"schema_version", "upload_providers"}
+                    or type(policy["schema_version"]) is not int
+                    or policy["schema_version"] != 1
+                    or provider not in _strings(policy["upload_providers"])
+                ):
+                    _deny()
+            if authorization.dependency_ids:
+                self._authorize_dependencies(
+                    authorization.dependency_ids, provider, granted
+                )
         except (ValueError, TypeError, KeyError):
             _deny()
         finally:

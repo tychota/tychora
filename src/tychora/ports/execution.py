@@ -53,10 +53,18 @@ class UploadPolicy(Protocol):
         policy_epoch: int,
     ) -> None: ...
 
+    def authorize_query(
+        self,
+        scope: RequestScope,
+        provider: str,
+        authorization: QueryUploadAuthorization,
+    ) -> None: ...
+
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from tychora.contracts.embeddings import QueryUploadAuthorization
     from tychora.ports.vision import (
         CapturedRegionAuthorization,
         CapturedSourceRegistration,
