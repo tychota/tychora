@@ -1,11 +1,10 @@
 """Append-only policy observations with transactional workspace epochs."""
 
-import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from hashlib import sha256
 
+from tychora.adapters.files.assertions import iter_verified_assertions
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.corpus import ReviewTarget
 from tychora.contracts.errors import TychoraError
@@ -16,15 +15,6 @@ from .validation import fail
 
 def now() -> str:
     return datetime.now(UTC).isoformat()
-
-
-def _object(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            fail("Duplicate assertion JSON field")
-        result[key] = value
-    return result
 
 
 class PolicyRepository:
@@ -166,42 +156,11 @@ class PolicyRepository:
             media_type=row[1],
             storage_key=row[2],
         )
-        if ref.size_bytes > 16 * 1024 * 1024:
-            fail("Assertion manifest exceeds verification bound")
-        hasher, size, record_ids, assertion_ids = sha256(), 0, set(), set()
-        matched = False
-        try:
-            with self.artifacts.open_verified(ref) as stream:
-                while line := stream.readline(1024 * 1024 + 1):
-                    if len(line) > 1024 * 1024:
-                        fail("Assertion JSONL record exceeds verification bound")
-                    hasher.update(line)
-                    size += len(line)
-                    if size > 16 * 1024 * 1024:
-                        fail("Assertion manifest exceeds verification bound")
-                    data = json.loads(line.decode("utf-8"), object_pairs_hook=_object)
-                    if (
-                        not isinstance(data, dict)
-                        or data.get("type") != "assertion"
-                        or data.get("schema_version") != "1"
-                    ):
-                        fail("Unsupported assertion record framing")
-                    aid, rid = data.get("assertion_id"), data.get("record_id")
-                    if (
-                        not isinstance(aid, str)
-                        or not aid
-                        or not isinstance(rid, str)
-                        or not rid
-                        or aid in assertion_ids
-                        or rid in record_ids
-                    ):
-                        fail("Assertion record identities are missing or ambiguous")
-                    assertion_ids.add(aid)
-                    record_ids.add(rid)
-                    matched |= aid == assertion_id and rid == record_id
-        except (OSError, UnicodeDecodeError, ValueError):
-            fail("Assertion artifact cannot be verified")
-        if not matched or size != ref.size_bytes or hasher.hexdigest() != ref.sha256:
+        matched = sum(
+            item.assertion_id == assertion_id and item.record_id == record_id
+            for item in iter_verified_assertions(ref, self.artifacts)
+        )
+        if matched != 1:
             fail("Assertion record binding or artifact digest differs")
 
     def record_assertion_decision(

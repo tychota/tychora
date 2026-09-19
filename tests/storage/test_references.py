@@ -33,6 +33,7 @@ TYPES = (
     "repository_capture",
     "extraction",
     "assertion",
+    "assertion_index",
     "registry",
     "index_input",
     "vector_cache",

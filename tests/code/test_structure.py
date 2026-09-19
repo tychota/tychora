@@ -15,6 +15,7 @@ from tychora.adapters.code.normalize import (
 from tychora.adapters.code.python import PythonAdapter
 from tychora.adapters.code.syntax import base_syntax_result
 from tychora.adapters.code.typescript import TypeScriptAdapter
+from tychora.adapters.files.assertions import iter_verified_assertions
 from tychora.adapters.files.cas import LocalArtifacts
 from tychora.adapters.files.references import MAX_MANIFEST_BYTES, required_refs
 from tychora.adapters.sqlite.connection import open_corpus
@@ -29,7 +30,8 @@ from tychora.contracts.corpus import (
     WorkspaceRow,
 )
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.identity import digest, revision_id, source_id
+from tychora.contracts.identity import digest, extraction_id, revision_id, source_id
+from tychora.ports.language import Definition, SourceSpan
 
 
 def _registration(tmp_path: Path):
@@ -173,6 +175,15 @@ def test_mixed_repository_retains_replays_and_registers_exact_file_facts(tmp_pat
     }
     assert call["method"] == "parser_inferred"
     assert len(assertions) == 8
+    assert retained.diagnostics_ref is not None
+    with artifacts.open_verified(retained.diagnostics_ref) as stream:
+        diagnostics = json.load(stream)
+    unit_ids = {unit.unit_id for unit in bundle.units}
+    assert diagnostics["data"]["resolutions"]
+    assert all(
+        item["source_unit_id"] in unit_ids
+        for item in diagnostics["data"]["resolutions"]
+    )
 
     child = next(row for row in bundle.records if row.data_json["name"] == "child")
     child_data = json.loads(child.model_dump_json())["data_json"]
@@ -231,6 +242,55 @@ def test_same_bytes_at_two_paths_keep_distinct_file_and_definition_identity(tmp_
     assert len(keys) == 2
 
 
+def test_unsupported_unique_target_is_diagnostic_without_semantic_assertion(tmp_path):
+    artifacts, registration, parsed = _registration(tmp_path)
+    syntax = parsed[0].syntax.model_copy(
+        update={
+            "references_found": tuple(
+                reference.model_copy(update={"supported": False})
+                for reference in parsed[0].syntax.references_found
+            )
+        }
+    )
+    parsed = (parsed[0].model_copy(update={"syntax": syntax}), *parsed[1:])
+    retained = retain_code_extraction(registration, parsed, registry(), artifacts)
+    assert retained.assertions_ref is not None
+    with artifacts.open_verified(retained.assertions_ref) as stream:
+        assertions = [json.loads(line) for line in stream]
+    assert "calls@1" not in {item["data"]["predicate"] for item in assertions}
+    assert retained.diagnostics_ref is not None
+    with artifacts.open_verified(retained.diagnostics_ref) as stream:
+        resolutions = json.load(stream)["data"]["resolutions"]
+    unsupported = [item for item in resolutions if not item["supported"]]
+    assert unsupported
+    assert all(
+        item["state"] == "unresolved"
+        and item["selected_target"] is None
+        and item["rule"] == "unsupported_reference"
+        for item in unsupported
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("source_key", "code/forged.py"), ("mode", 0o600)),
+)
+def test_retention_and_direct_normalize_require_exact_capture_entry(
+    tmp_path, field, value
+):
+    artifacts, registration, parsed = _registration(tmp_path)
+    captured = parsed[0].captured.model_copy(update={field: value})
+    forged_file = parsed[0].model_copy(update={"captured": captured})
+    forged_files = (forged_file, *parsed[1:])
+    with pytest.raises(ValueError, match="repository capture entries"):
+        retain_code_extraction(registration, forged_files, registry(), artifacts)
+
+    retained = retain_code_extraction(registration, parsed, registry(), artifacts)
+    forged = retained.model_copy(update={"files": forged_files})
+    with pytest.raises(ValueError, match="captured files"):
+        normalize_code(forged, registry())
+
+
 def test_large_repository_uses_verified_bounded_extraction_partitions(tmp_path):
     artifacts, registration, _ = _registration(tmp_path)
     empty_ref = artifacts.put_stream(BytesIO(b""), "text/plain")
@@ -280,6 +340,89 @@ def test_large_repository_uses_verified_bounded_extraction_partitions(tmp_path):
     (artifacts.root / missing.storage_key).write_bytes(b"{}")
     with pytest.raises(TychoraError, match="failed verification"):
         replay_code_extraction(retained.raw_document_ref, registration, artifacts)
+
+
+def test_code_retention_roundtrips_more_than_ten_thousand_sparse_assertions(
+    tmp_path,
+):
+    artifacts, registration, _ = _registration(tmp_path)
+    count = 5001
+    payload = b"x\n" * count
+    ref = artifacts.put_stream(BytesIO(payload), "text/plain")
+    captured = CapturedFile(
+        relative_path="large.py",
+        source_key="code/large.py",
+        mode=0o644,
+        blob_sha=ref.sha256,
+        artifact_ref=ref,
+    )
+    registration = registration.model_copy(
+        update={
+            "capture": registration.capture.model_copy(update={"entries": (captured,)})
+        }
+    )
+    base = base_syntax_result(
+        language="python",
+        grammar="synthetic",
+        adapter_fingerprint=digest("synthetic-adapter-v1"),
+        file_bytes=payload,
+        text=payload.decode(),
+        encoding="utf-8",
+        coverage="parsed",
+        options={},
+        root_type="module",
+    )
+    definitions = tuple(
+        Definition(
+            kind="function",
+            name=f"item_{index}",
+            qualified_name=f"item_{index}",
+            scope=(),
+            native_ref=f"definition:{index}",
+            byte_start=index * 2,
+            byte_end=index * 2 + 1,
+            char_start=index * 2,
+            char_end=index * 2 + 1,
+            line_start=index + 1,
+            line_end=index + 1,
+            declaration_span=SourceSpan(
+                native_ref=f"declaration:{index}",
+                kind="declaration",
+                byte_start=index * 2,
+                byte_end=index * 2 + 1,
+                char_start=index * 2,
+                char_end=index * 2 + 1,
+                line_start=index + 1,
+                line_end=index + 1,
+            ),
+        )
+        for index in range(count)
+    )
+    parsed = (
+        CapturedSyntax(
+            captured=captured,
+            syntax=base.model_copy(update={"definitions_found": definitions}),
+        ),
+    )
+    retained = retain_code_extraction(registration, parsed, registry(), artifacts)
+    assert retained.assertions_ref is not None
+    assert len(retained.assertion_partition_refs) >= 2
+    replayed = replay_code_extraction(
+        retained.raw_document_ref, registration, artifacts
+    )
+    assert replayed.assertion_partition_refs == retained.assertion_partition_refs
+    verified = tuple(
+        iter_verified_assertions(
+            retained.assertions_ref,
+            artifacts,
+            expected_extraction_id=extraction_id(
+                registration.revision.revision_id,
+                retained.parser_fingerprint,
+                retained.normalizer_fingerprint,
+            ),
+        )
+    )
+    assert len(verified) == count * 2 - 1
 
 
 def test_repository_capture_file_cap_is_enforced_before_retention(tmp_path):
@@ -346,6 +489,59 @@ def test_retained_syntax_partitions_before_manifest_byte_limit(tmp_path):
     )
 
 
+def test_replay_and_registration_reject_hash_valid_oversized_partition(tmp_path):
+    artifacts, registration, parsed = _registration(tmp_path)
+    retained = retain_code_extraction(registration, parsed, registry(), artifacts)
+    bundle = normalize_code(retained, registry())
+    with artifacts.open_verified(retained.raw_document_ref) as stream:
+        root = json.load(stream)
+    child = {
+        "type": "extraction",
+        "schema_version": "1",
+        "required_artifacts": [],
+        "required_manifests": [],
+        "data": {
+            "files": root["data"]["files"],
+            "padding": "x" * MAX_MANIFEST_BYTES,
+        },
+    }
+    child_ref = artifacts.put_stream(
+        BytesIO(json.dumps(child, separators=(",", ":")).encode()),
+        "application/json",
+    )
+    root["data"]["files"] = []
+    root["data"]["files_partitioned"] = True
+    root["required_manifests"].append(
+        {
+            "artifact": child_ref.model_dump(mode="json"),
+            "type": "extraction",
+            "schema_version": "1",
+        }
+    )
+    root_ref = artifacts.put_stream(
+        BytesIO(json.dumps(root, sort_keys=True, separators=(",", ":")).encode()),
+        "application/json",
+    )
+    with pytest.raises(ValueError, match="partition differs"):
+        replay_code_extraction(root_ref, registration, artifacts)
+
+    bundle = bundle.model_copy(
+        update={
+            "artifacts": (*bundle.artifacts, root_ref, child_ref),
+            "extraction": bundle.extraction.model_copy(
+                update={"document_artifact_sha": root_ref.sha256}
+            ),
+        }
+    )
+    store = CorpusStore(
+        open_corpus(tmp_path / "oversized-part.sqlite3", initialize=True),
+        registry=registry(),
+        artifacts=artifacts,
+    )
+    with pytest.raises(TychoraError, match="partition exceeds byte capacity"):
+        store.commit_extraction(bundle)
+
+
 @pytest.mark.parametrize("field", ["relative_path", "language"])
 def test_symbol_record_cannot_swap_to_another_captured_file(tmp_path, field):
     artifacts, registration, parsed = _registration(tmp_path)
@@ -375,6 +571,23 @@ def test_descriptor_cannot_swap_to_another_captured_artifact(tmp_path):
     bundle = bundle.model_copy(update={"code_files": (forged, *bundle.code_files[1:])})
     store = CorpusStore(
         open_corpus(tmp_path / "forged-artifact.sqlite3", initialize=True),
+        registry=registry(),
+        artifacts=artifacts,
+    )
+    with pytest.raises(TychoraError, match="retained file provenance"):
+        store.commit_extraction(bundle)
+
+
+def test_descriptor_cannot_change_full_capture_entry_identity(tmp_path):
+    artifacts, registration, parsed = _registration(tmp_path)
+    retained = retain_code_extraction(registration, parsed, registry(), artifacts)
+    bundle = normalize_code(retained, registry())
+    forged = bundle.code_files[0].model_copy(
+        update={"capture_entry_digest": "f" * 64}
+    )
+    bundle = bundle.model_copy(update={"code_files": (forged, *bundle.code_files[1:])})
+    store = CorpusStore(
+        open_corpus(tmp_path / "forged-capture-entry.sqlite3", initialize=True),
         registry=registry(),
         artifacts=artifacts,
     )

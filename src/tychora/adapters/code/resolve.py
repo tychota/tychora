@@ -32,12 +32,31 @@ def _finish(
     rule: str,
     reasons: tuple[str, ...],
 ) -> Resolution:
+    owners = [
+        owned
+        for owned in catalog.source_ranges
+        if owned.relative_path == catalog.source_relative_path
+        and owned.char_start <= reference.char_start
+        and reference.char_end <= owned.char_end
+    ]
+    source_unit_id = (
+        min(
+            owners,
+            key=lambda owned: (
+                owned.char_end - owned.char_start,
+                owned.owner_unit_id,
+            ),
+        ).owner_unit_id
+        if owners
+        else catalog.source_container_id
+    )
     unique = tuple(sorted(set(candidate_ids)))
     state = "resolved" if len(unique) == 1 else "ambiguous" if unique else "unresolved"
     selected = unique[0] if state == "resolved" else None
     return Resolution(
         reference_id=_reference_id(reference, catalog),
         source_id=catalog.source_id,
+        source_unit_id=source_unit_id,
         revision_id=catalog.revision_id,
         relative_path=catalog.source_relative_path,
         language=catalog.source_language,
@@ -64,6 +83,14 @@ def _finish(
 
 
 def _resolve_one(reference: Reference, catalog: SymbolCatalog) -> Resolution:
+    if not reference.supported:
+        return _finish(
+            reference,
+            catalog,
+            (),
+            "unsupported_reference",
+            ("language adapter did not qualify a static target",),
+        )
     qualified = {
         name for name in (*reference.candidate_names, reference.spelling) if "." in name
     }

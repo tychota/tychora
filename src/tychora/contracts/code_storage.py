@@ -17,6 +17,7 @@ from .identity import normalize_source_key
 class CodeFileDescriptor(Contract):
     relative_path: NonEmptyStr
     artifact_ref: Sha256
+    capture_entry_digest: Sha256
     language: NonEmptyStr
     encoding: NonEmptyStr
     coverage: Literal["parsed", "partial", "text_fallback", "empty"]

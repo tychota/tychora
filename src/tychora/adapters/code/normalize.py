@@ -9,6 +9,7 @@ from io import BytesIO
 from itertools import pairwise
 from typing import Any, cast
 
+from tychora.adapters.files.assertions import iter_verified_assertions
 from tychora.adapters.files.references import MAX_MANIFEST_BYTES, required_refs
 from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef, ManifestRef
@@ -37,12 +38,19 @@ from tychora.contracts.corpus import (
 )
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import CodeLocator, EvidenceUnit
-from tychora.contracts.identity import canonical_bytes, digest, extraction_id, unit_id
+from tychora.contracts.identity import (
+    canonical_bytes,
+    digest,
+    extraction_id,
+    normalize_source_key,
+    unit_id,
+)
 from tychora.contracts.relationships import (
     AssertionObservation,
     RelationshipAssertion,
     RelationshipEndpoint,
-    encode_assertions,
+    assertion_index_document,
+    partition_assertions,
 )
 from tychora.ports.artifacts import ArtifactReader, Artifacts
 from tychora.ports.language import Definition, Reference, SourceSpan, SyntaxResult
@@ -97,6 +105,7 @@ def definition_key(
     symbol_kind: str,
     discriminator: str | int,
 ) -> str:
+    path = normalize_source_key(path)
     return digest(
         "code-definition-v1",
         revision_id,
@@ -255,6 +264,10 @@ def _build(
                         "encoding": syntax.encoding,
                         "coverage": syntax.coverage,
                         "artifact_ref": item.captured.artifact_ref.sha256,
+                        "capture_entry_digest": digest(
+                            "captured-file-v1",
+                            item.captured.model_dump(mode="json"),
+                        ),
                         "adapter_fingerprint": syntax.adapter_fingerprint,
                     }
                 ),
@@ -546,6 +559,13 @@ def _build(
             source_relative_path=item.captured.relative_path,
             source_language=item.syntax.language,
             source_adapter_fingerprint=item.syntax.adapter_fingerprint,
+            source_container_id=container_ids[item.captured.relative_path],
+            source_ranges=tuple(
+                owned
+                for owned in source_ranges
+                if owned.relative_path == item.captured.relative_path
+                and owned.artifact_ref == item.captured.artifact_ref.sha256
+            ),
             definitions=definitions,
             imports=tuple(imports),
         )
@@ -569,36 +589,12 @@ def _build(
         predicate = semantic_predicates.get(reference.form)
         if (
             predicate is None
+            or not resolution.supported
             or resolution.state != "resolved"
             or resolution.selected_target is None
         ):
             continue
-        path = item.captured.relative_path
-        source_id = (
-            definition_ids.get((path, reference.source_scope_ref))
-            if reference.source_scope_ref is not None
-            else None
-        )
-        if source_id is None:
-            owners = [
-                owned
-                for owned in source_ranges
-                if owned.relative_path == path
-                and owned.char_start <= reference.char_start
-                and reference.char_end <= owned.char_end
-            ]
-            source_id = (
-                min(
-                    owners,
-                    key=lambda owned: (
-                        owned.char_end - owned.char_start,
-                        owned.owner_unit_id,
-                    ),
-                ).owner_unit_id
-                if owners
-                else container_ids[path]
-            )
-        subject = unit_by_id[source_id]
+        subject = unit_by_id[resolution.source_unit_id]
         target = unit_by_id[resolution.selected_target]
         assertions.append(
             _semantic_assertion(
@@ -621,6 +617,7 @@ def _build(
             parsed.assertions_ref,
             parsed.diagnostics_ref,
             *(link.artifact for link in parsed.partition_refs),
+            *(link.artifact for link in parsed.assertion_partition_refs),
         )
         if ref is not None
     }
@@ -750,6 +747,8 @@ def retain_code_extraction(
 ) -> CodeExtractionArtifact:
     registration = CodeRegistration.model_validate(registration.model_dump())
     files = tuple(CapturedSyntax.model_validate(item.model_dump()) for item in files)
+    if tuple(item.captured for item in files) != registration.capture.entries:
+        raise ValueError("Code syntax files differ from repository capture entries")
     parser, normalizer = _fingerprints(registration, files, registry)
     placeholder = CodeExtractionArtifact.model_construct(
         registration=registration,
@@ -767,19 +766,41 @@ def retain_code_extraction(
         assertions_ref=None,
         diagnostics_ref=None,
         partition_refs=(),
+        assertion_partition_refs=(),
     )
     preliminary = code_extraction_document(placeholder)
     prepared = placeholder.model_copy(
         update={"raw_document_ref": _artifact_ref(preliminary, "application/json")}
     )
     _, assertions, resolutions = _build(prepared, registry)
-    assertion_ref = (
-        artifacts.put_stream(
-            BytesIO(encode_assertions(assertions)), "application/x-ndjson"
+    assertion_ref = None
+    assertion_partition_refs: tuple[ManifestRef, ...] = ()
+    assertion_parts = partition_assertions(assertions)
+    if len(assertion_parts) == 1:
+        assertion_ref = artifacts.put_stream(
+            BytesIO(assertion_parts[0]), "application/x-ndjson"
         )
-        if assertions
-        else None
-    )
+    elif assertion_parts:
+        leaves = tuple(
+            ManifestRef(
+                artifact=artifacts.put_stream(
+                    BytesIO(part), "application/x-ndjson"
+                ),
+                type="assertion",
+                schema_version="1",
+            )
+            for part in assertion_parts
+        )
+        index = assertion_index_document(
+            extraction_id(
+                registration.revision.revision_id, parser, normalizer
+            ),
+            leaves,
+            assertions,
+        )
+        required_refs(json.loads(index), capture_published=True)
+        assertion_ref = artifacts.put_stream(BytesIO(index), "application/json")
+        assertion_partition_refs = leaves
     diagnostic_payload = json.dumps(
         {
             "type": "extraction",
@@ -810,7 +831,11 @@ def retain_code_extraction(
     )
     partition_refs = []
     inline = placeholder.model_copy(
-        update={"assertions_ref": assertion_ref, "diagnostics_ref": diagnostics_ref}
+        update={
+            "assertions_ref": assertion_ref,
+            "diagnostics_ref": diagnostics_ref,
+            "assertion_partition_refs": assertion_partition_refs,
+        }
     )
     inline_payload = code_extraction_document(inline)
     if len(files) > 4000 or len(inline_payload) > MAX_MANIFEST_BYTES:
@@ -825,6 +850,7 @@ def retain_code_extraction(
             "assertions_ref": assertion_ref,
             "diagnostics_ref": diagnostics_ref,
             "partition_refs": tuple(partition_refs),
+            "assertion_partition_refs": assertion_partition_refs,
         }
     )
     payload = code_extraction_document(final)
@@ -841,7 +867,9 @@ def replay_code_extraction(
     artifacts: ArtifactReader,
 ) -> CodeExtractionArtifact:
     with artifacts.open_verified(manifest_ref) as stream:
-        payload = stream.read()
+        payload = stream.read(MAX_MANIFEST_BYTES + 1)
+    if len(payload) > MAX_MANIFEST_BYTES:
+        raise ValueError("Code extraction manifest exceeds byte capacity")
     if sha256(payload).hexdigest() != manifest_ref.sha256:
         raise ValueError("Code extraction manifest differs from retained reference")
     root = json.loads(payload)
@@ -852,10 +880,20 @@ def replay_code_extraction(
         "code-registration-v1", registration.model_dump(mode="json")
     ):
         raise ValueError("Code replay registration differs")
-    partition_refs = tuple(
+    required_manifests = tuple(
         ManifestRef.model_validate_json(canonical_bytes(value))
         for value in root.get("required_manifests", [])
     )
+    partition_refs = tuple(
+        link for link in required_manifests if link.type == "extraction"
+    )
+    assertion_roots = tuple(
+        link
+        for link in required_manifests
+        if link.type in ("assertion", "assertion_index")
+    )
+    if len(assertion_roots) > 1:
+        raise ValueError("Code extraction has multiple assertion roots")
     stored_files = data["files"]
     if data.get("files_partitioned"):
         if stored_files or not partition_refs or len(partition_refs) > 10_000:
@@ -863,9 +901,10 @@ def replay_code_extraction(
         stored_files = []
         for link in partition_refs:
             with artifacts.open_verified(link.artifact) as stream:
-                child_payload = stream.read()
+                child_payload = stream.read(MAX_MANIFEST_BYTES + 1)
             if (
-                sha256(child_payload).hexdigest() != link.artifact.sha256
+                len(child_payload) > MAX_MANIFEST_BYTES
+                or sha256(child_payload).hexdigest() != link.artifact.sha256
                 or len(child_payload) != link.artifact.size_bytes
             ):
                 raise ValueError("Code extraction partition differs from its link")
@@ -925,10 +964,39 @@ def replay_code_extraction(
         if data["diagnostics_ref"]
         else None
     )
-    for ref in (assertions_ref, diagnostics_ref):
-        if ref is not None:
-            with artifacts.open_verified(ref):
-                pass
+    assertion_partition_refs: tuple[ManifestRef, ...] = ()
+    if assertions_ref is not None:
+        if not assertion_roots or assertion_roots[0].artifact != assertions_ref:
+            raise ValueError("Code assertion root differs from retained closure")
+        locations = tuple(
+            iter_verified_assertions(
+                assertions_ref,
+                artifacts,
+                expected_extraction_id=extraction_id(
+                    registration.revision.revision_id,
+                    data["parser_fingerprint"],
+                    data["normalizer_fingerprint"],
+                ),
+            )
+        )
+        if assertion_roots[0].type == "assertion_index":
+            unique_leaves = {
+                location.leaf_ref.sha256: location.leaf_ref
+                for location in locations
+            }
+            assertion_partition_refs = tuple(
+                ManifestRef(
+                    artifact=leaf,
+                    type="assertion",
+                    schema_version="1",
+                )
+                for leaf in unique_leaves.values()
+            )
+    elif assertion_roots:
+        raise ValueError("Code extraction closure has an unexpected assertion root")
+    if diagnostics_ref is not None:
+        with artifacts.open_verified(diagnostics_ref):
+            pass
     return CodeExtractionArtifact(
         registration=registration,
         files=tuple(files),
@@ -940,6 +1008,7 @@ def replay_code_extraction(
         assertions_ref=assertions_ref,
         diagnostics_ref=diagnostics_ref,
         partition_refs=partition_refs,
+        assertion_partition_refs=assertion_partition_refs,
     )
 
 

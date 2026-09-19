@@ -1,5 +1,7 @@
 """Typed code identity, retained parsing and static resolution contracts."""
 
+from __future__ import annotations
+
 from hashlib import sha256
 from typing import Literal, Self
 
@@ -70,6 +72,9 @@ class CapturedSyntax(Contract):
         return CodeFileDescriptor(
             relative_path=self.captured.relative_path,
             artifact_ref=self.captured.artifact_ref.sha256,
+            capture_entry_digest=digest(
+                "captured-file-v1", self.captured.model_dump(mode="json")
+            ),
             language=syntax.language,
             encoding=syntax.encoding,
             coverage=syntax.coverage,
@@ -100,7 +105,7 @@ def retained_syntax_data(item: CapturedSyntax) -> dict:
     }
 
 
-def code_extraction_document(value: "CodeExtractionArtifact") -> bytes:
+def code_extraction_document(value: CodeExtractionArtifact) -> bytes:
     files = (
         []
         if value.partition_refs
@@ -108,16 +113,29 @@ def code_extraction_document(value: "CodeExtractionArtifact") -> bytes:
     )
     required = [
         ref.model_dump(mode="json")
-        for ref in (value.assertions_ref, value.diagnostics_ref)
+        for ref in (value.diagnostics_ref,)
         if ref is not None
     ]
+    assertion_link = (
+        ManifestRef(
+            artifact=value.assertions_ref,
+            type="assertion_index" if value.assertion_partition_refs else "assertion",
+            schema_version="1",
+        )
+        if value.assertions_ref is not None
+        else None
+    )
     return canonical_bytes(
         {
             "type": "extraction",
             "schema_version": "1",
             "required_artifacts": required,
             "required_manifests": [
-                ref.model_dump(mode="json") for ref in value.partition_refs
+                ref.model_dump(mode="json")
+                for ref in (
+                    *value.partition_refs,
+                    *((assertion_link,) if assertion_link is not None else ()),
+                )
             ],
             "data": {
                 "registration_fingerprint": digest(
@@ -153,18 +171,33 @@ class CodeExtractionArtifact(Contract):
     assertions_ref: ArtifactRef | None = None
     diagnostics_ref: ArtifactRef | None = None
     partition_refs: tuple[ManifestRef, ...] = ()
+    assertion_partition_refs: tuple[ManifestRef, ...] = ()
 
     @model_validator(mode="after")
     def retained_identity(self) -> Self:
-        paths = [item.captured.relative_path for item in self.files]
-        expected = [item.relative_path for item in self.registration.capture.entries]
+        captured = tuple(item.captured for item in self.files)
+        paths = [item.relative_path for item in captured]
+        expected = self.registration.capture.entries
         encoded = code_extraction_document(self)
         if (
-            paths != expected
+            captured != expected
             or len(set(paths)) != len(paths)
             or len(self.files) > 4000
             and not self.partition_refs
             or len(self.partition_refs) > 10_000
+            or len(self.assertion_partition_refs) > 10_000
+            or bool(self.assertion_partition_refs) != (
+                self.assertions_ref is not None
+                and self.assertions_ref.media_type == "application/json"
+            )
+            or any(
+                link.type != "assertion" or link.schema_version != "1"
+                for link in self.assertion_partition_refs
+            )
+            or len(
+                {link.artifact.sha256 for link in self.assertion_partition_refs}
+            )
+            != len(self.assertion_partition_refs)
             or len(encoded) > 16 * 1024 * 1024
             or sha256(encoded).hexdigest() != self.raw_document_ref.sha256
             or len(encoded) != self.raw_document_ref.size_bytes
@@ -229,6 +262,8 @@ class SymbolCatalog(Contract):
     source_relative_path: NonEmptyStr
     source_language: NonEmptyStr
     source_adapter_fingerprint: Sha256
+    source_container_id: Identifier
+    source_ranges: tuple[OwnedRange, ...] = ()
     definitions: tuple[CatalogDefinition, ...] = ()
     imports: tuple[ImportBinding, ...] = ()
     revision_dependencies: tuple[RevisionDependency, ...] = ()
@@ -249,12 +284,20 @@ class SymbolCatalog(Contract):
             raise ValueError("Revision dependency source differs from catalog")
         if len({item.target_id for item in self.definitions}) != len(self.definitions):
             raise ValueError("Catalog definition target IDs must be unique")
+        if any(
+            item.relative_path != self.source_relative_path
+            for item in self.source_ranges
+        ) or len({item.owner_unit_id for item in self.source_ranges}) != len(
+            self.source_ranges
+        ):
+            raise ValueError("Catalog source ranges must be unique to its file view")
         return self
 
 
 class Resolution(Contract):
     reference_id: Identifier
     source_id: Identifier
+    source_unit_id: Identifier
     revision_id: Identifier
     relative_path: NonEmptyStr
     language: NonEmptyStr

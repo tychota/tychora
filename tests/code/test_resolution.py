@@ -1,8 +1,11 @@
+import pytest
+
 from tychora.adapters.code.normalize import definition_key
 from tychora.adapters.code.resolve import resolution_rates, resolve
 from tychora.contracts.code import (
     CatalogDefinition,
     ImportBinding,
+    OwnedRange,
     RevisionDependency,
     SymbolCatalog,
 )
@@ -61,6 +64,7 @@ def catalog(*definitions: CatalogDefinition, path: str = "src/main.py", **update
         source_relative_path=path,
         source_language="python",
         source_adapter_fingerprint="a" * 64,
+        source_container_id=f"container:{path}",
         definitions=definitions,
         **updates,
     )
@@ -76,6 +80,9 @@ def test_definition_identity_includes_file_and_revision():
         key("r1", "a.py")
         == "9c21f99afdbc5e36084a1d61ab992e3a7efbbf98b48b47680ff5f4dc5e1c1614"
     )
+    assert key("r1", "src/./a.py") == key("r1", "src/a.py")
+    with pytest.raises(ValueError):
+        key("r1", "../a.py")
 
 
 def test_resolution_prefers_exact_qualified_name_over_short_name_collisions():
@@ -183,3 +190,55 @@ def test_resolution_rates_exclude_unsupported_and_empty_groups_are_na():
     assert rates[("python", "call")].unresolved_rate == 1.0
     assert rates[("python", "inheritance")].extracted == 0
     assert rates[("python", "inheritance")].resolved_rate is None
+
+
+def test_unsupported_reference_with_unique_target_stays_diagnostic_only():
+    unsupported = reference("run").model_copy(update={"supported": False})
+    result = resolve(
+        (unsupported,),
+        catalog(definition("only-target", "run", "run")),
+    )[0]
+    assert result.supported is False
+    assert (result.state, result.selected_target, result.candidates) == (
+        "unresolved",
+        None,
+        (),
+    )
+    assert result.rule == "unsupported_reference"
+
+
+def test_resolution_records_smallest_canonical_source_owner():
+    source_ranges = (
+        OwnedRange(
+            owner_unit_id="outer-unit",
+            artifact_ref="a" * 64,
+            relative_path="src/main.py",
+            char_start=0,
+            char_end=20,
+            byte_start=0,
+            byte_end=20,
+        ),
+        OwnedRange(
+            owner_unit_id="inner-unit",
+            artifact_ref="a" * 64,
+            relative_path="src/main.py",
+            char_start=0,
+            char_end=8,
+            byte_start=0,
+            byte_end=8,
+        ),
+    )
+    result = resolve(
+        (reference("missing"),), catalog(source_ranges=source_ranges)
+    )[0]
+    assert result.source_unit_id == "inner-unit"
+
+
+def test_unique_resolution_is_a_diagnostic_not_gold_correctness():
+    result = resolve(
+        (reference("run"),),
+        catalog(definition("deterministic-target", "run", "run")),
+    )[0]
+    gold_target = "different-gold-target"
+    assert result.state == "resolved"
+    assert result.selected_target != gold_target

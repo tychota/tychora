@@ -7,6 +7,8 @@ from hashlib import sha256
 from types import SimpleNamespace
 from typing import Any, NoReturn, cast
 
+from tychora.adapters.files.assertions import iter_verified_assertions
+from tychora.adapters.files.references import MAX_MANIFEST_BYTES
 from tychora.configuration.registry import Registry, compile_filter
 from tychora.contracts.code import CODE_RESOLVER_FINGERPRINT
 from tychora.contracts.corpus import ExtractionBundle
@@ -103,6 +105,23 @@ def verify_artifacts(
     )
     if required - refs.keys():
         fail("Bundle omits required artifact references")
+    if (
+        bundle.extraction.assertions_artifact_sha is not None
+        and refs[bundle.extraction.assertions_artifact_sha].media_type
+        == "application/json"
+    ):
+        root = refs[bundle.extraction.assertions_artifact_sha]
+        locations = tuple(
+            iter_verified_assertions(
+                root,
+                reader,
+                expected_extraction_id=(
+                    bundle.extraction.extraction_id if bundle.code_files else None
+                ),
+            )
+        )
+        if any(item.leaf_ref.sha256 not in refs for item in locations):
+            fail("Bundle omits an assertion partition artifact")
     return payloads
 
 
@@ -235,17 +254,42 @@ def validate_bundle(
             retained_data = retained["data"]
             retained_values = retained_data["files"]
             links = retained.get("required_manifests", [])
+            partition_links = [
+                link for link in links if link.get("type") == "extraction"
+            ]
+            assertion_links = [
+                link
+                for link in links
+                if link.get("type") in ("assertion", "assertion_index")
+            ]
+            if len(partition_links) + len(assertion_links) != len(links):
+                fail("Retained code extraction has an unknown manifest link")
+            assertion_ref = retained_data.get("assertions_ref")
+            if (
+                bool(assertion_ref) != bool(assertion_links)
+                or len(assertion_links) > 1
+                or assertion_ref is not None
+                and assertion_links[0]["artifact"] != assertion_ref
+            ):
+                fail("Retained code assertion closure differs")
             if retained_data.get("files_partitioned"):
-                if retained_values or not links or len(links) > 10_000:
+                if (
+                    retained_values
+                    or not partition_links
+                    or len(partition_links) > 10_000
+                ):
                     fail("Retained code partition root is malformed")
                 retained_values = []
-                for link in links:
+                for link in partition_links:
                     if (
                         link.get("type") != "extraction"
                         or link.get("schema_version") != "1"
                     ):
                         fail("Retained code partition link is unregistered")
-                    child = json.loads(payloads[link["artifact"]["sha256"]])
+                    child_payload = payloads[link["artifact"]["sha256"]]
+                    if len(child_payload) > MAX_MANIFEST_BYTES:
+                        fail("Retained code extraction partition exceeds byte capacity")
+                    child = json.loads(child_payload)
                     values = child.get("data", {}).get("files")
                     if (
                         child.get("type") != "extraction"
@@ -257,7 +301,7 @@ def validate_bundle(
                     ):
                         fail("Retained code extraction partition is malformed")
                     retained_values.extend(values)
-            elif links:
+            elif partition_links:
                 fail("Inline retained code extraction has partition links")
             retained_files = {
                 item["captured"]["relative_path"]: item for item in retained_values
@@ -317,6 +361,8 @@ def validate_bundle(
             syntax = stored["syntax"]
             if (
                 stored["captured"]["artifact_ref"]["sha256"] != descriptor.artifact_ref
+                or digest("captured-file-v1", stored["captured"])
+                != descriptor.capture_entry_digest
                 or syntax["language"] != descriptor.language
                 or syntax["encoding"] != descriptor.encoding
                 or syntax["coverage"] != descriptor.coverage
@@ -446,6 +492,10 @@ def validate_bundle(
                     or unit.attributes.get("encoding") != descriptor.encoding
                     or unit.attributes.get("coverage") != descriptor.coverage
                     or unit.attributes.get("artifact_ref") != descriptor.artifact_ref
+                    or unit.attributes.get("capture_entry_digest")
+                    != descriptor.capture_entry_digest
+                    or unit.attributes.get("adapter_fingerprint")
+                    != descriptor.adapter_fingerprint
                     or descriptor.relative_path in containers
                 ):
                     fail("Code file container differs from verified descriptor")
