@@ -1,0 +1,25 @@
+src/tychora/adapters/code/python.py
+  s_35b641b930a96d::t_18ff1518bdbdcd 59-83,90,96-99,101,108-109,122,124-125,154-166,204-244,274-281,298-302,304,309-313,323,329-333,335-341,344,347-353,355-400,426-430,484,500,514,526,542,602,604-609,617
+src/tychora/adapters/code/syntax.py
+  s_35b641b930a96d::t_d6b4100395212e 39-52
+src/tychora/ports/language.py
+  s_35b641b930a96d::t_83891e28a0ee86 138
+tests/code/test_python.py
+  s_35b641b930a96d::t_6ef953b10acdde 49-69,148-169,264-275,300-320
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "20e0279f83f36292e8a140fa0b0cab89996721c8",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
