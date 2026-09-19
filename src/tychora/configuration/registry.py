@@ -374,8 +374,8 @@ _RESERVED = {
     },
 }
 _CODE_FACETS = {
-    "code.language": ("metadata.language", "all_units"),
-    "code.path": ("metadata.relative_path", "all_units"),
+    "code.language": ("file.language", "all_units"),
+    "code.path": ("file.relative_path", "all_units"),
     "code.symbol_kind": ("record.symbol_kind", "matched_candidates"),
     "code.qualified_name": ("record.qualified_name", "matched_candidates"),
 }

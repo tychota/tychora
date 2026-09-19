@@ -14,6 +14,7 @@ from .base import (
     PositiveInt,
     Sha256,
 )
+from .code_storage import CodeFileDescriptor
 from .evidence import EvidenceUnit, Locator, ReviewState
 
 AccessRank = Annotated[int, Field(ge=0, le=3)]
@@ -169,6 +170,7 @@ class ExtractionBundle(Contract):
     records: tuple[StructuredRecordRow, ...] = ()
     facets: tuple[FacetRow, ...] = ()
     identifiers: tuple[IdentifierRow, ...] = ()
+    code_files: tuple[CodeFileDescriptor, ...] = ()
 
 
 class ReviewTarget(Contract):

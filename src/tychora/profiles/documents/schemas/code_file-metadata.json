@@ -131,9 +131,7 @@
     }
   },
   "required": [
-    "title",
-    "relative_path",
-    "language"
+    "title"
   ],
   "additionalProperties": false
 }

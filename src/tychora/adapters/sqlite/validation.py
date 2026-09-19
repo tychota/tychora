@@ -1,11 +1,14 @@
 """Cross-record validation before a SQLite write transaction is acquired."""
 
+import json
 from collections.abc import Mapping
 from datetime import date
 from hashlib import sha256
-from typing import NoReturn, cast
+from types import SimpleNamespace
+from typing import Any, NoReturn, cast
 
 from tychora.configuration.registry import Registry, compile_filter
+from tychora.contracts.code import CODE_RESOLVER_FINGERPRINT
 from tychora.contracts.corpus import ExtractionBundle
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import CodeLocator, TextLocator
@@ -18,6 +21,26 @@ from .code_provenance import validate_code_record
 
 def fail(message: str) -> NoReturn:
     raise TychoraError("INTEGRITY_ERROR", message)
+
+
+def _code_text(descriptor, payload: bytes) -> str:
+    from tychora.adapters.code.syntax import source_maps
+
+    try:
+        text = payload.decode(descriptor.encoding)
+        maps = source_maps(payload, text, descriptor.encoding)
+    except (LookupError, UnicodeError, ValueError):
+        fail("Code descriptor encoding cannot reproduce original coordinates")
+    if (
+        descriptor.byte_length != len(payload)
+        or descriptor.char_length != len(text)
+        or descriptor.codepoint_to_byte != maps[0]
+        or descriptor.byte_to_codepoint != maps[1]
+        or descriptor.line_starts != maps[2]
+        or descriptor.byte_to_line != maps[3]
+    ):
+        fail("Code descriptor differs from recomputed original coordinates")
+    return text
 
 
 def verify_artifacts(
@@ -33,6 +56,14 @@ def verify_artifacts(
         for asset in bundle.assets
         if asset.locator.type in ("text", "code")
     )
+    if bundle.code_files:
+        needed.add(bundle.extraction.document_artifact_sha)
+        needed.update(item.artifact_ref for item in bundle.code_files)
+        needed.update(
+            ref.sha256
+            for ref in bundle.artifacts
+            if ref.media_type == "application/json"
+        )
     refs = {ref.sha256: ref for ref in bundle.artifacts}
     if len(refs) != len(bundle.artifacts):
         fail("Duplicate artifact identity")
@@ -76,22 +107,45 @@ def verify_artifacts(
 
 
 def validate_source_locator(
-    loc: TextLocator | CodeLocator, payloads: dict[str, bytes]
+    loc: TextLocator | CodeLocator, payloads: dict[str, bytes], descriptor=None
 ) -> None:
     """Validate shared unit/asset source coordinates against verified original bytes."""
-    try:
-        text = payloads[loc.artifact_ref].decode("utf-8")
-    except UnicodeDecodeError:
-        fail("Text locator requires valid UTF-8 bytes")
+    if loc.type == "code" and descriptor is not None:
+        text = _code_text(descriptor, payloads[loc.artifact_ref])
+    else:
+        try:
+            text = payloads[loc.artifact_ref].decode("utf-8")
+        except UnicodeDecodeError:
+            fail("Text locator requires valid UTF-8 bytes")
     if loc.char_end > len(text):
         fail("Locator character range exceeds original text")
     if loc.type == "code" and (
         loc.relative_path != loc.native_ref
         or normalize_source_key(loc.relative_path) != loc.relative_path
-        or loc.byte_start != len(text[: loc.char_start].encode("utf-8"))
-        or loc.byte_end != len(text[: loc.char_end].encode("utf-8"))
-        or loc.line_start != text[: loc.char_start].count("\n") + 1
-        or loc.line_end != text[: max(loc.char_start, loc.char_end - 1)].count("\n") + 1
+        or loc.byte_start
+        != (
+            descriptor.codepoint_to_byte[loc.char_start]
+            if descriptor is not None
+            else len(text[: loc.char_start].encode("utf-8"))
+        )
+        or loc.byte_end
+        != (
+            descriptor.codepoint_to_byte[loc.char_end]
+            if descriptor is not None
+            else len(text[: loc.char_end].encode("utf-8"))
+        )
+        or loc.line_start
+        != (
+            descriptor.byte_to_line[loc.byte_start]
+            if descriptor is not None
+            else text[: loc.char_start].count("\n") + 1
+        )
+        or loc.line_end
+        != (
+            descriptor.byte_to_line[max(loc.byte_start, loc.byte_end - 1)]
+            if descriptor is not None
+            else text[: max(loc.char_start, loc.char_end - 1)].count("\n") + 1
+        )
     ):
         fail("Code byte, character, line or path coordinates differ")
 
@@ -110,6 +164,24 @@ def validate_bundle(
     if normalize_source_key(bundle.source.source_key) != bundle.source.source_key:
         fail("Source key is not canonical")
     registry.validate_metadata(revision.kind_id, revision.metadata_json)
+    code_kind = revision.kind_id.split("@")[0] == "code_file"
+    metadata_has_path = "relative_path" in revision.metadata_json
+    metadata_has_language = "language" in revision.metadata_json
+    if (
+        code_kind
+        and bundle.source.source_type != "repository"
+        and (not metadata_has_path or not metadata_has_language)
+    ):
+        fail("Standalone code metadata requires relative_path and language")
+    if (
+        code_kind
+        and bundle.source.source_type == "repository"
+        and not bundle.code_files
+    ):
+        fail("Repository code requires verified per-file descriptors")
+    code_files = {item.relative_path: item for item in bundle.code_files}
+    if len(code_files) != len(bundle.code_files):
+        fail("Duplicate code file descriptor path")
     if revision.metadata_sha != digest("metadata-v1", revision.metadata_json):
         fail("Metadata digest differs")
     for value in (
@@ -157,6 +229,128 @@ def validate_bundle(
         row.revision_id != revision.revision_id for row in bundle.revision_artifacts
     ):
         fail("Revision artifact belongs elsewhere")
+    if bundle.code_files:
+        try:
+            retained = json.loads(payloads[extraction.document_artifact_sha])
+            retained_data = retained["data"]
+            retained_values = retained_data["files"]
+            links = retained.get("required_manifests", [])
+            if retained_data.get("files_partitioned"):
+                if retained_values or not links or len(links) > 10_000:
+                    fail("Retained code partition root is malformed")
+                retained_values = []
+                for link in links:
+                    if (
+                        link.get("type") != "extraction"
+                        or link.get("schema_version") != "1"
+                    ):
+                        fail("Retained code partition link is unregistered")
+                    child = json.loads(payloads[link["artifact"]["sha256"]])
+                    values = child.get("data", {}).get("files")
+                    if (
+                        child.get("type") != "extraction"
+                        or child.get("schema_version") != "1"
+                        or child.get("required_artifacts") != []
+                        or child.get("required_manifests") != []
+                        or not isinstance(values, list)
+                        or not 0 < len(values) <= 4000
+                    ):
+                        fail("Retained code extraction partition is malformed")
+                    retained_values.extend(values)
+            elif links:
+                fail("Inline retained code extraction has partition links")
+            retained_files = {
+                item["captured"]["relative_path"]: item for item in retained_values
+            }
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            fail("Retained code extraction manifest is malformed")
+        if (
+            retained.get("type") != "extraction"
+            or retained.get("schema_version") != "1"
+            or retained_data.get("registry_digest") != registry.registry_digest
+            or retained_data.get("resolver_fingerprint")
+            != CODE_RESOLVER_FINGERPRINT
+            or retained_data.get("parser_fingerprint") != extraction.parser_fingerprint
+            or retained_data.get("normalizer_fingerprint")
+            != extraction.normalizer_fingerprint
+            or (
+                retained_data["assertions_ref"]["sha256"]
+                if retained_data.get("assertions_ref") is not None
+                else None
+            )
+            != extraction.assertions_artifact_sha
+            or (
+                retained_data["diagnostics_ref"]["sha256"]
+                if retained_data.get("diagnostics_ref") is not None
+                else None
+            )
+            != extraction.diagnostics_artifact_sha
+            or set(retained_files) != set(code_files)
+        ):
+            fail("Retained code extraction differs from canonical preparation")
+        parser_fingerprint = digest(
+            "code-parser-v1",
+            [
+                [
+                    item["captured"]["relative_path"],
+                    item["syntax"]["adapter_fingerprint"],
+                    item["syntax"]["options"],
+                    item["syntax"]["coverage"],
+                ]
+                for item in retained_values
+            ],
+        )
+        kind = cast(Mapping[str, Any], registry.kinds[revision.kind_id])
+        normalizer_fingerprint = digest(
+            "code-normalizer-v1",
+            kind,
+            registry.schema_digests,
+            CODE_RESOLVER_FINGERPRINT,
+        )
+        if (
+            extraction.parser_fingerprint != parser_fingerprint
+            or extraction.normalizer_fingerprint != normalizer_fingerprint
+        ):
+            fail("Code extraction fingerprints differ from verified inputs")
+        for path, descriptor in code_files.items():
+            stored = retained_files[path]
+            syntax = stored["syntax"]
+            if (
+                stored["captured"]["artifact_ref"]["sha256"] != descriptor.artifact_ref
+                or syntax["language"] != descriptor.language
+                or syntax["encoding"] != descriptor.encoding
+                or syntax["coverage"] != descriptor.coverage
+                or syntax["adapter_fingerprint"] != descriptor.adapter_fingerprint
+                or (path, descriptor.artifact_ref) not in source_bindings
+            ):
+                fail("Code descriptor differs from retained file provenance")
+            _code_text(descriptor, payloads[descriptor.artifact_ref])
+
+    def descriptor_for(loc: CodeLocator):
+        descriptor = code_files.get(loc.relative_path)
+        if descriptor is not None:
+            if descriptor.artifact_ref != loc.artifact_ref:
+                fail("Code locator artifact differs from file descriptor")
+            return descriptor
+        if bundle.source.source_type == "repository":
+            fail("Repository code locator has no verified file descriptor")
+        from tychora.adapters.code.syntax import source_maps
+
+        payload = payloads[loc.artifact_ref]
+        text = payload.decode("utf-8")
+        maps = source_maps(payload, text, "utf-8")
+        return SimpleNamespace(
+            relative_path=revision.metadata_json["relative_path"],
+            language=revision.metadata_json["language"],
+            encoding="utf-8",
+            byte_length=len(payload),
+            char_length=len(text),
+            codepoint_to_byte=maps[0],
+            byte_to_codepoint=maps[1],
+            line_starts=maps[2],
+            byte_to_line=maps[3],
+        )
+
     for unit in units.values():
         locators = sorted(
             (row for row in bundle.locators if row.unit_id == unit.unit_id),
@@ -173,7 +367,11 @@ def validate_bundle(
             if (loc.native_ref, loc.artifact_ref) not in source_bindings:
                 fail("Locator has no original revision artifact binding")
             if loc.type in ("text", "code"):
-                validate_source_locator(cast(TextLocator | CodeLocator, loc), payloads)
+                validate_source_locator(
+                    cast(TextLocator | CodeLocator, loc),
+                    payloads,
+                    descriptor_for(loc) if loc.type == "code" else None,
+                )
             elif loc.type == "document" and loc.char_end > len(unit.text):
                 fail("Document character span exceeds unit text")
         if (
@@ -184,12 +382,15 @@ def validate_bundle(
                 unit.unit_type == "code_file" and not unit.citable and not unit.text
             )
         ):
-            original = "".join(
-                payloads[loc.artifact_ref].decode("utf-8")[
-                    loc.char_start : loc.char_end
-                ]
-                for loc in cast(tuple[TextLocator | CodeLocator, ...], unit.locators)
-            )
+            original_parts = []
+            for loc in cast(tuple[TextLocator | CodeLocator, ...], unit.locators):
+                text = (
+                    _code_text(descriptor_for(loc), payloads[loc.artifact_ref])
+                    if loc.type == "code"
+                    else payloads[loc.artifact_ref].decode("utf-8")
+                )
+                original_parts.append(text[loc.char_start : loc.char_end])
+            original = "".join(original_parts)
             if original != unit.text:
                 fail("Original unit text differs from its verified locator spans")
     if any(row.unit_id not in units for row in bundle.locators):
@@ -215,6 +416,42 @@ def validate_bundle(
         if definition["key"] != facet.facet_key:
             fail("Stored facets require canonical keys")
         compile_filter(EqFilter(field=facet.facet_key, value=facet.value), registry)
+    if bundle.code_files:
+        facet_values = {
+            (facet.unit_id, facet.facet_key): facet.value
+            for facet in bundle.facets
+            if facet.unit_id is not None
+        }
+        containers = {}
+        for unit in units.values():
+            code_locators = [loc for loc in unit.locators if loc.type == "code"]
+            if not code_locators:
+                continue
+            if len(code_locators) != 1:
+                fail("Code unit requires one original-file locator")
+            descriptor = descriptor_for(code_locators[0])
+            if (
+                unit.attributes.get("relative_path") != descriptor.relative_path
+                or unit.attributes.get("language") != descriptor.language
+                or facet_values.get((unit.unit_id, "code.path"))
+                != descriptor.relative_path
+                or facet_values.get((unit.unit_id, "code.language"))
+                != descriptor.language
+            ):
+                fail("Code unit attributes or all-unit facets differ from descriptor")
+            if unit.unit_type == "code_file":
+                if (
+                    unit.citable
+                    or unit.text
+                    or unit.attributes.get("encoding") != descriptor.encoding
+                    or unit.attributes.get("coverage") != descriptor.coverage
+                    or unit.attributes.get("artifact_ref") != descriptor.artifact_ref
+                    or descriptor.relative_path in containers
+                ):
+                    fail("Code file container differs from verified descriptor")
+                containers[descriptor.relative_path] = unit.unit_id
+        if set(containers) != set(code_files):
+            fail("Code file descriptors require exact container coverage")
     for record in bundle.records:
         if record.unit_id not in units:
             fail("Structured record belongs outside extraction")
@@ -233,12 +470,17 @@ def validate_bundle(
         if record.schema_hash != registry.schema_digests[binding]:
             fail("Structured record schema hash differs from original kind binding")
         if revision.kind_id.split("@")[0] == "code_file":
+            code_locator = next(
+                (loc for loc in units[record.unit_id].locators if loc.type == "code"),
+                None,
+            )
+            if code_locator is None:
+                fail("Code symbol record has no code locator")
             validate_code_record(
                 record,
                 units[record.unit_id],
                 original_units,
-                revision.metadata_json,
-                payloads,
+                descriptor_for(code_locator),
             )
     if any(row.unit_id not in units for row in bundle.identifiers):
         fail("Identifier belongs outside extraction")

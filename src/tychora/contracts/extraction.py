@@ -238,7 +238,12 @@ class ExtractionArtifact(Contract):
         encoded = extraction_document(
             self.model_dump(
                 mode="json",
-                exclude={"raw_document_ref", "document_json", "docling_json_ref"},
+                exclude={
+                    "raw_document_ref",
+                    "document_json",
+                    "docling_json_ref",
+                    "original_image",
+                },
             )
         )
         if (
