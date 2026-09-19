@@ -1,5 +1,6 @@
 """Pure preparation of exact representation ownership from canonical rows."""
 
+import codecs
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ from tychora.contracts.corpus import (
     AssetProxyRow,
     AssetRow,
     ExtractionBundle,
+    StructuredRecordRow,
 )
 from tychora.contracts.documents import DocumentSeparator, DocumentSourcePart
 from tychora.contracts.evidence import (
@@ -35,8 +37,25 @@ class _RetainedIndex:
     assets: Mapping[str, AssetRow]
     proxies: Mapping[str, AssetProxyRow]
     asset_owners: Mapping[str, frozenset[str]]
-    code_files: Mapping[tuple[str, str], CodeFileDescriptor]
+    code_maps: Mapping[str, "_LocalCodeMap"]
     document_parts: Mapping[str, tuple[DocumentSourcePart, ...]]
+
+
+@dataclass(frozen=True)
+class _RetainedCodeFile:
+    unit_id: str
+    artifact_ref: str
+    relative_path: str
+    language: str
+    encoding: str
+    coverage: str
+    adapter_fingerprint: str
+
+
+@dataclass(frozen=True)
+class _LocalCodeMap:
+    byte_offsets: tuple[int, ...]
+    line_offsets: tuple[int, ...]
 
 
 def _document_facts(
@@ -110,12 +129,124 @@ def _code_files(bundle: ExtractionBundle) -> dict[tuple[str, str], CodeFileDescr
     return files
 
 
+def _local_code_map(text: str, encoding: str) -> tuple[int, _LocalCodeMap]:
+    """Project one retained slice without inventing a new per-slice BOM."""
+    try:
+        encoder = codecs.getincrementalencoder(encoding)(errors="strict")
+        preamble = len(encoder.encode("", final=False))
+        byte_offsets = [0]
+        offset = 0
+        for character in text:
+            offset += len(encoder.encode(character, final=False))
+            byte_offsets.append(offset)
+        if encoder.encode("", final=True):
+            raise ValueError(
+                "Retained code encoding requires unavailable cross-slice state"
+            )
+    except (LookupError, UnicodeError) as exc:
+        raise ValueError("Retained code text cannot be encoded exactly") from exc
+
+    line_offsets: list[int] = []
+    line = 0
+    for index, character in enumerate(text):
+        line_offsets.append(line)
+        if character == "\r":
+            if index + 1 >= len(text) or text[index + 1] != "\n":
+                line += 1
+        elif character == "\n":
+            line += 1
+    return preamble, _LocalCodeMap(tuple(byte_offsets), tuple(line_offsets))
+
+
+def _retained_code_files(
+    bundle: ExtractionBundle, units: Mapping[str, EvidenceUnit]
+) -> dict[tuple[str, str], _RetainedCodeFile]:
+    """Bind post-hydration code units to their persisted file containers."""
+    artifacts = {item.sha256 for item in bundle.artifacts}
+    source_binding_rows = [
+        (row.source_ref, row.artifact_sha)
+        for row in bundle.revision_artifacts
+        if row.role == "source_file" and row.revision_id == bundle.revision.revision_id
+    ]
+    source_bindings = set(source_binding_rows)
+    if any(
+        row.revision_id != bundle.revision.revision_id
+        for row in bundle.revision_artifacts
+    ):
+        raise ValueError("Revision artifact belongs outside retained revision")
+
+    if len(source_bindings) != len(source_binding_rows):
+        raise ValueError("Retained source-file artifact binding is duplicated")
+    files: dict[tuple[str, str], _RetainedCodeFile] = {}
+    paths: set[str] = set()
+    for unit in units.values():
+        if unit.unit_type != "code_file":
+            continue
+        locators = [
+            locator for locator in unit.locators if isinstance(locator, CodeLocator)
+        ]
+        values = tuple(
+            unit.attributes.get(name)
+            for name in (
+                "artifact_ref",
+                "relative_path",
+                "language",
+                "encoding",
+                "coverage",
+                "adapter_fingerprint",
+            )
+        )
+        if len(locators) != 1 or any(not isinstance(value, str) for value in values):
+            raise ValueError("Retained code file container is incomplete")
+        artifact_ref, path, language, encoding, coverage, adapter = cast(
+            tuple[str, str, str, str, str, str], values
+        )
+        locator = locators[0]
+        preamble, _ = _local_code_map("", encoding)
+        key = artifact_ref, path
+        if (
+            key in files
+            or path in paths
+            or artifact_ref not in artifacts
+            or (path, artifact_ref) not in source_bindings
+            or coverage not in {"parsed", "partial", "text_fallback", "empty"}
+            or unit.parent_id is not None
+            or unit.text
+            or unit.citable
+            or unit.text_origin != "source"
+            or unit.native_ref != f"{path}#file"
+            or unit.boundary_key != path
+            or locator.artifact_ref != artifact_ref
+            or locator.native_ref != path
+            or locator.relative_path != path
+            or locator.char_start != 0
+            or locator.char_end != 0
+            or locator.byte_start != preamble
+            or locator.byte_end != preamble
+            or locator.line_start != 1
+            or locator.line_end != 1
+        ):
+            raise ValueError("Retained code file container binding differs")
+        paths.add(path)
+        files[key] = _RetainedCodeFile(
+            unit_id=unit.unit_id,
+            artifact_ref=artifact_ref,
+            relative_path=path,
+            language=language,
+            encoding=encoding,
+            coverage=coverage,
+            adapter_fingerprint=adapter,
+        )
+    return files
+
+
 def _validate_locator(
     bundle: ExtractionBundle,
     unit: EvidenceUnit,
     locator: TextLocator | CodeLocator,
     code_files: Mapping[tuple[str, str], CodeFileDescriptor],
-) -> None:
+    retained_code_files: Mapping[tuple[str, str], _RetainedCodeFile],
+) -> _LocalCodeMap | None:
     if locator.char_end - locator.char_start != len(unit.text):
         raise ValueError("Source locator range differs from exact unit text")
     if isinstance(locator, TextLocator):
@@ -124,22 +255,230 @@ def _validate_locator(
             or locator.native_ref != bundle.source.source_key
         ):
             raise ValueError("Native source locator binding differs")
-        return
-    descriptor = code_files.get((locator.artifact_ref, locator.relative_path))
+        return None
+    key = locator.artifact_ref, locator.relative_path
+    if code_files:
+        descriptor = code_files.get(key)
+        if (
+            descriptor is None
+            or locator.native_ref != locator.relative_path
+            or locator.char_end > descriptor.char_length
+            or locator.byte_end > descriptor.byte_length
+            or descriptor.codepoint_to_byte[locator.char_start] != locator.byte_start
+            or descriptor.codepoint_to_byte[locator.char_end] != locator.byte_end
+            or descriptor.byte_to_line[locator.byte_start] != locator.line_start
+            or descriptor.byte_to_line[max(locator.byte_start, locator.byte_end - 1)]
+            != locator.line_end
+        ):
+            raise ValueError("Code locator codepoint/byte/line mapping differs")
+        if unit.attributes.get("range_dependency_ids") is None:
+            raise ValueError("Code representation requires declared ownership")
+        return None
+
+    retained = retained_code_files.get(key)
+    if retained is None:
+        raise ValueError("Code locator has no retained file container")
+    preamble, local_map = _local_code_map(unit.text, retained.encoding)
+    line_end = (
+        locator.line_start + local_map.line_offsets[-1]
+        if local_map.line_offsets
+        else locator.line_start
+    )
     if (
-        descriptor is None
-        or locator.native_ref != locator.relative_path
-        or locator.char_end > descriptor.char_length
-        or locator.byte_end > descriptor.byte_length
-        or descriptor.codepoint_to_byte[locator.char_start] != locator.byte_start
-        or descriptor.codepoint_to_byte[locator.char_end] != locator.byte_end
-        or descriptor.byte_to_line[locator.byte_start] != locator.line_start
-        or descriptor.byte_to_line[max(locator.byte_start, locator.byte_end - 1)]
-        != locator.line_end
+        locator.native_ref != locator.relative_path
+        or unit.text_origin != "source"
+        or unit.boundary_key != retained.relative_path
+        or unit.attributes.get("relative_path") != retained.relative_path
+        or unit.attributes.get("language") != retained.language
+        or locator.byte_end - locator.byte_start != local_map.byte_offsets[-1]
+        or locator.line_end != line_end
+        or unit.unit_type == "code_file"
+        and (locator.byte_start != preamble or unit.unit_id != retained.unit_id)
     ):
         raise ValueError("Code locator codepoint/byte/line mapping differs")
-    if unit.attributes.get("range_dependency_ids") is None:
+    if (
+        unit.unit_type != "code_file"
+        and unit.attributes.get("range_dependency_ids") is None
+    ):
         raise ValueError("Code representation requires declared ownership")
+    return local_map
+
+
+def _one_code_locator(unit: EvidenceUnit) -> CodeLocator | None:
+    locators = [
+        locator for locator in unit.locators if isinstance(locator, CodeLocator)
+    ]
+    if not locators:
+        return None
+    if len(locators) != 1:
+        raise ValueError("Code unit requires one retained file locator")
+    return locators[0]
+
+
+def _validate_retained_code_structure(
+    units: Mapping[str, EvidenceUnit],
+    files: Mapping[tuple[str, str], _RetainedCodeFile],
+    code_maps: Mapping[str, _LocalCodeMap],
+) -> None:
+    for uid in code_maps:
+        unit = units[uid]
+        locator = _one_code_locator(unit)
+        if locator is None:
+            raise ValueError("Code unit has no retained file locator")
+        file = files[locator.artifact_ref, locator.relative_path]
+        visited = {unit.unit_id}
+        current = unit
+        while current.unit_id != file.unit_id:
+            if current.parent_id is None or current.parent_id not in units:
+                raise ValueError("Code unit has no retained file-container parent")
+            current = units[current.parent_id]
+            if current.unit_id in visited:
+                raise ValueError("Code unit parent chain is cyclic")
+            visited.add(current.unit_id)
+            parent_locator = _one_code_locator(current)
+            if (
+                parent_locator is None
+                or parent_locator.artifact_ref != file.artifact_ref
+                or parent_locator.relative_path != file.relative_path
+            ):
+                raise ValueError("Code unit parent crosses retained file container")
+
+
+def _retained_span_matches(
+    span: Mapping[str, Any], locator: CodeLocator, local_map: _LocalCodeMap
+) -> bool:
+    values = tuple(
+        span.get(name)
+        for name in (
+            "char_start",
+            "char_end",
+            "byte_start",
+            "byte_end",
+            "line_start",
+            "line_end",
+        )
+    )
+    if any(not isinstance(value, int) for value in values):
+        return False
+    char_start, char_end, byte_start, byte_end, line_start, line_end = cast(
+        tuple[int, int, int, int, int, int], values
+    )
+    if (
+        span.get("coordinate_domain") != "original_file"
+        or not locator.char_start <= char_start < char_end <= locator.char_end
+    ):
+        return False
+    local_start = char_start - locator.char_start
+    local_end = char_end - locator.char_start
+    return (
+        byte_start == locator.byte_start + local_map.byte_offsets[local_start]
+        and byte_end == locator.byte_start + local_map.byte_offsets[local_end]
+        and line_start == locator.line_start + local_map.line_offsets[local_start]
+        and line_end == locator.line_start + local_map.line_offsets[local_end - 1]
+    )
+
+
+def _validate_retained_code_records(
+    bundle: ExtractionBundle,
+    units: Mapping[str, EvidenceUnit],
+    files: Mapping[tuple[str, str], _RetainedCodeFile],
+    code_maps: Mapping[str, _LocalCodeMap],
+) -> None:
+    locators = {
+        uid: locator
+        for uid in code_maps
+        if (locator := _one_code_locator(units[uid])) is not None
+    }
+    by_file: dict[tuple[str, str], list[tuple[str, CodeLocator]]] = defaultdict(list)
+    for uid, locator in locators.items():
+        by_file[(locator.artifact_ref, locator.relative_path)].append((uid, locator))
+    records: dict[str, StructuredRecordRow] = {}
+    for record in bundle.records:
+        if record.record_type != "code_symbol":
+            continue
+        if record.unit_id in records:
+            raise ValueError("Code unit has multiple symbol records")
+        records[record.unit_id] = record
+    symbol_ids = {
+        unit.unit_id
+        for unit in units.values()
+        if unit.unit_type == "symbol" and unit.unit_id in code_maps
+    }
+    if set(records) != symbol_ids:
+        raise ValueError("Retained code symbol records are incomplete")
+
+    for uid, record in records.items():
+        unit = units[uid]
+        locator = locators[uid]
+        file = files[locator.artifact_ref, locator.relative_path]
+        local_map = code_maps[uid]
+        data = record.data_json
+        declaration = data.get("declaration_span")
+        definition_key = data.get("definition_key")
+        definition_identifiers = [
+            row
+            for row in bundle.identifiers
+            if row.unit_id == uid and row.namespace == "code.definition_key"
+        ]
+        if (
+            data.get("parent_unit_id") != unit.parent_id
+            or data.get("relative_path") != file.relative_path
+            or data.get("language") != file.language
+            or data.get("adapter_fingerprint") != file.adapter_fingerprint
+            or not isinstance(definition_key, str)
+            or len(definition_identifiers) != 1
+            or definition_identifiers[0].normalized_value != definition_key
+            or definition_identifiers[0].original_value != definition_key
+            or not isinstance(declaration, Mapping)
+            or not _retained_span_matches(declaration, locator, local_map)
+        ):
+            raise ValueError("Retained code declaration binding differs")
+
+        contexts = data.get("context_spans")
+        if not isinstance(contexts, tuple):
+            raise TypeError("Retained code context binding differs")
+        for context in contexts:
+            if not isinstance(context, Mapping):
+                raise TypeError("Retained code context binding differs")
+            source_id = context.get("source_unit_id")
+            source = units.get(cast(str, source_id))
+            if source is None or source.unit_id not in code_maps or not source.text:
+                raise ValueError("Retained code context binding differs")
+            source_locator = locators[source.unit_id]
+            source_key = source_locator.artifact_ref, source_locator.relative_path
+            start, end = context.get("char_start"), context.get("char_end")
+            original = context.get("original_file_locator")
+            dependencies = context.get("dependency_unit_ids")
+            if (
+                source_key != (file.artifact_ref, file.relative_path)
+                or not isinstance(start, int)
+                or not isinstance(end, int)
+                or not 0 <= start < end <= len(source.text)
+                or not isinstance(original, Mapping)
+                or original.get("char_start") != source_locator.char_start + start
+                or original.get("char_end") != source_locator.char_start + end
+                or not _retained_span_matches(
+                    original, source_locator, code_maps[source.unit_id]
+                )
+                or not isinstance(dependencies, tuple)
+                or len(dependencies) != len(set(dependencies))
+                or context.get("reason")
+                not in {"parent_declaration", "referenced_import"}
+                or context.get("reason") == "parent_declaration"
+                and source.unit_id != unit.parent_id
+            ):
+                raise ValueError("Retained code context binding differs")
+            original_start = source_locator.char_start + start
+            original_end = source_locator.char_start + end
+            expected_dependencies = {
+                candidate_id
+                for candidate_id, candidate_locator in by_file[source_key]
+                if candidate_locator.char_start < original_end
+                and original_start < candidate_locator.char_end
+            }
+            expected_dependencies.add(source.unit_id)
+            if set(dependencies) != expected_dependencies:
+                raise ValueError("Retained code context dependencies differ")
 
 
 def _bundle_index(bundle: ExtractionBundle) -> _RetainedIndex:
@@ -166,6 +505,8 @@ def _bundle_index(bundle: ExtractionBundle) -> _RetainedIndex:
         ) != unit.locators:
             raise ValueError("Canonical locator rows differ from evidence unit")
     code_files = _code_files(bundle)
+    retained_code_files = {} if code_files else _retained_code_files(bundle, units)
+    code_maps: dict[str, _LocalCodeMap] = {}
     for unit in bundle.units:
         native_locators = [
             locator
@@ -173,7 +514,13 @@ def _bundle_index(bundle: ExtractionBundle) -> _RetainedIndex:
             if isinstance(locator, (TextLocator, CodeLocator))
         ]
         for locator in native_locators:
-            _validate_locator(bundle, unit, locator, code_files)
+            local_map = _validate_locator(
+                bundle, unit, locator, code_files, retained_code_files
+            )
+            if local_map is not None:
+                if unit.unit_id in code_maps:
+                    raise ValueError("Code unit requires one retained file locator")
+                code_maps[unit.unit_id] = local_map
         for locator in unit.locators:
             if isinstance(locator, DocumentLocator) and (
                 locator.artifact_ref != bundle.revision.original_sha
@@ -181,6 +528,9 @@ def _bundle_index(bundle: ExtractionBundle) -> _RetainedIndex:
                 or locator.char_end > len(unit.text)
             ):
                 raise ValueError("Document locator retained binding differs")
+    if retained_code_files:
+        _validate_retained_code_structure(units, retained_code_files, code_maps)
+        _validate_retained_code_records(bundle, units, retained_code_files, code_maps)
     if any(record.unit_id not in units for record in bundle.records):
         raise ValueError("Canonical record belongs outside extraction")
     assets = {asset.asset_id: asset for asset in bundle.assets}
@@ -238,13 +588,13 @@ def _bundle_index(bundle: ExtractionBundle) -> _RetainedIndex:
             asset_id: frozenset(owner_ids)
             for asset_id, owner_ids in asset_owners.items()
         },
-        code_files=code_files,
+        code_maps=code_maps,
         document_parts=documents,
     )
 
 
 def _locator_intervals(
-    target: EvidenceUnit, units: Mapping[str, EvidenceUnit]
+    target: EvidenceUnit, index: _RetainedIndex
 ) -> list[tuple[int, int, str]] | None:
     locators = [
         locator
@@ -257,7 +607,7 @@ def _locator_intervals(
         raise ValueError("Text/code representation requires one source locator")
     locator = locators[0]
     result: list[tuple[int, int, str]] = []
-    for owner in units.values():
+    for owner in index.units.values():
         for candidate in owner.locators:
             same_domain = (
                 isinstance(locator, TextLocator)
@@ -282,6 +632,30 @@ def _locator_intervals(
                 ]
                 if target_text != owner_text:
                     raise ValueError("Retained source slices differ across owners")
+                if (
+                    isinstance(locator, CodeLocator)
+                    and isinstance(candidate, CodeLocator)
+                    and target.unit_id in index.code_maps
+                ):
+                    target_map = index.code_maps[target.unit_id]
+                    owner_map = index.code_maps[owner.unit_id]
+                    target_start = left - locator.char_start
+                    target_end = right - locator.char_start
+                    owner_start = left - candidate.char_start
+                    owner_end = right - candidate.char_start
+                    if (
+                        locator.byte_start + target_map.byte_offsets[target_start]
+                        != candidate.byte_start + owner_map.byte_offsets[owner_start]
+                        or locator.byte_start + target_map.byte_offsets[target_end]
+                        != candidate.byte_start + owner_map.byte_offsets[owner_end]
+                        or locator.line_start + target_map.line_offsets[target_start]
+                        != candidate.line_start + owner_map.line_offsets[owner_start]
+                        or locator.line_start + target_map.line_offsets[target_end - 1]
+                        != candidate.line_start + owner_map.line_offsets[owner_end - 1]
+                    ):
+                        raise ValueError(
+                            "Retained code overlap coordinate mapping differs"
+                        )
                 result.append(
                     (
                         left - locator.char_start,
@@ -394,7 +768,7 @@ def _prepare_source_unit(
     else:
         overlaps = _document_intervals(unit, index)
         if overlaps is None:
-            overlaps = _locator_intervals(unit, index.units)
+            overlaps = _locator_intervals(unit, index)
         if overlaps is None:
             raise ValueError("Text unit has no retained source ownership mapping")
         ownership = _partition(unit, bundle.revision.revision_id, overlaps)

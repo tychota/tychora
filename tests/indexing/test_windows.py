@@ -12,6 +12,7 @@ from tychora.contracts.corpus import (
     AssetRow,
     ExtractionBundle,
     LocatorRow,
+    RevisionArtifactRow,
     UnitAssetRow,
 )
 from tychora.contracts.evidence import (
@@ -292,6 +293,351 @@ def test_prepared_extraction_reuses_complete_code_ownership_view(counter) -> Non
     bad_child = code_child.model_copy(update={"locators": (bad_locator,)})
     with pytest.raises(ValueError, match="codepoint/byte/line"):
         prepare_extraction(_replace_units(bundle, (code_parent, bad_child)))
+
+    bad_codepoint_map = list(descriptor.codepoint_to_byte)
+    bad_codepoint_map[code_child.locators[0].char_start] += 1
+    bad_descriptor = descriptor.model_copy(
+        update={"codepoint_to_byte": tuple(bad_codepoint_map)}
+    )
+    with pytest.raises(ValueError, match="codepoint/byte/line"):
+        prepare_extraction(bundle.model_copy(update={"code_files": (bad_descriptor,)}))
+
+
+def test_post_sql_code_rows_prepare_without_transient_file_maps(
+    tmp_path, counter
+) -> None:
+    from tests.code.test_structure import _registration
+    from tests.helpers.corpus import registry
+    from tychora.adapters.code.normalize import (
+        normalize_code,
+        replay_code_extraction,
+        retain_code_extraction,
+    )
+    from tychora.adapters.sqlite.connection import open_corpus
+    from tychora.adapters.sqlite.corpus import CorpusStore
+
+    artifacts, registration, parsed = _registration(tmp_path)
+    retained = retain_code_extraction(registration, parsed, registry(), artifacts)
+    replayed = replay_code_extraction(
+        retained.raw_document_ref, registration, artifacts
+    )
+    bundle = normalize_code(replayed, registry())
+    store = CorpusStore(
+        open_corpus(tmp_path / "retained-code.sqlite3", initialize=True),
+        registry=registry(),
+        artifacts=artifacts,
+    )
+    store.commit_extraction(bundle)
+    hydrated = store.hydrate(tuple(unit.unit_id for unit in bundle.units))
+    canonical = _replace_units(bundle, hydrated).model_copy(update={"code_files": ()})
+
+    prepared = prepare_extraction(canonical)
+    represented = [
+        item for item in prepared.units if item.unit.text and item.unit.citable
+    ]
+
+    assert represented
+    assert all(window_unit(item, counter) for item in represented)
+    assert any(
+        item.unit.attributes.get("encoding") == "latin-1" for item in prepared.units
+    )
+
+    context_record = next(
+        record for record in canonical.records if record.data_json["context_spans"]
+    )
+    context = context_record.data_json["context_spans"][0]
+    original = context["original_file_locator"]
+    bad_original = FrozenJsonMap(
+        {**dict(original), "byte_start": original["byte_start"] + 1}
+    )
+    bad_context = FrozenJsonMap(
+        {**dict(context), "original_file_locator": bad_original}
+    )
+    bad_record = context_record.model_copy(
+        update={
+            "data_json": FrozenJsonMap(
+                {**dict(context_record.data_json), "context_spans": (bad_context,)}
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="context binding"):
+        prepare_extraction(
+            canonical.model_copy(
+                update={
+                    "records": tuple(
+                        bad_record if row == context_record else row
+                        for row in canonical.records
+                    )
+                }
+            )
+        )
+
+    bad_dependencies = FrozenJsonMap({**dict(context), "dependency_unit_ids": ()})
+    bad_dependency_record = context_record.model_copy(
+        update={
+            "data_json": FrozenJsonMap(
+                {
+                    **dict(context_record.data_json),
+                    "context_spans": (bad_dependencies,),
+                }
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="context dependencies"):
+        prepare_extraction(
+            canonical.model_copy(
+                update={
+                    "records": tuple(
+                        bad_dependency_record if row == context_record else row
+                        for row in canonical.records
+                    )
+                }
+            )
+        )
+
+    declaration = context_record.data_json["declaration_span"]
+    bad_declaration_record = context_record.model_copy(
+        update={
+            "data_json": FrozenJsonMap(
+                {
+                    **dict(context_record.data_json),
+                    "declaration_span": FrozenJsonMap(
+                        {**dict(declaration), "line_end": declaration["line_end"] + 1}
+                    ),
+                }
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="declaration binding"):
+        prepare_extraction(
+            canonical.model_copy(
+                update={
+                    "records": tuple(
+                        bad_declaration_record if row == context_record else row
+                        for row in canonical.records
+                    )
+                }
+            )
+        )
+
+    definition_identifier = next(
+        row
+        for row in canonical.identifiers
+        if row.unit_id == context_record.unit_id
+        and row.namespace == "code.definition_key"
+    )
+    mismatched_identifier = definition_identifier.model_copy(
+        update={"original_value": "0" * 64}
+    )
+    with pytest.raises(ValueError, match="declaration binding"):
+        prepare_extraction(
+            canonical.model_copy(
+                update={
+                    "identifiers": tuple(
+                        mismatched_identifier if row == definition_identifier else row
+                        for row in canonical.identifiers
+                    )
+                }
+            )
+        )
+
+
+def test_retained_code_ranges_handle_bom_unicode_and_crlf_without_maps(
+    counter,
+) -> None:
+    bundle = seed_bundle("", source_key="src/bom.ts", kind="code_file@1")
+    path = bundle.source.source_key
+    artifact_ref = bundle.revision.original_sha
+    empty_sha = sha256(b"").hexdigest()
+    container_native = f"{path}#file"
+    container = EvidenceUnit(
+        unit_id=unit_id(
+            bundle.extraction.extraction_id, container_native, 0, empty_sha
+        ),
+        extraction_id=bundle.extraction.extraction_id,
+        parent_id=None,
+        ordinal=0,
+        unit_type="code_file",
+        native_ref=container_native,
+        boundary_key=path,
+        text="",
+        text_sha=empty_sha,
+        citable=False,
+        locators=(
+            CodeLocator(
+                artifact_ref=artifact_ref,
+                native_ref=path,
+                relative_path=path,
+                char_start=0,
+                char_end=0,
+                byte_start=3,
+                byte_end=3,
+                line_start=1,
+                line_end=1,
+            ),
+        ),
+        attributes=FrozenJsonMap(
+            {
+                "relative_path": path,
+                "language": "typescript",
+                "encoding": "utf-8-sig",
+                "coverage": "parsed",
+                "artifact_ref": artifact_ref,
+                "adapter_fingerprint": "1" * 64,
+            }
+        ),
+    )
+    text = "const café = 1;\r\nnext();"
+    text_sha = sha256(text.encode()).hexdigest()
+    native_ref = f"{path}#code:1"
+    source_id = unit_id(bundle.extraction.extraction_id, native_ref, 1, text_sha)
+    source = EvidenceUnit(
+        unit_id=source_id,
+        extraction_id=bundle.extraction.extraction_id,
+        parent_id=container.unit_id,
+        ordinal=1,
+        unit_type="code",
+        native_ref=native_ref,
+        boundary_key=path,
+        text=text,
+        text_sha=text_sha,
+        locators=(
+            CodeLocator(
+                artifact_ref=artifact_ref,
+                native_ref=path,
+                relative_path=path,
+                char_start=0,
+                char_end=len(text),
+                byte_start=3,
+                byte_end=3 + len(text.encode()),
+                line_start=1,
+                line_end=2,
+            ),
+        ),
+        attributes=FrozenJsonMap(
+            {
+                "relative_path": path,
+                "language": "typescript",
+                "range_dependency_ids": [source_id],
+            }
+        ),
+    )
+    retained = _replace_units(bundle, (container, source)).model_copy(
+        update={
+            "code_files": (),
+            "revision_artifacts": (
+                *bundle.revision_artifacts,
+                RevisionArtifactRow(
+                    revision_id=bundle.revision.revision_id,
+                    role="source_file",
+                    source_ref=path,
+                    artifact_sha=artifact_ref,
+                ),
+            ),
+        }
+    )
+
+    prepared = prepare_extraction(retained)
+
+    assert [
+        window.text
+        for window in window_unit(prepared.representation(source_id), counter)
+    ] == [text]
+
+    bad_bytes = source.model_copy(
+        update={
+            "locators": (
+                source.locators[0].model_copy(
+                    update={"byte_end": source.locators[0].byte_end + 1}
+                ),
+            )
+        }
+    )
+    with pytest.raises(ValueError, match="codepoint/byte/line"):
+        prepare_extraction(_replace_units(retained, (container, bad_bytes)))
+
+    bad_lines = source.model_copy(
+        update={"locators": (source.locators[0].model_copy(update={"line_end": 3}),)}
+    )
+    with pytest.raises(ValueError, match="codepoint/byte/line"):
+        prepare_extraction(_replace_units(retained, (container, bad_lines)))
+
+    bad_encoding = container.model_copy(
+        update={
+            "attributes": FrozenJsonMap(
+                {**dict(container.attributes), "encoding": "ascii"}
+            ),
+            "locators": (
+                container.locators[0].model_copy(
+                    update={"byte_start": 0, "byte_end": 0}
+                ),
+            ),
+        }
+    )
+    with pytest.raises(ValueError, match="encoded exactly"):
+        prepare_extraction(_replace_units(retained, (bad_encoding, source)))
+
+    overlap_text = "café"
+    overlap_start = text.index(overlap_text)
+    overlap_end = overlap_start + len(overlap_text)
+    overlap_sha = sha256(overlap_text.encode()).hexdigest()
+    overlap_native = f"{path}#code:overlap"
+    overlap_id = unit_id(
+        bundle.extraction.extraction_id, overlap_native, 2, overlap_sha
+    )
+    dependencies = [source_id, overlap_id]
+    source_with_overlap = source.model_copy(
+        update={
+            "attributes": FrozenJsonMap(
+                {**dict(source.attributes), "range_dependency_ids": dependencies}
+            )
+        }
+    )
+    overlap = EvidenceUnit(
+        unit_id=overlap_id,
+        extraction_id=bundle.extraction.extraction_id,
+        parent_id=container.unit_id,
+        ordinal=2,
+        unit_type="code",
+        native_ref=overlap_native,
+        boundary_key=path,
+        text=overlap_text,
+        text_sha=overlap_sha,
+        locators=(
+            CodeLocator(
+                artifact_ref=artifact_ref,
+                native_ref=path,
+                relative_path=path,
+                char_start=overlap_start,
+                char_end=overlap_end,
+                byte_start=3 + len(text[:overlap_start].encode()),
+                byte_end=3 + len(text[:overlap_end].encode()),
+                line_start=1,
+                line_end=1,
+            ),
+        ),
+        attributes=FrozenJsonMap(
+            {
+                "relative_path": path,
+                "language": "typescript",
+                "range_dependency_ids": dependencies,
+            }
+        ),
+    )
+    overlapping = _replace_units(retained, (container, source_with_overlap, overlap))
+    prepare_extraction(overlapping)
+
+    shifted_locator = overlap.locators[0].model_copy(
+        update={
+            "byte_start": overlap.locators[0].byte_start + 1,
+            "byte_end": overlap.locators[0].byte_end + 1,
+        }
+    )
+    shifted_overlap = overlap.model_copy(update={"locators": (shifted_locator,)})
+    with pytest.raises(ValueError, match="overlap coordinate"):
+        prepare_extraction(
+            _replace_units(retained, (container, source_with_overlap, shifted_overlap))
+        )
 
 
 def test_docling_source_parts_bind_narrow_overlapping_owner(counter) -> None:
