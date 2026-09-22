@@ -3,9 +3,11 @@
 import struct
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
+from tychora.adapters.chroma import index as chroma_index
 from tychora.adapters.chroma.index import ChromaVectorIndex
 from tychora.contracts.embeddings import EmbeddingRecord
 from tychora.contracts.errors import TychoraError
@@ -191,6 +193,75 @@ def test_cancelled_search_does_not_query_store(vector_index, vector_family, exec
             vector_family.limits,
             execution.ctx,
         )
+
+
+def test_cancellation_stops_presence_scan_between_native_reads(
+    vector_index, vector_family, execution, monkeypatch
+):
+    vector_index.upsert_batch(
+        vector_family.batch([("present", "u1", (1.0, 0.0))]), execution.ctx
+    )
+    eligible = {"present": ("unit", "u1")}
+    eligible.update({f"missing-{i}": ("unit", f"u{i}") for i in range(5_000)})
+    native_get = vector_index._collection.get
+    calls = 0
+
+    def cancel_after_first_read(*args, **kwargs):
+        nonlocal calls
+        result = native_get(*args, **kwargs)
+        calls += 1
+        if calls == 1:
+            execution.ctx.cancelled.set()
+        return result
+
+    monkeypatch.setattr(vector_index._collection, "get", cancel_after_first_read)
+    with pytest.raises(TychoraError, match="cancelled"):
+        vector_index.search(
+            vector_family.query((1.0, 0.0)),
+            eligible,
+            1,
+            vector_family.limits,
+            execution.ctx,
+        )
+    assert calls == 1
+
+
+def test_work_deadline_stops_presence_scan_without_claiming_coverage(
+    vector_index, vector_family, execution, monkeypatch
+):
+    vector_index.upsert_batch(
+        vector_family.batch([("present", "u1", (1.0, 0.0))]), execution.ctx
+    )
+    eligible = {"present": ("unit", "u1")}
+    eligible.update({f"missing-{i}": ("unit", f"u{i}") for i in range(5_000)})
+    native_get = vector_index._collection.get
+    calls = 0
+    clock = [0.0]
+    monkeypatch.setattr(
+        chroma_index, "time", SimpleNamespace(monotonic=lambda: clock[0])
+    )
+
+    def expire_after_first_read(*args, **kwargs):
+        nonlocal calls
+        result = native_get(*args, **kwargs)
+        calls += 1
+        if calls == 1:
+            clock[0] = 2.0
+        return result
+
+    monkeypatch.setattr(vector_index._collection, "get", expire_after_first_read)
+    page = vector_index.search(
+        vector_family.query((1.0, 0.0)),
+        eligible,
+        1,
+        WorkLimits(deadline=1.0),
+        execution.ctx,
+    )
+    assert calls == 1
+    assert page.candidates == ()
+    assert page.truncated
+    assert not page.coverage_complete
+    assert not page.exhausted
 
 
 def test_writer_exit_then_reader_verifies_varied_float32_bytes(tmp_path, vector_family):

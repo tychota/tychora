@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import chromadb
+from chromadb.api.collection_configuration import CreateHNSWConfiguration
 from chromadb.config import Settings
 
 from tychora.contracts.identity import digest, space_id
@@ -31,6 +32,23 @@ from tychora.ports.execution import ExecutionContext
 
 _PARTITION_SIZE = 5_000
 _EF_SEARCH = 200
+_QUALIFIED_HNSW: CreateHNSWConfiguration = {
+    "space": "ip",
+    "ef_construction": 100,
+    "ef_search": _EF_SEARCH,
+    "max_neighbors": 16,
+    "resize_factor": 1.2,
+    "sync_threshold": 1_000,
+}
+_QUALIFIED_CONFIGURATION = {
+    "hnsw": _QUALIFIED_HNSW,
+    "spann": None,
+    "embedding_function": None,
+}
+
+
+class _PresenceDeadline(Exception):
+    """The eligible-ID scan ended before full membership was known."""
 
 
 def _float32(raw: bytes, dimensions: int) -> tuple[float, ...]:
@@ -86,11 +104,9 @@ class ChromaVectorIndex:
         return self._collection, self._handle
 
     def _check_collection(self, collection: Any, spec: FamilySpec) -> None:
-        config = collection.configuration.get("hnsw", {})
         if (
             collection.metadata != self._metadata(spec)
-            or config.get("space") != "ip"
-            or config.get("ef_search") != _EF_SEARCH
+            or collection.configuration != _QUALIFIED_CONFIGURATION
         ):
             raise ValueError("Chroma family configuration differs from immutable spec")
 
@@ -107,7 +123,7 @@ class ChromaVectorIndex:
             name=self._name(spec),
             embedding_function=None,
             metadata=self._metadata(spec),
-            configuration={"hnsw": {"space": "ip", "ef_search": _EF_SEARCH}},
+            configuration={"hnsw": _QUALIFIED_HNSW},
         )
         self._check_collection(collection, spec)
         handle = FamilyHandle(
@@ -123,23 +139,39 @@ class ChromaVectorIndex:
         return [list(ids[start : start + size]) for start in range(0, len(ids), size)]
 
     def _present(
-        self, ids: Sequence[str], *, embeddings: bool = False
+        self,
+        ids: Sequence[str],
+        *,
+        embeddings: bool = False,
+        ctx: ExecutionContext | None = None,
+        deadline: float | None = None,
     ) -> dict[str, tuple[str, str, bytes]]:
         collection, _ = self._require()
         found: dict[str, tuple[str, str, bytes]] = {}
         for chunk in self._chunks(ids):
             if not chunk:
                 continue
+            self._presence_checkpoint(ctx, deadline)
             result = collection.get(
                 ids=chunk,
                 include=["metadatas", "embeddings"] if embeddings else ["metadatas"],
             )
+            self._presence_checkpoint(ctx, deadline)
             vectors = result["embeddings"] if embeddings else None
             for index, record_id in enumerate(result["ids"]):
                 metadata = result["metadatas"][index]
                 raw = _bytes(vectors[index]) if vectors is not None else b""
                 found[record_id] = (metadata["input_sha"], metadata["value_sha"], raw)
         return found
+
+    @staticmethod
+    def _presence_checkpoint(
+        ctx: ExecutionContext | None, deadline: float | None
+    ) -> None:
+        if ctx is not None:
+            ctx.checkpoint()
+        if deadline is not None and time.monotonic() >= deadline:
+            raise _PresenceDeadline
 
     def upsert_batch(self, batch: VectorBatch, ctx: ExecutionContext) -> BatchReceipt:
         collection, handle = self._require()
@@ -166,7 +198,7 @@ class ChromaVectorIndex:
             if vector_value_sha(raw) != record.value_sha:
                 raise ValueError("Vector value digest differs from exact bytes")
         existing = self._present(
-            [record.record_id for record in batch.records], embeddings=True
+            [record.record_id for record in batch.records], embeddings=True, ctx=ctx
         )
         for record in batch.records:
             actual = existing.get(record.record_id)
@@ -280,7 +312,22 @@ class ChromaVectorIndex:
                 returned_records=0,
                 queried_partitions=0,
             )
-        present = self._present(sorted(eligible_records_and_owners))
+        try:
+            present = self._present(
+                sorted(eligible_records_and_owners),
+                ctx=ctx,
+                deadline=work_limits.deadline,
+            )
+        except _PresenceDeadline:
+            return CandidatePage(
+                candidates=(),
+                missing_record_ids=(),
+                coverage_complete=False,
+                truncated=True,
+                exhausted=False,
+                returned_records=0,
+                queried_partitions=0,
+            )
         missing = tuple(sorted(set(eligible_records_and_owners) - present.keys()))
         pools = (
             sorted(

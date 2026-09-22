@@ -2,6 +2,11 @@
 
 import math
 
+import chromadb
+import pytest
+from chromadb.config import Settings
+
+from tychora.adapters.chroma.index import ChromaVectorIndex
 from tychora.contracts.vectors import WorkLimits
 
 
@@ -102,3 +107,19 @@ def test_k_owners_span_unit_and_asset_partitions(
         ("asset", "west"),
     ]
     assert page.queried_partitions == 2
+
+
+def test_existing_family_rejects_changed_hnsw_construction_setting(
+    tmp_path, vector_index, vector_family
+):
+    native = chromadb.PersistentClient(
+        path=str(tmp_path / "altered"), settings=Settings(anonymized_telemetry=False)
+    )
+    native.create_collection(
+        name="family_" + vector_family.spec.family_id,
+        embedding_function=None,
+        metadata=vector_index._collection.metadata,
+        configuration={"hnsw": {"space": "ip", "ef_search": 200, "max_neighbors": 32}},
+    )
+    with pytest.raises(ValueError, match="configuration"):
+        ChromaVectorIndex(tmp_path / "altered").create_family(vector_family.spec)
