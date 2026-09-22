@@ -57,14 +57,17 @@ class UploadPolicy(Protocol):
         self,
         scope: RequestScope,
         provider: str,
-        authorization: QueryUploadAuthorization,
+        authorization: QueryUploadAuthorization | VisualQueryAdmission,
     ) -> None: ...
 
 
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from tychora.contracts.embeddings import QueryUploadAuthorization
+    from tychora.contracts.embeddings import (
+        QueryUploadAuthorization,
+        VisualQueryAdmission,
+    )
     from tychora.ports.vision import (
         CapturedRegionAuthorization,
         CapturedSourceRegistration,

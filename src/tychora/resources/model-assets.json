@@ -42,6 +42,13 @@
       "license": "Apache-2.0",
       "notice_url": "https://huggingface.co/voyageai/voyage-code-4/blob/ac780b405e54ff8b3aff681270e0e03840fed2f3/README.md",
       "model_card_url": "https://huggingface.co/voyageai/voyage-code-4"
+    },
+    {
+      "selection": "voyage-multimodal-3.5",
+      "attribution": "Tokenizer bytes are verified identical to the Apache-2.0 voyage-context-4 tokenizer source; publisher multimodal accounting metadata is retained separately",
+      "license": "No license declared (factual model accounting metadata)",
+      "notice_url": "https://huggingface.co/voyageai/voyage-multimodal-3.5/blob/e33df0507cb152ea6fc576e5d96d9c51443e4191/client_config.json",
+      "model_card_url": "https://huggingface.co/voyageai/voyage-multimodal-3.5"
     }
   ],
   "assets": [
@@ -56,6 +63,30 @@
       "owner": "voyageai==0.5.0",
       "revision": "8ca946072a18e398cd61f2ad0243b56d0350b1db",
       "notice_url": "https://huggingface.co/voyageai/voyage-context-4/blob/8ca946072a18e398cd61f2ad0243b56d0350b1db/tokenizer.json"
+    },
+    {
+      "id": "voyage-multimodal-3.5-tokenizer",
+      "selection": "voyage-multimodal-3.5",
+      "path": "voyage-multimodal-3.5/e33df0507cb152ea6fc576e5d96d9c51443e4191/tokenizer.json",
+      "sha256": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
+      "size_bytes": 7031645,
+      "url": "https://huggingface.co/voyageai/voyage-multimodal-3.5/resolve/e33df0507cb152ea6fc576e5d96d9c51443e4191/tokenizer.json",
+      "license": "Apache-2.0 source tokenizer asset only",
+      "owner": "voyageai==0.5.0",
+      "revision": "e33df0507cb152ea6fc576e5d96d9c51443e4191",
+      "notice_url": "https://huggingface.co/voyageai/voyage-context-4/blob/8ca946072a18e398cd61f2ad0243b56d0350b1db/tokenizer.json"
+    },
+    {
+      "id": "voyage-multimodal-3.5-client-config",
+      "selection": "voyage-multimodal-3.5",
+      "path": "voyage-multimodal-3.5/e33df0507cb152ea6fc576e5d96d9c51443e4191/client_config.json",
+      "sha256": "26f27fcc6ca6eada8b9330f2a3998d62bdaeb564dd3a252009b468c4a0db9c0e",
+      "size_bytes": 253,
+      "url": "https://huggingface.co/voyageai/voyage-multimodal-3.5/resolve/e33df0507cb152ea6fc576e5d96d9c51443e4191/client_config.json",
+      "license": "No license declared (factual model accounting metadata)",
+      "owner": "voyageai==0.5.0",
+      "revision": "e33df0507cb152ea6fc576e5d96d9c51443e4191",
+      "notice_url": "https://huggingface.co/voyageai/voyage-multimodal-3.5/blob/e33df0507cb152ea6fc576e5d96d9c51443e4191/client_config.json"
     },
     {
       "id": "rapidocr-det-pp-ocrv6-small",

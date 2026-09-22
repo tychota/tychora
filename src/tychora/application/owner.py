@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from threading import Lock, get_ident
-from typing import BinaryIO, NoReturn, Protocol, cast, overload
+from typing import BinaryIO, Literal, NoReturn, Protocol, cast, overload
 from uuid import UUID, uuid4
 
 from tychora.adapters.files.cas import LocalArtifacts
@@ -25,7 +25,13 @@ from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
-from tychora.contracts.embeddings import EmbeddingRecord, QueryUploadAuthorization
+from tychora.contracts.embeddings import (
+    EmbeddingRecord,
+    QueryUploadAuthorization,
+    TextOrImage,
+    VisualInput,
+    VisualQueryAdmission,
+)
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.extraction import extraction_document
 from tychora.contracts.identity import (
@@ -37,7 +43,11 @@ from tychora.contracts.identity import (
     source_id,
 )
 from tychora.contracts.requests import RequestScope
-from tychora.ports.embeddings import TextEmbedder
+from tychora.ports.embeddings import (
+    OwnerBoundVisualEmbedder,
+    TextEmbedder,
+    VisualOperation,
+)
 from tychora.ports.execution import ExecutionContext
 from tychora.ports.vision import (
     CapturedOriginalRegionProof,
@@ -482,7 +492,7 @@ class WorkspaceOwner:
         ctx: ExecutionContext,
         *,
         scope: RequestScope,
-        authorization: QueryUploadAuthorization,
+        authorization: QueryUploadAuthorization | VisualQueryAdmission,
     ) -> T:
         """Run a query upload miss after fresh bounded-lane authorization."""
         ctx.checkpoint()
@@ -513,6 +523,117 @@ class WorkspaceOwner:
 
         return await drain_result(lane.submit(invoke), ctx)
 
+    def _check_embedding_probe(
+        self,
+        workspace_id: str,
+        provider: str,
+        expected_provider: str,
+        identity: str,
+        expected_identity: str,
+    ) -> None:
+        if (
+            workspace_id != self.workspace_id
+            or provider != expected_provider
+            or identity != expected_identity
+        ):
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Query probe differs from owner operation."
+            )
+
+    async def embed_visual_query(
+        self,
+        embedder: OwnerBoundVisualEmbedder,
+        query: TextOrImage,
+        ctx: ExecutionContext,
+        *,
+        scope: RequestScope,
+    ) -> EmbeddingRecord:
+        """Check current read scope on hits; dispatch misses through the owner lane."""
+        embedder._access.binding(self, scope)
+        probe = await self.run_blocking(lambda: embedder.probe_query(query, ctx), ctx)
+        _, _, operation_sha = embedder._access.operation(query, "query")
+        self._check_embedding_probe(
+            probe.workspace_id,
+            probe.provider,
+            embedder.capabilities.provider,
+            probe.query_sha,
+            digest("visual-query-probe-v1", query.model_dump(mode="json")),
+        )
+        if probe.operation_sha != operation_sha:
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Visual probe differs from owner operation."
+            )
+        if probe.record is not None:
+            return probe.record
+        return cast(
+            EmbeddingRecord,
+            await self._run_visual(embedder, query, "query", ctx, scope),
+        )
+
+    async def embed_visual_assets(
+        self,
+        embedder: OwnerBoundVisualEmbedder,
+        items: tuple[VisualInput, ...],
+        ctx: ExecutionContext,
+        *,
+        scope: RequestScope,
+    ) -> tuple[EmbeddingRecord, ...]:
+        """Dispatch complete ordered document assets in bounded provider requests."""
+        embedder._access.binding(self, scope)
+        records: list[EmbeddingRecord] = []
+        for item in items:
+            records.extend(
+                cast(
+                    tuple[EmbeddingRecord, ...],
+                    await self._run_visual(embedder, (item,), "document", ctx, scope),
+                )
+            )
+        return tuple(records)
+
+    async def _run_visual(
+        self,
+        embedder: OwnerBoundVisualEmbedder,
+        operation: VisualOperation,
+        mode: Literal["query", "document"],
+        ctx: ExecutionContext,
+        scope: RequestScope,
+    ) -> EmbeddingRecord | tuple[EmbeddingRecord, ...]:
+        access = embedder._access
+        items, ids, operation_sha = access.operation(operation, mode)
+        await self.run_blocking(lambda: access.authorize(operation, mode, ctx), ctx)
+
+        def invoke() -> EmbeddingRecord | tuple[EmbeddingRecord, ...]:
+            with access.admitted():
+                if mode == "query":
+                    return embedder.embed_query(cast(TextOrImage, operation), ctx)
+                return embedder.embed_assets(items, ctx)
+
+        provider = embedder.capabilities.provider
+        if mode == "query":
+            return await self.run_query_provider(
+                provider,
+                invoke,
+                ctx,
+                scope=scope,
+                authorization=VisualQueryAdmission(
+                    operation_sha=operation_sha,
+                    input_shas=ids,
+                    collection_ids=access.scope.collection_ids,
+                    dependency_ids=frozenset().union(
+                        *(i.dependency_ids for i in items)
+                    ),
+                    policy_epoch=access.epoch,
+                ),
+            )
+        return await self.run_provider(
+            provider,
+            invoke,
+            ctx,
+            scope=scope,
+            dependencies=frozenset().union(*(i.dependency_ids for i in items)),
+            policy_epoch=access.epoch,
+        )
+
     async def embed_queries(
         self,
         embedder: TextEmbedder,
@@ -523,12 +644,14 @@ class WorkspaceOwner:
     ) -> tuple[EmbeddingRecord, ...]:
         """Return local query hits directly and admit only remote misses."""
         probe = embedder.probe_queries(queries, ctx)
-        if (
-            probe.workspace_id != self.workspace_id
-            or probe.provider != embedder.capabilities.provider
-            or probe.input_count != len(queries)
-            or probe.query_batch_sha != digest("query-embedding-probe-v1", queries)
-        ):
+        self._check_embedding_probe(
+            probe.workspace_id,
+            probe.provider,
+            embedder.capabilities.provider,
+            probe.query_batch_sha,
+            digest("query-embedding-probe-v1", queries),
+        )
+        if probe.input_count != len(queries):
             raise TychoraError(
                 "INTEGRITY_ERROR", "Query probe differs from owner operation."
             )
@@ -875,7 +998,7 @@ class CanonicalUploadPolicy:
             _deny()
 
     def _authorize_dependencies(
-        self, dependencies: frozenset[str], provider: str, scope: RequestScope
+        self, dependencies: frozenset[str], provider: str | None, scope: RequestScope
     ) -> None:
         pending = [(dependency, False) for dependency in dependencies]
         complete: set[str] = set()
@@ -1003,7 +1126,7 @@ class CanonicalUploadPolicy:
         self,
         scope: RequestScope,
         provider: str,
-        authorization: QueryUploadAuthorization,
+        authorization: QueryUploadAuthorization | VisualQueryAdmission,
     ) -> None:
         """Authorize caller query text against explicit current collections."""
         owner = self._owner
@@ -1080,7 +1203,7 @@ class CanonicalUploadPolicy:
         return revision, children
 
     def _check_revision(
-        self, revision: str, provider: str, scope: RequestScope
+        self, revision: str, provider: str | None, scope: RequestScope
     ) -> None:
         row = self._owner.db.execute(
             "SELECT c.workspace_id,c.collection_id,c.access_floor,s.access_floor,r.access_rank,s.withdrawn_at,c.policy_json,r.allowed_uses_json,k.definition_json,k.definition_hash "
@@ -1103,7 +1226,9 @@ class CanonicalUploadPolicy:
             or policy["schema_version"] != 1
         ):
             _deny()
-        if provider not in _strings(policy["upload_providers"]):
+        if provider is not None and provider not in _strings(
+            policy["upload_providers"]
+        ):
             _deny()
         envelope = json.loads(row[8], object_pairs_hook=_unique_object)
         if not isinstance(envelope, dict):

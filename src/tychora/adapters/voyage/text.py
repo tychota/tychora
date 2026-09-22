@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
-import json
-import random
-import time
-from collections import OrderedDict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from hashlib import sha256
-from threading import Lock
-from typing import TYPE_CHECKING, Any, NoReturn, Protocol
 
-from tychora.adapters.voyage.validation import normalize_vector
+from tychora.adapters.voyage.request import HttpxVoyageTransport, VoyageRequestExecutor
+from tychora.adapters.voyage.request_types import RawVoyageResponse
+from tychora.adapters.voyage.response import (
+    _flat_stored_response,
+    _indexed,
+    _response_object,
+    _stored_vector,
+)
+from tychora.adapters.voyage.runtime import VoyageRuntime
 from tychora.contracts.embeddings import (
     EmbeddingCapabilities,
     EmbeddingRecord,
@@ -25,10 +27,9 @@ from tychora.contracts.indexing import ContextGroup
 from tychora.ports.execution import ExecutionContext
 from tychora.ports.tokens import TokenCounter
 
-if TYPE_CHECKING:
-    import httpx
-
 INDEPENDENT_RENDERER_VERSION = "capsule-window-v1"
+
+__all__ = ["HttpxVoyageTransport", "RawVoyageResponse", "VoyageRuntime"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,136 +49,6 @@ class QueryPlan:
     path: str | None
     body: bytes | None
     authorization: QueryUploadAuthorization | None
-
-
-@dataclass(frozen=True, slots=True)
-class RawVoyageResponse:
-    status_code: int
-    body: bytes
-
-
-class VoyageTransport(Protocol):
-    def post_json(
-        self, path: str, body: bytes, timeout: float
-    ) -> RawVoyageResponse: ...
-
-    def close(self) -> None: ...
-
-
-class HttpxVoyageTransport:
-    """Raw fixed-origin HTTP transport with no ambient or hidden retry state."""
-
-    def __init__(
-        self, *, api_key: str, transport: httpx.BaseTransport | None = None
-    ) -> None:
-        if not api_key:
-            raise ValueError("Voyage credential must be nonempty")
-        import httpx
-
-        self._httpx = httpx
-        self._client = httpx.Client(
-            base_url="https://api.voyageai.com",
-            headers={
-                "authorization": f"Bearer {api_key}",
-                "content-type": "application/json",
-                "accept": "application/json",
-            },
-            follow_redirects=False,
-            trust_env=False,
-            transport=transport,
-        )
-
-    def post_json(self, path: str, body: bytes, timeout: float) -> RawVoyageResponse:
-        try:
-            response = self._client.post(path, content=body, timeout=timeout)
-        except self._httpx.TransportError:
-            raise OSError("Voyage transport failed") from None
-        return RawVoyageResponse(response.status_code, response.content)
-
-    def close(self) -> None:
-        self._client.close()
-
-
-class VoyageRuntime:
-    """Owner-registered lazy transport with synchronized lifecycle."""
-
-    def __init__(
-        self,
-        transport_factory: Callable[[], VoyageTransport],
-        *,
-        workspace_id: str,
-        credential_binding_id: str,
-        cache_capacity: int = 256,
-        cache_ttl: float = 300.0,
-        clock: Callable[[], float] = time.monotonic,
-    ) -> None:
-        if (
-            not workspace_id
-            or not credential_binding_id
-            or type(cache_capacity) is not int
-            or cache_capacity <= 0
-            or cache_ttl <= 0
-        ):
-            raise ValueError("Runtime bindings must be nonempty")
-        self._workspace_id = workspace_id
-        self._credential_binding_id = credential_binding_id
-        self._transport_factory = transport_factory
-        self._transport: VoyageTransport | None = None
-        self._lock = Lock()
-        self._closed = False
-        self._cache_capacity = cache_capacity
-        self._cache_ttl = cache_ttl
-        self._clock = clock
-        self._query_cache: OrderedDict[tuple[object, ...], tuple[float, bytes]] = (
-            OrderedDict()
-        )
-
-    @property
-    def workspace_id(self) -> str:
-        return self._workspace_id
-
-    @property
-    def credential_binding_id(self) -> str:
-        return self._credential_binding_id
-
-    def transport(self) -> VoyageTransport:
-        with self._lock:
-            if self._closed:
-                raise TychoraError("WORKSPACE_BUSY", "Provider runtime is closed.")
-            if self._transport is None:
-                self._transport = self._transport_factory()
-            return self._transport
-
-    def close(self) -> None:
-        with self._lock:
-            self._closed = True
-            transport, self._transport = self._transport, None
-            self._query_cache.clear()
-        if transport is not None:
-            transport.close()
-
-    def cached_query(self, key: tuple[object, ...]) -> bytes | None:
-        with self._lock:
-            if self._closed:
-                return None
-            entry = self._query_cache.get(key)
-            if entry is None:
-                return None
-            created, value = entry
-            if self._clock() - created >= self._cache_ttl:
-                del self._query_cache[key]
-                return None
-            self._query_cache.move_to_end(key)
-            return value
-
-    def cache_query(self, key: tuple[object, ...], value: bytes) -> None:
-        with self._lock:
-            if self._closed:
-                return
-            self._query_cache[key] = (self._clock(), value)
-            self._query_cache.move_to_end(key)
-            while len(self._query_cache) > self._cache_capacity:
-                self._query_cache.popitem(last=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -237,9 +108,7 @@ class VoyageTextEmbedder:
         self._authorize_document = authorize_document
         self._query_binding = query_binding
         self._authorize_query = authorize_query
-        self._backoff = backoff or (
-            lambda attempt: random.uniform(0.0, min(0.25 * 2 ** (attempt - 1), 2.0))
-        )
+        self._requests = VoyageRequestExecutor(runtime, backoff=backoff)
 
     def embed_groups(
         self, groups: tuple[ContextGroup, ...], ctx: ExecutionContext
@@ -535,111 +404,7 @@ class VoyageTextEmbedder:
         authorize: Callable[[str, ExecutionContext], None],
         ctx: ExecutionContext,
     ) -> RawVoyageResponse:
-        payload_sha = sha256(body).hexdigest()
-        for attempt in range(1, 4):
-            if attempt > 1:
-                self._wait(self._backoff(attempt - 1), ctx)
-            ctx.checkpoint()
-            authorize(payload_sha, ctx)
-            ctx.checkpoint()
-            timeout = 30.0
-            if ctx.deadline is not None:
-                timeout = min(timeout, max(0.001, ctx.deadline - time.monotonic()))
-            try:
-                response = self._runtime.transport().post_json(path, body, timeout)
-            except TychoraError:
-                raise
-            except (OSError, TimeoutError):
-                if attempt < 3:
-                    continue
-                break
-            except Exception:  # noqa: BLE001 - sanitize unknown provider boundary errors
-                raise TychoraError(
-                    "PROVIDER_FAILURE", "Embedding provider request failed."
-                ) from None
-            if response.status_code == 200:
-                return response
-            transient = response.status_code == 429 or (
-                500 <= response.status_code <= 599
-            )
-            if transient and attempt < 3:
-                continue
-            raise TychoraError(
-                "PROVIDER_FAILURE",
-                "Embedding provider request failed.",
-                retryable=transient,
-            ) from None
-        raise TychoraError(
-            "PROVIDER_FAILURE",
-            "Embedding provider request failed.",
-            retryable=True,
-        )
-
-    @staticmethod
-    def _wait(delay: float, ctx: ExecutionContext) -> None:
-        if delay <= 0:
-            ctx.checkpoint()
-            return
-        if ctx.deadline is not None:
-            delay = min(delay, max(0.0, ctx.deadline - time.monotonic()))
-        ctx.cancelled.wait(delay)
-        ctx.checkpoint()
-
-
-def _invalid_mapping() -> NoReturn:
-    raise TychoraError("PROVIDER_FAILURE", "Invalid provider response mapping.")
-
-
-def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            _invalid_mapping()
-        result[key] = value
-    return result
-
-
-def _response_object(body: bytes) -> Mapping[str, Any]:
-    if not body or len(body) > 16 * 1024 * 1024:
-        _invalid_mapping()
-    try:
-        result = json.loads(body, object_pairs_hook=_unique_object)
-    except TychoraError:
-        raise
-    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
-        _invalid_mapping()
-    if not isinstance(result, dict):
-        _invalid_mapping()
-    return result
-
-
-def _indexed(
-    entries: object, expected: int, *, nested_key: str | None = None
-) -> tuple[Mapping[str, Any], ...]:
-    if not isinstance(entries, list) or len(entries) != expected:
-        _invalid_mapping()
-    mapped: dict[int, Mapping[str, Any]] = {}
-    for entry in entries:
-        if not isinstance(entry, dict):
-            _invalid_mapping()
-        index = entry.get("index")
-        if type(index) is not int or index < 0 or index >= expected or index in mapped:
-            _invalid_mapping()
-        if nested_key is not None and nested_key not in entry:
-            _invalid_mapping()
-        mapped[index] = entry
-    if set(mapped) != set(range(expected)):
-        _invalid_mapping()
-    return tuple(mapped[index] for index in range(expected))
-
-
-def _stored_vector(entry: Mapping[str, Any], dimension: int) -> bytes:
-    values = entry.get("embedding")
-    if not isinstance(values, list) or any(
-        type(value) not in (int, float) for value in values
-    ):
-        _invalid_mapping()
-    return normalize_vector(tuple(float(value) for value in values), dimension)
+        return self._requests.post(path, body, authorize, ctx)
 
 
 def map_contextual_response(
@@ -715,14 +480,6 @@ def _map_flat_group_response(
             )
         )
     return tuple(output)
-
-
-def _flat_stored_response(
-    body: bytes, expected: int, dimension: int
-) -> tuple[bytes, ...]:
-    response = _response_object(body)
-    entries = _indexed(response.get("data"), expected)
-    return tuple(_stored_vector(entry, dimension) for entry in entries)
 
 
 def _contextual_query_stored_response(

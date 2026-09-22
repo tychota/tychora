@@ -7,6 +7,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
+from .artifacts import ArtifactRef
 from .base import (
     Contract,
     FiniteFloat,
@@ -17,6 +18,8 @@ from .base import (
     PositiveInt,
     Sha256,
 )
+from .corpus import AssetRow
+from .evidence import ImageLocator
 from .identity import space_id as derive_space_id
 
 
@@ -38,13 +41,17 @@ class EmbeddingCapabilities(Contract):
     max_group_tokens: PositiveInt
     max_request_tokens: PositiveInt
     options: FrozenJsonMap = Field(default_factory=FrozenJsonMap)
+    modality: Literal["text", "visual"] = "text"
+    visual_limits: "VisualEmbeddingLimits | None" = None
 
     @model_validator(mode="after")
     def exact_space(self) -> Self:
         if self.input_types != frozenset({"document", "query"}):
             raise ValueError("Text embedding capability must support both input modes")
+        if (self.modality == "visual") != (self.visual_limits is not None):
+            raise ValueError("Visual capability limits differ from embedding modality")
         expected = derive_space_id(
-            "text",
+            self.modality,
             self.provider,
             self.model,
             self.dimensions,
@@ -54,6 +61,189 @@ class EmbeddingCapabilities(Contract):
         if self.space_id != expected:
             raise ValueError("Embedding space identity differs from capabilities")
         return self
+
+
+class VisualEmbeddingLimits(Contract):
+    """Qualified local accounting and request-resource limits for one visual model."""
+
+    accounting_version: Literal["voyage-multimodal-accounting-v1"]
+    model_revision: NonEmptyStr
+    tokenizer_sha256: Sha256
+    client_config_sha256: Sha256
+    accounting_image_pixels_min: PositiveInt
+    accounting_image_pixels_max: PositiveInt
+    image_pixels_per_token: PositiveInt
+    source_pixels_max: PositiveInt
+    image_encoded_bytes_max: PositiveInt
+    input_tokens_max: PositiveInt
+    request_assets_max: PositiveInt
+    request_tokens_max: PositiveInt
+    request_wire_bytes_max: PositiveInt
+    decoded_image_bytes_max: PositiveInt
+
+    @model_validator(mode="after")
+    def bounded(self) -> Self:
+        if (
+            self.accounting_image_pixels_min > self.accounting_image_pixels_max
+            or self.source_pixels_max > 16_000_000
+            or self.request_assets_max > 32
+            or self.request_tokens_max > 100_000
+            or self.image_encoded_bytes_max > 20_000_000
+            or self.request_wire_bytes_max > 64 * 1024 * 1024
+            or self.input_tokens_max > 32_000
+            or self.decoded_image_bytes_max < self.source_pixels_max * 3
+        ):
+            raise ValueError("Visual capability limits exceed qualified bounds")
+        return self
+
+
+class VisualResizeDerivation(Contract):
+    """Explicit representation derivation; no implicit resize is permitted."""
+
+    source_width: PositiveInt
+    source_height: PositiveInt
+    width: PositiveInt
+    height: PositiveInt
+    mode: Literal["none", "LANCZOS"]
+
+    @model_validator(mode="after")
+    def recorded_resize(self) -> Self:
+        if (self.mode == "none") != (
+            self.source_width == self.width and self.source_height == self.height
+        ):
+            raise ValueError("Visual resize derivation is inconsistent")
+        return self
+
+
+class VisualInput(Contract):
+    """A canonical visual descriptor; pixel bytes are resolved by a trusted reader."""
+
+    asset: AssetRow
+    artifact_ref: ArtifactRef
+    revision_id: Identifier
+    context: str
+    dependency_ids: Annotated[
+        frozenset[Identifier], Field(min_length=1, max_length=2048)
+    ]
+    pixel_sha256: Sha256
+    width: PositiveInt
+    height: PositiveInt
+    pixel_transform: Literal["exif-transpose-rgb-v1"] = "exif-transpose-rgb-v1"
+    resize: VisualResizeDerivation
+    input_sha: Sha256
+
+    @classmethod
+    def from_registered(
+        cls,
+        *,
+        asset: AssetRow,
+        artifact_ref: ArtifactRef,
+        revision_id: str,
+        context: str,
+        dependency_ids: frozenset[str],
+        pixel_sha256: str,
+        width: int,
+        height: int,
+        resize: VisualResizeDerivation,
+        pixel_transform: Literal["exif-transpose-rgb-v1"] = "exif-transpose-rgb-v1",
+    ) -> Self:
+        return cls(
+            asset=asset,
+            artifact_ref=artifact_ref,
+            revision_id=revision_id,
+            context=context,
+            dependency_ids=dependency_ids,
+            pixel_sha256=pixel_sha256,
+            width=width,
+            height=height,
+            pixel_transform=pixel_transform,
+            resize=resize,
+            input_sha=_visual_input_sha(
+                asset,
+                artifact_ref,
+                revision_id,
+                context,
+                dependency_ids,
+                pixel_sha256,
+                width,
+                height,
+                pixel_transform,
+                resize,
+            ),
+        )
+
+    @model_validator(mode="after")
+    def canonical_descriptor(self) -> Self:
+        if (
+            not isinstance(self.asset.locator, ImageLocator)
+            or self.asset.artifact_sha != self.artifact_ref.sha256
+            or self.artifact_ref.storage_key != self.artifact_ref.sha256
+            or self.asset.locator.artifact_ref != self.artifact_ref.sha256
+            or self.asset.locator.native_ref != self.asset.native_ref
+            or self.resize.width != self.width
+            or self.resize.height != self.height
+            or self.input_sha
+            != _visual_input_sha(
+                self.asset,
+                self.artifact_ref,
+                self.revision_id,
+                self.context,
+                self.dependency_ids,
+                self.pixel_sha256,
+                self.width,
+                self.height,
+                self.pixel_transform,
+                self.resize,
+            )
+        ):
+            raise ValueError(
+                "Visual input differs from its registered pixel descriptor"
+            )
+        return self
+
+
+class TextQuery(Contract):
+    kind: Literal["text"] = "text"
+    text: NonEmptyStr
+
+
+class RegisteredImageQuery(Contract):
+    kind: Literal["image"] = "image"
+    image: VisualInput
+
+
+type TextOrImage = Annotated[
+    TextQuery | RegisteredImageQuery, Field(discriminator="kind")
+]
+
+
+def _visual_input_sha(
+    asset: AssetRow,
+    artifact_ref: ArtifactRef,
+    revision_id: str,
+    context: str,
+    dependency_ids: frozenset[str],
+    pixel_sha256: str,
+    width: int,
+    height: int,
+    pixel_transform: str,
+    resize: VisualResizeDerivation,
+) -> str:
+    from .identity import digest
+
+    return digest(
+        "visual-input-v1",
+        asset.model_dump(mode="json"),
+        artifact_ref.model_dump(mode="json"),
+        revision_id,
+        context,
+        sorted(dependency_ids),
+        pixel_sha256,
+        width,
+        height,
+        pixel_transform,
+        resize.model_dump(mode="json"),
+    )
 
 
 class QueryUploadAuthorization(Contract):
@@ -136,3 +326,34 @@ class QueryEmbeddingProbe(Contract):
         ):
             raise ValueError("Query cache miss outcome is inconsistent")
         return self
+
+
+class VisualQueryEmbeddingProbe(Contract):
+    """Pre-read operation identity is distinct from a prepared request-body hash."""
+
+    workspace_id: Identifier
+    provider: NonEmptyStr
+    query_sha: Sha256
+    operation_sha: Sha256
+    state: Literal["hit", "miss"]
+    record: EmbeddingRecord | None = None
+
+    @model_validator(mode="after")
+    def exact_outcome(self) -> Self:
+        if (self.state == "hit") != (self.record is not None):
+            raise ValueError("Visual query probe outcome is inconsistent")
+        return self
+
+
+class VisualQueryAdmission(Contract):
+    """Canonical pre-read query admission; this contains no request-body digest."""
+
+    operation_sha: Sha256
+    input_shas: Annotated[tuple[Sha256, ...], Field(min_length=1, max_length=1)]
+    collection_ids: Annotated[
+        frozenset[Identifier], Field(min_length=1, max_length=1000)
+    ]
+    dependency_ids: Annotated[frozenset[Identifier], Field(max_length=2048)] = (
+        frozenset()
+    )
+    policy_epoch: NonNegativeInt

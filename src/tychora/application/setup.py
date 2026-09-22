@@ -15,6 +15,7 @@ from pydantic import Field, model_validator
 
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import Contract, NonEmptyStr, PositiveInt, Sha256
+from tychora.contracts.embeddings import VisualEmbeddingLimits
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.operations import JobHandle
@@ -495,7 +496,12 @@ def load_output_tokenizer(cache_root: Path):
 
 def load_voyage_tokenizer(cache_root: Path, model: str):
     """Load a model-bound Voyage tokenizer only from a verified local inventory."""
-    if model not in ("voyage-context-4", "voyage-code-4", "voyage-code-3"):
+    if model not in (
+        "voyage-context-4",
+        "voyage-code-4",
+        "voyage-code-3",
+        "voyage-multimodal-3.5",
+    ):
         raise TychoraError("INVALID_REQUEST", "Unknown local Voyage tokenizer model")
     assets = _verified_selection(cache_root, model)
     tokenizer = next(
@@ -511,3 +517,61 @@ def load_voyage_tokenizer(cache_root: Path, model: str):
         raise TychoraError(
             "INTEGRITY_ERROR", "Local Voyage tokenizer cannot be loaded"
         ) from None
+
+
+def load_voyage_multimodal_accounting(cache_root: Path) -> VisualEmbeddingLimits:
+    """Read only the pinned local multimodal tokenizer/configuration resources."""
+    try:
+        assets = _verified_selection(cache_root, "voyage-multimodal-3.5")
+        tokenizer = next(
+            asset for asset in assets if Path(asset.path).name == "tokenizer.json"
+        )
+        config = next(
+            asset for asset in assets if Path(asset.path).name == "client_config.json"
+        )
+        values = json.loads((cache_root / config.path).read_bytes())
+        expected = {
+            "multimodal_image_pixels_min",
+            "multimodal_image_pixels_max",
+            "multimodal_image_to_tokens_ratio",
+            "multimodal_video_pixels_min",
+            "multimodal_video_pixels_max",
+            "multimodal_video_to_tokens_ratio",
+        }
+        if (
+            not isinstance(values, dict)
+            or set(values) != expected
+            or any(type(value) is not int or value <= 0 for value in values.values())
+            or values["multimodal_image_pixels_min"] != 50_000
+            or values["multimodal_image_pixels_max"] != 2_000_000
+            or values["multimodal_image_to_tokens_ratio"] != 560
+        ):
+            raise ValueError
+    except (
+        OSError,
+        StopIteration,
+        TychoraError,
+        ValueError,
+        TypeError,
+        json.JSONDecodeError,
+    ):
+        raise TychoraError(
+            "CAPABILITY_MISSING",
+            "Local multimodal accounting resources are unavailable.",
+        ) from None
+    return VisualEmbeddingLimits(
+        accounting_version="voyage-multimodal-accounting-v1",
+        model_revision=config.revision,
+        tokenizer_sha256=tokenizer.sha256,
+        client_config_sha256=config.sha256,
+        accounting_image_pixels_min=values["multimodal_image_pixels_min"],
+        accounting_image_pixels_max=values["multimodal_image_pixels_max"],
+        image_pixels_per_token=values["multimodal_image_to_tokens_ratio"],
+        source_pixels_max=16_000_000,
+        image_encoded_bytes_max=20_000_000,
+        input_tokens_max=32_000,
+        request_assets_max=32,
+        request_tokens_max=100_000,
+        request_wire_bytes_max=64 * 1024 * 1024,
+        decoded_image_bytes_max=48_000_000,
+    )
