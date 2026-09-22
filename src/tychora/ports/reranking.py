@@ -13,10 +13,9 @@ from tychora.contracts.base import (
     PositiveInt,
     Sha256,
 )
+from tychora.contracts.candidates import CandidateKey
 from tychora.contracts.evidence import AnchorRange
 from tychora.ports.execution import ExecutionContext
-
-type CandidateKey = tuple[Literal["unit", "asset"], Identifier]
 
 
 class RankingSpan(Contract):

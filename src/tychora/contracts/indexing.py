@@ -204,6 +204,7 @@ class FamilySpec(Contract):
     normalization: NonEmptyStr
     representation_fingerprint: Sha256
     backend_namespace: NonEmptyStr
+    backend_space: NonEmptyStr = "ip"
 
     @field_validator("creation_uuid")
     @classmethod
