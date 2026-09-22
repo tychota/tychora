@@ -585,7 +585,7 @@ def _validate_definitions(data: dict[str, Any]) -> None:
             if not _strings(relation.get(field)):
                 _invalid("Missing relation endpoint constraints or methods")
         if (
-            set(relation["methods"]) - {"native", "human", "parser_inferred"}
+            set(relation["methods"]) - {"native", "human", "parser_inferred", "model"}
             or relation["default_status"]
             not in ("recorded", "proposed", "confirmed", "rejected")
             or relation["revision_binding"] not in ("explicit", "same_revision")

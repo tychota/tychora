@@ -340,6 +340,17 @@ search_directions=["outgoing"]
         registry.validate_metadata("observation@1", {"unregistered": "value"})
 
 
+def test_custom_predicate_may_explicitly_permit_proposed_model_method(builtin_config):
+    config = changed_config(
+        builtin_config(),
+        lambda data: data["relations"]["supports@1"].update(methods=["human", "model"]),
+    )
+    assert Registry.from_config(config).relations["supports@1"]["methods"] == (
+        "human",
+        "model",
+    )
+
+
 def test_filters_separate_candidate_selectors_from_context_constraints(builtin_config):
     from tychora.configuration.registry import compile_filter
 
