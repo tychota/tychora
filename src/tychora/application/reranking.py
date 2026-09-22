@@ -8,6 +8,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
 from hashlib import sha256
+from pathlib import Path
 from threading import Lock, get_ident
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -39,6 +40,8 @@ from tychora.ports.reranking import RankedIndex, RankingInput, RankingSpan
 from tychora.ports.tokens import TokenCounter
 
 if TYPE_CHECKING:
+    from tokenizers import Tokenizer
+
     from tychora.adapters.voyage.rerank import VoyageReranker
     from tychora.adapters.voyage.runtime import VoyageRuntime
     from tychora.application.owner import WorkspaceOwner
@@ -440,8 +443,8 @@ def attest_ranking_input(
             if anchor.char_end > len(unit.unit.text) or not any(
                 span.role == "match"
                 and span.unit_id == anchor.unit_id
-                and span.char_start < anchor.char_end
-                and anchor.char_start < span.char_end
+                and span.char_start <= anchor.char_start
+                and anchor.char_end <= span.char_end
                 for span in matched
             ):
                 _deny_ranking()
@@ -570,7 +573,50 @@ class OwnerRerankAccess:
         self._on_owner(check, ctx)
 
 
+@dataclass(slots=True)
+class VerifiedRerankCounter:
+    """Count with the model-bound tokenizer loaded from verified local bytes."""
+
+    model: str
+    tokenizer_id: str
+    tokenizer: Tokenizer
+
+    def count(self, text: str) -> int:
+        return len(self.tokenizer.encode(text).ids)
+
+
 async def create_reranker(
+    owner: WorkspaceOwner,
+    *,
+    runtime: VoyageRuntime,
+    scope: RequestScope,
+    cache_root: Path,
+    ctx: ExecutionContext,
+) -> VoyageReranker:
+    """Standard composition requires the exact verified local tokenizer."""
+    from tychora.application.setup import SetupService, load_voyage_tokenizer
+
+    def verified_counter() -> VerifiedRerankCounter:
+        settings = owner.config.values.providers.rerank
+        if settings.model != "rerank-2.5":
+            raise TychoraError("CAPABILITY_MISSING", "Reranker is unavailable.")
+        (asset,) = SetupService(cache_root, offline=True).plan((settings.model,)).assets
+        tokenizer = load_voyage_tokenizer(cache_root, settings.model)
+        return VerifiedRerankCounter(
+            model=settings.model,
+            tokenizer_id=f"{settings.model}:{asset.revision}",
+            tokenizer=tokenizer,
+        )
+
+    if owner.config.values.offline:
+        raise TychoraError("CAPABILITY_MISSING", "Reranker is unavailable.")
+    counter = await owner.run_blocking(verified_counter, ctx)
+    return await _create_injected_reranker(
+        owner, runtime=runtime, scope=scope, counter=counter, ctx=ctx
+    )
+
+
+async def _create_injected_reranker(
     owner: WorkspaceOwner,
     *,
     runtime: VoyageRuntime,
@@ -578,7 +624,7 @@ async def create_reranker(
     counter: TokenCounter,
     ctx: ExecutionContext,
 ) -> VoyageReranker:
-    """Compose a qualified reranker only within the real canonical owner."""
+    """Privileged explicit injection for synthetic tests and trusted extensions."""
     from tychora.adapters.voyage.rerank import VoyageReranker
     from tychora.adapters.voyage.validation import qualify_voyage_rerank
 

@@ -1,7 +1,9 @@
 """Strict synthetic reranker response tests."""
 
+import inspect
 import json
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
@@ -20,6 +22,7 @@ from tychora.adapters.voyage.validation import qualify_voyage_rerank
 from tychora.application.owner import WorkspaceOwner
 from tychora.application.reranking import (
     RetainedReadBudget,
+    _create_injected_reranker,
     attest_ranking_input,
     create_reranker,
     load_retained_representation,
@@ -31,7 +34,7 @@ from tychora.configuration.resolve import resolve_config
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.corpus import AssetRow, LocatorRow, UnitAssetRow
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.evidence import ImageLocator
+from tychora.contracts.evidence import AnchorRange, ImageLocator
 from tychora.contracts.identity import digest
 from tychora.contracts.requests import RequestScope
 from tychora.indexing.representations import prepare_extraction
@@ -278,6 +281,59 @@ def test_exact_span_attestation_derives_complete_canonical_dependencies():
     assert nested.value.code == "FORBIDDEN_SCOPE"
 
 
+def test_anchor_must_be_fully_inside_an_uploaded_match_span():
+    bundle = seed_bundle("An exact selected passage with surrounding source.")
+    prepared = prepare_extraction(bundle)
+    unit = bundle.units[0]
+    span = RankingSpan(
+        unit_id=unit.unit_id,
+        char_start=9,
+        char_end=17,
+        text=unit.text[9:17],
+        dependency_ids=frozenset({bundle.revision.revision_id, unit.unit_id}),
+    )
+    rendered = render_ranking_input(
+        bundle.revision.kind_id, bundle.revision.title, (), (span,)
+    )
+    item = RankingInput(
+        key=("unit", unit.unit_id),
+        text=rendered,
+        source_kind=bundle.revision.kind_id,
+        title=bundle.revision.title,
+        spans=(span,),
+        dependency_ids=span.dependency_ids,
+        token_count=len(rendered),
+        anchors=(
+            AnchorRange(
+                unit_id=unit.unit_id,
+                char_start=0,
+                char_end=len(unit.text),
+                origin="index_window",
+            ),
+        ),
+    )
+    with pytest.raises(TychoraError) as outside:
+        attest_ranking_input(item, bundle, prepared)
+    assert outside.value.code == "FORBIDDEN_SCOPE"
+    contained = item.model_copy(
+        update={
+            "anchors": (
+                AnchorRange(
+                    unit_id=unit.unit_id,
+                    char_start=10,
+                    char_end=15,
+                    origin="index_window",
+                ),
+            )
+        }
+    )
+    assert attest_ranking_input(contained, bundle, prepared) == span.dependency_ids
+
+
+def test_standard_reranker_factory_has_no_counter_injection_parameter():
+    assert "counter" not in inspect.signature(create_reranker).parameters
+
+
 def test_asset_candidate_requires_canonical_source_link_and_asset_dependency():
     bundle = seed_bundle("Exact linked caption.")
     unit = bundle.units[0]
@@ -394,6 +450,176 @@ class RecordingRerankTransport:
         pass
 
 
+def _online_rerank_config_scope(tmp_path: Path):
+    config_path = tmp_path / "workspace.toml"
+    config_path.write_text('schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n')
+    config = resolve_config(config_path, "test", {})
+    settings = RerankerSettings(
+        provider="voyage", model="rerank-2.5", credential_ref="env:VOYAGE_KEY"
+    )
+    providers = config.values.providers.model_copy(update={"rerank": settings})
+    config = config.model_copy(
+        update={
+            "values": config.values.model_copy(
+                update={
+                    "offline": False,
+                    "providers": providers,
+                }
+            )
+        }
+    )
+    scope = RequestScope(
+        principal_id="synthetic-principal",
+        collection_ids=frozenset({COLLECTION}),
+        access_ceiling=2,
+        uses=frozenset({"lookup"}),
+        upload_providers=frozenset({"voyage"}),
+    )
+    return config, scope
+
+
+@pytest.mark.asyncio
+async def test_standard_factory_rejects_absent_or_corrupt_pinned_asset(tmp_path: Path):
+    config, scope = _online_rerank_config_scope(tmp_path)
+    with WorkspaceOwner.open(tmp_path / "workspace", config, scope) as owner:
+        constructed = []
+
+        def transport_factory():
+            constructed.append(True)
+            return RecordingRerankTransport()
+
+        runtime = VoyageRuntime(
+            transport_factory,
+            workspace_id=owner.workspace_id,
+            credential_binding_id="synthetic-credential",
+        )
+        with pytest.raises(TypeError):
+            await cast(Any, create_reranker)(
+                owner,
+                runtime=runtime,
+                scope=scope,
+                cache_root=tmp_path / "model-cache",
+                counter=LengthCounter(),
+                ctx=ExecutionContext(),
+            )
+        cache = tmp_path / "model-cache"
+        with pytest.raises(TychoraError) as absent:
+            await create_reranker(
+                owner,
+                runtime=runtime,
+                scope=scope,
+                cache_root=cache,
+                ctx=ExecutionContext(),
+            )
+        assert absent.value.code == "CAPABILITY_MISSING"
+        (asset,) = SetupService(cache, offline=True).plan(("rerank-2.5",)).assets
+        wrong = cache / asset.path
+        wrong.parent.mkdir(parents=True)
+        wrong.write_bytes(b"wrong tokenizer bytes")
+        with pytest.raises(TychoraError) as corrupt:
+            await create_reranker(
+                owner,
+                runtime=runtime,
+                scope=scope,
+                cache_root=cache,
+                ctx=ExecutionContext(),
+            )
+        assert corrupt.value.code == "CAPABILITY_MISSING"
+        assert constructed == []
+
+
+@pytest.mark.asyncio
+async def test_standard_factory_dispatches_with_verified_local_tokenizer(
+    tmp_path: Path,
+):
+    cache = Path(__file__).parents[2] / (
+        ".superpowers/sdd/2026-09-11-tychora-engine/task-22-qualification-cache"
+    )
+    (asset,) = SetupService(cache, offline=True).plan(("rerank-2.5",)).assets
+    if not (cache / asset.path).is_file():
+        pytest.skip("Optional pinned public tokenizer fixture is absent")
+    config, scope = _online_rerank_config_scope(tmp_path)
+    with WorkspaceOwner.open(tmp_path / "workspace", config, scope) as owner:
+
+        def install():
+            bundle = seed_bundle("Exact synthetic source span.")
+            for ref in bundle.artifacts:
+                with reader().open_verified(ref) as stream:
+                    owner.artifacts.put_stream(stream, ref.media_type)
+            created = owner.db.execute("SELECT created_at FROM workspaces").fetchone()[
+                0
+            ]
+            bundle = bundle.model_copy(
+                update={
+                    "workspace": bundle.workspace.model_copy(
+                        update={
+                            "workspace_id": owner.workspace_id,
+                            "created_at": created,
+                        }
+                    ),
+                    "collection": bundle.collection.model_copy(
+                        update={
+                            "workspace_id": owner.workspace_id,
+                            "policy_json": FrozenJsonMap(
+                                {"schema_version": 1, "upload_providers": ["voyage"]}
+                            ),
+                        }
+                    ),
+                }
+            )
+            owner.store.commit_extraction(bundle)
+            return bundle
+
+        bundle = await owner.run_blocking(install, ExecutionContext())
+        unit = bundle.units[0]
+        deps = frozenset({unit.unit_id, bundle.revision.revision_id})
+        span = RankingSpan(
+            unit_id=unit.unit_id,
+            char_start=0,
+            char_end=len(unit.text),
+            text=unit.text,
+            dependency_ids=deps,
+        )
+        text = render_ranking_input(
+            bundle.revision.kind_id, bundle.revision.title, (), (span,)
+        )
+        tokenizer = load_voyage_tokenizer(cache, "rerank-2.5")
+        item = RankingInput(
+            key=("unit", unit.unit_id),
+            text=text,
+            source_kind=bundle.revision.kind_id,
+            title=bundle.revision.title,
+            spans=(span,),
+            dependency_ids=deps,
+            token_count=len(tokenizer.encode(text).ids),
+        )
+        transport = RecordingRerankTransport()
+        runtime = VoyageRuntime(
+            lambda: transport,
+            workspace_id=owner.workspace_id,
+            credential_binding_id="synthetic-credential",
+        )
+        ctx = ExecutionContext()
+        reranker = await create_reranker(
+            owner, runtime=runtime, scope=scope, cache_root=cache, ctx=ctx
+        )
+        assert reranker._counter.count(text) == item.token_count
+        assert item.token_count != len(text)
+        ranked = await rank_with_owner(
+            owner, reranker, "Find the café notes.", (item,), ctx
+        )
+        assert [(result.index, result.score) for result in ranked] == [(0, 0.75)]
+        assert transport.calls[0][0] == "/v1/rerank"
+        assert transport.calls[0][1]["documents"] == [text]
+        wrong_count = item.model_copy(update={"token_count": len(text)})
+        with pytest.raises(TychoraError) as count_error:
+            await rank_with_owner(
+                owner, reranker, "Find the café notes.", (wrong_count,), ctx
+            )
+        assert count_error.value.code == "INVALID_REQUEST"
+        assert len(transport.calls) == 1
+
+
 @pytest.mark.asyncio
 async def test_owner_rerank_dispatches_only_attested_exact_text(tmp_path: Path):
     config_path = tmp_path / "workspace.toml"
@@ -480,7 +706,7 @@ async def test_owner_rerank_dispatches_only_attested_exact_text(tmp_path: Path):
             credential_binding_id="synthetic-credential",
         )
         ctx = ExecutionContext()
-        reranker = await create_reranker(
+        reranker = await _create_injected_reranker(
             owner, runtime=runtime, scope=scope, counter=LengthCounter(), ctx=ctx
         )
         result = await rank_with_owner(owner, reranker, "query", (item,), ctx)
@@ -578,8 +804,13 @@ async def test_offline_retains_explicit_remote_identity_without_runtime_construc
     )
     with WorkspaceOwner.open(tmp_path / "workspace", config, scope) as owner:
         constructed = []
+
+        def transport_factory():
+            constructed.append(True)
+            return RecordingRerankTransport()
+
         runtime = VoyageRuntime(
-            lambda: constructed.append(True),
+            transport_factory,
             workspace_id=owner.workspace_id,
             credential_binding_id="synthetic-credential",
         )
@@ -588,7 +819,7 @@ async def test_offline_retains_explicit_remote_identity_without_runtime_construc
                 owner,
                 runtime=runtime,
                 scope=scope,
-                counter=LengthCounter(),
+                cache_root=tmp_path,
                 ctx=ExecutionContext(),
             )
         assert error.value.code == "CAPABILITY_MISSING"
