@@ -173,6 +173,24 @@ class ExtractionBundle(Contract):
     code_files: tuple[CodeFileDescriptor, ...] = ()
 
 
+class RetainedRepresentationRows(Contract):
+    """Only canonical rows required to revalidate text ownership after storage."""
+
+    source: SourceRow
+    artifacts: tuple[ArtifactRef, ...]
+    revision: RevisionRow
+    revision_artifacts: tuple[RevisionArtifactRow, ...]
+    extraction: ExtractionRow
+    units: tuple[EvidenceUnit, ...]
+    locators: tuple[LocatorRow, ...]
+    assets: tuple[AssetRow, ...]
+    unit_assets: tuple[UnitAssetRow, ...]
+    proxies: tuple[AssetProxyRow, ...]
+    records: tuple[StructuredRecordRow, ...]
+    identifiers: tuple[IdentifierRow, ...]
+    code_files: tuple[CodeFileDescriptor, ...] = ()
+
+
 class ReviewTarget(Contract):
     revision_id: Identifier | None = None
     unit_id: Identifier | None = None

@@ -9,7 +9,30 @@ from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.embeddings import EmbeddingCapabilities, VisualEmbeddingLimits
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import digest, space_id
+from tychora.ports.reranking import RerankCapabilities
 from tychora.ports.tokens import TokenCounter
+
+
+def qualify_voyage_rerank(model: str, tokenizer_id: str) -> RerankCapabilities:
+    """Only the independently pinned stable model has qualified public limits."""
+    revision = "5cf631991ecd82024c3dc64d8e34de27318d5b9e"
+    if model != "rerank-2.5" or tokenizer_id != f"{model}:{revision}":
+        raise TychoraError(
+            "CAPABILITY_MISSING", "Configured reranker capability is unavailable."
+        )
+    return RerankCapabilities(
+        provider="voyage",
+        endpoint="https://api.voyageai.com/v1/rerank",
+        model=model,
+        model_revision=revision,
+        tokenizer_id=tokenizer_id,
+        tokenizer_sha256="c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
+        max_query_tokens=2000,
+        max_representation_tokens=1200,
+        max_candidates=64,
+        max_pair_tokens=32000,
+        max_aggregate_tokens=600000,
+    )
 
 
 def qualify_voyage_capabilities(

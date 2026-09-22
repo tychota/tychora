@@ -49,9 +49,28 @@
       "license": "No license declared (factual model accounting metadata)",
       "notice_url": "https://huggingface.co/voyageai/voyage-multimodal-3.5/blob/e33df0507cb152ea6fc576e5d96d9c51443e4191/client_config.json",
       "model_card_url": "https://huggingface.co/voyageai/voyage-multimodal-3.5"
+    },
+    {
+      "selection": "rerank-2.5",
+      "attribution": "Tokenizer bytes verified against the distinct rerank-2.5 publisher revision and identical to the Apache-2.0 voyage-context-4 tokenizer source",
+      "license": "Apache-2.0 for the sourced tokenizer asset only",
+      "notice_url": "https://huggingface.co/voyageai/voyage-context-4/blob/8ca946072a18e398cd61f2ad0243b56d0350b1db/tokenizer.json",
+      "model_card_url": "https://huggingface.co/voyageai/rerank-2.5"
     }
   ],
   "assets": [
+    {
+      "id": "rerank-2.5-tokenizer",
+      "selection": "rerank-2.5",
+      "path": "rerank-2.5/5cf631991ecd82024c3dc64d8e34de27318d5b9e/tokenizer.json",
+      "sha256": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
+      "size_bytes": 7031645,
+      "url": "https://huggingface.co/voyageai/rerank-2.5/resolve/5cf631991ecd82024c3dc64d8e34de27318d5b9e/tokenizer.json",
+      "license": "Apache-2.0 source tokenizer asset only",
+      "owner": "voyageai==0.5.0",
+      "revision": "5cf631991ecd82024c3dc64d8e34de27318d5b9e",
+      "notice_url": "https://huggingface.co/voyageai/voyage-context-4/blob/8ca946072a18e398cd61f2ad0243b56d0350b1db/tokenizer.json"
+    },
     {
       "id": "voyage-code-3-tokenizer",
       "selection": "voyage-code-3",

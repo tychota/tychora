@@ -13,6 +13,7 @@ from tychora.contracts.corpus import (
     AssetProxyRow,
     AssetRow,
     ExtractionBundle,
+    RetainedRepresentationRows,
     StructuredRecordRow,
 )
 from tychora.contracts.documents import DocumentSeparator, DocumentSourcePart
@@ -29,6 +30,8 @@ from tychora.contracts.indexing import (
     PreparedExtraction,
     RepresentationUnit,
 )
+
+type RepresentationRows = ExtractionBundle | RetainedRepresentationRows
 
 
 @dataclass(frozen=True)
@@ -59,7 +62,7 @@ class _LocalCodeMap:
 
 
 def _document_facts(
-    bundle: ExtractionBundle, unit: EvidenceUnit
+    bundle: RepresentationRows, unit: EvidenceUnit
 ) -> tuple[DocumentSourcePart, ...]:
     refs = cast(tuple[str, ...], unit.attributes.get("source_refs", ()))
     if not refs or len(set(refs)) != len(refs):
@@ -118,7 +121,9 @@ def _document_facts(
     return parts
 
 
-def _code_files(bundle: ExtractionBundle) -> dict[tuple[str, str], CodeFileDescriptor]:
+def _code_files(
+    bundle: RepresentationRows,
+) -> dict[tuple[str, str], CodeFileDescriptor]:
     files: dict[tuple[str, str], CodeFileDescriptor] = {}
     artifacts = {item.sha256 for item in bundle.artifacts}
     for item in bundle.code_files:
@@ -159,7 +164,7 @@ def _local_code_map(text: str, encoding: str) -> tuple[int, _LocalCodeMap]:
 
 
 def _retained_code_files(
-    bundle: ExtractionBundle, units: Mapping[str, EvidenceUnit]
+    bundle: RepresentationRows, units: Mapping[str, EvidenceUnit]
 ) -> dict[tuple[str, str], _RetainedCodeFile]:
     """Bind post-hydration code units to their persisted file containers."""
     artifacts = {item.sha256 for item in bundle.artifacts}
@@ -243,7 +248,7 @@ def _retained_code_files(
 
 
 def _validate_locator(
-    bundle: ExtractionBundle,
+    bundle: RepresentationRows,
     unit: EvidenceUnit,
     locator: TextLocator | CodeLocator,
     code_files: Mapping[tuple[str, str], CodeFileDescriptor],
@@ -381,7 +386,7 @@ def _retained_span_matches(
 
 
 def _validate_retained_code_records(
-    bundle: ExtractionBundle,
+    bundle: RepresentationRows,
     units: Mapping[str, EvidenceUnit],
     files: Mapping[tuple[str, str], _RetainedCodeFile],
     code_maps: Mapping[str, _LocalCodeMap],
@@ -491,7 +496,7 @@ def _validate_retained_code_records(
                 raise ValueError("Retained code context dependencies differ")
 
 
-def _bundle_index(bundle: ExtractionBundle) -> _RetainedIndex:
+def _bundle_index(bundle: RepresentationRows) -> _RetainedIndex:
     units = {unit.unit_id: unit for unit in bundle.units}
     if (
         len(units) != len(bundle.units)
@@ -740,7 +745,7 @@ def _partition(
 
 
 def _representation(
-    bundle: ExtractionBundle,
+    bundle: RepresentationRows,
     unit: EvidenceUnit,
     ownership: tuple[OwnedInterval, ...],
 ) -> RepresentationUnit:
@@ -769,7 +774,7 @@ def _representation(
 
 
 def _prepare_source_unit(
-    bundle: ExtractionBundle,
+    bundle: RepresentationRows,
     index: _RetainedIndex,
     unit: EvidenceUnit,
 ) -> RepresentationUnit:
@@ -809,7 +814,7 @@ def _proxy_locator(asset: AssetRow) -> ImageLocator:
 
 
 def _prepare_proxy_unit(
-    bundle: ExtractionBundle,
+    bundle: RepresentationRows,
     index: _RetainedIndex,
     unit: EvidenceUnit,
     sources: Mapping[str, RepresentationUnit],
@@ -891,7 +896,7 @@ def _prepare_proxy_unit(
     return _representation(bundle, unit, ownership)
 
 
-def prepare_extraction(bundle: ExtractionBundle) -> PreparedExtraction:
+def prepare_extraction(bundle: RepresentationRows) -> PreparedExtraction:
     """Validate and index retained ownership once for all extraction units."""
     index = _bundle_index(bundle)
     sources = {

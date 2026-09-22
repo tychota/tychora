@@ -88,9 +88,31 @@ class EmbeddingSettings(Contract):
     max_multimodal_tokens: Annotated[int, Field(gt=0, le=100000)] = 100000
 
 
+class RerankerSettings(Contract):
+    """Explicit remote rerank selection; offline profiles retain this identity."""
+
+    provider: Literal["disabled", "voyage"] = "disabled"
+    model: Literal["rerank-2.5", "rerank-3"] | None = None
+    credential_ref: (
+        Annotated[str, Field(pattern=r"^(env|secret):[A-Za-z_][A-Za-z0-9_.-]*$")] | None
+    ) = None
+    truncation: Literal[False] = False
+
+    @model_validator(mode="after")
+    def selected_model(self) -> Self:
+        if self.provider == "voyage" and (
+            self.model is None or self.credential_ref is None
+        ):
+            raise ValueError(
+                "Enabled reranker requires a model and credential reference"
+            )
+        return self
+
+
 class ProviderSettings(Contract):
     text: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     image: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
+    rerank: RerankerSettings = Field(default_factory=RerankerSettings)
 
 
 class VectorSettings(Contract):

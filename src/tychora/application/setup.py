@@ -501,6 +501,7 @@ def load_voyage_tokenizer(cache_root: Path, model: str):
         "voyage-code-4",
         "voyage-code-3",
         "voyage-multimodal-3.5",
+        "rerank-2.5",
     ):
         raise TychoraError("INVALID_REQUEST", "Unknown local Voyage tokenizer model")
     assets = _verified_selection(cache_root, model)
