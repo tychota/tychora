@@ -34,6 +34,7 @@ _DDL = (
     "CREATE REL TABLE Object(FROM RelationAssertion TO Entity, MANY_ONE)",
     "CREATE REL TABLE SupportedBy(FROM RelationAssertion TO Evidence)",
 )
+_MAX_NATIVE_OPERATIONS = 128
 
 
 class LadybugGraphStore:
@@ -101,6 +102,8 @@ class LadybugGraphStore:
     def _transaction(
         self, operations: list[tuple[str, dict]], ctx: ExecutionContext
     ) -> None:
+        if len(operations) > _MAX_NATIVE_OPERATIONS:
+            self._fail("Native graph transaction exceeds operation bound")
         self._connection.execute("BEGIN TRANSACTION")
         try:
             for query, params in operations:
@@ -120,6 +123,8 @@ class LadybugGraphStore:
             encoded = spec.model_dump(mode="json")
             if state is not None and state["spec"] != encoded:
                 self._fail("Graph generation specification differs")
+            if state is not None and state.get("dropping", False):
+                self._fail("Graph generation removal is in progress")
             if state is None:
                 self._write_state(
                     spec.generation_id, {"spec": encoded, "receipt": None}
@@ -147,6 +152,8 @@ class LadybugGraphStore:
         state = self._read_state(generation_id)
         if state is None:
             raise TychoraError("NOT_FOUND", "Graph generation is unavailable")
+        if state.get("dropping", False):
+            self._fail("Graph generation removal is in progress")
         if state["receipt"] is not None:
             self._fail("Sealed graph generation is immutable")
         for assertion in assertions:
@@ -296,14 +303,16 @@ class LadybugGraphStore:
     ) -> None:
         operations = []
         for unit in units:
+            ctx.checkpoint()
             pk = self._pk(gid, unit.unit_id)
             binding = canonical[unit.unit_id]
             content_hash = digest("graph-evidence-v1", binding.model_dump(mode="json"))
             row = self._one(
-                "MATCH (e:Evidence) WHERE e.pk=$pk RETURN e.content_hash", {"pk": pk}
+                "MATCH (e:Evidence) WHERE e.pk=$pk RETURN e.content_hash,e.generation_id",
+                {"pk": pk},
             )
             if row is not None:
-                if row[0] != content_hash:
+                if row != [content_hash, gid]:
                     self._fail("Graph evidence retry differs")
                 continue
             operations.append(
@@ -322,8 +331,9 @@ class LadybugGraphStore:
                     },
                 )
             )
-        if operations:
-            self._transaction(operations, ctx)
+        for start in range(0, len(operations), _MAX_NATIVE_OPERATIONS):
+            ctx.checkpoint()
+            self._transaction(operations[start : start + _MAX_NATIVE_OPERATIONS], ctx)
 
     def _upsert_assertions(
         self,
@@ -338,6 +348,7 @@ class LadybugGraphStore:
         pending_entities: set[str] = set()
         pending_grounding: set[str] = set()
         for assertion in assertions:
+            ctx.checkpoint()
             for endpoint in (assertion.subject, assertion.object):
                 identity = (endpoint.kind, endpoint.entity_id, endpoint.unit_id)
                 previous = entities.setdefault(endpoint.entity_id, identity)
@@ -346,9 +357,10 @@ class LadybugGraphStore:
                 pk = self._pk(gid, endpoint.entity_id)
                 content_hash = digest("graph-entity-v1", identity)
                 row = self._one(
-                    "MATCH (n:Entity) WHERE n.pk=$pk RETURN n.content_hash", {"pk": pk}
+                    "MATCH (n:Entity) WHERE n.pk=$pk RETURN n.content_hash,n.generation_id",
+                    {"pk": pk},
                 )
-                if row is not None and row[0] != content_hash:
+                if row is not None and row != [content_hash, gid]:
                     self._fail("Graph entity retry differs")
                 if row is None and endpoint.entity_id not in pending_entities:
                     pending_entities.add(endpoint.entity_id)
@@ -366,10 +378,10 @@ class LadybugGraphStore:
                         )
                     )
                 grounded = self._rows(
-                    "MATCH (n:Entity)-[:GroundedIn]->(e:Evidence) WHERE n.pk=$pk RETURN e.evidence_id",
+                    "MATCH (n:Entity)-[:GroundedIn]->(e:Evidence) WHERE n.pk=$pk RETURN e.pk,e.generation_id",
                     {"pk": pk},
                 )
-                if grounded and grounded != [[endpoint.unit_id]]:
+                if grounded and grounded != [[self._pk(gid, endpoint.unit_id), gid]]:
                     self._fail("Graph entity grounding retry differs")
                 if not grounded and endpoint.entity_id not in pending_grounding:
                     pending_grounding.add(endpoint.entity_id)
@@ -383,11 +395,11 @@ class LadybugGraphStore:
             pk = self._pk(gid, assertion.assertion_id)
             content_hash = digest("graph-assertion-v1", binding.model_dump(mode="json"))
             row = self._one(
-                "MATCH (a:RelationAssertion) WHERE a.pk=$pk RETURN a.content_hash",
+                "MATCH (a:RelationAssertion) WHERE a.pk=$pk RETURN a.content_hash,a.generation_id",
                 {"pk": pk},
             )
             if row is not None:
-                if row[0] != content_hash:
+                if row != [content_hash, gid]:
                     self._fail("Graph assertion retry differs")
             else:
                 nodes.append(
@@ -414,10 +426,10 @@ class LadybugGraphStore:
                 ("Object", assertion.object),
             ):
                 actual = self._rows(
-                    f"MATCH (a:RelationAssertion)-[:{table}]->(n:Entity) WHERE a.pk=$pk RETURN n.entity_id",
+                    f"MATCH (a:RelationAssertion)-[:{table}]->(n:Entity) WHERE a.pk=$pk RETURN n.pk,n.generation_id",
                     {"pk": pk},
                 )
-                if actual and actual != [[endpoint.entity_id]]:
+                if actual and actual != [[self._pk(gid, endpoint.entity_id), gid]]:
                     self._fail("Graph assertion endpoint retry differs")
                 if not actual:
                     edges.append(
@@ -426,14 +438,23 @@ class LadybugGraphStore:
                             {"a": pk, "n": self._pk(gid, endpoint.entity_id)},
                         )
                     )
+            present = self._rows(
+                "MATCH (a:RelationAssertion)-[:SupportedBy]->(e:Evidence) WHERE a.pk=$pk RETURN e.evidence_id,e.pk,e.generation_id",
+                {"pk": pk},
+            )
+            seen_supports: set[str] = set()
+            for evidence_id, evidence_pk, evidence_generation in present:
+                if (
+                    evidence_id not in assertion.required_support_ids
+                    or evidence_id in seen_supports
+                    or evidence_pk != self._pk(gid, evidence_id)
+                    or evidence_generation != gid
+                ):
+                    self._fail("Graph support retry differs")
+                seen_supports.add(evidence_id)
             for support in sorted(assertion.required_support_ids):
-                actual = self._rows(
-                    "MATCH (a:RelationAssertion)-[:SupportedBy]->(e:Evidence) WHERE a.pk=$pk AND e.evidence_id=$id RETURN e.evidence_id",
-                    {"pk": pk, "id": support},
-                )
-                if len(actual) > 1:
-                    self._fail("Graph support retry has duplicate edges")
-                if not actual:
+                ctx.checkpoint()
+                if support not in seen_supports:
                     edges.append(
                         (
                             "MATCH (a:RelationAssertion),(e:Evidence) WHERE a.pk=$a AND e.pk=$e CREATE (a)-[:SupportedBy]->(e)",
@@ -441,10 +462,12 @@ class LadybugGraphStore:
                         )
                     )
         # Native relationship writes follow node commits in bounded transactions.
-        for start in range(0, len(nodes), 128):
-            self._transaction(nodes[start : start + 128], ctx)
-        for start in range(0, len(edges), 128):
-            self._transaction(edges[start : start + 128], ctx)
+        for start in range(0, len(nodes), _MAX_NATIVE_OPERATIONS):
+            ctx.checkpoint()
+            self._transaction(nodes[start : start + _MAX_NATIVE_OPERATIONS], ctx)
+        for start in range(0, len(edges), _MAX_NATIVE_OPERATIONS):
+            ctx.checkpoint()
+            self._transaction(edges[start : start + _MAX_NATIVE_OPERATIONS], ctx)
 
     def seal_generation(
         self, generation_id: str, expected: GraphManifest, ctx: ExecutionContext
@@ -454,6 +477,8 @@ class LadybugGraphStore:
             state = self._read_state(generation_id)
             if state is None:
                 raise TychoraError("NOT_FOUND", "Graph generation is unavailable")
+            if state.get("dropping", False):
+                self._fail("Graph generation removal is in progress")
             build = self._build
             if build is None or build.spec.generation_id != generation_id:
                 self._fail("Graph canonical build input is unavailable")
@@ -474,10 +499,11 @@ class LadybugGraphStore:
                 ctx.checkpoint()
                 unit = binding.unit
                 row = self._one(
-                    "MATCH (e:Evidence) WHERE e.pk=$pk RETURN e.revision_id,e.extraction_id,e.locator_json,e.content_hash",
+                    "MATCH (e:Evidence) WHERE e.pk=$pk RETURN e.generation_id,e.revision_id,e.extraction_id,e.locator_json,e.content_hash",
                     {"pk": self._pk(generation_id, unit.unit_id)},
                 )
                 expected_row = [
+                    generation_id,
                     binding.revision_id,
                     unit.extraction_id,
                     canonical_bytes(
@@ -492,10 +518,11 @@ class LadybugGraphStore:
                 assertion = binding.assertion
                 pk = self._pk(generation_id, assertion.assertion_id)
                 row = self._one(
-                    "MATCH (a:RelationAssertion) WHERE a.pk=$pk RETURN a.predicate,a.status,a.confidence,a.method,a.origin_evidence_id,a.required_support_ids,a.artifact_hash,a.artifact_record_id,a.content_hash",
+                    "MATCH (a:RelationAssertion) WHERE a.pk=$pk RETURN a.generation_id,a.predicate,a.status,a.confidence,a.method,a.origin_evidence_id,a.required_support_ids,a.artifact_hash,a.artifact_record_id,a.content_hash",
                     {"pk": pk},
                 )
                 if row != [
+                    generation_id,
                     assertion.predicate,
                     binding.status_at_watermark or assertion.status,
                     assertion.confidence,
@@ -512,16 +539,25 @@ class LadybugGraphStore:
                     ("Object", assertion.object),
                 ):
                     rows = self._rows(
-                        f"MATCH (a:RelationAssertion)-[:{table}]->(n:Entity) WHERE a.pk=$pk RETURN n.entity_id",
+                        f"MATCH (a:RelationAssertion)-[:{table}]->(n:Entity) WHERE a.pk=$pk RETURN n.pk,n.generation_id",
                         {"pk": pk},
                     )
-                    if rows != [[endpoint.entity_id]]:
+                    if rows != [
+                        [self._pk(generation_id, endpoint.entity_id), generation_id]
+                    ]:
                         self._fail("Graph assertion endpoint differs")
                 rows = self._rows(
-                    "MATCH (a:RelationAssertion)-[:SupportedBy]->(e:Evidence) WHERE a.pk=$pk RETURN e.evidence_id ORDER BY e.evidence_id",
+                    "MATCH (a:RelationAssertion)-[:SupportedBy]->(e:Evidence) WHERE a.pk=$pk RETURN e.pk,e.generation_id ORDER BY e.pk",
                     {"pk": pk},
                 )
-                if [row[0] for row in rows] != sorted(assertion.required_support_ids):
+                expected_supports = sorted(
+                    (
+                        [self._pk(generation_id, support), generation_id]
+                        for support in assertion.required_support_ids
+                    ),
+                    key=lambda value: value[0],
+                )
+                if rows != expected_supports:
                     self._fail("Graph support edges differ from required list")
             for endpoint in {
                 endpoint.entity_id: endpoint
@@ -529,10 +565,11 @@ class LadybugGraphStore:
                 for endpoint in (binding.assertion.subject, binding.assertion.object)
             }.values():
                 row = self._one(
-                    "MATCH (n:Entity) WHERE n.pk=$pk RETURN n.kind,n.display_name,n.content_hash",
+                    "MATCH (n:Entity) WHERE n.pk=$pk RETURN n.generation_id,n.kind,n.display_name,n.content_hash",
                     {"pk": self._pk(generation_id, endpoint.entity_id)},
                 )
                 if row != [
+                    generation_id,
                     endpoint.kind,
                     endpoint.entity_id,
                     digest(
@@ -542,10 +579,10 @@ class LadybugGraphStore:
                 ]:
                     self._fail("Graph entity content differs")
                 rows = self._rows(
-                    "MATCH (n:Entity)-[:GroundedIn]->(e:Evidence) WHERE n.pk=$pk RETURN e.evidence_id",
+                    "MATCH (n:Entity)-[:GroundedIn]->(e:Evidence) WHERE n.pk=$pk RETURN e.pk,e.generation_id",
                     {"pk": self._pk(generation_id, endpoint.entity_id)},
                 )
-                if rows != [[endpoint.unit_id]]:
+                if rows != [[self._pk(generation_id, endpoint.unit_id), generation_id]]:
                     self._fail("Graph entity grounding differs")
             receipt = GraphBatchReceipt(
                 generation_id=generation_id,
@@ -571,19 +608,32 @@ class LadybugGraphStore:
 
     def drop_generation(self, generation_id: str, ctx: ExecutionContext) -> None:
         with self._lock:
-            if self._read_state(generation_id) is None:
+            state = self._read_state(generation_id)
+            if state is None:
                 return
+            ctx.checkpoint()
+            if not state.get("dropping", False):
+                self._write_state(generation_id, {**state, "dropping": True})
             for table in ("RelationAssertion", "Entity", "Evidence"):
-                ctx.checkpoint()
-                self._transaction(
-                    [
-                        (
-                            f"MATCH (n:{table}) WHERE n.generation_id=$gid DETACH DELETE n",
-                            {"gid": generation_id},
-                        )
-                    ],
-                    ctx,
-                )
+                while True:
+                    ctx.checkpoint()
+                    pks = self._rows(
+                        f"MATCH (n:{table}) WHERE n.generation_id=$gid "
+                        f"RETURN n.pk ORDER BY n.pk LIMIT {_MAX_NATIVE_OPERATIONS}",
+                        {"gid": generation_id},
+                    )
+                    if not pks:
+                        break
+                    self._transaction(
+                        [
+                            (
+                                f"MATCH (n:{table}) WHERE n.pk=$pk AND n.generation_id=$gid DETACH DELETE n",
+                                {"pk": row[0], "gid": generation_id},
+                            )
+                            for row in pks
+                        ],
+                        ctx,
+                    )
             self._state_path(generation_id).unlink(missing_ok=True)
             directory = os.open(self._state_dir, os.O_RDONLY | os.O_DIRECTORY)
             try:

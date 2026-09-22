@@ -4,6 +4,7 @@ import io
 
 import pytest
 
+import tychora.adapters.sqlite.graph as sqlite_graph
 from tests.helpers.corpus import artifact, reader, registry, seed_bundle
 from tychora.adapters.files.cas import LocalArtifacts
 from tychora.adapters.ladybug.generation import LadybugGraphStore
@@ -630,3 +631,224 @@ def test_failed_native_transaction_rolls_back_partial_generation_write(tmp_path)
     assert graph._connection.execute(
         "MATCH (e:Evidence) RETURN count(e)"
     ).get_all() == [[0]]
+
+
+def test_evidence_upsert_chunks_more_than_128_native_operations(tmp_path):
+    units = tuple(_unit(f"unit-{index}") for index in range(260))
+    spec = GraphGenerationSpec(
+        generation_id="large",
+        family_id=digest("family"),
+        config_sha=digest("config"),
+        registry_digest=digest("registry"),
+        workspace_id="workspace",
+        decision_watermark=0,
+        memberships=(
+            GraphExtraction(
+                extraction_id="extraction",
+                revision_id="revision",
+                unit_ids=tuple(unit.unit_id for unit in units),
+            ),
+        ),
+    )
+    build = GraphBuildInput(
+        spec=spec,
+        units=tuple(
+            GraphUnitBinding(unit=unit, revision_id="revision") for unit in units
+        ),
+        assertions=(),
+        relations=FrozenJsonMap(),
+    )
+    graph = LadybugGraphStore(tmp_path / "graph", build=build)
+    generation = graph.begin_generation(spec)
+    lengths = []
+    original = graph._transaction
+
+    def capture(operations, ctx):
+        lengths.append(len(operations))
+        return original(operations, ctx)
+
+    graph._transaction = capture
+    graph.upsert_batch(generation, (), units, ExecutionContext())
+    assert lengths == [128, 128, 4]
+    assert graph._connection.execute(
+        "MATCH (e:Evidence) RETURN count(e)"
+    ).get_all() == [[260]]
+
+
+def test_interrupted_drop_keeps_dropping_state_and_resumes_in_bounded_chunks(tmp_path):
+    from threading import Event
+
+    graph = LadybugGraphStore(tmp_path / "graph")
+    spec = GraphGenerationSpec(
+        generation_id="large",
+        family_id=digest("family"),
+        config_sha=digest("config"),
+        registry_digest=digest("registry"),
+        workspace_id="workspace",
+        decision_watermark=0,
+    )
+    generation = graph.begin_generation(spec)
+    for index in range(260):
+        graph._connection.execute(
+            "CREATE (:Evidence {pk:$pk,generation_id:$gid,evidence_id:$id})",
+            {
+                "pk": graph._pk(generation, f"unit-{index}"),
+                "gid": generation,
+                "id": f"unit-{index}",
+            },
+        )
+    cancel = Event()
+    ctx = ExecutionContext(cancelled=cancel)
+    lengths = []
+    original = graph._transaction
+
+    def capture(operations, execution):
+        lengths.append(len(operations))
+        result = original(operations, execution)
+        cancel.set()
+        return result
+
+    graph._transaction = capture
+    with pytest.raises(TychoraError) as err:
+        graph.drop_generation(generation, ctx)
+    assert err.value.code == "CANCELLED"
+    assert lengths == [128]
+    assert graph._read_state(generation)["dropping"] is True
+    assert graph._connection.execute(
+        "MATCH (e:Evidence) RETURN count(e)"
+    ).get_all() == [[132]]
+    with pytest.raises(TychoraError, match="removal is in progress"):
+        graph.begin_generation(spec)
+    with pytest.raises(TychoraError, match="removal is in progress"):
+        graph.upsert_batch(generation, (), (), ExecutionContext())
+    graph.close()
+    graph = LadybugGraphStore(tmp_path / "graph")
+    graph.drop_generation(generation, ExecutionContext())
+    assert graph._read_state(generation) is None
+    assert graph._connection.execute(
+        "MATCH (e:Evidence) RETURN count(e)"
+    ).get_all() == [[0]]
+
+
+@pytest.mark.parametrize("table", ("GroundedIn", "Subject", "Object", "SupportedBy"))
+def test_cross_generation_target_is_rejected_on_retry_and_seal(tmp_path, table):
+    spec, build, units, assertion = _build(tmp_path)
+    graph = LadybugGraphStore(tmp_path / "graph", build=build)
+    generation = graph.begin_generation(spec)
+    graph.upsert_batch(generation, (assertion,), units, ExecutionContext())
+    if table == "GroundedIn":
+        source_label, source_id, target_label, target_id = (
+            "Entity",
+            "subject",
+            "Evidence",
+            "a",
+        )
+    elif table == "SupportedBy":
+        source_label, source_id, target_label, target_id = (
+            "RelationAssertion",
+            assertion.assertion_id,
+            "Evidence",
+            "a",
+        )
+    else:
+        source_label, source_id, target_label, target_id = (
+            "RelationAssertion",
+            assertion.assertion_id,
+            "Entity",
+            ("subject" if table == "Subject" else "object"),
+        )
+    external_field = "evidence_id" if target_label == "Evidence" else "entity_id"
+    graph._connection.execute(
+        f"CREATE (:{target_label} {{pk:$pk,generation_id:'other',{external_field}:$id}})",
+        {"pk": graph._pk("other", target_id), "id": target_id},
+    )
+    source_pk = graph._pk(generation, source_id)
+    graph._connection.execute(
+        f"MATCH (s:{source_label})-[r:{table}]->(t:{target_label}) WHERE s.pk=$pk AND t.pk=$target DELETE r",
+        {"pk": source_pk, "target": graph._pk(generation, target_id)},
+    )
+    graph._connection.execute(
+        f"MATCH (s:{source_label}),(t:{target_label}) WHERE s.pk=$source AND t.pk=$target CREATE (s)-[:{table}]->(t)",
+        {"source": source_pk, "target": graph._pk("other", target_id)},
+    )
+    with pytest.raises(TychoraError) as retry:
+        graph.upsert_batch(generation, (assertion,), units, ExecutionContext())
+    assert retry.value.code == "INTEGRITY_ERROR"
+    with pytest.raises(TychoraError) as seal:
+        graph.seal_generation(
+            generation, GraphManifest.from_build(build), ExecutionContext()
+        )
+    assert seal.value.code == "INTEGRITY_ERROR"
+
+
+def test_decision_materialization_cap_counts_rows_across_roots(tmp_path, monkeypatch):
+    monkeypatch.setattr(sqlite_graph, "_MAX_DECISIONS", 3)
+    db = open_corpus(tmp_path / "corpus.sqlite3", initialize=True)
+    corpus = CorpusStore(db, registry=registry(), artifacts=reader())
+    members = []
+    workspace_id = ""
+    for index in range(2):
+        bundle = seed_bundle(f"Source {index}.", source_key=f"source-{index}.md")
+        workspace_id = bundle.workspace.workspace_id
+        unit = bundle.units[0]
+        assertion = RelationshipAssertion.from_observation(
+            AssertionObservation(
+                observation_key=f"observation-{index}",
+                revision_id=bundle.revision.revision_id,
+                extraction_id=bundle.extraction.extraction_id,
+                predicate="supports@1",
+                subject=RelationshipEndpoint(
+                    entity_id=f"subject-{index}", unit_id=unit.unit_id, kind="manual@1"
+                ),
+                object=RelationshipEndpoint(
+                    entity_id=f"object-{index}", unit_id=unit.unit_id, kind="manual@1"
+                ),
+                origin_unit_id=unit.unit_id,
+                origin_locator=unit.locators[0],
+                required_support_ids=frozenset({unit.unit_id}),
+                method="native",
+                status="recorded",
+                confidence=1.0,
+                derivation_fingerprint=digest("fixture", index),
+            )
+        )
+        root = artifact(encode_assertions((assertion,)), "application/x-ndjson")
+        bundle = bundle.model_copy(
+            update={
+                "artifacts": (*bundle.artifacts, root),
+                "extraction": bundle.extraction.model_copy(
+                    update={"assertions_artifact_sha": root.sha256}
+                ),
+            }
+        )
+        corpus.commit_extraction(bundle)
+        for _ in range(2):
+            corpus.record_assertion_decision(
+                assertion.assertion_id,
+                root.sha256,
+                assertion.assertion_id,
+                "confirmed",
+                "reviewer",
+            )
+        members.append(
+            GraphExtraction(
+                extraction_id=bundle.extraction.extraction_id,
+                revision_id=bundle.revision.revision_id,
+                assertion_root=root,
+                unit_ids=(unit.unit_id,),
+            )
+        )
+    spec = GraphGenerationSpec(
+        generation_id="multi",
+        family_id=digest("family"),
+        config_sha=digest("config"),
+        registry_digest=registry().registry_digest,
+        workspace_id=workspace_id,
+        decision_watermark=4,
+        memberships=tuple(members),
+    )
+    with pytest.raises(TychoraError) as err:
+        read_graph_build(corpus, spec, ExecutionContext())
+    assert err.value.code == "BUDGET_TOO_SMALL"
+    assert not db.in_transaction
+    db.close()

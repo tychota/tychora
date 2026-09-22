@@ -50,6 +50,7 @@ def read_graph_build(
         if spec.decision_watermark > maximum:
             _fail("Graph decision watermark exceeds canonical history")
         unit_count = 0
+        decision_rows = 0
         for member in spec.memberships:
             ctx.checkpoint()
             row = db.execute(
@@ -113,11 +114,12 @@ def read_graph_build(
                     "WHERE provenance_artifact_sha=? AND decision_id<=?",
                     (root.sha256, spec.decision_watermark),
                 ).fetchone()[0]
-                if count + len(decisions) > _MAX_DECISIONS:
+                if decision_rows + count > _MAX_DECISIONS:
                     raise TychoraError(
                         "BUDGET_TOO_SMALL",
                         "Graph decision materialization limit exceeded",
                     )
+                decision_rows += count
                 rows = db.execute(
                     "SELECT assertion_id,provenance_artifact_sha,provenance_record_id,state,decision_id,actor_id "
                     "FROM assertion_decisions WHERE provenance_artifact_sha=? "
