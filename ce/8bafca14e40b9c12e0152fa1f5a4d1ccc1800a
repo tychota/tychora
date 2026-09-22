@@ -1,0 +1,77 @@
+src/tychora/contracts/embeddings.py
+  s_35b641b930a96d::t_1766692d28bdfb 21-22,44-45,51-52,54,66-72,75,77-86,89-90,93,95-124,128-198,202-214,218-246
+  s_35b641b930a96d::t_545d1bb69009e4 73-74,76,87-88,94
+  s_35b641b930a96d::t_139931bc578461 10,91-92,125-127,199-201,215-217,329-359
+  s_35b641b930a96d::t_843d5b7fc16671 247-248
+src/tychora/ports/embeddings.py
+  s_35b641b930a96d::t_139931bc578461 3-4,10-12,15,33-83
+src/tychora/application/visual.py
+  s_35b641b930a96d::t_139931bc578461 1-16,18-24,26-112,126-335
+  s_35b641b930a96d::t_00c915172397d4 17,25,116-122,124-125
+  s_35b641b930a96d::t_88d47cafbb9113 113-115,123
+  s_35b641b930a96d::t_3ded1503f7d118 336-338
+src/tychora/resources/model-assets.json
+  s_35b641b930a96d::t_165ab8a6d0b979 45-51,67-90
+src/tychora/adapters/voyage/text.py
+  s_35b641b930a96d::t_d4bd28ea2bac3f 9
+  s_35b641b930a96d::t_ed65e645d03c23 10
+  s_35b641b930a96d::t_139931bc578461 5,11-16
+  s_35b641b930a96d::t_8a43512d33313c 17,32-33,111,407
+src/tychora/application/owner.py
+  s_35b641b930a96d::t_139931bc578461 18,28-34,46-50,495,526-636,647-654,1001,1129,1206,1229,1231
+  s_35b641b930a96d::t_f9d0adae64eac4 1230
+src/tychora/adapters/voyage/runtime.py
+  s_35b641b930a96d::t_8fd7e4e6e514ec 1-94
+src/tychora/adapters/voyage/request_types.py
+  s_35b641b930a96d::t_8fd7e4e6e514ec 1-18
+src/tychora/adapters/voyage/request.py
+  s_35b641b930a96d::t_ed65e645d03c23 14
+  s_35b641b930a96d::t_8fd7e4e6e514ec 1-13,15-123
+  s_35b641b930a96d::t_8d5466926dd1c3 124-125
+src/tychora/adapters/voyage/validation.py
+  s_35b641b930a96d::t_139931bc578461 107
+  s_35b641b930a96d::t_2376322d04ae2f 9,72-80,83-106,108-125
+  s_35b641b930a96d::t_545d1bb69009e4 81-82
+  s_35b641b930a96d::t_e31e038dabf6aa 126-127
+src/tychora/application/setup.py
+  s_35b641b930a96d::t_62234faab28751 499-504,530,559-560
+  s_35b641b930a96d::t_1534c8eb69e32b 18,520-529,531-549,558,561-577
+  s_35b641b930a96d::t_5bd25ce336e6d8 550-557
+src/tychora/adapters/voyage/visual.py
+  s_35b641b930a96d::t_139931bc578461 1-20,22-28,30-31,33-243,245-311
+  s_35b641b930a96d::t_7daa44293e088f 21,29,32,244
+tests/providers/test_visual.py
+  s_35b641b930a96d::t_01af4572269e96 3,8,282-288,669-726
+  s_35b641b930a96d::t_22571723af2a7a 57-58,102-103,110-112,120-122,136-147,149-151,153-155,197,209-210,212-216,300-303,323-325,327-330,370-373,400-402,740-745
+  s_35b641b930a96d::t_c87ad3ce835217 567-575,583-586
+  s_35b641b930a96d::t_79f2e4c5d68775 1-2,4-7,9-17,22-24,31-56,59-97,101,104-109,113-119,123-124,159-175,179-196,198-208,211,217-231,233-262,266-281,289-299,304-322,326,331-339,341-347,355,357-360,376
+  s_35b641b930a96d::t_eadd6dd7071ff9 18-21,263-265
+  s_35b641b930a96d::t_10e3b9599eeba3 232,428,442,479,730,739,746
+  s_35b641b930a96d::t_ef25daa74f287c 377-399,403-427,429-441,443-478,480-527,729,731-738
+  s_35b641b930a96d::t_4f0bc9066af28e 25-30,98-100,125-135,148,152,156-158,176-178,340,348-354,356,361-369,374-375
+  s_35b641b930a96d::t_de892ffe90685f 528-566,587-668,727-728
+  s_35b641b930a96d::t_d009802bd33e2a 576-582
+src/tychora/adapters/voyage/response.py
+  s_35b641b930a96d::t_139931bc578461 1-73
+src/tychora/ports/execution.py
+  s_35b641b930a96d::t_139931bc578461 60,67-70
+tests/qualification/test_visual_live.py
+  s_35b641b930a96d::t_41547991b5d74d 1-120
+  s_35b641b930a96d::t_799fbf5e27fc03 121-122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "ce8bafca14e40b9c12e0152fa1f5a4d1ccc1800a",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
