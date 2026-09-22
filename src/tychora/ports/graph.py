@@ -4,7 +4,11 @@ from typing import Protocol
 
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.graph import (
+    AssertionPage,
+    EligibilityView,
     GraphBatchReceipt,
+    GraphBudget,
+    GraphCandidates,
     GraphGenerationSpec,
     GraphManifest,
 )
@@ -28,3 +32,28 @@ class GraphStore(Protocol):
     ) -> GraphBatchReceipt: ...
 
     def drop_generation(self, generation_id: str, ctx: ExecutionContext) -> None: ...
+
+    def expand(
+        self,
+        view: EligibilityView,
+        seed_unit_ids: tuple[str, ...],
+        limits: GraphBudget,
+        ctx: ExecutionContext,
+    ) -> GraphCandidates: ...
+
+    def structural_context(
+        self,
+        view: EligibilityView,
+        seed_unit_ids: tuple[str, ...],
+        limits: GraphBudget,
+        ctx: ExecutionContext,
+    ) -> GraphCandidates: ...
+
+    def get_assertions(
+        self,
+        view: EligibilityView,
+        selected_unit_ids: tuple[str, ...],
+        predicates: tuple[str, ...],
+        limits: GraphBudget,
+        ctx: ExecutionContext,
+    ) -> AssertionPage: ...

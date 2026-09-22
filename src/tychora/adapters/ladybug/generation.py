@@ -14,16 +14,23 @@ from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.graph import (
+    AssertionPage,
+    EligibilityView,
     GraphAssertionBinding,
     GraphBatchReceipt,
+    GraphBudget,
     GraphBuildInput,
+    GraphCandidates,
     GraphGenerationSpec,
     GraphManifest,
+    GraphTraversalPolicy,
     GraphUnitBinding,
 )
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.relationships import RelationshipAssertion
 from tychora.ports.execution import ExecutionContext
+
+from .traversal import GraphTraversal
 
 _DDL = (
     "CREATE NODE TABLE Entity(pk STRING PRIMARY KEY, generation_id STRING, entity_id STRING, kind STRING, display_name STRING, content_hash STRING)",
@@ -41,7 +48,11 @@ class LadybugGraphStore:
     """Own one Database and issue writes through its native connections."""
 
     def __init__(
-        self, path: str | Path, *, build: GraphBuildInput | None = None
+        self,
+        path: str | Path,
+        *,
+        build: GraphBuildInput | None = None,
+        traversal_policy: GraphTraversalPolicy | None = None,
     ) -> None:
         self.path = Path(path)
         self._state_dir = self.path.parent / (self.path.name + ".generations")
@@ -55,6 +66,51 @@ class LadybugGraphStore:
                 self._connection.execute(statement)
         self._build = build
         self._lock = RLock()
+        self._traversal = (
+            GraphTraversal(self, traversal_policy) if traversal_policy else None
+        )
+
+    def expand(
+        self,
+        view: EligibilityView,
+        seed_unit_ids: tuple[str, ...],
+        limits: GraphBudget,
+        ctx: ExecutionContext,
+    ) -> GraphCandidates:
+        if self._traversal is None:
+            raise TychoraError(
+                "INDEX_INCOMPLETE", "Graph traversal policy is unavailable"
+            )
+        return self._traversal.expand(view, seed_unit_ids, limits, ctx)
+
+    def structural_context(
+        self,
+        view: EligibilityView,
+        seed_unit_ids: tuple[str, ...],
+        limits: GraphBudget,
+        ctx: ExecutionContext,
+    ) -> GraphCandidates:
+        if self._traversal is None:
+            raise TychoraError(
+                "INDEX_INCOMPLETE", "Graph traversal policy is unavailable"
+            )
+        return self._traversal.structural_context(view, seed_unit_ids, limits, ctx)
+
+    def get_assertions(
+        self,
+        view: EligibilityView,
+        selected_unit_ids: tuple[str, ...],
+        predicates: tuple[str, ...],
+        limits: GraphBudget,
+        ctx: ExecutionContext,
+    ) -> AssertionPage:
+        if self._traversal is None:
+            raise TychoraError(
+                "INDEX_INCOMPLETE", "Graph traversal policy is unavailable"
+            )
+        return self._traversal.get_assertions(
+            view, selected_unit_ids, predicates, limits, ctx
+        )
 
     def close(self) -> None:
         self._connection.close()

@@ -1,5 +1,6 @@
-"""Immutable graph generation membership and receipt contracts."""
+"""Graph generation, eligibility and bounded traversal contracts."""
 
+from dataclasses import dataclass, field
 from typing import Literal, Self
 
 from pydantic import model_validator
@@ -146,3 +147,170 @@ class GraphBatchReceipt(Contract):
     entity_count: NonNegativeInt
     evidence_count: NonNegativeInt
     assertion_count: NonNegativeInt
+
+
+class EligibilityView(Contract):
+    """Pinned request eligibility; graph bindings are absent together when disabled."""
+
+    snapshot_id: Identifier
+    policy_epoch: NonNegativeInt
+    scope_digest: Sha256
+    eligibility_policy_digest: Sha256
+    eligibility_request_digest: Sha256
+    selected_batch_ids: tuple[Identifier, ...]
+    revision_ids: frozenset[Identifier]
+    source_unit_ids: frozenset[Identifier]
+    context_unit_ids: frozenset[Identifier]
+    structural_unit_ids: frozenset[Identifier]
+    proxy_unit_ids: frozenset[Identifier]
+    chunk_ids: frozenset[Identifier]
+    asset_ids: frozenset[Identifier]
+    vector_record_ids: frozenset[Identifier]
+    blocked_assertion_ids: frozenset[Sha256]
+    graph_generation_id: Identifier | None = None
+    graph_family_id: Sha256 | None = None
+    graph_config_sha: Sha256 | None = None
+    graph_decision_watermark: NonNegativeInt | None = None
+    graph_manifest_digest: Sha256 | None = None
+
+    @model_validator(mode="after")
+    def graph_binding(self) -> Self:
+        fields = (
+            self.graph_generation_id,
+            self.graph_family_id,
+            self.graph_config_sha,
+            self.graph_decision_watermark,
+            self.graph_manifest_digest,
+        )
+        if any(value is None for value in fields) and any(
+            value is not None for value in fields
+        ):
+            raise ValueError("Graph ready bindings must be present or absent together")
+        if not self.source_unit_ids <= self.context_unit_ids:
+            raise ValueError("Candidate sources must be context eligible")
+        if self.context_unit_ids & self.structural_unit_ids:
+            raise ValueError("Structural and source context must be separate")
+        if (
+            self.graph_generation_id is not None
+            and self.graph_generation_id not in self.selected_batch_ids
+        ):
+            raise ValueError("Selected graph generation is absent from ready batches")
+        return self
+
+    @property
+    def graph_eligible_unit_ids(self) -> frozenset[str]:
+        return self.context_unit_ids | self.structural_unit_ids
+
+
+@dataclass
+class GraphBudget:
+    """Shared, request-local mutable graph accounting."""
+
+    max_seeds: int = 5
+    max_new_units: int = 32
+    max_rows: int = 2000
+    max_inspection_edges: int = 100
+    max_inspection_hops: int = 2
+    inspected_rows: int = 0
+    new_unit_ids: set[str] = field(default_factory=set)
+    inspected_edges: int = 0
+    seed_unit_ids: set[str] = field(default_factory=set)
+    completed_strategies: set[Literal["semantic", "structural"]] = field(
+        default_factory=set
+    )
+    strategy_counts: dict[Literal["semantic", "structural"], int] = field(
+        default_factory=dict
+    )
+    strategy_unit_ids: dict[Literal["semantic", "structural"], set[str]] = field(
+        default_factory=dict
+    )
+    view_digest: str | None = None
+
+    def __post_init__(self) -> None:
+        for name, cap in (
+            ("max_seeds", 5),
+            ("max_new_units", 32),
+            ("max_rows", 2000),
+            ("max_inspection_edges", 100),
+            ("max_inspection_hops", 2),
+        ):
+            value = getattr(self, name)
+            if type(value) is not int or not 0 <= value <= cap:
+                raise ValueError(f"{name} exceeds the graph request bound")
+        if (
+            self.inspected_rows < 0
+            or self.inspected_rows > self.max_rows
+            or self.inspected_edges < 0
+            or self.inspected_edges > self.max_inspection_edges
+            or len(self.new_unit_ids) > self.max_new_units
+            or len(self.seed_unit_ids) > self.max_seeds
+        ):
+            raise ValueError("Graph work counters exceed the request bound")
+
+
+class GraphPredicatePolicy(Contract):
+    predicate: Identifier
+    directions: tuple[Literal["outgoing", "incoming"], ...]
+    statuses: tuple[Literal["recorded", "proposed", "confirmed", "rejected"], ...] = (
+        "recorded",
+        "confirmed",
+    )
+
+
+class GraphTraversalPolicy(Contract):
+    predicates: tuple[GraphPredicatePolicy, ...]
+    inspection_predicates: tuple[GraphPredicatePolicy, ...] = ()
+    structural: Literal["none", "code_context@1"] = "none"
+    semantic: bool = False
+    table_continuations: Literal["derived", "confirmed_only", "none"] = "derived"
+
+    @model_validator(mode="after")
+    def normal_search_stays_recorded_or_confirmed(self) -> Self:
+        if any(
+            set(item.statuses) - {"recorded", "confirmed"} for item in self.predicates
+        ):
+            raise ValueError(
+                "Normal graph traversal cannot use proposed or rejected assertions"
+            )
+        if any(
+            not item.directions or not item.statuses
+            for item in (*self.predicates, *self.inspection_predicates)
+        ):
+            raise ValueError("Graph predicate requires direction and status")
+        return self
+
+
+class GraphPath(Contract):
+    assertion_ids: tuple[Sha256, ...]
+    required_support_ids: frozenset[Identifier]
+    predicate: Identifier
+    status: Literal["recorded", "proposed", "confirmed", "rejected"]
+    confidence: float
+    source_unit_id: Identifier
+    target_unit_id: Identifier
+    assertion_occurrences: int = 1
+
+
+class GraphCandidate(Contract):
+    unit_id: Identifier
+    paths: tuple[GraphPath, ...]
+    omitted_path_count: NonNegativeInt = 0
+    reasons: tuple[NonEmptyStr, ...]
+    strategy: Literal["semantic", "structural"]
+    source_order_distance: NonNegativeInt | None = None
+
+
+class GraphCandidates(Contract):
+    candidates: tuple[GraphCandidate, ...] = ()
+    enrichments: tuple[GraphCandidate, ...] = ()
+    inspected_rows: NonNegativeInt = 0
+    truncation: Literal["candidate_limit", "edge_work_limit", "deadline"] | None = None
+    exhausted: bool = True
+
+
+class AssertionPage(Contract):
+    assertions: tuple[GraphPath, ...] = ()
+    inspected_edges: NonNegativeInt = 0
+    next_offset: NonNegativeInt | None = None
+    truncation: Literal["edge_limit", "edge_work_limit", "deadline"] | None = None
+    exhausted: bool = True
