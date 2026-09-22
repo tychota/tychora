@@ -1,0 +1,27 @@
+src/tychora/adapters/chroma/index.py
+  s_35b641b930a96d::t_d3d4464e7a3291 15,35
+  s_35b641b930a96d::t_5b8313732a56de 36-51,109,126,142-147,154,159,167-175,201,315-327,330
+  s_35b641b930a96d::t_97f59b8b905daf 328-329
+tests/qualification/test_chroma.py
+  s_35b641b930a96d::t_d4c479e9cd0306 5-9,110-125
+tests/storage/test_vector_contract.py
+  s_35b641b930a96d::t_992e9eeb311486 6,10,236-239,246,252
+  s_35b641b930a96d::t_d4c479e9cd0306 198-235,240-245,247-251,253-258
+  s_35b641b930a96d::t_a46e5a5cf2ea56 259-266
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "8957f5b73d0504dcf8b7831bef286463785371ca",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
