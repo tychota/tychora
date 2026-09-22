@@ -1,0 +1,23 @@
+tests/providers/test_visual.py
+  s_35b641b930a96d::t_7700f89165cf85 473
+src/tychora/adapters/voyage/response.py
+  s_35b641b930a96d::t_e58c342f9a5053 65-69
+tests/providers/test_text.py
+  s_35b641b930a96d::t_aa9218fddfc383 595-626
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "2f97d43bebb14dff5ea5766a055d6e04352a2c7b",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
