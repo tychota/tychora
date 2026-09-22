@@ -592,6 +592,38 @@ def test_context_query_response_requires_one_complete_nested_vector(data, valid)
     assert records[1].values == pytest.approx((0.0, 1.0))
 
 
+def test_contextual_raw_response_rejects_integer_beyond_float_range():
+    group = _group(
+        model="voyage-context-4",
+        contextualization="joint",
+        dimensions=2,
+        windows=("window",),
+    )
+    body = json.dumps(
+        {
+            "data": [
+                {
+                    "index": 0,
+                    "data": [
+                        {"index": 0, "embedding": [1.0, 0.0]},
+                        {"index": 1, "embedding": [10**400, 0.0]},
+                    ],
+                }
+            ]
+        }
+    ).encode()
+
+    with pytest.raises(TychoraError) as invalid:
+        map_contextual_response(
+            (group,),
+            body,
+            _capabilities(
+                model="voyage-context-4", contextualization="joint", dimensions=2
+            ),
+        )
+    assert invalid.value.code == "PROVIDER_FAILURE"
+
+
 @pytest.mark.asyncio
 async def test_source_free_query_has_a_separate_canonical_collection_route(tmp_path):
     settings_path = tmp_path / "workspace.toml"

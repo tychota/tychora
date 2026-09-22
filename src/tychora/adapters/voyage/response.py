@@ -62,7 +62,11 @@ def _stored_vector(entry: Mapping[str, Any], dimension: int) -> bytes:
         type(value) not in (int, float) for value in values
     ):
         _invalid_mapping()
-    return normalize_vector(tuple(float(value) for value in values), dimension)
+    try:
+        converted = tuple(float(value) for value in values)
+    except OverflowError:
+        _invalid_mapping()
+    return normalize_vector(converted, dimension)
 
 
 def _flat_stored_response(

@@ -470,6 +470,7 @@ async def test_retry_checks_policy_epoch_before_second_wire_attempt(visual_case)
         {"data": [{"index": 1, "embedding": [1.0] * 1024}]},
         {"data": [{"index": 0, "embedding": [1.0] * 1023}]},
         {"data": [{"index": 0, "embedding": [float("nan")] * 1024}]},
+        {"data": [{"index": 0, "embedding": [10**400] + [0.0] * 1023}]},
     ],
 )
 async def test_raw_response_mapping_rejects_invalid_index_dimension_or_values(
