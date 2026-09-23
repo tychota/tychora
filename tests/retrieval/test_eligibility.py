@@ -103,7 +103,7 @@ def _revision(**changes):
     return fact.__class__(**{**fact.__dict__, **changes})
 
 
-def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=()):
+def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images=()):
     artifact = ArtifactRef(
         sha256=digest("artifact"),
         size_bytes=1,
@@ -180,6 +180,51 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=()):
         slots.append(
             PublicationSlot(slot="text", family=text_family, batches=(text_batch,))
         )
+    if images:
+        image_family = IndexFamily(
+            family_id=digest("image-family"),
+            channel="image",
+            backend="chroma",
+            config_sha=digest("image-config"),
+            config_json={},
+            backend_namespace="image-fixture",
+            created_at="2025-01-01",
+        )
+        bindings = tuple(
+            VectorRecordBinding(
+                record_id=record_id,
+                asset_id=asset_id,
+                input_sha=digest("image-input", record_id),
+                value_sha=digest("image-value", record_id),
+                embedding_cache=artifact,
+            )
+            for record_id, asset_id in images
+        )
+        receipt = BatchReceipt(
+            family_id=image_family.family_id,
+            namespace_hash=digest("image-namespace"),
+            config_sha=image_family.config_sha,
+            records=tuple(
+                IndexRecordDigest(
+                    record_id=b.record_id, input_sha=b.input_sha, value_sha=b.value_sha
+                )
+                for b in bindings
+            ),
+            digest=digest("image-receipt"),
+            count=len(bindings),
+        )
+        image_batch = PublicationBatch(
+            batch_id="image-batch",
+            family_id=image_family.family_id,
+            extraction_id="extraction",
+            input_manifest=artifact,
+            expected_count=len(bindings),
+            receipt=receipt,
+            vector_records=bindings,
+        )
+        slots.append(
+            PublicationSlot(slot="image", family=image_family, batches=(image_batch,))
+        )
     return SnapshotView(
         snapshot_id="snapshot",
         workspace_id="workspace",
@@ -243,6 +288,7 @@ def _facts(
                 "revision",
                 "accepted",
                 frozenset({"revision", "asset", "child"}),
+                source_owner_ids=frozenset({"child"}),
             ),
         ),
     )
@@ -447,6 +493,191 @@ def test_candidate_filter_preserves_allowed_context(config, scope):
     )
     assert view.source_unit_ids == frozenset({"child"})
     assert {"parent", "child"} <= view.context_unit_ids
+
+
+def test_candidate_filter_limits_proxy_lexical_without_removing_context(config, scope):
+    from tychora.contracts.requests import EqFilter
+
+    original = _facts()
+    facts = EligibilityFacts(
+        **{
+            **original.__dict__,
+            "units": tuple(
+                UnitFact(
+                    **{**unit.__dict__, "facets": (("code.symbol_kind", "function"),)}
+                )
+                if unit.unit_id == "proxy"
+                else unit
+                for unit in original.units
+            ),
+            "chunks": (
+                *original.chunks,
+                ChunkFact(
+                    "proxy-chunk",
+                    "proxy",
+                    frozenset({"revision", "proxy", "child", "asset"}),
+                ),
+            ),
+        }
+    )
+    compiler = EligibilityCompiler(_Reader(config, facts))
+    snapshot = _snapshot(config, chunks=("child-chunk", "proxy-chunk"))
+    matching = compiler.compile_eligibility(
+        snapshot,
+        scope,
+        _request(filters=EqFilter(field="code.symbol_kind", value="function")),
+        config,
+    )
+    nonmatching = compiler.compile_eligibility(
+        snapshot,
+        scope,
+        _request(filters=EqFilter(field="code.symbol_kind", value="class")),
+        config,
+    )
+    assert "proxy-chunk" in matching.chunk_ids
+    assert "proxy-chunk" not in nonmatching.chunk_ids
+    assert "proxy" in matching.context_unit_ids & nonmatching.context_unit_ids
+    assert "asset" in matching.asset_ids & nonmatching.asset_ids
+
+
+def test_candidate_filter_limits_image_vector_per_complete_source_owner(config, scope):
+    from tychora.contracts.requests import AndFilter, EqFilter
+
+    original = _facts()
+    facts = EligibilityFacts(
+        **{
+            **original.__dict__,
+            "units": tuple(
+                UnitFact(
+                    **{
+                        **unit.__dict__,
+                        "facets": (
+                            ("code.symbol_kind", "function"),
+                            ("code.qualified_name", "example.function"),
+                        ),
+                    }
+                )
+                if unit.unit_id == "child"
+                else unit
+                for unit in original.units
+            ),
+            "vectors": (
+                VectorFact(
+                    "image-vector",
+                    asset_id="asset",
+                    dependency_ids=frozenset({"revision", "asset", "child"}),
+                ),
+            ),
+        }
+    )
+    compiler = EligibilityCompiler(_Reader(config, facts))
+    snapshot = _snapshot(config, images=(("image-vector", "asset"),))
+    matching = compiler.compile_eligibility(
+        snapshot,
+        scope,
+        _request(
+            filters=AndFilter(
+                children=(
+                    EqFilter(field="code.symbol_kind", value="function"),
+                    EqFilter(field="code.qualified_name", value="example.function"),
+                )
+            )
+        ),
+        config,
+    )
+    nonmatching = compiler.compile_eligibility(
+        snapshot,
+        scope,
+        _request(filters=EqFilter(field="code.symbol_kind", value="class")),
+        config,
+    )
+    assert "image-vector" in matching.vector_record_ids
+    assert "image-vector" not in nonmatching.vector_record_ids
+    assert "asset" in matching.asset_ids & nonmatching.asset_ids
+    assert "child" in matching.context_unit_ids & nonmatching.context_unit_ids
+
+
+def test_image_candidate_requires_one_owner_to_match_entire_expression(config, scope):
+    from tychora.contracts.requests import AndFilter, EqFilter
+
+    query = _request(
+        filters=AndFilter(
+            children=(
+                EqFilter(field="code.symbol_kind", value="function"),
+                EqFilter(field="code.qualified_name", value="example.function"),
+            )
+        )
+    )
+    snapshot = _snapshot(config, chunks=(), images=(("image-vector", "asset"),))
+
+    def view(left_facets, right_facets, source_owners=frozenset({"left", "right"})):
+        facts = EligibilityFacts(
+            policy_epoch=1,
+            revisions=(_revision(),),
+            units=(
+                UnitFact(
+                    "left",
+                    "revision",
+                    "extraction",
+                    "paragraph",
+                    "accepted",
+                    True,
+                    frozenset({"revision", "left"}),
+                    facets=left_facets,
+                ),
+                UnitFact(
+                    "right",
+                    "revision",
+                    "extraction",
+                    "paragraph",
+                    "accepted",
+                    True,
+                    frozenset({"revision", "right"}),
+                    facets=right_facets,
+                ),
+            ),
+            chunks=(),
+            assets=(
+                AssetFact(
+                    "asset",
+                    "revision",
+                    "accepted",
+                    frozenset({"revision", "asset", "left", "right"}),
+                    source_owner_ids=source_owners,
+                ),
+            ),
+            vectors=(
+                VectorFact(
+                    "image-vector",
+                    asset_id="asset",
+                    dependency_ids=frozenset({"revision", "asset", "left", "right"}),
+                ),
+            ),
+        )
+        return EligibilityCompiler(_Reader(config, facts)).compile_eligibility(
+            snapshot, scope, query, config
+        )
+
+    whole = view(
+        (("code.symbol_kind", "function"), ("code.qualified_name", "example.function")),
+        (),
+    )
+    split = view(
+        (("code.symbol_kind", "function"),),
+        (("code.qualified_name", "example.function"),),
+    )
+    ownerless = view(
+        (("code.symbol_kind", "function"), ("code.qualified_name", "example.function")),
+        (),
+        frozenset(),
+    )
+    assert whole.vector_record_ids == frozenset({"image-vector"})
+    assert split.vector_record_ids == frozenset()
+    assert ownerless.vector_record_ids == frozenset()
+    assert (
+        whole.context_unit_ids == split.context_unit_ids == frozenset({"left", "right"})
+    )
+    assert whole.asset_ids == split.asset_ids == frozenset({"asset"})
 
 
 @pytest.mark.asyncio

@@ -163,6 +163,7 @@ class AssetFact:
     revision_id: str
     review_state: str
     dependency_ids: frozenset[str]
+    source_owner_ids: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -472,25 +473,27 @@ class EligibilityCompiler:
             for uid in eligible_units
             if units[uid].proxy_asset_id is None and units[uid].citable
         )
-        source_units = frozenset(
-            uid
-            for uid in context_source_units
-            if units[uid].proxy_asset_id is None
-            and units[uid].citable
-            and (
+
+        def candidate_matches_unit(item: UnitFact) -> bool:
+            return (
                 selected_filter is None
                 or selected_filter.matched_candidates is None
                 or _filter_matches(
                     selected_filter.matched_candidates,
                     registry,
-                    revision_facets.get(units[uid].revision_id, {}),
-                    dict(units[uid].facets),
+                    revision_facets.get(item.revision_id, {}),
+                    dict(item.facets),
                     include_global=request.include_global,
-                    explicit_global=revisions_by_id[
-                        units[uid].revision_id
-                    ].global_scope,
+                    explicit_global=revisions_by_id[item.revision_id].global_scope,
                 )
             )
+
+        source_units = frozenset(
+            uid
+            for uid in context_source_units
+            if units[uid].proxy_asset_id is None
+            and units[uid].citable
+            and candidate_matches_unit(units[uid])
         )
         structural_units = frozenset(
             uid
@@ -499,6 +502,22 @@ class EligibilityCompiler:
         )
         proxy_units = frozenset(
             uid for uid in eligible_units if units[uid].proxy_asset_id is not None
+        )
+        candidate_proxy_units = frozenset(
+            uid for uid in proxy_units if candidate_matches_unit(units[uid])
+        )
+        candidate_assets = frozenset(
+            aid
+            for aid in eligible_assets
+            if selected_filter is None
+            or selected_filter.matched_candidates is None
+            or any(
+                owner in eligible_units
+                and owner in assets[aid].dependency_ids
+                and units[owner].proxy_asset_id is None
+                and candidate_matches_unit(units[owner])
+                for owner in assets[aid].source_owner_ids
+            )
         )
         context_units = context_source_units | proxy_units
         extraction_ids = {
@@ -526,7 +545,7 @@ class EligibilityCompiler:
             item.chunk_id
             for item in facts.chunks
             if item.chunk_id in selected_chunks
-            if item.unit_id in source_units | proxy_units
+            if item.unit_id in source_units | candidate_proxy_units
             and _allowed_dependencies(
                 item.dependency_ids, revision_ids, eligible_units, eligible_assets
             )
@@ -535,7 +554,7 @@ class EligibilityCompiler:
             item.record_id
             for item in facts.vectors
             if item.record_id in selected_vectors
-            and (item.chunk_id in eligible_chunks or item.asset_id in eligible_assets)
+            and (item.chunk_id in eligible_chunks or item.asset_id in candidate_assets)
             and item.dependency_ids
             and _allowed_dependencies(
                 item.dependency_ids, revision_ids, eligible_units, eligible_assets

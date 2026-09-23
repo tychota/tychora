@@ -378,12 +378,15 @@ def read_eligibility_facts(
                     )
                 )
             asset_owners: dict[str, set[str]] = defaultdict(set)
-            for uid, aid in db.execute(
-                "SELECT ua.unit_id,ua.asset_id FROM unit_assets ua JOIN evidence_units u USING(unit_id) "
+            source_asset_owners: dict[str, set[str]] = defaultdict(set)
+            for uid, aid, role in db.execute(
+                "SELECT ua.unit_id,ua.asset_id,ua.role FROM unit_assets ua JOIN evidence_units u USING(unit_id) "
                 "WHERE u.extraction_id=?",
                 (member.extraction_id,),
             ):
                 asset_owners[aid].add(uid)
+                if role == "source":
+                    source_asset_owners[aid].add(uid)
             for (aid,) in db.execute(
                 "SELECT asset_id FROM assets WHERE extraction_id=?",
                 (member.extraction_id,),
@@ -397,6 +400,7 @@ def read_eligibility_facts(
                         member.revision_id,
                         store.review_state(ReviewTarget(asset_id=aid)),
                         frozenset(deps),
+                        source_owner_ids=frozenset(source_asset_owners.get(aid, ())),
                     )
                 )
             unit_ordinals = {
