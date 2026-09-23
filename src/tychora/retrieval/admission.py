@@ -22,6 +22,10 @@ class LanePolicy:
             self.order + self.required
         ) <= set(self.known):
             raise ValueError("Lane policy includes an unregistered or repeated lane")
+        if len(self.required) != len(set(self.required)) or not set(
+            self.required
+        ) <= set(self.order):
+            raise ValueError("Every required lane must occur once in configured order")
 
 
 @dataclass(frozen=True)
@@ -111,29 +115,33 @@ def admit(
         requested = lane_policy.order
     else:
         requested = ()
-    missing_reasons: dict[str, str] = {}
     for lane in requested:
         if any(lanes[item.key] == lane for item in selected):
             continue
-        matching = next((item.key for item in ranked if lanes[item.key] == lane), None)
-        if matching is None:
-            missing_reasons[lane] = "no_eligible_candidate"
-        elif not take(matching):
-            if len(selected) >= limit:
-                reason = "assessment_limit"
-            elif matching in exact_set:
-                reason = "exact_reservation_cap"
-            elif matching in graph_only:
-                reason = "graph_reservation_cap"
-            else:
-                reason = "assessment_limit"
-            missing_reasons[lane] = reason
+        for item in ranked:
+            if lanes[item.key] == lane and take(item.key):
+                break
     for item in ranked:
         take(item.key)
     coverage: dict[str, int] = {lane: 0 for lane in lane_policy.order}
     for item in selected:
         lane = lanes[item.key]
         coverage[lane] = coverage.get(lane, 0) + 1
+    missing_reasons: dict[str, str] = {}
+    for lane in requested:
+        if coverage.get(lane, 0):
+            continue
+        matching = next((item.key for item in ranked if lanes[item.key] == lane), None)
+        if matching is None:
+            missing_reasons[lane] = "no_eligible_candidate"
+        elif len(selected) >= limit:
+            missing_reasons[lane] = "assessment_limit"
+        elif matching in exact_set:
+            missing_reasons[lane] = "exact_reservation_cap"
+        elif matching in graph_only:
+            missing_reasons[lane] = "graph_reservation_cap"
+        else:
+            missing_reasons[lane] = "assessment_limit"
     reservations = {
         "exact": sum(item.key in exact_set for item in selected),
         "graph": sum(item.key in graph_only for item in selected),
