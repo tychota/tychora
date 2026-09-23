@@ -1,0 +1,21 @@
+src/tychora/retrieval/admission.py
+  s_35b641b930a96d::t_eeac9cd607b8b5 25-28,121-123,130-144
+tests/retrieval/test_admission.py
+  s_35b641b930a96d::t_36a491f1df6514 285-420
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "c64f1ff4e11910c205c3d6aea2b036a08955014c",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
