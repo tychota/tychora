@@ -29,11 +29,11 @@ from tychora.contracts.relationships import (
 from tychora.ports.execution import ExecutionContext
 
 
-def unit(uid: str, ordinal: int = 0) -> EvidenceUnit:
+def unit(uid: str, ordinal: int = 0, *, parent_id: str | None = None) -> EvidenceUnit:
     return EvidenceUnit(
         unit_id=uid,
         extraction_id="extraction",
-        parent_id=None,
+        parent_id=parent_id,
         ordinal=ordinal,
         unit_type="symbol",
         native_ref=uid,

@@ -1,5 +1,7 @@
 """Code structural context uses eligible native adjacency and parent paths."""
 
+from itertools import pairwise
+
 import pytest
 
 from tests.retrieval.graph_fixture import assertion, sealed_graph, unit
@@ -9,8 +11,12 @@ from tychora.contracts.graph import GraphPredicatePolicy, GraphTraversalPolicy
 
 
 def _case(tmp_path):
-    units = tuple(
-        unit(uid, ordinal) for ordinal, uid in enumerate(("parent", "a", "b", "c", "d"))
+    units = (
+        unit("parent"),
+        *(
+            unit(uid, ordinal, parent_id="parent")
+            for ordinal, uid in enumerate(("a", "b", "c", "d"))
+        ),
     )
     relations = tuple(
         assertion("parent", uid, predicate="contains@1") for uid in ("a", "b", "c", "d")
@@ -263,5 +269,73 @@ def test_shared_target_retains_both_strategy_reasons_without_second_vote(
             "semantic",
             "structural",
         }
+    finally:
+        case.graph.close()
+
+
+def test_one_sided_chain_returns_two_nearest_additional_siblings(tmp_path):
+    names = ("a", "b", "c", "d", "e")
+    units = (
+        unit("parent"),
+        *(unit(uid, ordinal, parent_id="parent") for ordinal, uid in enumerate(names)),
+    )
+    relations = (
+        *(assertion("parent", uid, predicate="contains@1") for uid in names),
+        *(
+            assertion(left, right, predicate="precedes@1")
+            for left, right in pairwise(names)
+        ),
+    )
+    policy = GraphTraversalPolicy(
+        predicates=(), structural="code_context@1", semantic=False
+    )
+    case = sealed_graph(tmp_path, units, relations, policy)
+    try:
+        view = case.view(
+            context=set(names), candidates=set(names), structural={"parent"}
+        )
+        budget = case.budget(max_rows=7)
+        page = case.graph.structural_context(view, ("a",), budget, case.ctx)
+        assert [candidate.unit_id for candidate in page.candidates] == ["b", "c", "d"]
+        assert [candidate.reasons for candidate in page.candidates] == [
+            ("following_definition",),
+            ("same_parent",),
+            ("same_parent",),
+        ]
+        assert [candidate.source_order_distance for candidate in page.candidates] == [
+            1,
+            2,
+            3,
+        ]
+        assert [
+            candidate.paths[0].assertion_occurrences for candidate in page.candidates
+        ] == [1, 2, 2]
+        assert budget.inspected_rows == 7
+    finally:
+        case.graph.close()
+
+
+def test_forged_nonadjacent_precedes_cannot_jump_hidden_middle(tmp_path):
+    units = (
+        unit("parent"),
+        unit("a", 0, parent_id="parent"),
+        unit("b", 1, parent_id="parent"),
+        unit("c", 2, parent_id="parent"),
+    )
+    relations = (
+        *(assertion("parent", uid, predicate="contains@1") for uid in ("a", "b", "c")),
+        assertion("a", "c", predicate="precedes@1"),
+    )
+    policy = GraphTraversalPolicy(
+        predicates=(), structural="code_context@1", semantic=False
+    )
+    case = sealed_graph(tmp_path, units, relations, policy)
+    try:
+        view = case.view(
+            context={"a", "c"}, candidates={"a", "c"}, structural={"parent"}
+        )
+        page = case.graph.structural_context(view, ("a",), case.budget(), case.ctx)
+        assert page.candidates == ()
+        assert page.exhausted
     finally:
         case.graph.close()

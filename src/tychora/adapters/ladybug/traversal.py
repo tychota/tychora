@@ -311,6 +311,92 @@ class GraphTraversal:
             return None
         return abs(left[1] - right[1])
 
+    def _adjacent_structural(
+        self,
+        view: EligibilityView,
+        source: str,
+        direction: str,
+        order: dict[str, tuple[tuple[str, str, str | None], int]],
+        limits: GraphBudget,
+        ctx: ExecutionContext,
+    ) -> tuple[_NativePath | None, bool]:
+        selected = None
+        for path in self._iter_edges(
+            view,
+            source,
+            direction,
+            ("precedes@1",),
+            ("recorded", "confirmed"),
+            ctx,
+            candidate_ids=view.graph_eligible_unit_ids,
+        ):
+            if limits.inspected_rows >= limits.max_rows:
+                return None, True
+            limits.inspected_rows += 1
+            if self._distance(order, source, path.target) != 1:
+                continue
+            before = order[path.target][1] < order[source][1]
+            if before != (direction == "incoming"):
+                continue
+            if selected is None:
+                selected = path
+            elif path.target != selected.target:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Precedes has multiple immediate neighbors"
+                )
+        return selected, False
+
+    def _sibling_path(
+        self,
+        view: EligibilityView,
+        seed: str,
+        target: str,
+        order: dict[str, tuple[tuple[str, str, str | None], int]],
+        limits: GraphBudget,
+        ctx: ExecutionContext,
+    ) -> tuple[GraphPath | None, bool]:
+        canonical_parent = order[seed][0][2]
+        for parent_edge in self._iter_edges(
+            view,
+            seed,
+            "incoming",
+            ("contains@1",),
+            ("recorded", "confirmed"),
+            ctx,
+            candidate_ids=view.graph_eligible_unit_ids,
+        ):
+            if limits.inspected_rows >= limits.max_rows:
+                return None, True
+            limits.inspected_rows += 1
+            if canonical_parent is not None and parent_edge.target != canonical_parent:
+                continue
+            for child_edge in self._iter_edges(
+                view,
+                parent_edge.target,
+                "outgoing",
+                ("contains@1",),
+                ("recorded", "confirmed"),
+                ctx,
+                candidate_ids=view.graph_eligible_unit_ids,
+                target_id=target,
+            ):
+                if limits.inspected_rows >= limits.max_rows:
+                    return None, True
+                limits.inspected_rows += 1
+                return GraphPath(
+                    assertion_ids=(parent_edge.assertion_id, child_edge.assertion_id),
+                    required_support_ids=parent_edge.supports | child_edge.supports,
+                    predicate="contains@1",
+                    status="confirmed"
+                    if parent_edge.status == child_edge.status == "confirmed"
+                    else "recorded",
+                    confidence=min(parent_edge.confidence, child_edge.confidence),
+                    source_unit_id=seed,
+                    target_unit_id=target,
+                    assertion_occurrences=2,
+                ), False
+        return None, False
+
     def _fetch(
         self,
         view: EligibilityView,
@@ -564,203 +650,36 @@ SKIP {offset} LIMIT {page_size}
             truncation = None
             allocation = self._candidate_allocation(limits, "structural")
             for seed in seeds:
-                if seed not in view.graph_eligible_unit_ids:
+                if seed not in view.graph_eligible_unit_ids or seed not in order:
                     continue
                 immediate: dict[str, _NativePath] = {}
                 for direction, reason in (
                     ("incoming", "preceding_definition"),
                     ("outgoing", "following_definition"),
                 ):
-                    paths = self._iter_edges(
-                        view,
-                        seed,
-                        direction,
-                        ("precedes@1",),
-                        ("recorded", "confirmed"),
-                        ctx,
-                        candidate_ids=view.graph_eligible_unit_ids,
+                    selected, work_limit = self._adjacent_structural(
+                        view, seed, direction, order, limits, ctx
                     )
-                    selected = None
-                    for path in paths:
-                        if limits.inspected_rows >= limits.max_rows:
-                            truncation = "edge_work_limit"
-                            break
-                        limits.inspected_rows += 1
-                        if selected is None:
-                            selected = path
-                        elif path.target != selected.target:
-                            raise TychoraError(
-                                "INTEGRITY_ERROR",
-                                "Precedes has multiple immediate neighbors",
-                            )
-                    if truncation:
+                    if work_limit:
+                        truncation = "edge_work_limit"
                         break
                     if selected is None:
                         continue
-                    distance = self._distance(order, seed, selected.target)
-                    if distance is None or distance == 0:
-                        continue
-                    if (
-                        direction == "incoming"
-                        and order[selected.target][1] >= order[seed][1]
-                    ):
-                        continue
-                    if (
-                        direction == "outgoing"
-                        and order[selected.target][1] <= order[seed][1]
-                    ):
-                        continue
                     immediate[direction] = selected
-                    if (
-                        selected.target not in view.source_unit_ids
-                        or selected.target in seeds
-                    ):
-                        continue
-                    if selected.target in limits.new_unit_ids:
-                        if selected.target not in strategy_seen:
-                            strategy_seen.add(selected.target)
-                            enrichments.append(
-                                GraphCandidate(
-                                    unit_id=selected.target,
-                                    paths=(selected.contract(),),
-                                    reasons=(reason,),
-                                    strategy="structural",
-                                    source_order_distance=distance,
-                                )
-                            )
-                        continue
-                    if len(limits.new_unit_ids) >= allocation:
-                        truncation = "candidate_limit"
-                        break
-                    limits.new_unit_ids.add(selected.target)
-                    strategy_seen.add(selected.target)
-                    limits.strategy_counts["structural"] = (
-                        limits.strategy_counts.get("structural", 0) + 1
-                    )
-                    candidates.append(
-                        GraphCandidate(
-                            unit_id=selected.target,
-                            paths=(selected.contract(),),
-                            reasons=(reason,),
-                            strategy="structural",
-                            source_order_distance=distance,
-                        )
-                    )
-                if truncation:
-                    break
-                extras: list[tuple[int, int, str, _NativePath]] = []
-                for direction in ("incoming", "outgoing"):
-                    neighbor = immediate.get(direction)
-                    if neighbor is None:
-                        continue
-                    paths = self._iter_edges(
-                        view,
-                        neighbor.target,
-                        direction,
-                        ("precedes@1",),
-                        ("recorded", "confirmed"),
-                        ctx,
-                        candidate_ids=view.graph_eligible_unit_ids,
-                    )
-                    selected = None
-                    for path in paths:
-                        if limits.inspected_rows >= limits.max_rows:
-                            truncation = "edge_work_limit"
-                            break
-                        limits.inspected_rows += 1
-                        if selected is None:
-                            selected = path
-                        elif path.target != selected.target:
-                            raise TychoraError(
-                                "INTEGRITY_ERROR",
-                                "Precedes has multiple immediate neighbors",
-                            )
-                    if truncation:
-                        break
-                    if (
-                        selected
-                        and selected.target != seed
-                        and selected.target
-                        not in {p.target for p in immediate.values()}
-                    ):
-                        distance = self._distance(order, seed, selected.target)
-                        if distance is not None and distance > 0:
-                            extras.append(
-                                (
-                                    distance,
-                                    0 if direction == "incoming" else 1,
-                                    selected.target,
-                                    selected,
-                                )
-                            )
-                if truncation:
-                    break
-                for distance, _, target, _ in sorted(extras)[:2]:
+                    target = selected.target
                     if target not in view.source_unit_ids or target in seeds:
                         continue
-                    parent_edges = self._iter_edges(
-                        view,
-                        seed,
-                        "incoming",
-                        ("contains@1",),
-                        ("recorded", "confirmed"),
-                        ctx,
-                        candidate_ids=view.graph_eligible_unit_ids,
-                    )
-                    matched = None
-                    for parent_edge in parent_edges:
-                        if limits.inspected_rows >= limits.max_rows:
-                            truncation = "edge_work_limit"
-                            break
-                        limits.inspected_rows += 1
-                        child_edges = self._iter_edges(
-                            view,
-                            parent_edge.target,
-                            "outgoing",
-                            ("contains@1",),
-                            ("recorded", "confirmed"),
-                            ctx,
-                            candidate_ids=view.graph_eligible_unit_ids,
-                            target_id=target,
-                        )
-                        for child_edge in child_edges:
-                            if limits.inspected_rows >= limits.max_rows:
-                                truncation = "edge_work_limit"
-                                break
-                            limits.inspected_rows += 1
-                            matched = (parent_edge, child_edge)
-                            break
-                        if matched or truncation:
-                            break
-                    if truncation:
-                        break
-                    if matched is None:
-                        continue
-                    first, second = matched
-                    path = GraphPath(
-                        assertion_ids=(first.assertion_id, second.assertion_id),
-                        required_support_ids=first.supports | second.supports,
-                        predicate="contains@1",
-                        status="confirmed"
-                        if first.status == second.status == "confirmed"
-                        else "recorded",
-                        confidence=min(first.confidence, second.confidence),
-                        source_unit_id=seed,
-                        target_unit_id=target,
-                        assertion_occurrences=2,
+                    candidate = GraphCandidate(
+                        unit_id=target,
+                        paths=(selected.contract(),),
+                        reasons=(reason,),
+                        strategy="structural",
+                        source_order_distance=1,
                     )
                     if target in limits.new_unit_ids:
                         if target not in strategy_seen:
                             strategy_seen.add(target)
-                            enrichments.append(
-                                GraphCandidate(
-                                    unit_id=target,
-                                    paths=(path,),
-                                    reasons=("same_parent",),
-                                    strategy="structural",
-                                    source_order_distance=distance,
-                                )
-                            )
+                            enrichments.append(candidate)
                         continue
                     if len(limits.new_unit_ids) >= allocation:
                         truncation = "candidate_limit"
@@ -770,15 +689,85 @@ SKIP {offset} LIMIT {page_size}
                     limits.strategy_counts["structural"] = (
                         limits.strategy_counts.get("structural", 0) + 1
                     )
-                    candidates.append(
-                        GraphCandidate(
+                    candidates.append(candidate)
+                if truncation:
+                    break
+
+                frontier = {
+                    direction: path.target for direction, path in immediate.items()
+                }
+                immediate_ids = set(frontier.values())
+                additional = 0
+                while frontier and additional < 2:
+                    options: list[tuple[int, int, str]] = []
+                    next_frontier: dict[str, str] = {}
+                    for direction in ("incoming", "outgoing"):
+                        source = frontier.get(direction)
+                        if source is None:
+                            continue
+                        selected, work_limit = self._adjacent_structural(
+                            view, source, direction, order, limits, ctx
+                        )
+                        if work_limit:
+                            truncation = "edge_work_limit"
+                            break
+                        if selected is None:
+                            continue
+                        next_frontier[direction] = selected.target
+                        distance = self._distance(order, seed, selected.target)
+                        if distance is not None and distance > 1:
+                            options.append(
+                                (
+                                    distance,
+                                    0 if direction == "incoming" else 1,
+                                    selected.target,
+                                )
+                            )
+                    if truncation:
+                        break
+                    for distance, _, target in sorted(options):
+                        if additional >= 2:
+                            break
+                        if (
+                            target not in view.source_unit_ids
+                            or target in seeds
+                            or target in immediate_ids
+                        ):
+                            continue
+                        sibling, work_limit = self._sibling_path(
+                            view, seed, target, order, limits, ctx
+                        )
+                        if work_limit:
+                            truncation = "edge_work_limit"
+                            break
+                        if sibling is None:
+                            continue
+                        candidate = GraphCandidate(
                             unit_id=target,
-                            paths=(path,),
+                            paths=(sibling,),
                             reasons=("same_parent",),
                             strategy="structural",
                             source_order_distance=distance,
                         )
-                    )
+                        if target in limits.new_unit_ids:
+                            if target not in strategy_seen:
+                                strategy_seen.add(target)
+                                enrichments.append(candidate)
+                            additional += 1
+                            continue
+                        if len(limits.new_unit_ids) >= allocation:
+                            truncation = "candidate_limit"
+                            break
+                        limits.new_unit_ids.add(target)
+                        strategy_seen.add(target)
+                        limits.strategy_counts["structural"] = (
+                            limits.strategy_counts.get("structural", 0) + 1
+                        )
+                        candidates.append(candidate)
+                        additional += 1
+                    if truncation:
+                        break
+                    frontier = next_frontier
                 if truncation:
                     break
             if truncation is None:
