@@ -2,7 +2,7 @@
 
 from typing import Literal, Self
 
-from pydantic import model_validator
+from pydantic import field_serializer, model_validator
 
 from .artifacts import ArtifactRef
 from .base import (
@@ -54,11 +54,19 @@ class VectorRecordBinding(Contract):
     chunk_id: Identifier | None = None
     asset_id: Identifier | None = None
     embedding_cache: ArtifactRef
+    group_id: Identifier | None = None
+    dependency_ids: frozenset[Identifier] = frozenset()
+
+    @field_serializer("dependency_ids")
+    def sorted_dependencies(self, dependencies: frozenset[str]) -> list[str]:
+        return sorted(dependencies)
 
     @model_validator(mode="after")
     def one_owner(self) -> Self:
         if (self.chunk_id is None) == (self.asset_id is None):
             raise ValueError("Vector record requires exactly one canonical owner")
+        if (self.group_id is None) != (not self.dependency_ids):
+            raise ValueError("Text group identity and dependencies must be paired")
         return self
 
 

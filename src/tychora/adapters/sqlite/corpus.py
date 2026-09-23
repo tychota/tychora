@@ -102,6 +102,16 @@ class CorpusStore(PolicyRepository):
 
         return publish_snapshot(self, plan)
 
+    def read_eligibility_facts(self, snapshot: SnapshotView):
+        from .eligibility import read_eligibility_facts
+
+        return read_eligibility_facts(self, snapshot)
+
+    def policy_epoch(self, workspace_id: str) -> int:
+        from .eligibility import policy_epoch
+
+        return policy_epoch(self, workspace_id)
+
     def resolve_snapshot(self, selector: str | None) -> SnapshotView:
         from .publication import resolve_snapshot
 

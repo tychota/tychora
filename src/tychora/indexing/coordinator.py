@@ -63,14 +63,25 @@ def _fail(message: str) -> NoReturn:
     raise TychoraError("INTEGRITY_ERROR", message)
 
 
-def _input_manifest(artifacts: Artifacts, entries: tuple[str, ...]) -> ArtifactRef:
+def _input_manifest(
+    artifacts: Artifacts,
+    entries: tuple[str, ...],
+    representations: tuple[dict[str, object], ...] | None = None,
+) -> ArtifactRef:
     return artifacts.put_stream(
         BytesIO(
             canonical_bytes(
                 {
                     "type": "index_input",
                     "schema_version": "1",
-                    "data": {"entries": entries},
+                    "data": {
+                        "entries": entries,
+                        **(
+                            {"representations": representations}
+                            if representations is not None
+                            else {}
+                        ),
+                    },
                 }
             )
         ),
@@ -385,7 +396,7 @@ class ProjectionCoordinator:
                 window_id,
                 group.input_sha,
                 self.text_embedder.capabilities.space_id,
-            ): (window_id, group.input_sha)
+            ): (window_id, group)
             for group in groups
             for window_id in group.window_ids
         }
@@ -396,9 +407,9 @@ class ProjectionCoordinator:
             _fail("Text provider returned incomplete or foreign window vectors")
         bindings = []
         for item in records:
-            window_id, input_sha = expected[item.record_id]
+            window_id, group = expected[item.record_id]
             if (
-                item.input_sha != input_sha
+                item.input_sha != group.input_sha
                 or item.space_id != self.text_embedder.capabilities.space_id
                 or len(item.values) != spec.dimensions
             ):
@@ -415,6 +426,8 @@ class ProjectionCoordinator:
                     chunk_id=window_id,
                     input_sha=item.input_sha,
                     value_sha=item.value_sha,
+                    group_id=group.group_id,
+                    dependency_ids=group.dependency_ids,
                     embedding_cache=cache,
                 )
             )
@@ -434,7 +447,18 @@ class ProjectionCoordinator:
                 count=0,
             )
         entries = tuple(row.record_id for row in bindings)
-        manifest = _input_manifest(self.artifacts, entries)
+        manifest = _input_manifest(
+            self.artifacts,
+            entries,
+            tuple(
+                {
+                    "record_id": binding.record_id,
+                    "group_id": binding.group_id,
+                    "dependency_ids": sorted(binding.dependency_ids),
+                }
+                for binding in bindings
+            ),
+        )
         return PublicationBatch(
             batch_id=_batch_id(
                 family.family_id, bundle.extraction.extraction_id, manifest

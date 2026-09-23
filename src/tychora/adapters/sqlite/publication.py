@@ -127,6 +127,20 @@ def _verify_artifacts(store: CorpusStore, plan: PublicationPlan) -> None:
             )
             if entries != expected:
                 _fail("Index input entries differ from the immutable batch")
+            if slot.slot == "text":
+                represented = [
+                    {
+                        "record_id": binding.record_id,
+                        "group_id": binding.group_id,
+                        "dependency_ids": sorted(binding.dependency_ids),
+                    }
+                    for binding in batch.vector_records
+                ]
+                if value.get("data", {}).get("representations") != represented or any(
+                    binding.group_id is None or not binding.dependency_ids
+                    for binding in batch.vector_records
+                ):
+                    _fail("Text batch input omits complete group ownership")
 
 
 def _verify_batches(
