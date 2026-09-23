@@ -478,6 +478,22 @@ def publish_snapshot(store: CorpusStore, plan: PublicationPlan) -> str:
                         "Publication base changed; rebase required.",
                         retryable=True,
                     )
+                graph = next(
+                    (slot for slot in plan.slots if slot.slot == "graph"), None
+                )
+                if graph is not None:
+                    receipt = graph.batches[0].receipt
+                    if not isinstance(receipt, GraphBatchReceipt):
+                        _fail("Graph publication receipt is invalid")
+                    watermark = store.db.execute(
+                        "SELECT COALESCE(MAX(decision_id),0) FROM assertion_decisions"
+                    ).fetchone()[0]
+                    if receipt.decision_watermark != watermark:
+                        raise TychoraError(
+                            "WORKSPACE_BUSY",
+                            "Graph decisions changed; rebase required.",
+                            retryable=True,
+                        )
                 job = store.db.execute(
                     "SELECT state,effective_config_sha,result_snapshot_id FROM jobs WHERE job_id=?",
                     (plan.job_id,),

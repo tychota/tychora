@@ -6,16 +6,11 @@ from tychora.adapters.sqlite.publication import PublicationReceipts
 from tychora.application.owner import WorkspaceOwner
 from tychora.application.sources import SourceService
 from tychora.configuration.resolve import resolve_config
-from tychora.contracts.errors import TychoraError
 from tychora.contracts.requests import RequestScope, SourceInput
 from tychora.indexing.coordinator import ProjectionCoordinator
 from tychora.ports.execution import ExecutionContext
 
 pytest_plugins = ("tests.indexing.test_publication",)
-
-
-def test_receipt_query_is_typed() -> None:
-    assert PublicationReceipts.__name__ == "PublicationReceipts"
 
 
 def test_publication_before_completion_event_reconciles(projected_corpus) -> None:
@@ -92,21 +87,19 @@ async def test_retry_uses_exact_committed_capture_and_verified_plan(
 
         def fail_once(plan):
             monkeypatch.setattr(owner.store, "publish_snapshot", original_publish)
-            raise TychoraError(
-                "PROVIDER_FAILURE", "Injected activation interruption", retryable=True
-            )
+            raise RuntimeError("sensitive activation interruption")
 
         monkeypatch.setattr(owner.store, "publish_snapshot", fail_once)
-        with pytest.raises(TychoraError) as interrupted:
+        with pytest.raises(RuntimeError, match="sensitive activation interruption"):
             await service.add(source, scope, "same-request")
-        assert interrupted.value.code == "PROVIDER_FAILURE"
         status = await owner.run_blocking(
             lambda: service._jobs.get(
                 owner.db.execute("SELECT job_id FROM jobs").fetchone()[0]
             ),
             ExecutionContext(),
         )
-        assert status.state == "failed" and status.captured_inputs is not None
+        assert status.state == "interrupted" and status.captured_inputs is not None
+        assert status.error_code == "JOB_INTERRUPTED"
 
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as reopened:
         resumed = SourceService(
@@ -120,6 +113,7 @@ async def test_retry_uses_exact_committed_capture_and_verified_plan(
         )
         jobs, acquirer = await resumed._ports(ExecutionContext())
         await reopened.run_blocking(lambda: jobs.retry(status.id), ExecutionContext())
+        original_capture = acquirer.capture
 
         def forbidden_capture(*args):
             raise AssertionError("Retry must use committed capture")
@@ -135,4 +129,70 @@ async def test_retry_uses_exact_committed_capture_and_verified_plan(
                 ExecutionContext(),
             )
             == 1
+        )
+
+        monkeypatch.setattr(acquirer, "capture", original_capture)
+
+        parser_source = SourceInput.from_mapping(
+            {
+                "type": "text",
+                "text": "Parser interruption candidate.",
+                "format": "text",
+                "kind": "manual@1",
+                "metadata": {
+                    "title": "Parser interruption",
+                    "publisher": "Example Team",
+                    "edition": "1",
+                },
+                "source_key": "parser.txt",
+                "collection_id": collection,
+            }
+        )
+        original_extract = resumed._extract
+
+        async def fail_parse(*args):
+            monkeypatch.setattr(resumed, "_extract", original_extract)
+            raise RuntimeError("sensitive parser interruption")
+
+        monkeypatch.setattr(resumed, "_extract", fail_parse)
+        with pytest.raises(RuntimeError, match="sensitive parser interruption"):
+            await resumed.add(parser_source, scope, "parser-before-plan")
+        parser_job = await reopened.run_blocking(
+            lambda: reopened.db.execute(
+                "SELECT job_id FROM jobs WHERE idempotency_key='parser-before-plan'"
+            ).fetchone()[0],
+            ExecutionContext(),
+        )
+        assert (
+            await reopened.run_blocking(
+                lambda: jobs.get(parser_job).error_code, ExecutionContext()
+            )
+            == "JOB_INTERRUPTED"
+        )
+        await reopened.run_blocking(lambda: jobs.retry(parser_job), ExecutionContext())
+        assert (
+            await resumed.add(parser_source, scope, "parser-before-plan")
+        ).state == "succeeded"
+
+        original_complete = jobs.complete
+
+        def fail_after_publication(*args, **kwargs):
+            monkeypatch.setattr(jobs, "complete", original_complete)
+            raise RuntimeError("sensitive completion interruption")
+
+        monkeypatch.setattr(jobs, "complete", fail_after_publication)
+        with pytest.raises(RuntimeError, match="sensitive completion interruption"):
+            await resumed.add(source, scope, "published-before-event")
+        published_job = await reopened.run_blocking(
+            lambda: reopened.db.execute(
+                "SELECT job_id FROM jobs WHERE idempotency_key='published-before-event'"
+            ).fetchone()[0],
+            ExecutionContext(),
+        )
+        published_status = await reopened.run_blocking(
+            lambda: jobs.get(published_job), ExecutionContext()
+        )
+        assert published_status.state == "succeeded"
+        assert published_status.result_snapshot_id == await reopened.run_blocking(
+            reopened.store.active_snapshot_id, ExecutionContext()
         )

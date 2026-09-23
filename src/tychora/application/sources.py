@@ -11,7 +11,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
 from uuid import UUID
 
-from tychora.adapters.code.normalize import normalize_code, retain_code_extraction
+from tychora.adapters.code.normalize import (
+    normalize_code,
+    replay_code_extraction,
+    retain_code_extraction,
+)
 from tychora.adapters.code.python import PythonAdapter
 from tychora.adapters.code.syntax import base_syntax_result
 from tychora.adapters.code.typescript import TypeScriptAdapter
@@ -23,13 +27,14 @@ from tychora.contracts.composition import DocumentCompositionPlan
 from tychora.contracts.corpus import CollectionRow, RevisionRow, SourceRow, WorkspaceRow
 from tychora.contracts.documents import DocumentRegistration
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.extraction import NativeRegistration
+from tychora.contracts.extraction import ExtractionArtifact, NativeRegistration
 from tychora.contracts.identity import canonical_bytes, digest, revision_id, source_id
 from tychora.contracts.operations import JobHandle
 from tychora.contracts.publication import PublicationPlan
 from tychora.contracts.requests import RequestScope, SourceInput
 from tychora.ingestion.acquire import Acquirer
 from tychora.ingestion.composition import compose_document
+from tychora.ingestion.documents import replay_document
 from tychora.ingestion.native import NativeParser
 from tychora.ingestion.normalize import normalize
 from tychora.ports.acquisition import UrlReader
@@ -178,19 +183,47 @@ class SourceService:
         return capture
 
     @staticmethod
-    def _plan_step(base: str | None) -> str:
-        return "projection/plan/" + (base or "genesis")
+    def _plan_step(base: str | None, watermark: int | None = None) -> str:
+        step = "projection/plan/" + (base or "genesis")
+        return step if watermark is None else f"{step}/decision/{watermark}"
 
     @staticmethod
     def _plan_input(
-        capture: CaptureManifest, config_ref: ArtifactRef, base: str | None
+        capture: CaptureManifest,
+        config_ref: ArtifactRef,
+        base: str | None,
+        watermark: int | None = None,
     ) -> str:
-        return digest(
-            "projection-plan-input-v1",
+        parts = (
             capture.manifest_ref.sha256,
             config_ref.sha256,
             base,
         )
+        return digest(
+            "projection-plan-input-v1",
+            *(parts if watermark is None else (*parts, watermark)),
+        )
+
+    def _decision_watermark(self) -> int | None:
+        if self.owner.config.values.index.graph == "disabled":
+            return None
+        return self.owner.db.execute(
+            "SELECT COALESCE(MAX(decision_id),0) FROM assertion_decisions"
+        ).fetchone()[0]
+
+    @staticmethod
+    def _plan_watermark(plan: PublicationPlan) -> int | None:
+        for slot in plan.slots:
+            if slot.slot == "graph":
+                from tychora.contracts.graph import GraphBatchReceipt
+
+                receipt = slot.batches[0].receipt
+                if not isinstance(receipt, GraphBatchReceipt):
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Graph plan receipt is malformed"
+                    )
+                return receipt.decision_watermark
+        return None
 
     def _completed_plan(
         self,
@@ -199,11 +232,12 @@ class SourceService:
         capture: CaptureManifest,
         config_ref: ArtifactRef,
         base: str | None,
+        watermark: int | None,
     ) -> PublicationPlan | None:
         ref = jobs.completed_step(
             handle.id,
-            self._plan_step(base),
-            self._plan_input(capture, config_ref, base),
+            self._plan_step(base, watermark),
+            self._plan_input(capture, config_ref, base, watermark),
         )
         if ref is None:
             return None
@@ -352,13 +386,22 @@ class SourceService:
             base = await self.owner.run_blocking(
                 self.owner.store.active_snapshot_id, ctx
             )
+            watermark = await self.owner.run_blocking(self._decision_watermark, ctx)
             committed = await self.owner.run_blocking(
-                lambda: self._completed_plan(jobs, handle, capture, config_ref, base),
+                lambda: self._completed_plan(
+                    jobs, handle, capture, config_ref, base, watermark
+                ),
                 ctx,
             )
             if committed is not None:
-                await self._publish(committed, jobs, handle, ctx)
-                return JobHandle(id=handle.id, operation=operation, state="succeeded")
+                try:
+                    await self._publish(committed, jobs, handle, ctx)
+                    return JobHandle(
+                        id=handle.id, operation=operation, state="succeeded"
+                    )
+                except TychoraError as error:
+                    if error.code != "WORKSPACE_BUSY":
+                        raise
             if base is not None:
                 selected_base = base
                 can_reuse = await self.owner.run_blocking(
@@ -378,11 +421,19 @@ class SourceService:
                         ),
                         ctx,
                     )
-                    await self._publish(plan, jobs, handle, ctx)
-                    return JobHandle(
-                        id=handle.id, operation=operation, state="succeeded"
-                    )
-            bundle = await self._extract(registration, capture, ctx)
+                    try:
+                        await self._publish(plan, jobs, handle, ctx)
+                        return JobHandle(
+                            id=handle.id, operation=operation, state="succeeded"
+                        )
+                    except TychoraError as error:
+                        if error.code != "WORKSPACE_BUSY":
+                            raise
+            bundle = await self.owner.run_blocking(
+                lambda: self._retained_bundle(registration, ctx), ctx
+            )
+            if bundle is None:
+                bundle = await self._extract(registration, capture, ctx)
             previous_groups = None
             previous_records = None
             for _attempt in range(3):
@@ -414,8 +465,10 @@ class SourceService:
                 await self.owner.run_blocking(
                     lambda plan=plan, base=base: jobs.checkpoint(
                         handle.id,
-                        self._plan_step(base),
-                        self._plan_input(capture, config_ref, base),
+                        self._plan_step(base, self._plan_watermark(plan)),
+                        self._plan_input(
+                            capture, config_ref, base, self._plan_watermark(plan)
+                        ),
                         plan.manifest,
                     ),
                     ctx,
@@ -462,6 +515,26 @@ class SourceService:
                 ExecutionContext(),
             )
             raise
+        except Exception as error:
+            try:
+                await self.owner.run_blocking(
+                    lambda: self._reconcile_unexpected(jobs, handle.id),
+                    ExecutionContext(),
+                )
+            except Exception as recovery_error:  # noqa: BLE001 - preserve original failure
+                error.add_note(
+                    "Job reconciliation failed: " + type(recovery_error).__name__
+                )
+            raise
+
+    def _reconcile_unexpected(self, jobs: JobRepository, job_id: str) -> None:
+        if PublicationReceipts(self.owner.store).lookup(job_id) is not None:
+            jobs.recover(job_id)
+        elif jobs.get(job_id).state in {"queued", "running"}:
+            jobs.fail(
+                job_id,
+                TychoraError("JOB_INTERRUPTED", "Job was interrupted", retryable=True),
+            )
 
     async def _publish(
         self, plan, jobs: JobRepository, handle: JobHandle, ctx: ExecutionContext
@@ -541,6 +614,153 @@ class SourceService:
             ).fetchone()
             is not None
         )
+
+    def _retained_bundle(
+        self,
+        registration: NativeRegistration | DocumentRegistration | CodeRegistration,
+        ctx: ExecutionContext,
+    ) -> ExtractionBundle | None:
+        """Replay a registered revision independently of current membership."""
+        from tychora.contracts.artifacts import ArtifactRef
+
+        rows = self.owner.db.execute(
+            "SELECT e.extraction_id,a.artifact_sha,a.size_bytes,a.media_type,a.storage_key "
+            "FROM extractions e JOIN artifacts a ON a.artifact_sha=e.document_artifact_sha "
+            "WHERE e.revision_id=? ORDER BY e.created_at,e.extraction_id",
+            (registration.revision.revision_id,),
+        ).fetchall()
+        for extraction_id, sha, size, media_type, storage_key in rows:
+            ctx.checkpoint()
+            ref = ArtifactRef(
+                sha256=sha,
+                size_bytes=size,
+                media_type=media_type,
+                storage_key=storage_key,
+            )
+            with self.owner.artifacts.open_verified(ref) as stream:
+                payload = stream.read(ref.size_bytes + 1)
+            root = json.loads(payload)
+            if root.get("type") != "extraction" or root.get("schema_version") != "1":
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Retained extraction type differs"
+                )
+            data = root.get("data", {})
+            if isinstance(registration, CodeRegistration):
+                old_capture = self._code_replay_capture(
+                    data["capture_manifest_sha"], registration
+                )
+                if old_capture is None:
+                    continue
+                replay_registration = CodeRegistration.model_validate(
+                    registration.model_copy(
+                        update={"capture": old_capture}
+                    ).model_dump()
+                )
+                bundle = normalize_code(
+                    replay_code_extraction(
+                        ref, replay_registration, self.owner.artifacts
+                    ),
+                    self.owner.store.registry,
+                )
+            elif data.get("representation") == "document-composition@1":
+                if not isinstance(registration, DocumentRegistration):
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Retained extraction kind differs"
+                    )
+                links = root.get("required_manifests", [])
+                parsed_refs = [
+                    ArtifactRef.model_validate(link["artifact"])
+                    for link in links
+                    if link.get("type") == "extraction"
+                ]
+                if len(parsed_refs) != 1:
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Retained document parser root differs"
+                    )
+                parsed_ref = parsed_refs[0]
+                with self.owner.artifacts.open_verified(parsed_ref) as stream:
+                    parsed_payload = stream.read(parsed_ref.size_bytes + 1)
+                parsed_data = json.loads(parsed_payload)["data"]
+                doc_ref = ArtifactRef.model_validate(parsed_data["docling_json_ref"])
+                with self.owner.artifacts.open_verified(doc_ref) as stream:
+                    doc_payload = stream.read(doc_ref.size_bytes + 1)
+                parsed = replay_document(parsed_payload, doc_payload, parsed_ref)
+                if (
+                    parsed.registration.capture.config_sha
+                    != registration.capture.config_sha
+                ):
+                    continue
+                bundle = compose_document(
+                    parsed,
+                    self.owner.store.registry,
+                    DocumentCompositionPlan.model_validate_json(
+                        canonical_bytes(data["plan"])
+                    ),
+                    self.owner.artifacts,
+                    ctx,
+                ).bundle
+            else:
+                if not isinstance(registration, NativeRegistration):
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Retained extraction kind differs"
+                    )
+                parsed = ExtractionArtifact.model_validate_json(
+                    canonical_bytes(
+                        {**data, "raw_document_ref": ref.model_dump(mode="json")}
+                    )
+                )
+                if (
+                    parsed.registration.capture.config_sha
+                    != registration.capture.config_sha
+                ):
+                    continue
+                bundle = normalize(
+                    parsed,
+                    registration.revision.revision_id,
+                    self.owner.store.registry,
+                )
+            if (
+                bundle.extraction.extraction_id != extraction_id
+                or bundle.extraction.document_artifact_sha != ref.sha256
+                or bundle.source != registration.source
+                or bundle.revision != registration.revision
+            ):
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Retained extraction identity differs"
+                )
+            return bundle
+        return None
+
+    def _code_replay_capture(
+        self, capture_sha: str, registration: CodeRegistration
+    ) -> CaptureManifest | None:
+        """Resolve the exact capture bound into the retained code manifest."""
+        from tychora.contracts.artifacts import ArtifactRef
+
+        row = self.owner.db.execute(
+            "SELECT artifact_sha,size_bytes,media_type,storage_key "
+            "FROM artifacts WHERE artifact_sha=? AND payload_state='present'",
+            (capture_sha,),
+        ).fetchone()
+        if row is None:
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Retained code capture is unavailable"
+            )
+        capture = self._committed_capture(
+            ArtifactRef(
+                sha256=row[0],
+                size_bytes=row[1],
+                media_type=row[2],
+                storage_key=row[3],
+            )
+        )
+        if (
+            capture.original_sha == registration.capture.original_sha
+            and capture.source_key == registration.capture.source_key
+            and capture.config_sha == registration.capture.config_sha
+        ):
+            return capture
+        return None
 
     def _registration(
         self, source: SourceInput, capture: CaptureManifest, scope: RequestScope

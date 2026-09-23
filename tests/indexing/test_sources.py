@@ -1,6 +1,7 @@
 """Source service through the actual owner, capture, parser and canonical store."""
 
 import asyncio
+import json
 import os
 from io import BytesIO
 from pathlib import Path
@@ -21,9 +22,11 @@ from tychora.application.owner import WorkspaceOwner
 from tychora.application.sources import SourceService
 from tychora.application.visual import create_visual_embedder
 from tychora.configuration.resolve import resolve_config
+from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.embeddings import EmbeddingCapabilities, VisualEmbeddingLimits
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.identity import space_id
+from tychora.contracts.identity import canonical_bytes, space_id
+from tychora.contracts.publication import PublicationPlan
 from tychora.contracts.requests import RequestScope, SourceInput
 from tychora.indexing.coordinator import ProjectionCoordinator
 from tychora.ports.execution import ExecutionContext
@@ -313,6 +316,118 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
         assert len(resumed.members) == 3
         assert resumed.snapshot_id != view.snapshot_id
 
+        fourth = SourceInput.from_mapping(
+            {
+                "type": "text",
+                "text": "fourth evidence.",
+                "format": "text",
+                "kind": "manual@1",
+                "metadata": {
+                    "title": "fourth",
+                    "publisher": "Example Team",
+                    "edition": "1",
+                },
+                "source_key": "fourth.txt",
+                "collection_id": collection,
+            }
+        )
+
+        def interrupt_before_activation(plan):
+            monkeypatch.setattr(owner.store, "publish_snapshot", original_publish)
+            raise TychoraError(
+                "PROVIDER_FAILURE", "Injected late interruption", retryable=True
+            )
+
+        monkeypatch.setattr(
+            owner.store, "publish_snapshot", interrupt_before_activation
+        )
+        with pytest.raises(TychoraError, match="Injected late interruption"):
+            await service.add(fourth, scope, "watermark-fourth")
+        job_id = await owner.run_blocking(
+            lambda: owner.db.execute(
+                "SELECT job_id FROM jobs WHERE idempotency_key='watermark-fourth'"
+            ).fetchone()[0],
+            ExecutionContext(),
+        )
+
+        def stale_plan():
+            row = owner.db.execute(
+                "SELECT a.artifact_sha,a.size_bytes,a.media_type,a.storage_key "
+                "FROM job_steps s JOIN artifacts a ON a.artifact_sha=s.output_artifact_sha "
+                "WHERE s.job_id=? AND s.step_key LIKE 'projection/plan/%'",
+                (job_id,),
+            ).fetchone()
+            ref = ArtifactRef(
+                sha256=row[0], size_bytes=row[1], media_type=row[2], storage_key=row[3]
+            )
+            with owner.artifacts.open_verified(ref) as stream:
+                root = json.load(stream)
+            return PublicationPlan.model_validate_json(
+                canonical_bytes(
+                    {**root["data"], "manifest": ref.model_dump(mode="json")}
+                )
+            )
+
+        plan = await owner.run_blocking(stale_plan, ExecutionContext())
+        old_watermark = next(
+            slot.batches[0].receipt.decision_watermark
+            for slot in plan.slots
+            if slot.slot == "graph"
+        )
+        assert old_watermark == 0
+        await owner.run_blocking(
+            lambda: owner.db.execute(
+                "INSERT INTO assertion_decisions "
+                "(assertion_id,provenance_artifact_sha,provenance_record_id,state,actor_id,created_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (
+                    "unselected-observation",
+                    owner.db.execute(
+                        "SELECT original_sha FROM revisions WHERE revision_id=?",
+                        (resumed.members[0].revision_id,),
+                    ).fetchone()[0],
+                    "unselected-observation",
+                    "recorded",
+                    "reviewer",
+                    "2026-09-23T00:00:00+00:00",
+                ),
+            ),
+            ExecutionContext(),
+        )
+        await owner.run_blocking(
+            lambda: service._jobs.retry(job_id), ExecutionContext()
+        )
+        await owner.run_blocking(
+            lambda: service._jobs.start(job_id), ExecutionContext()
+        )
+        with pytest.raises(TychoraError) as stale_error:
+            await owner.run_blocking(
+                lambda: owner.store.publish_snapshot(plan), ExecutionContext()
+            )
+        assert stale_error.value.code == "WORKSPACE_BUSY"
+        assert (
+            await owner.run_blocking(owner.store.active_snapshot_id, ExecutionContext())
+            == resumed.snapshot_id
+        )
+        await owner.run_blocking(
+            lambda: service._jobs.fail(job_id, stale_error.value), ExecutionContext()
+        )
+        await owner.run_blocking(
+            lambda: service._jobs.retry(job_id), ExecutionContext()
+        )
+        await service.add(fourth, scope, "watermark-fourth")
+        refreshed = await owner.run_blocking(
+            lambda: owner.store.resolve_snapshot(None), ExecutionContext()
+        )
+        assert (
+            next(
+                slot.batches[0].receipt.decision_watermark
+                for slot in refreshed.slots
+                if slot.slot == "graph"
+            )
+            == 1
+        )
+
 
 @pytest.mark.asyncio
 async def test_relocated_file_with_identical_bytes_reuses_immutable_registration(
@@ -394,7 +509,96 @@ async def test_relocated_file_with_identical_bytes_reuses_immutable_registration
 
 
 @pytest.mark.asyncio
-async def test_png_source_uses_owner_authorized_visual_provider(tmp_path):
+async def test_reselects_retained_extraction_after_intervening_revision(
+    tmp_path, monkeypatch
+):
+    first_path = tmp_path / "left" / "manual.txt"
+    second_path = tmp_path / "right" / "manual.txt"
+    first_path.parent.mkdir()
+    second_path.parent.mkdir()
+    first_path.write_text("First retained content.")
+    second_path.write_bytes(first_path.read_bytes())
+    settings = tmp_path / "workspace.toml"
+    settings.write_text(
+        'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
+        f'[configuration.acquisition]\nroots=["{tmp_path}"]\n'
+    )
+    config = resolve_config(settings, "test", {})
+    collection = "55825936-6a6a-4d29-945a-327d771a76b7"
+    scope = RequestScope(
+        principal_id="writer",
+        collection_ids=frozenset({collection}),
+        capabilities=frozenset({"write", "manage", "read"}),
+        uses=frozenset({"lookup"}),
+    )
+    with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
+        await owner.run_blocking(
+            lambda: owner.db.execute(
+                "INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,'{}')",
+                (collection, owner.workspace_id, "manuals", "Manuals"),
+            ),
+            ExecutionContext(),
+        )
+        service = SourceService(
+            owner,
+            ProjectionCoordinator(
+                store=owner.store,
+                artifacts=owner.artifacts,
+                config=config,
+                counter=Counter(),
+            ),
+        )
+
+        def source(path):
+            return SourceInput.from_mapping(
+                {
+                    "type": "file",
+                    "path": str(path),
+                    "format": "text",
+                    "kind": "manual@1",
+                    "metadata": {
+                        "title": "Synthetic Manual",
+                        "publisher": "Example Team",
+                        "edition": "1",
+                    },
+                    "source_key": "manual.txt",
+                    "collection_id": collection,
+                }
+            )
+
+        await service.add(source(first_path), scope)
+        original = await owner.run_blocking(
+            lambda: owner.store.resolve_snapshot(None), ExecutionContext()
+        )
+        first_path.write_text("Intervening revision.")
+        await service.add(source(first_path), scope)
+        changed = await owner.run_blocking(
+            lambda: owner.store.resolve_snapshot(None), ExecutionContext()
+        )
+        assert changed.members != original.members
+
+        async def parser_must_not_run(*_args):
+            raise AssertionError("Retained extraction should replay without parsing")
+
+        monkeypatch.setattr(service, "_extract", parser_must_not_run)
+        await service.add(source(second_path), scope)
+        restored = await owner.run_blocking(
+            lambda: owner.store.resolve_snapshot(None), ExecutionContext()
+        )
+        assert restored.members == original.members
+        assert (
+            await owner.run_blocking(
+                lambda: owner.db.execute("SELECT COUNT(*) FROM extractions").fetchone()[
+                    0
+                ],
+                ExecutionContext(),
+            )
+            == 2
+        )
+
+
+@pytest.mark.asyncio
+async def test_png_source_uses_owner_authorized_visual_provider(tmp_path, monkeypatch):
     model_root = os.environ.get("TYCHORA_TEST_DOCLING_MODELS")
     if model_root is None:
         pytest.skip("requires the explicitly provisioned Docling model cache")
@@ -471,9 +675,8 @@ async def test_png_source_uses_owner_authorized_visual_provider(tmp_path):
                 "collection_id": UUID(collection),
             }
         )
-        await SourceService(owner, coordinator, docling_models=Path(model_root)).add(
-            source, scope
-        )
+        service = SourceService(owner, coordinator, docling_models=Path(model_root))
+        await service.add(source, scope)
         view = await owner.run_blocking(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
@@ -481,10 +684,24 @@ async def test_png_source_uses_owner_authorized_visual_provider(tmp_path):
         assert image.batches[0].expected_count >= 1
         assert len(transport.calls) == image.batches[0].expected_count
         before_calls = len(transport.calls)
-        await SourceService(owner, coordinator, docling_models=Path(model_root)).sync(
-            view.members[0].source_id, scope
-        )
+        await service.sync(view.members[0].source_id, scope)
         assert len(transport.calls) == before_calls
+        changed_stream = BytesIO()
+        Image.new("RGB", (256, 256), (60, 40, 20)).save(changed_stream, format="PNG")
+        changed = SourceInput.model_validate(
+            source.model_dump() | {"data": changed_stream.getvalue()}
+        )
+        await service.add(changed, scope)
+
+        async def parser_must_not_run(*_args):
+            raise AssertionError("Retained document should replay without parsing")
+
+        monkeypatch.setattr(service, "_extract", parser_must_not_run)
+        await service.add(source, scope)
+        restored = await owner.run_blocking(
+            lambda: owner.store.resolve_snapshot(None), ExecutionContext()
+        )
+        assert restored.members == view.members
 
 
 @pytest.mark.asyncio
@@ -576,7 +793,7 @@ async def test_cancellation_drains_active_provider_before_publication(
 
 
 @pytest.mark.asyncio
-async def test_repository_source_uses_spawned_language_adapters(tmp_path):
+async def test_repository_source_uses_spawned_language_adapters(tmp_path, monkeypatch):
     repository = make_repo(tmp_path)
     settings = tmp_path / "workspace.toml"
     settings.write_text(
@@ -634,3 +851,21 @@ async def test_repository_source_uses_spawned_language_adapters(tmp_path):
             )
             >= 1
         )
+        original_bytes = (repository / "module.py").read_bytes()
+        (repository / "module.py").write_text("def changed(): return 2\n")
+        await service.add(source, scope)
+        changed = await owner.run_blocking(
+            lambda: owner.store.resolve_snapshot(None), ExecutionContext()
+        )
+        assert changed.members != view.members
+        (repository / "module.py").write_bytes(original_bytes)
+
+        async def parser_must_not_run(*_args):
+            raise AssertionError("Retained repository must replay without parsing")
+
+        monkeypatch.setattr(service, "_extract", parser_must_not_run)
+        await service.add(source, scope)
+        restored = await owner.run_blocking(
+            lambda: owner.store.resolve_snapshot(None), ExecutionContext()
+        )
+        assert restored.members == view.members
