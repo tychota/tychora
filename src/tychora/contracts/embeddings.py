@@ -178,8 +178,6 @@ class VisualInput(Contract):
             not isinstance(self.asset.locator, ImageLocator)
             or self.asset.artifact_sha != self.artifact_ref.sha256
             or self.artifact_ref.storage_key != self.artifact_ref.sha256
-            or self.asset.locator.artifact_ref != self.artifact_ref.sha256
-            or self.asset.locator.native_ref != self.asset.native_ref
             or self.resize.width != self.width
             or self.resize.height != self.height
             or self.input_sha

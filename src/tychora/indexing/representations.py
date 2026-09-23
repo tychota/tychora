@@ -278,7 +278,10 @@ def _validate_locator(
             != locator.line_end
         ):
             raise ValueError("Code locator codepoint/byte/line mapping differs")
-        if unit.attributes.get("range_dependency_ids") is None:
+        if (
+            unit.unit_type != "code_file"
+            and unit.attributes.get("range_dependency_ids") is None
+        ):
             raise ValueError("Code representation requires declared ownership")
         return None
 

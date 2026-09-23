@@ -198,7 +198,20 @@ class WorkspaceOwner:
         }
         registry.validate_activation(frozenset(retained), retained)
         self.upload_policy = CanonicalUploadPolicy(self)
-        self.store = CorpusStore(self.db, registry=registry, artifacts=self.artifacts)
+        required_slots = {"lexical"}
+        if self.config.values.index.text.backend != "disabled":
+            required_slots.add("text")
+        if self.config.values.index.image.backend != "disabled":
+            required_slots.add("image")
+        if self.config.values.index.graph != "disabled":
+            required_slots.add("graph")
+        self.store = CorpusStore(
+            self.db,
+            registry=registry,
+            artifacts=self.artifacts,
+            required_slots=frozenset(required_slots),
+            leases=self.leases,
+        )
 
     def _close_storage(self) -> None:
         try:

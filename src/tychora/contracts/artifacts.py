@@ -43,6 +43,7 @@ MANIFEST_TYPES = frozenset(
         "assertion_index",
         "registry",
         "index_input",
+        "snapshot",
         "vector_cache",
         "job_capture",
         "retained_run",

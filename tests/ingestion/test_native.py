@@ -77,6 +77,51 @@ def test_plain_text_preserves_markers_paragraphs_and_lines(native_case):
     ]
 
 
+@pytest.mark.parametrize("change", ["wrong_key", "wrong_artifact", "multiple"])
+def test_native_registration_rejects_foreign_file_capture_entries(native_case, change):
+    from pydantic import ValidationError
+
+    from tychora.contracts.acquisition import CapturedFile
+    from tychora.contracts.extraction import NativeRegistration
+
+    parsed, _, _ = native_case("one captured file", format="text")
+    registration = parsed.registration
+    original = registration.capture.original_ref
+    entry = CapturedFile(
+        relative_path="source.txt",
+        source_key=registration.source.source_key,
+        mode=0o644,
+        blob_sha=original.sha256,
+        artifact_ref=original,
+    )
+    if change == "wrong_key":
+        entry = entry.model_copy(update={"source_key": "another.txt"})
+        entries = (entry,)
+    elif change == "wrong_artifact":
+        foreign = original.model_copy(
+            update={"sha256": "f" * 64, "storage_key": "f" * 64}
+        )
+        entry = entry.model_copy(
+            update={"blob_sha": foreign.sha256, "artifact_ref": foreign}
+        )
+        entries = (entry,)
+    else:
+        second = entry.model_copy(
+            update={"relative_path": "other.txt", "source_key": "other.txt"}
+        )
+        entries = (second, entry)
+    capture = registration.capture.model_copy(update={"entries": entries})
+    with pytest.raises(ValidationError):
+        NativeRegistration(
+            capture=capture,
+            workspace=registration.workspace,
+            collection=registration.collection,
+            source=registration.source,
+            revision=registration.revision,
+            format="text",
+        )
+
+
 @pytest.mark.parametrize(
     "change",
     [

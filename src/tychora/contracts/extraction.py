@@ -5,7 +5,7 @@ from typing import Literal, Self, cast
 from pydantic import model_validator
 
 from .acquisition import CaptureManifest
-from .artifacts import ArtifactRef
+from .artifacts import ArtifactRef, physical_identity
 from .base import (
     Contract,
     FrozenJsonMap,
@@ -64,7 +64,15 @@ class NativeRegistration(Contract):
     @model_validator(mode="after")
     def matching_registration(self) -> Self:
         capture, revision, source = self.capture, self.revision, self.source
-        if capture.source.get("type") in ("folder", "repository") or capture.entries:
+        if capture.source.get("type") in ("folder", "repository") or (
+            capture.entries
+            and (
+                len(capture.entries) != 1
+                or capture.entries[0].source_key != source.source_key
+                or physical_identity(capture.entries[0].artifact_ref)
+                != physical_identity(capture.original_ref)
+            )
+        ):
             raise ValueError(
                 "Native parser requires one explicitly registered document"
             )

@@ -585,6 +585,37 @@ async def test_model_copy_cannot_forge_visual_input_identity(visual_case):
 
 
 @pytest.mark.asyncio
+async def test_recomputed_visual_input_with_modified_locator_is_denied(visual_case):
+    owner, scope = visual_case
+    bundle, asset, ref, image = await owner.run_blocking(
+        lambda: _install(owner), ExecutionContext()
+    )
+    item = _descriptor(bundle, asset, ref, image)
+    changed = asset.model_copy(
+        update={
+            "locator": asset.locator.model_copy(update={"native_ref": "forged-source"})
+        }
+    )
+    forged = VisualInput.from_registered(
+        asset=changed,
+        artifact_ref=ref,
+        revision_id=bundle.revision.revision_id,
+        context=item.context,
+        dependency_ids=item.dependency_ids,
+        pixel_sha256=item.pixel_sha256,
+        width=item.width,
+        height=item.height,
+        resize=item.resize,
+    )
+    transport = RecordingRawTransport()
+    provider, ctx = await _provider(owner, scope, transport)
+    with pytest.raises(TychoraError) as denied:
+        await owner.embed_visual_assets(provider, (forged,), ctx, scope=scope)
+    assert denied.value.code == "FORBIDDEN_SCOPE"
+    assert transport.calls == []
+
+
+@pytest.mark.asyncio
 async def test_explicit_lanczos_resize_sends_recorded_pixels(visual_case):
     owner, scope = visual_case
     bundle, asset, ref, image = await owner.run_blocking(

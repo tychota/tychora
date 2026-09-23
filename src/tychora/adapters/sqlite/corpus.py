@@ -2,15 +2,22 @@
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from typing import NoReturn, cast
 
+from tychora.application.leases import LeaseSet
 from tychora.configuration.registry import Registry
 from tychora.contracts.base import Contract, FrozenJsonMap
 from tychora.contracts.corpus import ExtractionBundle, ReviewTarget
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit, Geometry
+from tychora.contracts.graph import GraphBatchReceipt
 from tychora.contracts.identity import canonical_bytes, digest
-from tychora.ports.artifacts import ArtifactReader
+from tychora.contracts.publication import PublicationPlan, SnapshotView
+from tychora.ports.artifacts import Artifacts
+from tychora.ports.execution import ExecutionContext
+from tychora.ports.graph import GraphStore
+from tychora.ports.vectors import VectorIndex
 
 from .policy import PolicyRepository
 from .validation import validate_bundle, verify_artifacts
@@ -33,12 +40,107 @@ def _fail(message: str) -> NoReturn:
 
 
 class CorpusStore(PolicyRepository):
+    artifacts: Artifacts
+
     def __init__(
-        self, db: sqlite3.Connection, *, registry: Registry, artifacts: ArtifactReader
+        self,
+        db: sqlite3.Connection,
+        *,
+        registry: Registry,
+        artifacts: Artifacts,
+        required_slots: frozenset[str] = frozenset({"lexical"}),
+        vector_indexes: dict[str, VectorIndex] | None = None,
+        graph_indexes: dict[str, GraphStore] | None = None,
+        leases: LeaseSet | None = None,
+        publication_context: ExecutionContext | None = None,
     ):
         self.db = db
         self.registry = registry
         self.artifacts = artifacts
+        self.required_slots = required_slots
+        self.vector_indexes = vector_indexes if vector_indexes is not None else {}
+        self.graph_indexes = graph_indexes if graph_indexes is not None else {}
+        self.leases = leases if leases is not None else LeaseSet()
+        self.publication_context = publication_context
+
+    @contextmanager
+    def immediate_transaction(self):
+        if self.db.in_transaction:
+            _fail("Publication requires a fresh transaction")
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            yield
+            self.db.commit()
+        except BaseException:
+            self.db.rollback()
+            raise
+
+    def active_snapshot_id(self) -> str | None:
+        rows = self.db.execute("SELECT active_snapshot_id FROM workspaces").fetchall()
+        if len(rows) != 1:
+            _fail("Canonical workspace identity is ambiguous")
+        return rows[0][0]
+
+    def insert_snapshot_bindings(self, plan: PublicationPlan) -> None:
+        from .publication import insert_snapshot_bindings
+
+        insert_snapshot_bindings(self, plan)
+
+    def set_active_snapshot(self, snapshot_id: str) -> None:
+        if not self.db.in_transaction:
+            _fail("Active snapshot switch requires an immediate transaction")
+        if (
+            self.db.execute(
+                "UPDATE workspaces SET active_snapshot_id=?", (snapshot_id,)
+            ).rowcount
+            != 1
+        ):
+            _fail("Canonical workspace identity is ambiguous")
+
+    def publish_snapshot(self, plan: PublicationPlan) -> str:
+        from .publication import publish_snapshot
+
+        return publish_snapshot(self, plan)
+
+    def resolve_snapshot(self, selector: str | None) -> SnapshotView:
+        from .publication import resolve_snapshot
+
+        return resolve_snapshot(self, selector)
+
+    @contextmanager
+    def pin_snapshot(self, selector: str | None):
+        """Hold a resolved snapshot's canonical, native and CAS inputs for a read."""
+        view = self.resolve_snapshot(selector)
+        keys = frozenset(
+            {
+                view.snapshot_id,
+                *(batch.batch_id for slot in view.slots for batch in slot.batches),
+                *(
+                    batch.receipt.generation_id
+                    for slot in view.slots
+                    for batch in slot.batches
+                    if isinstance(batch.receipt, GraphBatchReceipt)
+                ),
+            }
+        )
+        payloads = frozenset(
+            {
+                view.manifest.sha256,
+                *(
+                    batch.input_manifest.sha256
+                    for slot in view.slots
+                    for batch in slot.batches
+                ),
+                *(
+                    row.embedding_cache.sha256
+                    for slot in view.slots
+                    for batch in slot.batches
+                    for row in batch.vector_records
+                ),
+            }
+        )
+        with self.leases.pin(keys), self.artifacts.pin_payloads(payloads):
+            yield self.resolve_snapshot(view.snapshot_id)
 
     def _insert(self, table: str, row: dict, keys: tuple[str, ...]):
         # Identifiers originate only in the closed repository mappings below.
