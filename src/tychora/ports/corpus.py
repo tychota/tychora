@@ -2,8 +2,10 @@
 
 from typing import Protocol
 
+from tychora.contracts.candidates import ChannelCandidates
 from tychora.contracts.corpus import ExtractionBundle, ReviewTarget
 from tychora.contracts.evidence import EvidenceUnit
+from tychora.contracts.graph import EligibilityView
 
 
 class CorpusStore(Protocol):
@@ -18,3 +20,6 @@ class CorpusStore(Protocol):
         state: str,
         actor: str,
     ) -> int: ...
+    def lookup_identifiers(
+        self, namespaced: tuple[str, ...], view: EligibilityView, limit: int
+    ) -> ChannelCandidates: ...

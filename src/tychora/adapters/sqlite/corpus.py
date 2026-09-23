@@ -8,10 +8,11 @@ from typing import NoReturn, cast
 from tychora.application.leases import LeaseSet
 from tychora.configuration.registry import Registry
 from tychora.contracts.base import Contract, FrozenJsonMap
+from tychora.contracts.candidates import ChannelCandidates
 from tychora.contracts.corpus import ExtractionBundle, ReviewTarget
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit, Geometry
-from tychora.contracts.graph import GraphBatchReceipt
+from tychora.contracts.graph import EligibilityView, GraphBatchReceipt
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.publication import PublicationPlan, SnapshotView
 from tychora.ports.artifacts import Artifacts
@@ -111,6 +112,13 @@ class CorpusStore(PolicyRepository):
         from .eligibility import policy_epoch
 
         return policy_epoch(self, workspace_id)
+
+    def lookup_identifiers(
+        self, namespaced: tuple[str, ...], view: EligibilityView, limit: int
+    ) -> ChannelCandidates:
+        from .lexical import lookup_identifiers
+
+        return lookup_identifiers(self, namespaced, view, limit)
 
     def resolve_snapshot(self, selector: str | None) -> SnapshotView:
         from .publication import resolve_snapshot
