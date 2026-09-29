@@ -1,0 +1,39 @@
+docs/mcp.md
+  s_35b641b930a96d::t_52940b6a217380 1-13
+src/tychora/application/query.py
+  s_35b641b930a96d::t_97220f43742fbb 193-194,197,201-208,1081-1082
+src/tychora/contracts/operations.py
+  s_35b641b930a96d::t_042b48cd43aab3 131-159
+src/tychora/interfaces/http/app.py
+  s_35b641b930a96d::t_2c343f70301de6 79-81,85-86,101-102,129-133
+src/tychora/interfaces/mcp/__init__.py
+  s_35b641b930a96d::t_6d13d40bc46477 1-5
+src/tychora/interfaces/mcp/resources.py
+  s_35b641b930a96d::t_094ed6233af78e 1-79
+src/tychora/interfaces/mcp/server.py
+  s_35b641b930a96d::t_b4bf8296d044ee 1-168
+src/tychora/interfaces/mcp/tools.py
+  s_35b641b930a96d::t_371c41486973bd 1-353
+src/tychora/retrieval/response.py
+  s_35b641b930a96d::t_3951408997abb9 5,69-70,81,86-92,127-142,335-338
+tests/transports/test_mcp_http.py
+  s_35b641b930a96d::t_1322c0f39edb6e 1-496
+tests/transports/test_mcp_stdio.py
+  s_35b641b930a96d::t_eb336dcd8a7568 1-199
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "349905923c74ff688baaca1b9c060235691595d8",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
