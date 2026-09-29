@@ -1,0 +1,1130 @@
+"""Final excerpts use exact retained source and ownership."""
+
+from dataclasses import replace
+
+from tests.helpers.corpus import seed_bundle
+from tychora.configuration.resolve import resolve_config
+from tychora.contracts.indexing import OwnedInterval
+from tychora.indexing.representations import prepare_extraction
+from tychora.retrieval.fusion import FusedCandidate
+from tychora.retrieval.rerank import (
+    RankedEvidence,
+    RankedEvidenceItem,
+    RerankFacts,
+    RerankMatch,
+)
+from tychora.retrieval.segments import OutputTokenCounter, assemble_segments
+
+
+class Counter:
+    model = "output"
+    tokenizer_id = "cl100k_base"
+
+    def count(self, text):
+        return len(text)
+
+
+def config(tmp_path):
+    path = tmp_path / "workspace.toml"
+    path.write_text('schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n')
+    return resolve_config(path, "test", {})
+
+
+def case(text, matches, *, kind="manual@1", source_key="manual.md"):
+    bundle = seed_bundle(text, kind=kind, source_key=source_key)
+    unit = bundle.units[0]
+    prepared = prepare_extraction(bundle)
+    matches = tuple(replace(match, unit_id=unit.unit_id) for match in matches)
+    candidate = FusedCandidate(("unit", unit.unit_id), 1, 1.0, {"lexical": 1})
+    item = RankedEvidenceItem(
+        candidate, None, RerankFacts(bundle, prepared, matches), "disabled"
+    )
+    view = type(
+        "View",
+        (),
+        {
+            "revision_ids": frozenset({bundle.revision.revision_id}),
+            "context_unit_ids": frozenset({unit.unit_id}),
+            "structural_unit_ids": frozenset(),
+            "asset_ids": frozenset(),
+            "chunk_ids": frozenset(
+                match.window_id for match in matches if match.window_id
+            ),
+        },
+    )()
+    return bundle, prepared, RankedEvidence((item,)), view
+
+
+def test_segment_keeps_winning_range_and_never_bridges_denied_gap(tmp_path):
+    text = "left gap right"
+    match = RerankMatch(None, "placeholder", 0, len(text), "lexical", 1, 1.0)
+    bundle, prepared, ranked, view = case(text, (match,))
+    unit = bundle.units[0]
+    rep = prepared.units[0]
+    ownership = (
+        OwnedInterval(
+            char_start=0,
+            char_end=5,
+            dependency_ids=frozenset(
+                {unit.unit_id, bundle.revision.revision_id, "left"}
+            ),
+        ),
+        OwnedInterval(
+            char_start=5,
+            char_end=9,
+            dependency_ids=frozenset(
+                {unit.unit_id, bundle.revision.revision_id, "gap"}
+            ),
+        ),
+        OwnedInterval(
+            char_start=9,
+            char_end=len(text),
+            dependency_ids=frozenset(
+                {unit.unit_id, bundle.revision.revision_id, "right"}
+            ),
+        ),
+    )
+    ranked = RankedEvidence(
+        (
+            replace(
+                ranked.items[0],
+                facts=replace(
+                    ranked.items[0].facts,
+                    prepared=prepared.model_copy(
+                        update={
+                            "units": (rep.model_copy(update={"ownership": ownership}),)
+                        }
+                    ),
+                ),
+            ),
+        )
+    )
+    view.context_unit_ids = frozenset({unit.unit_id, "left", "right"})
+    result = assemble_segments(ranked, view, config(tmp_path), Counter())
+    assert len(result.segments) == 2
+    for segment in result.segments:
+        for excerpt in segment.excerpts:
+            assert excerpt.text == unit.text[excerpt.char_start : excerpt.char_end]
+    assert all(
+        "gap" not in segment.context_only_unit_ids for segment in result.segments
+    )
+    assert all("gap" not in segment.text for segment in result.segments)
+
+
+def test_distant_windows_and_end_match_keep_exact_offsets(tmp_path):
+    text = "first" + "x" * 9990 + "LAST"
+    matches = (
+        RerankMatch(None, "placeholder", len(text) - 4, len(text), "lexical", 1, 1.0),
+        RerankMatch(None, "placeholder", 0, 5, "lexical", 2, 1.0),
+    )
+    bundle, _, ranked, view = case(text, matches)
+    result = assemble_segments(ranked, view, config(tmp_path), Counter())
+    assert len(result.segments) == 2
+    assert result.segments[0].excerpts[0].text == "LAST"
+    assert result.segments[1].excerpts[0].text == "first"
+    assert all(len(segment.text) <= 1200 for segment in result.segments)
+    assert all(segment.citations for segment in result.segments)
+    assert result.segments[0].source_id == bundle.source.source_id
+
+
+def test_oversized_lookup_has_exact_truncation_and_fetch_reference(tmp_path):
+    text = "A" * 3000
+    _, _, ranked, view = case(text, ())
+    result = assemble_segments(ranked, view, config(tmp_path), Counter())
+    assert len(result.segments) == 1
+    segment = result.segments[0]
+    assert segment.truncated and not segment.complete
+    assert segment.omissions
+    assert segment.citations[0].source_ref
+    assert segment.text == text[: len(segment.text)]
+
+
+def test_table_continuation_retains_two_physical_fragments(tmp_path):
+    from tychora.contracts.evidence import DocumentLocator
+
+    text = "rowArowB"
+    bundle, prepared, ranked, view = case(
+        text, (RerankMatch(None, "placeholder", 0, len(text), "lexical", 1, 1.0),)
+    )
+    unit = bundle.units[0]
+    fragments = (
+        DocumentLocator(
+            artifact_ref=bundle.revision.original_sha,
+            native_ref="table:1",
+            char_start=0,
+            char_end=4,
+            physical_page=1,
+        ),
+        DocumentLocator(
+            artifact_ref=bundle.revision.original_sha,
+            native_ref="table:2",
+            char_start=4,
+            char_end=8,
+            physical_page=2,
+        ),
+    )
+    updated = unit.model_copy(update={"locators": fragments})
+    prepared = prepared.model_copy(
+        update={"units": (prepared.units[0].model_copy(update={"unit": updated}),)}
+    )
+    rows = bundle.model_copy(update={"units": (updated,)})
+    ranked = RankedEvidence(
+        (
+            replace(
+                ranked.items[0],
+                facts=replace(ranked.items[0].facts, rows=rows, prepared=prepared),
+            ),
+        )
+    )
+    for policy in ("derived", "confirmed_only", "none"):
+        cfg = config(tmp_path).model_copy(deep=True)
+        cfg = cfg.model_copy(
+            update={
+                "values": cfg.values.model_copy(
+                    update={
+                        "retrieval": cfg.values.retrieval.model_copy(
+                            update={"table_continuations": policy}
+                        )
+                    }
+                )
+            }
+        )
+        segments = assemble_segments(ranked, view, cfg, Counter()).segments
+        assert len(segments) == 2
+        assert {segment.citations[0].physical_page for segment in segments} == {1, 2}
+        assert all(
+            len(segment.citations) == 1 and len(segment.citations[0].locators) == 1
+            for segment in segments
+        )
+
+
+def test_code_parent_and_child_original_ranges_do_not_duplicate(tmp_path):
+    from hashlib import sha256
+
+    from tychora.contracts.evidence import CodeLocator
+    from tychora.contracts.indexing import PreparedExtraction, RepresentationUnit
+
+    text = "class Box:\n    def run(self): pass\n"
+    bundle = seed_bundle(text, kind="code_file@1")
+    parent = bundle.units[0].model_copy(
+        update={
+            "unit_type": "symbol",
+            "locators": (
+                CodeLocator(
+                    artifact_ref=bundle.revision.original_sha,
+                    native_ref="box.py",
+                    relative_path="box.py",
+                    char_start=0,
+                    char_end=len(text),
+                    byte_start=0,
+                    byte_end=len(text.encode()),
+                    line_start=1,
+                    line_end=2,
+                ),
+            ),
+        }
+    )
+    start = text.index("    def")
+    child_text = text[start:]
+    child = parent.model_copy(
+        update={
+            "unit_id": "child-method",
+            "ordinal": 1,
+            "parent_id": parent.unit_id,
+            "text": child_text,
+            "text_sha": sha256(child_text.encode()).hexdigest(),
+            "locators": (
+                CodeLocator(
+                    artifact_ref=bundle.revision.original_sha,
+                    native_ref="box.py",
+                    relative_path="box.py",
+                    char_start=start,
+                    char_end=len(text),
+                    byte_start=start,
+                    byte_end=len(text.encode()),
+                    line_start=2,
+                    line_end=2,
+                ),
+            ),
+        }
+    )
+    owners = frozenset({bundle.revision.revision_id, parent.unit_id, child.unit_id})
+    prepared = PreparedExtraction(
+        extraction_id=bundle.extraction.extraction_id,
+        revision_id=bundle.revision.revision_id,
+        units=(
+            RepresentationUnit(
+                unit=parent,
+                revision_id=bundle.revision.revision_id,
+                title=bundle.revision.title,
+                kind_id="code_file@1",
+                ownership=(
+                    OwnedInterval(
+                        char_start=0,
+                        char_end=start,
+                        dependency_ids=frozenset(
+                            {bundle.revision.revision_id, parent.unit_id}
+                        ),
+                    ),
+                    OwnedInterval(
+                        char_start=start, char_end=len(text), dependency_ids=owners
+                    ),
+                ),
+            ),
+            RepresentationUnit(
+                unit=child,
+                revision_id=bundle.revision.revision_id,
+                title=bundle.revision.title,
+                kind_id="code_file@1",
+                ownership=(
+                    OwnedInterval(
+                        char_start=0, char_end=len(child_text), dependency_ids=owners
+                    ),
+                ),
+            ),
+        ),
+    )
+    rows = bundle.model_copy(update={"units": (parent, child)})
+    candidates = (
+        FusedCandidate(("unit", parent.unit_id), 1, 1.0, {"lexical": 1}),
+        FusedCandidate(("unit", child.unit_id), 2, 0.5, {"lexical": 2}),
+    )
+    ranked = RankedEvidence(
+        tuple(
+            RankedEvidenceItem(
+                candidate,
+                None,
+                RerankFacts(
+                    rows,
+                    prepared,
+                    (
+                        RerankMatch(
+                            None,
+                            candidate.key[1],
+                            0,
+                            len(parent.text if index == 0 else child.text),
+                            "lexical",
+                            index + 1,
+                            1.0,
+                        ),
+                    ),
+                ),
+                "disabled",
+            )
+            for index, candidate in enumerate(candidates)
+        )
+    )
+    view = type(
+        "View",
+        (),
+        {
+            "revision_ids": frozenset({bundle.revision.revision_id}),
+            "context_unit_ids": frozenset({parent.unit_id, child.unit_id}),
+            "structural_unit_ids": frozenset(),
+            "asset_ids": frozenset(),
+            "chunk_ids": frozenset(),
+        },
+    )()
+    result = assemble_segments(ranked, view, config(tmp_path), Counter())
+    assert len(result.segments) == 1
+    locator = result.segments[0].citations[0].locators[0]
+    assert locator.relative_path == "box.py"
+    assert locator.char_start == 0 and locator.char_end == len(text)
+
+
+def test_continuation_context_requires_current_eligible_graph_path(tmp_path):
+    from hashlib import sha256
+
+    from tychora.contracts.evidence import DocumentLocator
+    from tychora.contracts.graph import GraphPath
+    from tychora.contracts.indexing import PreparedExtraction, RepresentationUnit
+
+    bundle = seed_bundle("first row", kind="manual@1")
+    first = bundle.units[0].model_copy(
+        update={
+            "unit_type": "table",
+            "locators": (
+                DocumentLocator(
+                    artifact_ref=bundle.revision.original_sha,
+                    native_ref="fragment:1",
+                    char_start=0,
+                    char_end=9,
+                    physical_page=1,
+                ),
+            ),
+        }
+    )
+    second_text = "next row"
+    second = first.model_copy(
+        update={
+            "unit_id": "second-fragment",
+            "ordinal": 1,
+            "text": second_text,
+            "text_sha": sha256(second_text.encode()).hexdigest(),
+            "locators": (
+                DocumentLocator(
+                    artifact_ref=bundle.revision.original_sha,
+                    native_ref="fragment:2",
+                    char_start=0,
+                    char_end=8,
+                    physical_page=2,
+                ),
+            ),
+        }
+    )
+    units = (first, second)
+    prepared = PreparedExtraction(
+        extraction_id=bundle.extraction.extraction_id,
+        revision_id=bundle.revision.revision_id,
+        units=tuple(
+            RepresentationUnit(
+                unit=unit,
+                revision_id=bundle.revision.revision_id,
+                title=bundle.revision.title,
+                kind_id="manual@1",
+                ownership=(
+                    OwnedInterval(
+                        char_start=0,
+                        char_end=len(unit.text),
+                        dependency_ids=frozenset(
+                            {bundle.revision.revision_id, unit.unit_id}
+                        ),
+                    ),
+                ),
+            )
+            for unit in units
+        ),
+    )
+    rows = bundle.model_copy(update={"units": units})
+    candidate = FusedCandidate(("unit", first.unit_id), 1, 1.0, {"lexical": 1})
+    ranked = RankedEvidence(
+        (
+            RankedEvidenceItem(
+                candidate,
+                None,
+                RerankFacts(
+                    rows,
+                    prepared,
+                    (
+                        RerankMatch(
+                            None, first.unit_id, 0, len(first.text), "lexical", 1, 1.0
+                        ),
+                    ),
+                ),
+                "disabled",
+            ),
+        )
+    )
+    view = type(
+        "View",
+        (),
+        {
+            "revision_ids": frozenset({bundle.revision.revision_id}),
+            "context_unit_ids": frozenset({first.unit_id, second.unit_id}),
+            "structural_unit_ids": frozenset(),
+            "asset_ids": frozenset(),
+            "chunk_ids": frozenset(),
+            "blocked_assertion_ids": frozenset(),
+            "graph_generation_id": "pinned-generation",
+        },
+    )()
+    path = GraphPath(
+        assertion_ids=("a" * 64,),
+        required_support_ids=frozenset({first.unit_id, second.unit_id}),
+        predicate="continues_table@1",
+        status="recorded",
+        confidence=0.9,
+        source_unit_id=first.unit_id,
+        target_unit_id=second.unit_id,
+    )
+    base = config(tmp_path)
+    graph = base.values.retrieval.graph.model_copy(
+        update={
+            "semantic": True,
+            "predicates": ("continues_table@1",),
+            "statuses": ("recorded", "confirmed"),
+        }
+    )
+    for policy, status, expected in (
+        ("derived", "recorded", True),
+        ("confirmed_only", "recorded", False),
+        ("confirmed_only", "confirmed", True),
+        ("none", "confirmed", False),
+        ("derived", "proposed", False),
+        ("derived", "rejected", False),
+    ):
+        configured = base.model_copy(
+            update={
+                "values": base.values.model_copy(
+                    update={
+                        "retrieval": base.values.retrieval.model_copy(
+                            update={"table_continuations": policy, "graph": graph}
+                        )
+                    }
+                )
+            }
+        )
+        result = assemble_segments(
+            ranked,
+            view,
+            configured,
+            Counter(),
+            continuation_paths=(path.model_copy(update={"status": status}),),
+        )
+        segment = result.segments[0]
+        assert (second.unit_id in segment.context_only_unit_ids) is expected
+        assert segment.citations[0].physical_page == 1
+        if expected:
+            assert segment.context_excerpts[0].text == second.text
+            assert segment.citations[1].physical_page == 2
+        else:
+            assert len(segment.citations) == 1
+    view.blocked_assertion_ids = frozenset(path.assertion_ids)
+    configured = base.model_copy(
+        update={
+            "values": base.values.model_copy(
+                update={
+                    "retrieval": base.values.retrieval.model_copy(
+                        update={"table_continuations": "derived", "graph": graph}
+                    )
+                }
+            )
+        }
+    )
+    assert (
+        assemble_segments(
+            ranked, view, configured, Counter(), continuation_paths=(path,)
+        )
+        .segments[0]
+        .context_excerpts
+        == ()
+    )
+
+
+def test_owned_match_expands_to_paragraph_boundary_without_changing_source(tmp_path):
+    text = "Earlier paragraph.\nTarget sentence continues.\nLater paragraph."
+    start = text.index("Target")
+    bundle, _, ranked, view = case(
+        text, (RerankMatch(None, "placeholder", start, start + 6, "lexical", 1, 1.0),)
+    )
+    segment = assemble_segments(ranked, view, config(tmp_path), Counter()).segments[0]
+    excerpt = segment.excerpts[0]
+    assert excerpt.text == "Target sentence continues.\n"
+    assert excerpt.text == bundle.units[0].text[excerpt.char_start : excerpt.char_end]
+    assert segment.anchors[0].char_start == start
+
+
+def test_lane_reservation_and_visual_space_under_tight_budget(tmp_path):
+    _, _, standard, standard_view = case("Standard", ())
+    _, _, authority, authority_view = case(
+        "Authority", (), kind="law@1", source_key="law.md"
+    )
+    ranked = RankedEvidence((*standard.items, *authority.items))
+    view = type(
+        "View",
+        (),
+        {
+            "revision_ids": standard_view.revision_ids | authority_view.revision_ids,
+            "context_unit_ids": standard_view.context_unit_ids
+            | authority_view.context_unit_ids,
+            "structural_unit_ids": frozenset(),
+            "asset_ids": frozenset(),
+            "chunk_ids": frozenset(),
+        },
+    )()
+    base = config(tmp_path)
+    values = base.values.model_copy(
+        update={
+            "selection": base.values.selection.model_copy(
+                update={"lane_reservation": "one_per_available_lane"}
+            ),
+            "output": base.values.output.model_copy(
+                update={"lane_order": ("authority", "standard")}
+            ),
+            "limits": base.values.limits.model_copy(
+                update={"max_tokens": 30, "limit": 2}
+            ),
+        }
+    )
+    selected = assemble_segments(
+        ranked, view, base.model_copy(update={"values": values}), Counter()
+    )
+    assert selected.visual_reserved_tokens == 3
+    assert selected.text_budget == 27
+    assert [segment.lane for segment in selected.segments] == ["authority", "standard"]
+    assert selected.lane_coverage == ("authority", "standard")
+
+
+def test_same_boundary_neighbors_require_complete_current_eligibility(tmp_path):
+    from hashlib import sha256
+
+    from tychora.contracts.evidence import TextLocator
+    from tychora.contracts.indexing import PreparedExtraction, RepresentationUnit
+
+    bundle = seed_bundle("one|two|three")
+    original = bundle.units[0]
+    pieces = (
+        ("left-neighbor", 0, 3, 0),
+        ("middle-match", 4, 7, 1),
+        ("right-neighbor", 8, 13, 2),
+    )
+    units = tuple(
+        original.model_copy(
+            update={
+                "unit_id": uid,
+                "ordinal": ordinal,
+                "text": original.text[start:end],
+                "text_sha": sha256(original.text[start:end].encode()).hexdigest(),
+                "locators": (
+                    TextLocator(
+                        artifact_ref=bundle.revision.original_sha,
+                        native_ref="manual.md",
+                        char_start=start,
+                        char_end=end,
+                    ),
+                ),
+            }
+        )
+        for uid, start, end, ordinal in pieces
+    )
+    prepared = PreparedExtraction(
+        extraction_id=bundle.extraction.extraction_id,
+        revision_id=bundle.revision.revision_id,
+        units=tuple(
+            RepresentationUnit(
+                unit=unit,
+                revision_id=bundle.revision.revision_id,
+                title=bundle.revision.title,
+                kind_id="manual@1",
+                ownership=(
+                    OwnedInterval(
+                        char_start=0,
+                        char_end=len(unit.text),
+                        dependency_ids=frozenset(
+                            {bundle.revision.revision_id, unit.unit_id}
+                        ),
+                    ),
+                ),
+            )
+            for unit in units
+        ),
+    )
+    rows = bundle.model_copy(update={"units": units})
+    candidate = FusedCandidate(("unit", units[1].unit_id), 1, 1.0, {"lexical": 1})
+    ranked = RankedEvidence(
+        (
+            RankedEvidenceItem(
+                candidate,
+                None,
+                RerankFacts(
+                    rows,
+                    prepared,
+                    (RerankMatch(None, units[1].unit_id, 0, 3, "lexical", 1, 1.0),),
+                ),
+                "disabled",
+            ),
+        )
+    )
+    view = type(
+        "View",
+        (),
+        {
+            "revision_ids": frozenset({bundle.revision.revision_id}),
+            "context_unit_ids": frozenset(unit.unit_id for unit in units),
+            "structural_unit_ids": frozenset(),
+            "asset_ids": frozenset(),
+            "chunk_ids": frozenset(),
+        },
+    )()
+    segment = assemble_segments(ranked, view, config(tmp_path), Counter()).segments[0]
+    assert segment.context_only_unit_ids == (units[0].unit_id, units[2].unit_id)
+    assert [citation.locators[0].char_start for citation in segment.citations] == [
+        4,
+        0,
+        8,
+    ]
+    view.context_unit_ids = frozenset({units[1].unit_id, units[2].unit_id})
+    result = assemble_segments(ranked, view, config(tmp_path), Counter())
+    segment = result.segments[0]
+    assert segment.context_only_unit_ids == (units[2].unit_id,)
+    assert all(
+        units[0].unit_id not in omission.unit_ids for omission in segment.omissions
+    )
+    assert all(citation.unit_id != units[0].unit_id for citation in segment.citations)
+    assert all(anchor.unit_id != units[0].unit_id for anchor in result.omitted_anchors)
+
+
+def test_one_eligible_ordinal_gap_can_join_matches_but_denied_gap_cannot(tmp_path):
+    from hashlib import sha256
+
+    from tychora.contracts.evidence import TextLocator
+    from tychora.contracts.indexing import PreparedExtraction, RepresentationUnit
+
+    bundle = seed_bundle("left|gap|right")
+    original = bundle.units[0]
+    spans = (("left-match", 0, 4, 0), ("gap-unit", 5, 8, 1), ("right-match", 9, 14, 2))
+    units = tuple(
+        original.model_copy(
+            update={
+                "unit_id": uid,
+                "ordinal": ordinal,
+                "text": original.text[start:end],
+                "text_sha": sha256(original.text[start:end].encode()).hexdigest(),
+                "locators": (
+                    TextLocator(
+                        artifact_ref=bundle.revision.original_sha,
+                        native_ref="manual.md",
+                        char_start=start,
+                        char_end=end,
+                    ),
+                ),
+            }
+        )
+        for uid, start, end, ordinal in spans
+    )
+    prepared = PreparedExtraction(
+        extraction_id=bundle.extraction.extraction_id,
+        revision_id=bundle.revision.revision_id,
+        units=tuple(
+            RepresentationUnit(
+                unit=unit,
+                revision_id=bundle.revision.revision_id,
+                title=bundle.revision.title,
+                kind_id="manual@1",
+                ownership=(
+                    OwnedInterval(
+                        char_start=0,
+                        char_end=len(unit.text),
+                        dependency_ids=frozenset(
+                            {bundle.revision.revision_id, unit.unit_id}
+                        ),
+                    ),
+                ),
+            )
+            for unit in units
+        ),
+    )
+    rows = bundle.model_copy(update={"units": units})
+    ranked = RankedEvidence(
+        tuple(
+            RankedEvidenceItem(
+                FusedCandidate(
+                    ("unit", unit.unit_id), order, 1 / order, {"lexical": order}
+                ),
+                None,
+                RerankFacts(
+                    rows,
+                    prepared,
+                    (
+                        RerankMatch(
+                            None, unit.unit_id, 0, len(unit.text), "lexical", order, 1.0
+                        ),
+                    ),
+                ),
+                "disabled",
+            )
+            for order, unit in enumerate((units[0], units[2]), 1)
+        )
+    )
+    view = type(
+        "View",
+        (),
+        {
+            "revision_ids": frozenset({bundle.revision.revision_id}),
+            "context_unit_ids": frozenset(unit.unit_id for unit in units),
+            "structural_unit_ids": frozenset(),
+            "asset_ids": frozenset(),
+            "chunk_ids": frozenset(),
+        },
+    )()
+    joined = assemble_segments(ranked, view, config(tmp_path), Counter())
+    assert len(joined.segments) == 1
+    assert joined.segments[0].matched_unit_ids == (units[0].unit_id, units[2].unit_id)
+    assert joined.segments[0].context_only_unit_ids == (units[1].unit_id,)
+    view.context_unit_ids = frozenset({units[0].unit_id, units[2].unit_id})
+    split = assemble_segments(ranked, view, config(tmp_path), Counter())
+    assert len(split.segments) == 2
+    assert all(
+        units[1].unit_id not in segment.context_only_unit_ids
+        for segment in split.segments
+    )
+
+
+def test_code_import_context_is_separate_bounded_and_owner_checked(tmp_path):
+    from hashlib import sha256
+
+    from tychora.contracts.base import FrozenJsonMap
+    from tychora.contracts.corpus import StructuredRecordRow
+    from tychora.contracts.evidence import CodeLocator
+    from tychora.contracts.indexing import PreparedExtraction, RepresentationUnit
+
+    source = "import os\n\ndef run(): return 1\n"
+    bundle = seed_bundle(source, kind="code_file@1")
+    start = source.index("def run")
+    units = []
+    for uid, left, right, ordinal in (
+        ("import-unit", 0, 10, 0),
+        ("function-unit", start, len(source), 1),
+    ):
+        text = source[left:right]
+        unit = bundle.units[0].model_copy(
+            update={
+                "unit_id": uid,
+                "ordinal": ordinal,
+                "unit_type": "symbol",
+                "text": text,
+                "text_sha": sha256(text.encode()).hexdigest(),
+                "locators": (
+                    CodeLocator(
+                        artifact_ref=bundle.revision.original_sha,
+                        native_ref="demo.py",
+                        relative_path="demo.py",
+                        char_start=left,
+                        char_end=right,
+                        byte_start=left,
+                        byte_end=right,
+                        line_start=1 if ordinal == 0 else 3,
+                        line_end=1 if ordinal == 0 else 3,
+                    ),
+                ),
+            }
+        )
+        units.append(unit)
+    prepared = PreparedExtraction(
+        extraction_id=bundle.extraction.extraction_id,
+        revision_id=bundle.revision.revision_id,
+        units=tuple(
+            RepresentationUnit(
+                unit=unit,
+                revision_id=bundle.revision.revision_id,
+                title=bundle.revision.title,
+                kind_id="code_file@1",
+                ownership=(
+                    OwnedInterval(
+                        char_start=0,
+                        char_end=len(unit.text),
+                        dependency_ids=frozenset(
+                            {bundle.revision.revision_id, unit.unit_id}
+                        ),
+                    ),
+                ),
+            )
+            for unit in units
+        ),
+    )
+    record = StructuredRecordRow(
+        unit_id=units[1].unit_id,
+        record_type="code_symbol",
+        schema_hash="a" * 64,
+        data_json=FrozenJsonMap(
+            {
+                "context_spans": (
+                    {
+                        "source_unit_id": units[0].unit_id,
+                        "char_start": 0,
+                        "char_end": len(units[0].text),
+                        "reason": "referenced_import",
+                    },
+                ),
+            }
+        ),
+    )
+    rows = bundle.model_copy(update={"units": tuple(units), "records": (record,)})
+    candidate = FusedCandidate(("unit", units[1].unit_id), 1, 1.0, {"lexical": 1})
+    ranked = RankedEvidence(
+        (
+            RankedEvidenceItem(
+                candidate,
+                None,
+                RerankFacts(
+                    rows,
+                    prepared,
+                    (
+                        RerankMatch(
+                            None,
+                            units[1].unit_id,
+                            0,
+                            len(units[1].text),
+                            "lexical",
+                            1,
+                            1.0,
+                        ),
+                    ),
+                ),
+                "disabled",
+            ),
+        )
+    )
+    view = type(
+        "View",
+        (),
+        {
+            "revision_ids": frozenset({bundle.revision.revision_id}),
+            "context_unit_ids": frozenset(unit.unit_id for unit in units),
+            "structural_unit_ids": frozenset(),
+            "asset_ids": frozenset(),
+            "chunk_ids": frozenset(),
+        },
+    )()
+    segment = assemble_segments(ranked, view, config(tmp_path), Counter()).segments[0]
+    assert segment.text == units[1].text
+    assert segment.context_excerpts[0].text == units[0].text
+    assert (
+        sum(Counter().count(excerpt.text) for excerpt in segment.context_excerpts)
+        <= 160
+    )
+    assert segment.citations[1].locators[0].char_start == 0
+    view.context_unit_ids = frozenset({units[1].unit_id})
+    assert (
+        assemble_segments(ranked, view, config(tmp_path), Counter())
+        .segments[0]
+        .context_excerpts
+        == ()
+    )
+
+
+def test_verified_output_counter_counts_literal_source_tokens():
+    import os
+    from pathlib import Path
+
+    import pytest
+
+    root = os.environ.get("TYCHORA_TEST_MODEL_CACHE")
+    if root is None:
+        pytest.skip("requires explicitly provisioned local output tokenizer")
+    counter = OutputTokenCounter(Path(root))
+    assert counter.tokenizer_id == "cl100k_base"
+    assert counter.count("Café 🧬 <|endoftext|>") > 0
+
+
+def test_historical_role_comes_from_validated_selected_attempt(tmp_path):
+    import json
+
+    import pytest
+
+    from tests.retrieval.test_eligibility import _Reader, _request, _snapshot
+    from tychora.configuration.registry import Registry
+    from tychora.contracts.base import FrozenJsonMap
+    from tychora.contracts.errors import TychoraError
+    from tychora.contracts.identity import canonical_bytes, digest
+    from tychora.contracts.requests import RequestScope
+    from tychora.retrieval.eligibility import (
+        EligibilityCompiler,
+        EligibilityFacts,
+        RevisionFact,
+        UnitFact,
+    )
+
+    base = config(tmp_path)
+    registry_data = json.loads(canonical_bytes(base.registry))
+    registry_data["compatibility"]["kind_lanes"] = {"manual@0": "standard"}
+    cfg = base.model_copy(
+        update={
+            "registry": FrozenJsonMap(registry_data),
+            "registry_digest": digest("registry-v1", registry_data),
+        }
+    )
+    envelope = json.loads(
+        canonical_bytes(Registry.from_config(base).historical_definitions()["manual@1"])
+    )
+    original_role = envelope["kind"]["role"]
+    envelope["kind"]["id"] = "manual@0"
+    envelope["kind_digest"] = digest("kind-v1", envelope["kind"])
+    envelope["envelope_digest"] = digest(
+        "historical-kind-v1",
+        {key: value for key, value in envelope.items() if key != "envelope_digest"},
+    )
+    bundle, prepared, ranked, _ = case("Historical text", ())
+    unit = bundle.units[0]
+    facts = EligibilityFacts(
+        policy_epoch=1,
+        revisions=(
+            RevisionFact(
+                source_id=bundle.source.source_id,
+                revision_id=bundle.revision.revision_id,
+                extraction_id=bundle.extraction.extraction_id,
+                collection_id="collection",
+                kind_id="manual@0",
+                access_rank=0,
+                source_floor=0,
+                collection_floor=0,
+                allowed_uses=frozenset({"audit"}),
+                review_state="accepted",
+                withdrawn=False,
+                published_on=None,
+                effective_from=None,
+                effective_until=None,
+                is_default=True,
+            ),
+        ),
+        units=(
+            UnitFact(
+                unit_id=unit.unit_id,
+                revision_id=bundle.revision.revision_id,
+                extraction_id=bundle.extraction.extraction_id,
+                unit_type="paragraph",
+                review_state="accepted",
+                citable=True,
+                dependency_ids=frozenset({bundle.revision.revision_id, unit.unit_id}),
+            ),
+        ),
+        chunks=(),
+        assets=(),
+        historical_definitions=(("manual@0", envelope),),
+    )
+    reader = _Reader(cfg, facts)
+    scope = RequestScope(
+        principal_id="principal",
+        collection_ids=frozenset({"collection"}),
+        access_ceiling=2,
+        uses=frozenset({"audit"}),
+        capabilities=frozenset({"search"}),
+    )
+    attempt = EligibilityCompiler(reader).compile_attempt(
+        _snapshot(cfg, chunks=()), scope, _request(), cfg
+    )
+    assert attempt.historical_kind_roles == {"manual@0": original_role}
+    rows = bundle.model_copy(
+        update={"revision": bundle.revision.model_copy(update={"kind_id": "manual@0"})}
+    )
+    prepared = prepared.model_copy(
+        update={
+            "units": (prepared.units[0].model_copy(update={"kind_id": "manual@0"}),)
+        }
+    )
+    ranked = RankedEvidence(
+        (
+            replace(
+                ranked.items[0],
+                facts=replace(ranked.items[0].facts, rows=rows, prepared=prepared),
+            ),
+        )
+    )
+    segment = assemble_segments(
+        ranked,
+        attempt.view,
+        cfg,
+        Counter(),
+        historical_kind_roles=attempt.historical_kind_roles,
+    ).segments[0]
+    assert (
+        segment.kind == "manual@0"
+        and segment.lane == "standard"
+        and segment.role == original_role
+    )
+    with pytest.raises(TychoraError) as missing:
+        assemble_segments(ranked, attempt.view, cfg, Counter())
+    assert missing.value.code == "PROFILE_INCOMPATIBLE"
+
+
+def test_caller_total_budget_preserves_a_bounded_winning_subrange(tmp_path):
+    bundle, _, ranked, view = case("W" * 200, ())
+    selection = assemble_segments(
+        ranked, view, config(tmp_path), Counter(), total_tokens=20
+    )
+    assert selection.visual_reserved_tokens == 2
+    assert selection.text_budget == 18
+    assert len(selection.segments) == 1
+    assert selection.segments[0].text == bundle.units[0].text[:18]
+    assert selection.segments[0].truncated
+    source = "earlier " * 20 + "WINNER at end"
+    offset = source.index("WINNER")
+    _, _, end_ranked, end_view = case(
+        source,
+        (RerankMatch(None, "placeholder", offset, len(source), "lexical", 1, 1.0),),
+    )
+    end_selection = assemble_segments(
+        end_ranked, end_view, config(tmp_path), Counter(), total_tokens=20
+    )
+    assert end_selection.segments[0].text.startswith("WINNER")
+
+
+def test_code_diversity_counts_each_file_not_entire_repository(tmp_path):
+    from hashlib import sha256
+
+    from tychora.contracts.evidence import CodeLocator
+    from tychora.contracts.indexing import PreparedExtraction, RepresentationUnit
+
+    bundle = seed_bundle("ABCD", kind="code_file@1")
+    root = bundle.units[0]
+    units = tuple(
+        root.model_copy(
+            update={
+                "unit_id": f"symbol-{index}",
+                "ordinal": index,
+                "unit_type": "symbol",
+                "text": letter,
+                "text_sha": sha256(letter.encode()).hexdigest(),
+                "locators": (
+                    CodeLocator(
+                        artifact_ref=bundle.revision.original_sha,
+                        native_ref=path,
+                        relative_path=path,
+                        char_start=index,
+                        char_end=index + 1,
+                        byte_start=index,
+                        byte_end=index + 1,
+                        line_start=1,
+                        line_end=1,
+                    ),
+                ),
+            }
+        )
+        for index, (letter, path) in enumerate(
+            (("A", "a.py"), ("B", "a.py"), ("C", "a.py"), ("D", "b.py"))
+        )
+    )
+    prepared = PreparedExtraction(
+        extraction_id=bundle.extraction.extraction_id,
+        revision_id=bundle.revision.revision_id,
+        units=tuple(
+            RepresentationUnit(
+                unit=unit,
+                revision_id=bundle.revision.revision_id,
+                title=bundle.revision.title,
+                kind_id="code_file@1",
+                ownership=(
+                    OwnedInterval(
+                        char_start=0,
+                        char_end=1,
+                        dependency_ids=frozenset(
+                            {bundle.revision.revision_id, unit.unit_id}
+                        ),
+                    ),
+                ),
+            )
+            for unit in units
+        ),
+    )
+    rows = bundle.model_copy(update={"units": units})
+    ranked = RankedEvidence(
+        tuple(
+            RankedEvidenceItem(
+                FusedCandidate(
+                    ("unit", unit.unit_id), index, 1 / index, {"lexical": index}
+                ),
+                None,
+                RerankFacts(
+                    rows,
+                    prepared,
+                    (RerankMatch(None, unit.unit_id, 0, 1, "lexical", index, 1.0),),
+                ),
+                "disabled",
+            )
+            for index, unit in enumerate(units, 1)
+        )
+    )
+    view = type(
+        "View",
+        (),
+        {
+            "revision_ids": frozenset({bundle.revision.revision_id}),
+            "context_unit_ids": frozenset(unit.unit_id for unit in units),
+            "structural_unit_ids": frozenset(),
+            "asset_ids": frozenset(),
+            "chunk_ids": frozenset(),
+        },
+    )()
+    result = assemble_segments(ranked, view, config(tmp_path), Counter())
+    assert [segment.excerpts[0].text for segment in result.segments] == ["A", "B", "D"]
+    assert result.omitted_anchors[0].unit_id == units[2].unit_id

@@ -297,7 +297,14 @@ def load_retained_representation(
             locators=tuple(locators),
             assets=tuple(
                 AssetRow.model_validate(
-                    {**row, "locator": json.loads(row["locator_json"])}
+                    {
+                        **{
+                            key: value
+                            for key, value in row.items()
+                            if key != "locator_json"
+                        },
+                        "locator": json.loads(row["locator_json"]),
+                    }
                 )
                 for row in asset_raw
             ),

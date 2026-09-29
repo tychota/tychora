@@ -314,10 +314,34 @@ class EligibilityCompiler:
     ) -> EligibilityAttempt:
         facts = self.reader.read_eligibility_facts(snapshot)
         view, warnings = self._compile(snapshot, scope, request, config, facts)
+        definitions = dict(facts.historical_definitions)
+        selected_kinds = {
+            item.kind_id
+            for item in facts.revisions
+            if item.revision_id in view.revision_ids
+            and item.kind_id not in self.reader.registry.kinds
+        }
+        historical_roles: dict[str, str] = {}
+        for kind in selected_kinds:
+            envelope = definitions.get(kind)
+            if not isinstance(envelope, dict):
+                raise TychoraError(
+                    "PROFILE_INCOMPATIBLE",
+                    "Selected historical kind definition is unavailable",
+                )
+            definition = envelope.get("kind")
+            role = definition.get("role") if isinstance(definition, dict) else None
+            if not isinstance(role, str) or not role:
+                raise TychoraError(
+                    "PROFILE_INCOMPATIBLE",
+                    "Selected historical kind role is unavailable",
+                )
+            historical_roles[kind] = role
         return EligibilityAttempt(
             view=view,
             compiler=self,
             dependencies=MappingProxyType(_dependency_lookup(view, facts)),
+            historical_kind_roles=MappingProxyType(historical_roles),
             warnings=warnings,
         )
 
@@ -698,6 +722,9 @@ class EligibilityAttempt:
     warnings: tuple[str, ...] = ()
     owner: WorkspaceOwner | None = None
     ctx: ExecutionContext | None = None
+    historical_kind_roles: Mapping[str, str] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     def dependencies_for(self, representation_id: str) -> frozenset[str]:
         try:

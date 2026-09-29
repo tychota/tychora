@@ -1,0 +1,178 @@
+"""Visuals remain original pixel evidence independent of text reranking."""
+
+from types import SimpleNamespace
+
+import pytest
+
+from tests.helpers.corpus import artifact, reader, registry, seed_bundle
+from tychora.adapters.sqlite.connection import open_corpus
+from tychora.adapters.sqlite.corpus import CorpusStore
+from tychora.contracts.corpus import AssetRow, RevisionArtifactRow, UnitAssetRow
+from tychora.contracts.evidence import ImageLocator, Segment
+from tychora.contracts.identity import digest
+from tychora.ports.execution import ExecutionContext
+from tychora.retrieval.fusion import FusedCandidate
+from tychora.retrieval.rerank import RankedEvidence, RankedEvidenceItem
+from tychora.retrieval.visuals import (
+    AssetCandidate,
+    prepare_visual_candidates,
+    select_visuals,
+)
+
+
+def visual_case(source_key="image.png", rank=1, score=0.01, *, visual=True):
+    bundle = seed_bundle("", source_key=source_key)
+    pixels = artifact(b"synthetic encoded pixels", "image/png")
+    locator = ImageLocator(artifact_ref=pixels.sha256, native_ref=source_key)
+    asset_id = digest(
+        "asset-v1", bundle.extraction.extraction_id, source_key, pixels.sha256
+    )
+    asset = AssetRow(
+        asset_id=asset_id,
+        extraction_id=bundle.extraction.extraction_id,
+        artifact_sha=pixels.sha256,
+        asset_type="image",
+        native_ref=source_key,
+        locator=locator,
+    )
+    source_unit = bundle.units[0].model_copy(
+        update={"unit_type": "image_original", "locators": (locator,)}
+    )
+    bundle = bundle.model_copy(
+        update={
+            "units": (source_unit,),
+            "locators": (bundle.locators[0].model_copy(update={"locator": locator}),),
+            "assets": (asset,),
+            "artifacts": (*bundle.artifacts, pixels),
+            "revision_artifacts": (
+                *bundle.revision_artifacts,
+                RevisionArtifactRow(
+                    revision_id=bundle.revision.revision_id,
+                    role="sidecar",
+                    source_ref=source_key,
+                    artifact_sha=pixels.sha256,
+                ),
+            ),
+            "unit_assets": (
+                UnitAssetRow(
+                    unit_id=source_unit.unit_id, asset_id=asset_id, role="source"
+                ),
+            ),
+        }
+    )
+    view = type(
+        "View",
+        (),
+        {
+            "asset_ids": frozenset({asset_id}),
+            "revision_ids": frozenset({bundle.revision.revision_id}),
+            "context_unit_ids": frozenset({source_unit.unit_id}),
+            "structural_unit_ids": frozenset(),
+            "proxy_unit_ids": frozenset(),
+        },
+    )()
+    candidate = FusedCandidate(
+        ("asset", asset_id),
+        rank,
+        score,
+        {"visual": rank} if visual else {"lexical": rank},
+    )
+    return AssetCandidate(
+        candidate,
+        bundle,
+        view,
+        frozenset({asset_id, bundle.revision.revision_id, source_unit.unit_id}),
+        native_multimodal=visual,
+    )
+
+
+def test_zero_text_original_image_needs_no_proxy_or_text_score():
+    native = visual_case()
+    selected = select_visuals((native,), ())
+    assert len(selected) == 1
+    assert selected[0].asset_id == native.candidate.key[1]
+    assert selected[0].proxies == ()
+    assert selected[0].citations[0].locators == (native.rows.assets[0].locator,)
+    assert selected[0].selection_reasons == ("multimodal_match", "reserved_multimodal")
+
+
+def test_native_wins_tight_limit_and_companion_is_distinct():
+    native = visual_case("native.png", score=0.001)
+    companion = visual_case("companion.png", score=0.1, visual=False)
+    strongest = Segment(
+        segment_id="text-segment",
+        source_id=companion.rows.source.source_id,
+        revision_id=companion.rows.revision.revision_id,
+        extraction_id=companion.rows.extraction.extraction_id,
+        kind="manual@1",
+        role="supporting_evidence",
+        lane="standard",
+        excerpts=(),
+        text="matched text",
+        matched_unit_ids=(),
+    )
+    assert (
+        select_visuals((companion, native), (strongest,), limit=1)[0].asset_id
+        == native.candidate.key[1]
+    )
+    selected = select_visuals((companion, native), (strongest,), limit=2)
+    assert [item.asset_id for item in selected] == [
+        native.candidate.key[1],
+        companion.candidate.key[1],
+    ]
+    assert selected[1].selection_reasons == (
+        "proxy_match",
+        "source_link",
+        "reserved_companion",
+    )
+    same_source = strongest.model_copy(
+        update={"source_id": native.rows.source.source_id}
+    )
+    selected = select_visuals((native, companion), (same_source,), limit=2)
+    assert [item.asset_id for item in selected] == [
+        native.candidate.key[1],
+        companion.candidate.key[1],
+    ]
+    assert selected[0].selection_reasons == (
+        "multimodal_match",
+        "reserved_multimodal",
+        "source_link",
+        "reserved_companion",
+    )
+    assert selected[1].selection_reasons == ("proxy_match",)
+
+
+@pytest.mark.asyncio
+async def test_visual_producer_reads_retained_zero_text_original(tmp_path):
+    fixture = visual_case("retained.png")
+    db = open_corpus(tmp_path / "corpus.sqlite3", initialize=True)
+    store = CorpusStore(db, registry=registry(), artifacts=reader())
+    store.commit_extraction(fixture.rows)
+
+    class Owner:
+        def __init__(self):
+            self.db = db
+
+        async def run_blocking(self, call, ctx):
+            ctx.checkpoint()
+            return call()
+
+    owner = Owner()
+    attempt = SimpleNamespace(
+        owner=owner,
+        view=fixture.view,
+        dependencies_for=lambda asset_id: frozenset(
+            {asset_id, fixture.rows.revision.revision_id, fixture.rows.units[0].unit_id}
+        ),
+    )
+    ranked = RankedEvidence(
+        (RankedEvidenceItem(fixture.candidate, None, None, "independent"),)
+    )
+    candidates = await prepare_visual_candidates(
+        owner, attempt, ranked, ExecutionContext()
+    )
+    assert len(candidates) == 1
+    assert candidates[0].rows.assets[0].asset_id == fixture.candidate.key[1]
+    selected = select_visuals(candidates, ())
+    assert selected[0].citations[0].locators == (fixture.rows.assets[0].locator,)
+    db.close()
