@@ -244,9 +244,11 @@ class QueryService:
         return not (
             _needs_text(request)
             and self.owner.config.values.providers.rerank.provider != "disabled"
+            and not self.owner.config.values.retrieval.allow_degraded
             and (
                 self.reranker is None
                 or self.rerank_counter is None
+                or self.rerank_unavailable is not None
                 or not self.reranker.available
                 or offline
             )

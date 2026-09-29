@@ -58,6 +58,55 @@ class Counter:
         return len(text.split())
 
 
+class LocalTextQueryProvider:
+    credential_binding_id = "synthetic-local-binding"
+    remote = False
+    available = True
+
+    def __init__(self, owner, scope, capabilities, counter, caches):
+        self.owner = owner
+        self.scope = scope
+        self.capabilities = capabilities
+        self.counter = counter
+        self.caches = caches
+
+    def bind(self, bound_owner, bound_scope, policy_epoch):
+        assert bound_owner is self.owner
+        assert bound_scope == self.scope
+        assert policy_epoch >= 0
+        capabilities = self.capabilities
+        owner = self.owner
+
+        class LocalEmbedder:
+            def __init__(self):
+                self.capabilities = capabilities
+
+            def probe_queries(self, queries, ctx):
+                assert len(queries) == 1
+                value = EmbeddingRecord.from_normalized_bytes(
+                    record_id="synthetic-local-query",
+                    input_sha=digest("synthetic-query-v1", queries),
+                    space_id=capabilities.space_id,
+                    stored=struct.pack("<ff", 1.0, 0.0),
+                )
+                return QueryEmbeddingProbe(
+                    workspace_id=owner.workspace_id,
+                    provider=capabilities.provider,
+                    query_batch_sha=digest("query-embedding-probe-v1", queries),
+                    input_count=1,
+                    state="hit",
+                    records=(value,),
+                )
+
+            def embed_queries(self, queries, ctx):
+                raise AssertionError("Local hit must not call a remote provider")
+
+            def embed_groups(self, groups, ctx):
+                raise AssertionError("Query binding must not index documents")
+
+        return LocalEmbedder()
+
+
 def test_full_result_identity_changes_with_filters_context_and_lexical_epoch() -> None:
     base = QueryRequest.from_mapping({"question": "verification"})
     filtered = QueryRequest.from_mapping(
@@ -88,6 +137,52 @@ def test_over_2000_provider_tokens_fails_before_search() -> None:
         validate_query_text(request, Counter())
     assert error.value.code == "INVALID_REQUEST"
     assert "2,000" in error.value.message
+
+
+def test_local_text_replay_gate_degrades_reranker_but_strict_and_remote_still_fail() -> (
+    None
+):
+    config = SimpleNamespace(
+        values=SimpleNamespace(
+            offline=True,
+            index=SimpleNamespace(
+                text=SimpleNamespace(backend="chroma"),
+                image=SimpleNamespace(backend="disabled"),
+            ),
+            providers=SimpleNamespace(rerank=SimpleNamespace(provider="voyage")),
+            retrieval=SimpleNamespace(allow_degraded=True),
+        )
+    )
+    owner = SimpleNamespace(config=config, workspace_id="workspace")
+    scope = RequestScope(principal_id="reader")
+    caches = QueryCaches()
+    counter = RecordingCounter()
+    provider = LocalTextQueryProvider(
+        owner, scope, RecordingEmbedder(counter).capabilities, counter, caches
+    )
+    assert (
+        provider.bind(owner, scope, 0)
+        .probe_queries(("verification",), ExecutionContext())
+        .state
+        == "hit"
+    )
+    service = QueryService.__new__(QueryService)
+    service.owner = owner
+    service.caches = caches
+    service.text_provider = provider
+    service.text_index = object()
+    service.visual_provider = None
+    service.visual_index = None
+    service.reranker = None
+    service.rerank_counter = None
+    service.rerank_unavailable = None
+    request = QueryRequest.from_mapping({"question": "verification"})
+    assert service._replay_ready(request)
+    config.values.retrieval.allow_degraded = False
+    assert not service._replay_ready(request)
+    config.values.retrieval.allow_degraded = True
+    provider.remote = True
+    assert not service._replay_ready(request)
 
 
 def test_query_upload_binding_uses_actual_owner_scope_and_epoch() -> None:
@@ -400,6 +495,88 @@ async def test_filter_change_retrieves_again_from_real_fts(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+async def test_offline_degraded_retained_lexical_replay_does_not_require_reranker(
+    tmp_path: Path,
+) -> None:
+    from tychora.adapters.sqlite.history import HistoryRepository
+
+    settings = tmp_path / "workspace.toml"
+    settings.write_text(
+        'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
+        "[configuration]\noffline=true\n"
+        "[configuration.retrieval]\nallow_degraded=true\n"
+        '[configuration.providers.rerank]\nprovider="voyage"\n'
+        'model="rerank-2.5"\ncredential_ref="env:UNUSED_TEST_CREDENTIAL"\n'
+    )
+    config = resolve_config(settings, "test", {})
+    collection = "55825936-6a6a-4d29-945a-327d771a76b7"
+    scope = RequestScope(
+        principal_id="reader",
+        collection_ids=frozenset({collection}),
+        capabilities=frozenset({"read", "write", "manage"}),
+        uses=frozenset({"lookup", "compose"}),
+    )
+    with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
+        await owner.run_blocking(
+            lambda: owner.db.execute(
+                "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) "
+                "VALUES (?,?,?,?,0,'{}')",
+                (collection, owner.workspace_id, "manuals", "Manuals"),
+            ),
+            ExecutionContext(),
+        )
+        source_service = SourceService(
+            owner,
+            ProjectionCoordinator(
+                store=owner.store,
+                artifacts=owner.artifacts,
+                config=config,
+                counter=Counter(),
+            ),
+        )
+        await source_service.add(
+            SourceInput.from_mapping(
+                {
+                    "type": "text",
+                    "text": "Verification evidence for offline replay.",
+                    "format": "text",
+                    "kind": "manual@1",
+                    "metadata": {
+                        "title": "Offline manual",
+                        "publisher": "Example Team",
+                        "edition": "1",
+                    },
+                    "source_key": "offline.txt",
+                    "collection_id": collection,
+                }
+            ),
+            scope,
+        )
+        history = HistoryRepository(
+            owner.db, artifacts=owner.artifacts, retain_payloads=True
+        )
+        service = QueryService(
+            owner,
+            output_counter=OutputTokenCounter(
+                Path(os.environ["TYCHORA_TEST_MODEL_CACHE"])
+            ),
+            history=history,
+        )
+        request = QueryRequest.from_mapping({"question": "verification"})
+        original = await service.search(request, scope, ExecutionContext())
+        assert original.result.segments
+        assert original.result.coverage.status == "partial"
+        assert "rerank" in original.result.coverage.unavailable_channels
+        replayed = await service.replay(
+            original.result.run_id, scope, ExecutionContext()
+        )
+        assert replayed.result.segments
+        assert replayed.result.run_id != original.result.run_id
+        assert replayed.result.coverage.status == "partial"
+        assert "rerank" in replayed.result.coverage.unavailable_channels
+
+
+@pytest.mark.asyncio
 async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
     tmp_path: Path,
 ) -> None:
@@ -577,57 +754,12 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
         assert lexical.calls == 2
         assert "text" in results[0].result.coverage.completed_channels
 
-        class LocalTextBinding:
-            credential_binding_id = "synthetic-local-binding"
-            remote = False
-            available = True
-
-            def __init__(self):
-                self.capabilities = embedder.capabilities
-                self.counter = counter
-                self.caches = caches
-
-            def bind(self, bound_owner, bound_scope, policy_epoch):
-                assert bound_owner is owner
-                assert bound_scope == scope
-                assert policy_epoch >= 0
-                capabilities = self.capabilities
-
-                class LocalEmbedder:
-                    def __init__(self):
-                        self.capabilities = capabilities
-
-                    def probe_queries(self, queries, ctx):
-                        assert len(queries) == 1
-                        value = EmbeddingRecord.from_normalized_bytes(
-                            record_id="synthetic-local-query",
-                            input_sha=digest("synthetic-query-v1", queries),
-                            space_id=capabilities.space_id,
-                            stored=struct.pack("<ff", 1.0, 0.0),
-                        )
-                        return QueryEmbeddingProbe(
-                            workspace_id=owner.workspace_id,
-                            provider=capabilities.provider,
-                            query_batch_sha=digest("query-embedding-probe-v1", queries),
-                            input_count=1,
-                            state="hit",
-                            records=(value,),
-                        )
-
-                    def embed_queries(self, queries, ctx):
-                        raise AssertionError(
-                            "Local hit must not call a remote provider"
-                        )
-
-                    def embed_groups(self, groups, ctx):
-                        raise AssertionError("Query binding must not index documents")
-
-                return LocalEmbedder()
-
         local = QueryService(
             owner,
             output_counter=service.counter,
-            text_provider=LocalTextBinding(),
+            text_provider=LocalTextQueryProvider(
+                owner, scope, embedder.capabilities, counter, caches
+            ),
             text_index=index,
             caches=caches,
         )
