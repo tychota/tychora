@@ -473,7 +473,15 @@ def ranking_input(
     seen_ranges: set[tuple[str, int, int]] = set()
     for match in sorted(
         matches,
-        key=lambda match: (-match.weight / (60 + match.rank), match.char_start),
+        key=lambda match: (
+            match.rank,
+            -match.weight,
+            match.char_start,
+            match.unit_id,
+            match.window_id or "",
+            match.char_end,
+            match.channel,
+        ),
     ):
         range_key = (match.unit_id, match.char_start, match.char_end)
         if range_key not in seen_ranges:

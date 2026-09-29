@@ -149,6 +149,54 @@ def test_two_disjoint_matches_keep_strongest_first_and_both_anchors():
     assert item.omitted_match_count == 0
 
 
+def test_channel_rank_wins_over_weight_when_budget_fits_one_match():
+    long_match = "WEIGHT_TWO " + "x" * 1500
+    text = long_match + " RANK_ONE"
+    weighted = RerankMatch(
+        "weighted", "placeholder", 0, len(long_match), "exact", 10, 2.0
+    )
+    ranked = RerankMatch(
+        "ranked", "placeholder", len(text) - 8, len(text), "lexical", 1, 1.0
+    )
+    bundle, candidate, view, facts = _case(text, (weighted, ranked))
+    unit_id = bundle.units[0].unit_id
+    facts = replace(
+        facts,
+        matches=(replace(weighted, unit_id=unit_id), replace(ranked, unit_id=unit_id)),
+    )
+
+    item = ranking_input(
+        candidate, {unit_id: bundle.units[0]}, view, CharacterCounter(), facts=facts
+    )
+
+    assert item.anchors[0].indexed_window_id == "ranked"
+    assert "RANK_ONE" in item.text
+    assert item.omitted_match_count == 1
+
+
+def test_equal_rank_uses_weight_then_source_offset():
+    text = "OFFSET_FIRST WEIGHT_WIN OFFSET_LATER"
+    first = RerankMatch("first", "placeholder", 0, 12, "lexical", 1, 1.0)
+    winner = RerankMatch("winner", "placeholder", 13, 23, "exact", 1, 2.0)
+    later = RerankMatch("later", "placeholder", 24, len(text), "lexical", 1, 1.0)
+    bundle, candidate, view, facts = _case(text, (later, first, winner))
+    unit_id = bundle.units[0].unit_id
+    facts = replace(
+        facts,
+        matches=tuple(replace(match, unit_id=unit_id) for match in facts.matches),
+    )
+
+    item = ranking_input(
+        candidate, {unit_id: bundle.units[0]}, view, CharacterCounter(), facts=facts
+    )
+
+    assert [anchor.indexed_window_id for anchor in item.anchors] == [
+        "winner",
+        "first",
+        "later",
+    ]
+
+
 def test_same_window_from_two_channels_is_one_match_not_an_omission():
     text = "one exact matched window"
     first = RerankMatch("one", "placeholder", 0, len(text), "lexical", 2, 1.0)
