@@ -1,0 +1,59 @@
+src/tychora/configuration/models.py
+  s_35b641b930a96d::t_578fe97fb33a1c 57
+src/tychora/configuration/registry.py
+  s_35b641b930a96d::t_cea766fbf237ff 18,484-510
+src/tychora/contracts/evidence.py
+  s_35b641b930a96d::t_8448e174bee7e7 215,218
+src/tychora/contracts/requests.py
+  s_35b641b930a96d::t_3a7047140f5da5 234
+src/tychora/contracts/requirements.py
+  s_35b641b930a96d::t_7b90bff6cf8079 1-113
+src/tychora/formatting/budget.py
+  s_35b641b930a96d::t_5d1e1527f06742 1-21
+src/tychora/formatting/hierarchical.py
+  s_35b641b930a96d::t_d23db49c789d98 1-5
+src/tychora/formatting/render.py
+  s_35b641b930a96d::t_49fe04b5ff9899 1-271
+src/tychora/retrieval/response.py
+  s_35b641b930a96d::t_39c620f9aaee66 1-637
+tests/configuration/test_registry.py
+  s_35b641b930a96d::t_ec3c80127ff7cb 723-780
+tests/fixtures/results/agent.txt
+  s_35b641b930a96d::t_7856065d36b198 1-8
+tests/fixtures/results/canonical.json
+  s_35b641b930a96d::t_bb4eaa948069e6 1
+tests/fixtures/results/hierarchical.json
+  s_35b641b930a96d::t_6ca43ed524f3d7 1
+tests/formatting/test_record_attachment.py
+  s_35b641b930a96d::t_97053fdb8e8032 1-82
+tests/formatting/test_relation_checks.py
+  s_d9b088aff4b8af::t_97f941bf3f0ac2 1-84
+tests/formatting/test_render.py
+  s_35b641b930a96d::t_08a041b8460d49 1-151
+tests/formatting/test_response_budget.py
+  s_35b641b930a96d::t_a4341775d033c9 1-309
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "1bcdd250921366411048cf8f066ff2caffad78df",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    },
+    "s_d9b088aff4b8af": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e291b58a-a6c7-46f9-be47-f3221126082d",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
