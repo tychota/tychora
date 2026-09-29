@@ -1,0 +1,41 @@
+src/tychora/adapters/sqlite/jobs.py
+  s_35b641b930a96d::t_1ec7fad66d853f 529-544,551-552
+  s_35b641b930a96d::t_afa1235e1ff2ab 545-550
+src/tychora/application/removal.py
+  s_35b641b930a96d::t_c51837c7c275d9 445,447-465
+  s_35b641b930a96d::t_bc482ab30c73ea 8,189-195
+  s_35b641b930a96d::t_5567d0e820ebfc 403-405,407-416,419-427,429
+  s_35b641b930a96d::t_07c757e1d233e7 18-19,35-37,108-109,124-125,136-141,143-173,184-188,196-213,217-246,258,303
+  s_35b641b930a96d::t_f57fa187fbf46f 142,174-183,214-216,417-418
+src/tychora/contracts/operations.py
+  s_35b641b930a96d::t_6e811c03ab377f 336-348,354-356
+src/tychora/api.py
+  s_35b641b930a96d::t_0dd996ec4c7e5d 163-168,171
+src/tychora/ports/jobs.py
+  s_35b641b930a96d::t_1ec7fad66d853f 41
+tests/operations/test_removal.py
+  s_35b641b930a96d::t_4991f9a9f33411 160,176-186
+  s_35b641b930a96d::t_afa1235e1ff2ab 304-306
+  s_35b641b930a96d::t_ba2050ec4380b9 125-126,232-236,313-315,772-773,831-832
+  s_35b641b930a96d::t_a58103096f38f0 18,28,108-124,127-157,189-231,237-262
+  s_35b641b930a96d::t_dc5083c71865fc 158,161-175,187-188
+  s_35b641b930a96d::t_6acc75a1217eb2 159
+  s_35b641b930a96d::t_8a39f04202f59f 265-303,307-312,316-318
+  s_35b641b930a96d::t_0e15ca990299aa 263-264
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "9481f810a3093205ea441c7074ebdcaaadd408f7",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
