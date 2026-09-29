@@ -250,6 +250,7 @@ class GraphBudget:
 
 class GraphPredicatePolicy(Contract):
     predicate: Identifier
+    view: Literal["semantic", "structural"] = "semantic"
     directions: tuple[Literal["outgoing", "incoming"], ...]
     statuses: tuple[Literal["recorded", "proposed", "confirmed", "rejected"], ...] = (
         "recorded",

@@ -94,6 +94,8 @@ def resolve_graph_traversal_policy(
             not directions
             or predicate == "continues_table@1"
             and continuation == "none"
+            or definition.get("structural_semantics")
+            and settings.structural == "none"
         ):
             continue
         statuses = ("recorded", "proposed", "confirmed", "rejected")
@@ -102,6 +104,9 @@ def resolve_graph_traversal_policy(
         inspection.append(
             GraphPredicatePolicy(
                 predicate=predicate,
+                view="structural"
+                if definition.get("structural_semantics")
+                else "semantic",
                 directions=cast(
                     tuple[Literal["outgoing", "incoming"], ...], directions
                 ),
@@ -787,6 +792,9 @@ SKIP {offset} LIMIT {page_size}
         predicates: tuple[str, ...],
         limits: GraphBudget,
         ctx: ExecutionContext,
+        *,
+        direction: Literal["outgoing", "incoming", "both"] | None = None,
+        relation_view: Literal["semantic", "structural"] | None = None,
     ) -> AssertionPage:
         with self.store._lock:
             self._ready(view)
@@ -803,6 +811,13 @@ SKIP {offset} LIMIT {page_size}
                 raise TychoraError(
                     "INVALID_REQUEST", "Unregistered inspection predicate"
                 )
+            if relation_view is not None:
+                policies = {
+                    name: policy
+                    for name, policy in policies.items()
+                    if policy.view == relation_view
+                }
+            predicates = tuple(name for name in predicates if name in policies)
             if selected_unit_ids and limits.inspected_rows >= limits.max_rows:
                 return AssertionPage(truncation="edge_work_limit", exhausted=False)
             frontier = set(selected_unit_ids) & view.graph_eligible_unit_ids
@@ -815,11 +830,18 @@ SKIP {offset} LIMIT {page_size}
                 for seed in sorted(frontier):
                     for predicate in predicates:
                         rule = policies[predicate]
-                        for direction in rule.directions:
+                        directions = (
+                            rule.directions
+                            if direction is None or direction == "both"
+                            else tuple(
+                                item for item in rule.directions if item == direction
+                            )
+                        )
+                        for edge_direction in directions:
                             rows = self._iter_edges(
                                 view,
                                 seed,
-                                direction,
+                                edge_direction,
                                 (predicate,),
                                 rule.statuses,
                                 ctx,

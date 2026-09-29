@@ -1,0 +1,209 @@
+"""Scoped discovery over detached definitions and an opened canonical owner."""
+
+import sys
+from pathlib import Path
+
+import pytest
+
+from tests.code.conftest import git, make_repo
+from tychora.application.discovery import DiscoveryService, _scoped_resolution_rates
+from tychora.application.owner import WorkspaceOwner
+from tychora.application.sources import SourceService
+from tychora.configuration.registry import Registry
+from tychora.configuration.resolve import resolve_config
+from tychora.contracts import DiscoverRequest, RequestScope, SourceInput
+from tychora.contracts.code import Resolution
+from tychora.contracts.errors import TychoraError
+from tychora.contracts.identity import digest
+from tychora.indexing.coordinator import ProjectionCoordinator
+from tychora.ports.execution import ExecutionContext
+
+
+@pytest.fixture
+def configured(tmp_path: Path):
+    path = tmp_path / "workspace.toml"
+    path.write_text('schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n')
+    config = resolve_config(path, "test", {})
+    return config, Registry.from_config(config)
+
+
+def test_static_kinds_without_owner_have_definitions_but_no_corpus_counts(configured):
+    config, registry = configured
+    service = DiscoveryService(config, registry)
+    result = service.discover(
+        DiscoverRequest(subject="kinds"), RequestScope(principal_id="reader")
+    )
+    assert any(item.id == "manual@1" for item in result.definitions)
+    assert result.counts == ()
+
+
+def test_empty_configured_kind_remains_discoverable(configured, tmp_path):
+    config, registry = configured
+    reader = RequestScope(principal_id="reader")
+    with WorkspaceOwner.open(tmp_path / "corpus", config, reader) as owner:
+        result = DiscoveryService(config, registry, owner).discover(
+            DiscoverRequest(subject="kinds"), reader
+        )
+    standard = next(item for item in result.definitions if item.id == "manual@1")
+    assert standard.definition["description"]
+    assert next(count.count for count in result.counts if count.name == "manual@1") == 0
+
+
+def test_unknown_subject_names_available_subjects(configured):
+    config, registry = configured
+    with pytest.raises(TychoraError) as error:
+        DiscoveryService(config, registry).discover(
+            "unknown", RequestScope(principal_id="reader")
+        )
+    assert error.value.code == "INVALID_REQUEST"
+    assert "kinds" in error.value.message
+
+
+def test_settings_disclose_separate_parser_and_acquisition_ceilings(configured):
+    config, registry = configured
+    result = DiscoveryService(config, registry).discover(
+        DiscoverRequest(subject="settings"), RequestScope(principal_id="reader")
+    )
+    limits = result.definitions[0].definition["parser_limits"]
+    assert limits["native_source_bytes"] == min(
+        4 * 1024 * 1024, config.values.acquisition.limits.max_file_bytes
+    )
+    assert limits["native_markdown_block_tokens"] == 100000
+    assert limits["native_json_records"] == 4096
+    assert limits["docling_conversion_bytes"] == 256 * 1024 * 1024
+    assert limits["document_semantic_units_parts_separators"] == 100000
+    assert (
+        result.definitions[0].definition["retrieval"]["table_continuations"]
+        == "derived"
+    )
+
+
+def test_capability_inventory_is_static_and_does_not_import_adapters(configured):
+    config, registry = configured
+    before = {name for name in sys.modules if name.startswith(("docling", "voyageai"))}
+    result = DiscoveryService(config, registry).discover(
+        DiscoverRequest(subject="settings"), RequestScope(principal_id="reader")
+    )
+    statuses = {item.name: item for item in result.capability_status}
+    assert statuses["sqlite"].required and statuses["sqlite"].installed
+    assert "docling" in statuses
+    assert {
+        name for name in sys.modules if name.startswith(("docling", "voyageai"))
+    } == before
+
+
+def test_resolution_rates_omit_excluded_candidate_without_hidden_count():
+    def record(
+        reference: str, target: str | None, supported: bool = True
+    ) -> Resolution:
+        return Resolution(
+            reference_id=reference,
+            source_id="source",
+            source_unit_id="source-unit",
+            revision_id="revision",
+            relative_path="module.py",
+            language="python",
+            reference_form="call",
+            spelling="function",
+            owning_scope=(),
+            source_scope_ref=None,
+            byte_start=0,
+            byte_end=8,
+            char_start=0,
+            char_end=8,
+            line_start=1,
+            line_end=1,
+            adapter_fingerprint=digest("adapter"),
+            supported=supported,
+            state="resolved" if target else "unresolved",
+            selected_target=target,
+            candidates=(target,) if target else (),
+            rule="synthetic",
+            reasons=("synthetic",),
+            truncated=False,
+            total_candidate_count=1 if target else 0,
+        )
+
+    summary = _scoped_resolution_rates(
+        (
+            record("visible", "allowed"),
+            record("excluded", "hidden"),
+            record("unsupported", None, False),
+        ),
+        frozenset({"source-unit", "allowed"}),
+        frozenset({"revision"}),
+    )
+    assert summary["rates"][0]["resolved"] == 1
+    assert summary["unsupported_references"] == 1
+    assert summary["scope_limited"] is True
+    assert "hidden" not in str(summary)
+    assert "omitted" not in str(summary)
+
+
+@pytest.mark.asyncio
+async def test_code_source_discovery_uses_retained_scoped_resolution_rates(tmp_path):
+    repository = make_repo(tmp_path)
+    (repository / "module.py").write_text("def original(): return 1\noriginal()\n")
+    git(repository, "add", "module.py")
+    git(repository, "commit", "-qm", "add call reference")
+    settings = tmp_path / "workspace.toml"
+    settings.write_text(
+        'schema_version=1\n[profiles.test]\nbuiltin="code@1"\n'
+        f'[configuration.acquisition]\nroots=["{tmp_path}"]\n'
+        '[configuration.extraction]\nparser="code"\n'
+        '[configuration.index]\ngraph="disabled"\n'
+        '[configuration.retrieval.graph]\nstructural="none"\nsemantic=false\npredicates=[]\n'
+    )
+    config = resolve_config(settings, "test", {})
+    collection = "55825936-6a6a-4d29-945a-327d771a76b7"
+    scope = RequestScope(
+        principal_id="reader",
+        collection_ids=frozenset({collection}),
+        capabilities=frozenset({"read", "write", "manage"}),
+        uses=frozenset({"lookup"}),
+    )
+
+    class Counter:
+        model = "local"
+        tokenizer_id = "provider@1"
+
+        def count(self, text):
+            return len(text)
+
+    with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
+        await owner.run_blocking(
+            lambda: owner.db.execute(
+                "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,'{}')",
+                (collection, owner.workspace_id, "code", "Code"),
+            ),
+            ExecutionContext(),
+        )
+        service = SourceService(
+            owner,
+            ProjectionCoordinator(
+                store=owner.store,
+                artifacts=owner.artifacts,
+                config=config,
+                counter=Counter(),
+            ),
+        )
+        await service.add(
+            SourceInput.from_mapping(
+                {
+                    "type": "repository",
+                    "path": str(repository),
+                    "kind": "code_file@1",
+                    "metadata": {"title": "Synthetic Repository"},
+                    "source_key": "repository",
+                    "collection_id": collection,
+                }
+            ),
+            scope,
+        )
+        result = await __import__("asyncio").to_thread(
+            DiscoveryService(config, owner.store.registry, owner).discover,
+            DiscoverRequest(subject="sources"),
+            scope,
+        )
+    rates = result.definitions[0].definition["code_resolution"]
+    assert sum(item["extracted"] for item in rates["rates"]) >= 1, rates

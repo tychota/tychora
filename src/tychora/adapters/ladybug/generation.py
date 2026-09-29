@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 from threading import RLock
-from typing import Any, NoReturn, cast
+from typing import Any, Literal, NoReturn, cast
 
 from pydantic import ValidationError
 
@@ -103,13 +103,22 @@ class LadybugGraphStore:
         predicates: tuple[str, ...],
         limits: GraphBudget,
         ctx: ExecutionContext,
+        *,
+        direction: Literal["outgoing", "incoming", "both"] | None = None,
+        relation_view: Literal["semantic", "structural"] | None = None,
     ) -> AssertionPage:
         if self._traversal is None:
             raise TychoraError(
                 "INDEX_INCOMPLETE", "Graph traversal policy is unavailable"
             )
         return self._traversal.get_assertions(
-            view, selected_unit_ids, predicates, limits, ctx
+            view,
+            selected_unit_ids,
+            predicates,
+            limits,
+            ctx,
+            direction=direction,
+            relation_view=relation_view,
         )
 
     def close(self) -> None:

@@ -22,7 +22,7 @@ from .base import (
     NonEmptyStr,
     NonNegativeInt,
 )
-from .evidence import EvidenceUnit, RelationPath
+from .evidence import EvidenceUnit, Excerpt, RelationPath
 from .identity import canonical_bytes
 
 PageLimit = Annotated[int, Field(ge=1, le=1000)]
@@ -59,11 +59,19 @@ class NamedCount(Contract):
     count: NonNegativeInt
 
 
+class CapabilityEntry(Contract):
+    name: NonEmptyStr
+    installed: bool
+    required: bool
+    version: str | None = None
+
+
 class DiscoveryResult(Contract):
     subject: DiscoverySubject
     definitions: tuple[DefinitionEntry, ...] = ()
     counts: tuple[NamedCount, ...] = ()
     capabilities: frozenset[NonEmptyStr] = frozenset()
+    capability_status: tuple[CapabilityEntry, ...] = ()
     next_cursor: Cursor | None = None
 
 
@@ -72,6 +80,7 @@ class InspectRequest(Contract):
     id: Identifier
     original: bool = False
     range: CodepointRange | None = None
+    ranges: Annotated[tuple[CodepointRange, ...], Field(max_length=100)] = ()
     view: Literal["summary", "full", "original"] = "summary"
 
 
@@ -86,6 +95,7 @@ class InspectionResult(Contract):
     subject: Literal["evidence", "assets", "revisions", "jobs", "runs", "diagnostics"]
     id: Identifier
     evidence: EvidenceUnit | None = None
+    excerpts: tuple[Excerpt, ...] = ()
     records: tuple[InspectionItem, ...] = ()
     original_ref: Identifier | None = None
     payload: bytes | None = None

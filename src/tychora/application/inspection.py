@@ -1,0 +1,600 @@
+"""Pinned exact evidence, registered asset and bounded relation inspection."""
+
+from __future__ import annotations
+
+import json
+from base64 import urlsafe_b64decode, urlsafe_b64encode
+from typing import TYPE_CHECKING, cast
+
+from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
+from tychora.adapters.sqlite.eligibility import _retained_rows
+from tychora.adapters.sqlite.jobs import JobRepository
+from tychora.contracts.artifacts import ArtifactRef
+from tychora.contracts.base import CodepointRange, FrozenJsonMap
+from tychora.contracts.errors import TychoraError
+from tychora.contracts.evidence import Excerpt, RelationPath
+from tychora.contracts.graph import GraphBudget
+from tychora.contracts.identity import digest
+from tychora.contracts.operations import (
+    InspectionItem,
+    InspectionResult,
+    InspectRequest,
+    RelationRequest,
+    RelationResult,
+)
+from tychora.contracts.requests import QueryRequest, RequestScope
+from tychora.indexing.representations import prepare_extraction
+from tychora.ports.execution import ExecutionContext
+from tychora.retrieval.eligibility import EligibilityCompiler
+
+if TYPE_CHECKING:
+    from tychora.application.owner import WorkspaceOwner
+    from tychora.ports.graph import GraphStore
+
+MAX_INSPECTION_PAYLOAD_BYTES = 16 * 1024 * 1024
+MAX_DIAGNOSTIC_BYTES = 1024 * 1024
+
+
+def _deny() -> None:
+    raise TychoraError("FORBIDDEN_SCOPE", "Item is outside the readable scope.")
+
+
+def _ranges(request: InspectRequest, length: int) -> tuple[CodepointRange, ...]:
+    if request.range is not None and request.ranges:
+        raise TychoraError("INVALID_REQUEST", "Supply range or ranges, not both.")
+    selected = request.ranges or ((request.range,) if request.range is not None else ())
+    previous = -1
+    for interval in selected:
+        if not (0 <= interval.char_start <= interval.char_end <= length):
+            raise TychoraError("INVALID_REQUEST", "Range lies outside the source unit.")
+        if interval.char_start < previous:
+            raise TychoraError(
+                "INVALID_REQUEST", "Ranges must be ordered and disjoint."
+            )
+        previous = interval.char_end
+    return selected
+
+
+class InspectionService:
+    def __init__(self, owner: WorkspaceOwner, graph: GraphStore | None = None) -> None:
+        self.owner = owner
+        self.graph = graph
+        self.compiler = EligibilityCompiler(owner.store)
+
+    def _attempt(self, snapshot, scope: RequestScope):
+        preferred = (
+            self.owner.config.values.mode or self.owner.config.values.default_mode
+        )
+        readable_modes = [
+            name
+            for name, definition in self.owner.store.registry.modes.items()
+            if set(
+                cast(tuple[str, ...], cast(FrozenJsonMap, definition)["allowed_uses"])
+            )
+            & scope.uses
+        ]
+        mode = (
+            preferred
+            if preferred in readable_modes
+            else next(iter(sorted(readable_modes)), None)
+        )
+        if mode is None:
+            _deny()
+        limits = self.owner.config.values.limits
+        query = QueryRequest.from_mapping(
+            {
+                "question": "Exact inspection",
+                "revision_selector": "all",
+                "exact_only": True,
+                "mode": mode,
+                "limit": min(8, limits.limit),
+                "budgets": {
+                    "max_tokens": min(6000, limits.max_tokens),
+                    "max_response_bytes": min(1048576, limits.max_response_bytes),
+                },
+            }
+        )
+        return self.compiler.compile_attempt(snapshot, scope, query, self.owner.config)
+
+    def _artifact(
+        self,
+        sha: str,
+        *,
+        original: bool = False,
+        max_bytes: int = MAX_INSPECTION_PAYLOAD_BYTES,
+    ) -> tuple[bytes, str]:
+        row = self.owner.db.execute(
+            "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
+            (sha,),
+        ).fetchone()
+        if row is None or row[2] != sha or row[3] != "present":
+            raise TychoraError(
+                "ORIGINAL_REMOVED" if original else "NOT_FOUND",
+                "Original payload was removed."
+                if original
+                else "Registered asset is unavailable.",
+            )
+        if row[0] > max_bytes:
+            raise TychoraError(
+                "INVALID_REQUEST", "Inspection payload exceeds its limit."
+            )
+        ref = ArtifactRef(
+            sha256=sha, size_bytes=row[0], media_type=row[1], storage_key=row[2]
+        )
+        with self.owner.artifacts.open_verified(ref) as stream:
+            return stream.read(), row[1]
+
+    def _inspect_job(
+        self, request: InspectRequest, scope: RequestScope
+    ) -> InspectionResult:
+        repository = JobRepository(
+            self.owner.db,
+            artifacts=self.owner.artifacts,
+            workspace_id=self.owner.workspace_id,
+        )
+        repository.authorize(request.id, scope, write=False)
+        row = self.owner.db.execute(
+            "SELECT operation,state,created_at,updated_at FROM jobs WHERE job_id=?",
+            (request.id,),
+        ).fetchone()
+        if row is None:
+            raise TychoraError("NOT_FOUND", "Job is unavailable.")
+        return InspectionResult(
+            subject="jobs",
+            id=request.id,
+            records=(
+                InspectionItem(
+                    id=request.id,
+                    record_type="job_summary",
+                    schema_id="job-summary@1",
+                    value=FrozenJsonMap(
+                        dict(
+                            zip(("operation", "state", "created_at", "updated_at"), row)
+                        )
+                    ),
+                ),
+            ),
+        )
+
+    def _inspect_run(
+        self, request: InspectRequest, scope: RequestScope
+    ) -> InspectionResult:
+        row = self.owner.db.execute(
+            "SELECT principal_id,scope_digest,state,created_at,snapshot_id,retained_payload_sha "
+            "FROM query_runs WHERE run_id=?",
+            (request.id,),
+        ).fetchone()
+        if row is None:
+            raise TychoraError("NOT_FOUND", "Run is unavailable.")
+        if (
+            self.owner.scope.narrow(scope) != scope
+            or row[0] != scope.principal_id
+            or row[1] != digest("query-run-scope-v1", scope.model_dump(mode="json"))
+        ):
+            _deny()
+        return InspectionResult(
+            subject="runs",
+            id=request.id,
+            records=(
+                InspectionItem(
+                    id=request.id,
+                    record_type="run_summary",
+                    schema_id="run-summary@1",
+                    value=FrozenJsonMap(
+                        {
+                            "state": row[2],
+                            "created_at": row[3],
+                            "snapshot_id": row[4],
+                            "scope_limited": True,
+                            "request_retained": row[5] is not None,
+                        }
+                    ),
+                ),
+            ),
+        )
+
+    def _inspect_diagnostics(self, request, snapshot, attempt):
+        member = next(
+            (item for item in snapshot.members if item.extraction_id == request.id),
+            None,
+        )
+        if member is None:
+            raise TychoraError("NOT_FOUND", "Diagnostic extraction is unavailable.")
+        if member.revision_id not in attempt.view.revision_ids:
+            _deny()
+        row = self.owner.db.execute(
+            "SELECT diagnostics_artifact_sha FROM extractions WHERE extraction_id=?",
+            (request.id,),
+        ).fetchone()
+        if row is None:
+            raise TychoraError("NOT_FOUND", "Diagnostic extraction is unavailable.")
+        retained = row[0] is not None
+        if retained:
+            payload, _ = self._artifact(row[0], max_bytes=MAX_DIAGNOSTIC_BYTES)
+            try:
+                parsed = json.loads(payload)
+            except (ValueError, UnicodeError):
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Retained diagnostics are invalid."
+                ) from None
+            if not isinstance(parsed, (dict, list)):
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Retained diagnostics are invalid."
+                )
+        return InspectionResult(
+            subject="diagnostics",
+            id=request.id,
+            records=(
+                InspectionItem(
+                    id=request.id,
+                    record_type="diagnostic_summary",
+                    schema_id="diagnostic-summary@1",
+                    value=FrozenJsonMap({"retained": retained, "scope_limited": True}),
+                ),
+            ),
+        )
+
+    def _inspect_evidence(self, request, snapshot, attempt):
+        owner = self.owner
+        row = owner.db.execute(
+            "SELECT e.extraction_id,x.revision_id FROM evidence_units e "
+            "JOIN extractions x USING(extraction_id) WHERE e.unit_id=?",
+            (request.id,),
+        ).fetchone()
+        if row is None:
+            raise TychoraError("NOT_FOUND", "Evidence unit is unavailable.")
+        extraction, revision = row
+        member = next(
+            (
+                item
+                for item in snapshot.members
+                if item.extraction_id == extraction and item.revision_id == revision
+            ),
+            None,
+        )
+        if member is None or revision not in attempt.view.revision_ids:
+            _deny()
+        unit = owner.store._hydrate((request.id,))[0]
+        selected = _ranges(request, len(unit.text))
+        eligible = (
+            attempt.view.revision_ids
+            | attempt.view.context_unit_ids
+            | attempt.view.structural_unit_ids
+            | attempt.view.asset_ids
+        )
+        if not selected:
+            if (
+                request.id
+                not in attempt.view.context_unit_ids | attempt.view.structural_unit_ids
+            ):
+                _deny()
+            evidence = unit
+            excerpts = ()
+        else:
+            # The retained representation validator reconstructs exact per-range
+            # ownership from canonical locators/source parts, never from originals.
+            prepared = prepare_extraction(_retained_rows(owner.store, member))
+            representation = next(
+                (item for item in prepared.units if item.unit.unit_id == request.id),
+                None,
+            )
+            if representation is None:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Retained source range is unavailable."
+                )
+            mode_name = owner.config.values.mode or owner.config.values.default_mode
+            if mode_name is None:
+                raise TychoraError(
+                    "PROFILE_INCOMPATIBLE", "Inspection mode is unavailable."
+                )
+            mode = cast(FrozenJsonMap, owner.store.registry.modes[mode_name])
+            allowed_reviews = set(cast(tuple[str, ...], mode["original_review_states"]))
+            if unit.review_state not in allowed_reviews:
+                _deny()
+            for interval in selected:
+                dependencies = frozenset(
+                    dependency
+                    for owned in representation.ownership
+                    if owned.char_start < interval.char_end
+                    and interval.char_start < owned.char_end
+                    for dependency in owned.dependency_ids
+                )
+                if not dependencies <= eligible | {request.id}:
+                    _deny()
+            excerpts = tuple(
+                Excerpt(
+                    unit_id=request.id,
+                    char_start=interval.char_start,
+                    char_end=interval.char_end,
+                    text=unit.text[interval.char_start : interval.char_end],
+                )
+                for interval in selected
+            )
+            evidence = unit.model_copy(update={"text": ""})
+        records = ()
+        if not selected:
+            rows = owner.db.execute(
+                "SELECT record_type,schema_hash,data_json FROM structured_records WHERE unit_id=?",
+                (request.id,),
+            ).fetchall()
+            records = tuple(
+                InspectionItem(
+                    id=request.id,
+                    record_type=kind,
+                    schema_id=schema,
+                    value=FrozenJsonMap(json.loads(value)),
+                )
+                for kind, schema, value in rows
+            )
+        return InspectionResult(
+            subject="evidence",
+            id=request.id,
+            evidence=evidence,
+            excerpts=excerpts,
+            records=records,
+        )
+
+    def _inspect_asset(self, request, attempt):
+        row = self.owner.db.execute(
+            "SELECT a.artifact_sha,a.locator_json,x.revision_id "
+            "FROM assets a JOIN extractions x USING(extraction_id) WHERE a.asset_id=?",
+            (request.id,),
+        ).fetchone()
+        if row is None:
+            raise TychoraError("NOT_FOUND", "Registered asset is unavailable.")
+        sha, locator, revision = row
+        if (
+            request.id not in attempt.view.asset_ids
+            or revision not in attempt.view.revision_ids
+        ):
+            _deny()
+        if self.owner.db.execute(
+            "SELECT 1 FROM original_payload_tombstones WHERE revision_id=? AND artifact_sha=?",
+            (revision, sha),
+        ).fetchone():
+            raise TychoraError("ORIGINAL_REMOVED", "Original payload was removed.")
+        payload, media_type = self._artifact(sha, original=True)
+        return InspectionResult(
+            subject="assets",
+            id=request.id,
+            original_ref=sha,
+            payload=payload,
+            media_type=media_type,
+            records=(
+                InspectionItem(
+                    id=request.id,
+                    record_type="asset_locator",
+                    schema_id="asset-locator@1",
+                    value=FrozenJsonMap(json.loads(locator)),
+                ),
+            ),
+        )
+
+    def _inspect_revision(self, request, snapshot, attempt):
+        if request.id not in attempt.view.revision_ids:
+            _deny()
+        row = self.owner.db.execute(
+            "SELECT r.original_sha,r.title FROM revisions r WHERE r.revision_id=?",
+            (request.id,),
+        ).fetchone()
+        if row is None:
+            raise TychoraError("NOT_FOUND", "Revision is unavailable.")
+        sha, title = row
+        if request.original or request.view == "original":
+            selected_extractions = tuple(
+                item.extraction_id
+                for item in snapshot.members
+                if item.revision_id == request.id
+            )
+            readable = attempt.view.context_unit_ids | attempt.view.structural_unit_ids
+            for extraction in selected_extractions:
+                for (unit_id,) in self.owner.db.execute(
+                    "SELECT u.unit_id FROM evidence_units u "
+                    "LEFT JOIN asset_proxies p ON p.proxy_unit_id=u.unit_id "
+                    "WHERE u.extraction_id=? AND p.proxy_unit_id IS NULL",
+                    (extraction,),
+                ):
+                    if unit_id not in readable:
+                        _deny()
+            binding = self.owner.db.execute(
+                "SELECT 1 FROM revision_artifacts WHERE revision_id=? AND artifact_sha=? AND role='original'",
+                (request.id, sha),
+            ).fetchone()
+            removed = self.owner.db.execute(
+                "SELECT 1 FROM original_payload_tombstones WHERE revision_id=? AND artifact_sha=?",
+                (request.id, sha),
+            ).fetchone()
+            if binding is None or removed:
+                raise TychoraError("ORIGINAL_REMOVED", "Original payload was removed.")
+            payload, media = self._artifact(sha, original=True)
+            return InspectionResult(
+                subject="revisions",
+                id=request.id,
+                original_ref=sha,
+                payload=payload,
+                media_type=media,
+            )
+        return InspectionResult(
+            subject="revisions",
+            id=request.id,
+            records=(
+                InspectionItem(
+                    id=request.id,
+                    record_type="revision_summary",
+                    schema_id="revision-summary@1",
+                    value=FrozenJsonMap({"title": title}),
+                ),
+            ),
+        )
+
+    def _inspect_sync(
+        self, request: InspectRequest, scope: RequestScope, ctx: ExecutionContext
+    ):
+        granted = self.owner.scope.narrow(scope)
+        if request.subject != "evidence" and (
+            request.range is not None or request.ranges
+        ):
+            raise TychoraError("INVALID_REQUEST", "Ranges require an evidence unit.")
+        if request.subject == "jobs":
+            return self._inspect_job(request, granted)
+        if request.subject == "runs":
+            return self._inspect_run(request, scope)
+        with self.owner.store.pin_snapshot(None) as snapshot:
+            ctx.checkpoint()
+            attempt = self._attempt(snapshot, granted)
+            if request.subject == "evidence":
+                result = self._inspect_evidence(request, snapshot, attempt)
+            elif request.subject == "assets":
+                result = self._inspect_asset(request, attempt)
+            elif request.subject == "revisions":
+                result = self._inspect_revision(request, snapshot, attempt)
+            elif request.subject == "diagnostics":
+                result = self._inspect_diagnostics(request, snapshot, attempt)
+            else:
+                raise TychoraError(
+                    "INVALID_REQUEST", "Inspection subject is unavailable."
+                )
+            self.compiler.revalidate_epoch(attempt.view, "delivery")
+            ctx.checkpoint()
+            return result
+
+    async def inspect(
+        self, request: InspectRequest, scope: RequestScope, ctx: ExecutionContext
+    ) -> InspectionResult:
+        return await self.owner.run_blocking(
+            lambda: self._inspect_sync(request, scope, ctx), ctx
+        )
+
+    async def relations(
+        self, request: RelationRequest, scope: RequestScope, ctx: ExecutionContext
+    ) -> RelationResult:
+        return await self.owner.run_blocking(
+            lambda: self._relations_sync(request, scope, ctx), ctx
+        )
+
+    def _relations_sync(
+        self, request: RelationRequest, scope: RequestScope, ctx: ExecutionContext
+    ) -> RelationResult:
+        granted = self.owner.scope.narrow(scope)
+        with self.owner.store.pin_snapshot(None) as snapshot:
+            ctx.checkpoint()
+            attempt = self._attempt(snapshot, granted)
+            view = attempt.view
+            eligible = view.graph_eligible_unit_ids
+            if any(seed not in eligible for seed in request.unit_ids):
+                _deny()
+            if self.graph is None or view.graph_generation_id is None:
+                raise TychoraError(
+                    "INDEX_INCOMPLETE",
+                    "Graph inspection requires a rebuilt ready generation.",
+                )
+            policy = resolve_graph_traversal_policy(
+                self.owner.config, self.owner.store.registry
+            )
+            allowed = {
+                item.predicate
+                for item in policy.inspection_predicates
+                if item.view == request.view
+            }
+            if request.predicates - allowed:
+                raise TychoraError(
+                    "INVALID_REQUEST", "Relation predicates exceed the pinned policy."
+                )
+            predicates = tuple(sorted(request.predicates or allowed))
+            if not predicates or request.max_hops == 0:
+                return RelationResult()
+            limits = self.owner.config.values.limits
+            budget = GraphBudget(
+                max_rows=min(limits.graph_work_limit, 2000),
+                max_inspection_edges=100,
+                max_inspection_hops=min(request.max_hops, limits.inspection_hops, 2),
+            )
+            page = self.graph.get_assertions(
+                view,
+                request.unit_ids,
+                predicates,
+                budget,
+                ctx,
+                direction=request.direction,
+                relation_view=request.view,
+            )
+            paths = []
+            incomplete = page.truncation is not None or not page.exhausted
+            for path in page.assertions:
+                if (
+                    path.source_unit_id not in eligible
+                    or path.target_unit_id not in eligible
+                    or not path.required_support_ids
+                    or not path.required_support_ids <= eligible
+                    or set(path.assertion_ids) & view.blocked_assertion_ids
+                    or path.predicate not in predicates
+                ):
+                    incomplete = True
+                    continue
+                paths.append(
+                    RelationPath(
+                        unit_ids=(path.source_unit_id, path.target_unit_id),
+                        assertion_ids=path.assertion_ids,
+                        predicates=(path.predicate,),
+                        support_unit_ids=path.required_support_ids,
+                        provenance=FrozenJsonMap({"status": path.status}),
+                    )
+                )
+            keyed = sorted(
+                (
+                    (
+                        digest(
+                            "relation-inspection-path-v1", item.model_dump(mode="json")
+                        ),
+                        item,
+                    )
+                    for item in paths
+                ),
+                key=lambda value: value[0],
+            )
+            last = ""
+            if request.cursor is not None:
+                try:
+                    raw = urlsafe_b64decode(
+                        request.cursor + "=" * (-len(request.cursor) % 4)
+                    )
+                    cursor = json.loads(raw)
+                    if (
+                        cursor[:3]
+                        != [view.snapshot_id, view.policy_epoch, view.scope_digest]
+                        or len(cursor) != 4
+                        or not isinstance(cursor[3], str)
+                    ):
+                        raise ValueError
+                    last = cursor[3]
+                except (ValueError, UnicodeError, TypeError):
+                    raise TychoraError(
+                        "INVALID_REQUEST", "Invalid relation cursor."
+                    ) from None
+            remaining = [(key, item) for key, item in keyed if key > last]
+            selected = remaining[: request.max_edges]
+            more = len(remaining) > len(selected)
+            next_cursor = None
+            if more and selected:
+                next_cursor = (
+                    urlsafe_b64encode(
+                        json.dumps(
+                            [
+                                view.snapshot_id,
+                                view.policy_epoch,
+                                view.scope_digest,
+                                selected[-1][0],
+                            ],
+                            separators=(",", ":"),
+                        ).encode()
+                    )
+                    .decode()
+                    .rstrip("=")
+                )
+            self.compiler.revalidate_epoch(view, "delivery")
+            ctx.checkpoint()
+            return RelationResult(
+                paths=tuple(item for _, item in selected),
+                truncated=incomplete or more,
+                next_cursor=next_cursor,
+            )
