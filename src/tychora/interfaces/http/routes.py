@@ -49,7 +49,7 @@ def _require(request: Request, capability: str) -> None:
         raise TychoraError("FORBIDDEN_SCOPE", "Operation is outside the grant.")
 
 
-def _source(request: Request, value: dict) -> SourceInput:
+def _source(request: Request, value: Mapping) -> SourceInput:
     normalized = dict(value)
     if normalized.get("collection_id") == "default":
         if str(DEFAULT_COLLECTION_ID) not in _scope(request).collection_ids:
@@ -95,6 +95,13 @@ def _json(value, *, status_code: int = 200) -> JSONResponse:
     return JSONResponse(value.model_dump(mode="json"), status_code=status_code)
 
 
+def _source_json(value) -> Response:
+    payload = value.model_dump_json().encode("utf-8")
+    if len(payload) > 1048576:
+        raise TychoraError("BUDGET_TOO_SMALL", "Source response exceeds local limit.")
+    return Response(content=payload, media_type="application/json")
+
+
 def register_routes(app: FastAPI) -> None:
     @app.get("/v1/handshake")
     async def handshake(request: Request):
@@ -116,7 +123,7 @@ def register_routes(app: FastAPI) -> None:
     @app.post("/v1/sources")
     async def add_source(request: Request):
         _require(request, "write")
-        source = _source(request, await request.json())
+        source = _source(request, await _body_map(request))
         handle = await _services(request).source_jobs.add_async(
             source, _scope(request), request.headers.get("idempotency-key")
         )
@@ -158,7 +165,12 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/v1/jobs/{job_id}/events")
     async def job_events(job_id: str, request: Request):
         raw = request.headers.get("last-event-id", "0")
-        if not raw.isdecimal():
+        if (
+            len(raw) > 19
+            or not raw.isascii()
+            or not raw.isdecimal()
+            or int(raw) > 9223372036854775807
+        ):
             raise TychoraError("INVALID_REQUEST", "Event cursor is invalid.")
         # Authorize before starting the stream so failures remain canonical JSON.
         await (
@@ -182,7 +194,7 @@ def register_routes(app: FastAPI) -> None:
         result = await asyncio.to_thread(
             _services(request).discovery.discover, parsed, _scope(request)
         )
-        return _json(result)
+        return _source_json(result) if parsed.subject == "sources" else _json(result)
 
     @app.get("/v1/discovery/{subject}")
     async def discover_subject(
@@ -195,7 +207,7 @@ def register_routes(app: FastAPI) -> None:
         result = await asyncio.to_thread(
             _services(request).discovery.discover, parsed, _scope(request)
         )
-        return _json(result)
+        return _source_json(result) if parsed.subject == "sources" else _json(result)
 
     @app.get("/v1/sources")
     async def list_sources(
@@ -207,7 +219,7 @@ def register_routes(app: FastAPI) -> None:
             DiscoverRequest(subject="sources", cursor=cursor, limit=limit),
             _scope(request),
         )
-        return _json(result)
+        return _source_json(result)
 
     @app.get("/v1/sources/{source_id}")
     async def get_source(source_id: str, request: Request):
@@ -218,23 +230,21 @@ def register_routes(app: FastAPI) -> None:
             source_id,
             _scope(request),
         )
-        return _json(result)
+        return _source_json(result)
 
     @app.get("/v1/sources/{source_id}/revisions")
-    async def list_revisions(source_id: str, request: Request):
+    async def list_revisions(
+        source_id: str, request: Request, cursor: str | None = None, limit: int = 20
+    ):
         _require(request, "read")
         result = await asyncio.to_thread(
-            _services(request).discovery.definition,
-            "sources",
+            _services(request).discovery.source_revisions,
             source_id,
             _scope(request),
+            cursor=cursor,
+            limit=limit,
         )
-        return JSONResponse(
-            {
-                "source_id": source_id,
-                "revisions": result.definition.get("revisions", []),
-            }
-        )
+        return _source_json(result)
 
     @app.get("/v1/evidence/{unit_id}")
     async def get_evidence(

@@ -20,6 +20,7 @@ from tychora.contracts.operations import (
     NamedCount,
     SourceExtractionCoverage,
     SourceRevisionCoverage,
+    SourceRevisionPage,
 )
 from tychora.contracts.requests import RequestScope
 from tychora.ports.execution import ExecutionContext
@@ -137,6 +138,8 @@ def _cursor(subject: str, key: str) -> str:
 def _after(cursor: str | None, subject: str) -> str | None:
     if cursor is None:
         return None
+    if len(cursor) > 4096:
+        raise TychoraError("INVALID_REQUEST", "Invalid discovery cursor.")
     try:
         raw = urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
         value = json.loads(raw)
@@ -312,126 +315,194 @@ class DiscoveryService:
 
         return owner.run_blocking_sync(read, ExecutionContext())
 
-    def _source_definitions(self, scope: RequestScope) -> dict[str, FrozenJsonMap]:
+    def _source_rows(
+        self,
+        scope: RequestScope,
+        *,
+        after: str = "",
+        limit: int = 100,
+        source_id: str | None = None,
+    ) -> tuple[tuple, ...]:
         if self.owner is None:
-            return {}
+            return ()
         owner = self.owner
         granted = owner.scope.narrow(scope)
-        if "read" not in granted.capabilities:
-            return {}
+        if "read" not in granted.capabilities or not granted.collection_ids:
+            return ()
+        if not 1 <= limit <= 100:
+            raise TychoraError("INVALID_REQUEST", "Source page limit is invalid.")
 
-        def read() -> dict[str, FrozenJsonMap]:
-            definitions = {}
-            sources = owner.db.execute(
-                "SELECT s.source_id,s.source_key,s.source_type,s.collection_id,"
-                "s.access_floor,s.withdrawn_at,c.access_floor FROM sources s "
-                "JOIN collections c USING(collection_id) WHERE c.workspace_id=? "
-                "ORDER BY s.source_id",
-                (owner.workspace_id,),
-            ).fetchall()
-            for (
-                source,
-                source_key,
-                source_type,
-                collection,
-                source_floor,
-                withdrawn,
-                collection_floor,
-            ) in sources:
-                if (
-                    collection not in granted.collection_ids
-                    or max(source_floor, collection_floor) > granted.access_ceiling
-                    or withdrawn is not None
-                ):
-                    continue
-                revisions = []
-                limited = False
-                rows = owner.db.execute(
-                    "SELECT r.revision_id,r.kind_id,r.access_rank,r.allowed_uses_json,"
-                    "k.definition_json,k.definition_hash FROM revisions r "
-                    "JOIN kinds k USING(kind_id) WHERE r.source_id=? ORDER BY r.revision_id",
-                    (source,),
-                )
-                for (
-                    revision,
-                    kind,
-                    access,
-                    uses_raw,
-                    definition_raw,
-                    definition_hash,
-                ) in rows:
-                    if access > granted.access_ceiling:
-                        limited = True
-                        continue
-                    try:
-                        envelope = json.loads(definition_raw)
-                        recorded = envelope.pop("envelope_digest")
-                        if (
-                            recorded != definition_hash
-                            or digest("historical-kind-v1", envelope) != recorded
-                        ):
-                            raise ValueError
-                        uses = (
-                            set(envelope["kind"]["allowed_uses"])
-                            & set(json.loads(uses_raw))
-                            & granted.uses
-                        )
-                    except (ValueError, KeyError, TypeError):
-                        raise TychoraError(
-                            "INTEGRITY_ERROR", "Retained kind definition is invalid."
-                        ) from None
-                    if not uses:
-                        limited = True
-                        continue
-                    extractions: list[SourceExtractionCoverage] = []
-                    for (extraction,) in owner.db.execute(
-                        "SELECT extraction_id FROM extractions WHERE revision_id=? "
-                        "ORDER BY extraction_id",
-                        (revision,),
-                    ):
-                        channels = {
-                            channel: state
-                            for channel, state in owner.db.execute(
-                                "SELECT f.channel,b.state FROM index_batches b "
-                                "JOIN index_families f USING(family_id) "
-                                "WHERE b.extraction_id=? ORDER BY f.channel",
-                                (extraction,),
-                            )
-                        }
-                        extractions.append(
-                            SourceExtractionCoverage(
-                                extraction_id=extraction,
-                                stages=FrozenJsonMap(
-                                    {"extraction": "retained", **channels}
-                                ),
-                                code_resolution=self._code_resolution(
-                                    extraction, granted
-                                )
-                                if kind == "code_file@1"
-                                else None,
-                            )
-                        )
-                    revisions.append(
-                        SourceRevisionCoverage(
-                            revision_id=revision,
-                            kind_id=kind,
-                            stages=FrozenJsonMap({"capture": "retained"}),
-                            extractions=tuple(extractions),
-                        ).model_dump(mode="json", exclude_none=True)
-                    )
-                definitions[source] = FrozenJsonMap(
-                    {
-                        "label": source_key,
-                        "collection_id": collection,
-                        "source_type": source_type,
-                        "stages": {"registration": "registered"},
-                        "revisions": revisions,
-                        "scope_limited": limited,
-                    }
-                )
-            return definitions
+        def read() -> tuple[tuple, ...]:
+            selector = "s.source_id=?" if source_id is not None else "s.source_id>?"
+            return tuple(
+                owner.db.execute(
+                    "SELECT s.source_id,s.source_key,s.source_type,s.collection_id "
+                    "FROM sources s JOIN collections c USING(collection_id) "
+                    "WHERE c.workspace_id=? AND s.withdrawn_at IS NULL "
+                    "AND s.access_floor<=? AND c.access_floor<=? "
+                    "AND s.collection_id IN (SELECT value FROM json_each(?)) "
+                    f"AND {selector} ORDER BY s.source_id LIMIT ?",
+                    (
+                        owner.workspace_id,
+                        granted.access_ceiling,
+                        granted.access_ceiling,
+                        json.dumps(sorted(granted.collection_ids)),
+                        source_id if source_id is not None else after,
+                        1 if source_id is not None else limit + 1,
+                    ),
+                ).fetchall()
+            )
 
         return owner.run_blocking_sync(read, ExecutionContext())
+
+    def _revision_page(
+        self,
+        source_id: str,
+        scope: RequestScope,
+        *,
+        cursor: str | None = None,
+        limit: int = 20,
+    ) -> SourceRevisionPage:
+        assert self.owner is not None
+        if not 1 <= limit <= 100:
+            raise TychoraError("INVALID_REQUEST", "Revision page limit is invalid.")
+        owner = self.owner
+        granted = owner.scope.narrow(scope)
+        subject = f"source-revisions:{source_id}"
+        after = _after(cursor, subject) or ""
+
+        def read() -> SourceRevisionPage:
+            rows = owner.db.execute(
+                "SELECT r.revision_id,r.kind_id,r.access_rank,r.allowed_uses_json,"
+                "k.definition_json,k.definition_hash FROM revisions r "
+                "JOIN kinds k USING(kind_id) WHERE r.source_id=? "
+                "AND r.revision_id>? ORDER BY r.revision_id LIMIT ?",
+                (source_id, after, limit + 1),
+            ).fetchall()
+            page_rows = rows[:limit]
+            revisions: list[SourceRevisionCoverage] = []
+            limited = False
+            for (
+                revision,
+                kind,
+                access,
+                uses_raw,
+                definition_raw,
+                definition_hash,
+            ) in page_rows:
+                if access > granted.access_ceiling:
+                    limited = True
+                    continue
+                try:
+                    envelope = json.loads(definition_raw)
+                    recorded = envelope.pop("envelope_digest")
+                    if (
+                        recorded != definition_hash
+                        or digest("historical-kind-v1", envelope) != recorded
+                    ):
+                        raise ValueError
+                    uses = (
+                        set(envelope["kind"]["allowed_uses"])
+                        & set(json.loads(uses_raw))
+                        & granted.uses
+                    )
+                except (ValueError, KeyError, TypeError):
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Retained kind definition is invalid."
+                    ) from None
+                if not uses:
+                    limited = True
+                    continue
+                extraction_rows = owner.db.execute(
+                    "SELECT extraction_id FROM extractions WHERE revision_id=? "
+                    "ORDER BY extraction_id LIMIT 9",
+                    (revision,),
+                ).fetchall()
+                extractions: list[SourceExtractionCoverage] = []
+                for (extraction,) in extraction_rows[:8]:
+                    channel_rows = owner.db.execute(
+                        "SELECT f.channel,b.state FROM index_batches b "
+                        "JOIN index_families f USING(family_id) "
+                        "WHERE b.extraction_id=? ORDER BY f.channel LIMIT 17",
+                        (extraction,),
+                    ).fetchall()
+                    extractions.append(
+                        SourceExtractionCoverage(
+                            extraction_id=extraction,
+                            stages=FrozenJsonMap(
+                                {"extraction": "retained", **dict(channel_rows[:16])}
+                            ),
+                            code_resolution=self._code_resolution(extraction, granted)
+                            if kind == "code_file@1"
+                            else None,
+                            channels_truncated=len(channel_rows) > 16,
+                        )
+                    )
+                revisions.append(
+                    SourceRevisionCoverage(
+                        revision_id=revision,
+                        kind_id=kind,
+                        stages=FrozenJsonMap({"capture": "retained"}),
+                        extractions=tuple(extractions),
+                        extractions_truncated=len(extraction_rows) > 8,
+                    )
+                )
+            return SourceRevisionPage(
+                source_id=source_id,
+                revisions=tuple(revisions),
+                next_cursor=_cursor(subject, page_rows[-1][0])
+                if len(rows) > limit and page_rows
+                else None,
+                scope_limited=limited,
+            )
+
+        return owner.run_blocking_sync(read, ExecutionContext())
+
+    def source_revisions(
+        self,
+        source_id: str,
+        scope: RequestScope,
+        *,
+        cursor: str | None = None,
+        limit: int = 20,
+    ) -> SourceRevisionPage:
+        if not self._source_rows(scope, source_id=source_id, limit=1):
+            raise TychoraError("NOT_FOUND", "Source is unavailable.")
+        return self._revision_page(source_id, scope, cursor=cursor, limit=limit)
+
+    def _source_definitions(
+        self,
+        scope: RequestScope,
+        *,
+        after: str = "",
+        limit: int = 100,
+        source_id: str | None = None,
+    ) -> tuple[dict[str, FrozenJsonMap], str | None]:
+        rows = self._source_rows(scope, after=after, limit=limit, source_id=source_id)
+        page_rows = rows if source_id is not None else rows[:limit]
+        definitions = {}
+        for source, source_key, source_type, collection in page_rows:
+            preview = self._revision_page(source, scope, limit=1)
+            definitions[source] = FrozenJsonMap(
+                {
+                    "label": source_key,
+                    "collection_id": collection,
+                    "source_type": source_type,
+                    "stages": {"registration": "registered"},
+                    "revisions": [
+                        item.model_dump(mode="json", exclude_none=True)
+                        for item in preview.revisions
+                    ],
+                    "next_revision_cursor": preview.next_cursor,
+                    "scope_limited": preview.scope_limited,
+                }
+            )
+        next_cursor = (
+            _cursor("sources", page_rows[-1][0])
+            if source_id is None and len(rows) > limit and page_rows
+            else None
+        )
+        return definitions, next_cursor
 
     def _run_definitions(self, scope: RequestScope) -> dict[str, FrozenJsonMap]:
         if self.owner is None or self.owner.scope.narrow(scope) != scope:
@@ -562,7 +633,7 @@ class DiscoveryService:
     ) -> DefinitionEntry:
         """Return one scoped definition with the same schema identity as pages."""
         if subject == "sources":
-            definitions = self._source_definitions(scope)
+            definitions, _ = self._source_definitions(scope, source_id=item_id, limit=1)
         elif subject == "runs":
             definitions = self._run_definitions(scope)
         else:
@@ -589,10 +660,30 @@ class DiscoveryService:
                 )
             request = DiscoverRequest(subject=request)
         subject = request.subject
-        definitions = self._definitions(subject)
         if subject == "sources":
-            definitions = self._source_definitions(scope)
-        elif subject == "runs":
+            definitions, next_cursor = self._source_definitions(
+                scope,
+                after=_after(request.cursor, "sources") or "",
+                limit=request.limit,
+            )
+            return DiscoveryResult(
+                subject="sources",
+                definitions=tuple(
+                    DefinitionEntry(
+                        id=key,
+                        version="1",
+                        label=str(value.get("label", key)),
+                        definition=value,
+                        schema_digest=digest(
+                            "discovery-definition-v1", "sources", key, value
+                        ),
+                    )
+                    for key, value in definitions.items()
+                ),
+                next_cursor=next_cursor,
+            )
+        definitions = self._definitions(subject)
+        if subject == "runs":
             definitions = self._run_definitions(scope)
         counts = self._counts(subject, scope)
         if subject == "kinds":

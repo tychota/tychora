@@ -559,3 +559,14 @@ def resolve_config(
         raise TychoraError(
             "INVALID_REQUEST", "Invalid configuration options, values or local binding"
         ) from None
+
+
+def selected_workspace_profile(workspace_file: Path) -> str:
+    """Read the strict, durable selector; old workspaces default to local."""
+    try:
+        workspace = WorkspaceDocument.from_mapping(tomllib.loads(_read(workspace_file)))
+    except (ValueError, TypeError, OSError, KeyError):
+        raise TychoraError(
+            "INVALID_REQUEST", "Workspace profile selection is invalid."
+        ) from None
+    return workspace.defaults.profile or "local"

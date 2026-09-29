@@ -61,6 +61,7 @@ from .leases import LeaseSet
 from .runtime import (
     BoundedWorker,
     RuntimeIdentity,
+    ServiceRuntime,
     drain_result,
     parser_process,
     private_directory,
@@ -103,6 +104,7 @@ class WorkspaceOwner:
         self.leases = LeaseSet()
         self._worker = BoundedWorker()
         self._runtime = RuntimeIdentity(self.path)
+        self.service_runtime: ServiceRuntime | None = None
         self._parsers = BoundedWorker(workers=2)
         self._providers: dict[str, BoundedWorker] = {}
         self._local_text: BoundedWorker | None = None

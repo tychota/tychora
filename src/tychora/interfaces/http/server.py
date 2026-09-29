@@ -44,7 +44,10 @@ async def serve(path: Path, *, port: int = 0, token_counter=None) -> None:
             try:
                 await server.serve(sockets=[sock])
             finally:
-                await app.state.runtime.services.source_jobs.aclose()
+                try:
+                    await app.state.runtime.services.source_jobs.aclose()
+                finally:
+                    await app.state.runtime.aclose_retired()
 
 
 def main() -> None:

@@ -6,6 +6,7 @@ import asyncio
 import math
 import time
 from collections.abc import Iterator, Mapping
+from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
@@ -40,15 +41,30 @@ def _parsed(model: Any, value: Any) -> Any:
     return model.from_mapping(value) if isinstance(value, Mapping) else value
 
 
+def _admitted(method):
+    """Hold shared owner admission through a complete public Python operation."""
+
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        client = self.kb if hasattr(self, "kb") else self
+        ws = client._open()
+        with ws.runtime.operation():
+            return method(self, *args, **kwargs)
+
+    return call
+
+
 class _Sources:
     def __init__(self, kb: Tychora) -> None:
         self.kb = kb
 
+    @_admitted
     def add(self, source: SourceInput | Mapping, *, idempotency_key: str | None = None):
         ws = self.kb._open()
         parsed = ws.parse_source(source)
         return ws.services.source_jobs.add(parsed, ws.scope, idempotency_key)
 
+    @_admitted
     def sync(self, source_id: str, *, idempotency_key: str | None = None):
         ws = self.kb._open()
         return ws.services.source_jobs.sync(source_id, ws.scope, idempotency_key)
@@ -58,6 +74,7 @@ class _Evidence:
     def __init__(self, kb: Tychora) -> None:
         self.kb = kb
 
+    @_admitted
     def get(self, unit_id: str, *, start: int | None = None, end: int | None = None):
         ws = self.kb._open()
         if (start is None) != (end is None):
@@ -80,6 +97,7 @@ class _Assets:
     def __init__(self, kb: Tychora) -> None:
         self.kb = kb
 
+    @_admitted
     def get(self, asset_id: str):
         ws = self.kb._open()
         request = InspectRequest(subject="assets", id=asset_id, view="full")
@@ -87,6 +105,7 @@ class _Assets:
             ws.services.inspection.inspect(request, ws.scope, _context())
         )
 
+    @_admitted
     def read(self, asset_id: str) -> bytes:
         result = self.get(asset_id)
         if result.payload is None:
@@ -98,6 +117,7 @@ class _Relations:
     def __init__(self, kb: Tychora) -> None:
         self.kb = kb
 
+    @_admitted
     def traverse(self, request: RelationRequest | Mapping):
         ws = self.kb._open()
         return ws.bridge.call(
@@ -111,10 +131,12 @@ class _Jobs:
     def __init__(self, kb: Tychora) -> None:
         self.kb = kb
 
+    @_admitted
     def get(self, job_id: str):
         ws = self.kb._open()
         return ws.bridge.call(ws.services.jobs.get(job_id, _context()))
 
+    @_admitted
     def wait(self, job_id: str, *, timeout: float | None = None):
         ws = self.kb._open()
         return ws.bridge.call(
@@ -123,6 +145,7 @@ class _Jobs:
             )
         )
 
+    @_admitted
     def cancel(self, job_id: str):
         ws = self.kb._open()
         status = ws.bridge.call(ws.services.jobs.cancel(job_id, _context()))
@@ -135,9 +158,10 @@ class _Jobs:
             raise TychoraError("INVALID_REQUEST", "Event cursor must be nonnegative.")
         cursor = after
         while True:
-            events = ws.bridge.call(
-                ws.services.jobs.events_after(job_id, cursor, 100, _context())
-            )
+            with ws.runtime.operation():
+                events = ws.bridge.call(
+                    ws.services.jobs.events_after(job_id, cursor, 100, _context())
+                )
             for event in events:
                 cursor = event.sequence
                 yield event
@@ -155,6 +179,7 @@ class _Evaluations:
     def __init__(self, kb: Tychora) -> None:
         self.kb = kb
 
+    @_admitted
     def run(self, request: EvaluationRequest | Mapping):
         ws = self.kb._open()
         if "manage" not in ws.scope.capabilities:
@@ -167,6 +192,7 @@ class _Management:
     def __init__(self, kb: Tychora) -> None:
         self.kb = kb
 
+    @_admitted
     def run(
         self,
         request: MaintenanceRequest | Mapping,
@@ -240,6 +266,7 @@ class Tychora:
     def scope(self):
         return self._open().scope
 
+    @_admitted
     def discover(self, request: DiscoverRequest | Mapping):
         ws = self._open()
         parsed = _parsed(DiscoverRequest, request)
@@ -247,6 +274,7 @@ class Tychora:
             asyncio.to_thread(ws.services.discovery.discover, parsed, ws.scope)
         )
 
+    @_admitted
     def search(
         self,
         request: QueryRequest | Mapping,

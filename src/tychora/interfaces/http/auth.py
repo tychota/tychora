@@ -108,7 +108,7 @@ def checked_headers(
             ) from None
         scope = scope.narrow(requested)
     if length_text is not None:
-        if not length_text.isdecimal() or length_text.startswith("+"):
+        if len(length_text) > 20 or not length_text.isdecimal():
             raise TychoraError("INVALID_REQUEST", "Content length is malformed.")
         length = int(length_text)
         if length > auth.max_request_bytes:

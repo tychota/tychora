@@ -2,18 +2,53 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from uuid import uuid4
 
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.configuration.registry import Registry
-from tychora.configuration.resolve import resolve_config
+from tychora.configuration.resolve import resolve_config, selected_workspace_profile
 from tychora.contracts.errors import TychoraError
+from tychora.contracts.identity import digest
 from tychora.contracts.operations import SettingsActivation
 from tychora.ports.execution import ExecutionContext
 
 from .services import build_services
+
+
+def _indexed_representation_identity(config) -> str:
+    """Compare persisted representation semantics, not query credentials/cache identity."""
+    providers = config.values.providers
+    embeddings = {}
+    for modality in ("text", "image"):
+        settings = getattr(providers, modality).model_dump(mode="json")
+        settings.pop("credential_ref", None)
+        embeddings[modality] = settings
+    return digest(
+        "indexed-representation-compat-v1",
+        embeddings,
+        config.values.index.model_dump(mode="json"),
+        config.extraction_fingerprint,
+    )
+
+
+async def _complete_committed(coroutine) -> bool:
+    """Settle post-commit cleanup despite caller cancellation or close failure."""
+    task = asyncio.create_task(coroutine)
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            continue
+        except Exception:  # noqa: BLE001 - inspect the settled result below
+            break
+    try:
+        task.result()
+    except BaseException:  # noqa: BLE001 - caller receives the committed result
+        return False
+    return True
 
 
 class SettingsService:
@@ -24,6 +59,13 @@ class SettingsService:
     async def activate(self, request: SettingsActivation):
         """Prepare all ports before replacing the durable file and live binding."""
         owner = self.owner
+        await self.runtime.aclose_retired()
+        if self.runtime.retired_count >= 8:
+            raise TychoraError(
+                "WORKSPACE_BUSY",
+                "Previous source schedulers require cleanup before activation.",
+                retryable=True,
+            )
         previous_services = self.runtime.services
         if not await previous_services.source_jobs.is_idle_async():
             raise TychoraError(
@@ -53,6 +95,11 @@ class SettingsService:
                 stream.write(request.workspace_toml.encode("utf-8"))
                 stream.flush()
                 os.fsync(stream.fileno())
+            if selected_workspace_profile(candidate_path) != request.profile:
+                raise TychoraError(
+                    "INVALID_REQUEST",
+                    "Selected profile must match workspace defaults.profile.",
+                )
             candidate = resolve_config(candidate_path, request.profile, {})
             registry = Registry.from_config(candidate)
 
@@ -74,7 +121,8 @@ class SettingsService:
                 registry.validate_activation(frozenset(retained), retained)
                 if (
                     owner.store.active_snapshot_id() is not None
-                    and candidate.index_fingerprint != owner.config.index_fingerprint
+                    and _indexed_representation_identity(candidate)
+                    != _indexed_representation_identity(owner.config)
                 ):
                     raise TychoraError(
                         "PROFILE_INCOMPATIBLE",
@@ -145,7 +193,15 @@ class SettingsService:
                 os.close(directory_fd)
             owner.config, owner.store = candidate, store
             self.runtime.swap(candidate_services)
-            await previous_services.source_jobs.aclose()
+            # The durable file and live binding have committed. Cleanup must not
+            # turn this successful activation into an apparent failed request.
+            if not await _complete_committed(previous_services.source_jobs.aclose()):
+                if not await _complete_committed(
+                    asyncio.to_thread(previous_services.source_jobs.close)
+                ):
+                    self.runtime.record_cleanup_failure(previous_services.source_jobs)
+                else:
+                    self.runtime.record_cleanup_failure()
             return candidate
         except BaseException:
             if (

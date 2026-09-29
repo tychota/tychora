@@ -387,6 +387,42 @@ async def test_requested_scope_can_only_narrow_token_and_length_is_strict(tmp_pa
             )
             assert duplicate.status_code == 400
 
+            huge_length = await client.get(
+                "/v1/discovery/kinds",
+                headers={
+                    "Authorization": "Bearer owner-token",
+                    "Content-Length": "9" * 5000,
+                },
+            )
+            assert huge_length.status_code == 400
+            assert huge_length.json()["code"] == "INVALID_REQUEST"
+            huge_event = await client.get(
+                "/v1/jobs/unknown/events",
+                headers={
+                    "Authorization": "Bearer owner-token",
+                    "Last-Event-ID": "9" * 5000,
+                },
+            )
+            assert huge_event.status_code == 400
+            assert huge_event.json()["code"] == "INVALID_REQUEST"
+            overflow_event = await client.get(
+                "/v1/jobs/unknown/events",
+                headers={
+                    "Authorization": "Bearer owner-token",
+                    "Last-Event-ID": "9223372036854775808",
+                },
+            )
+            assert overflow_event.status_code == 400
+            assert overflow_event.json()["code"] == "INVALID_REQUEST"
+            for body in ([], 7, "text"):
+                invalid_source = await client.post(
+                    "/v1/sources",
+                    headers={"Authorization": "Bearer owner-token"},
+                    json=body,
+                )
+                assert invalid_source.status_code == 400
+                assert invalid_source.json()["code"] == "INVALID_REQUEST"
+
 
 @pytest.mark.asyncio
 async def test_settings_activation_persists_and_invalid_candidate_keeps_previous(
@@ -431,6 +467,41 @@ async def test_settings_activation_persists_and_invalid_candidate_keeps_previous
 
 
 @pytest.mark.asyncio
+async def test_nonlocal_profile_selection_survives_restart_and_mismatch_fails(tmp_path):
+    root = tmp_path / "knowledge"
+    with Tychora.open(root, token_counter=Counter()) as kb:
+        owner = kb._workspace.owner
+        app = create_app(
+            owner,
+            kb._workspace.services,
+            LocalAuth({"owner-token": owner.scope}, authority="127.0.0.1:8765"),
+        )
+        original = (root / "workspace.toml").read_text()
+        candidate = original.replace('profile = "local"', 'profile = "alternate"')
+        candidate += '\n[profiles.alternate]\nbuiltin = "documents@1"\n'
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://127.0.0.1:8765",
+            headers={"Authorization": "Bearer owner-token"},
+        ) as client:
+            mismatch = await client.put(
+                "/v1/settings", json={"profile": "local", "workspace_toml": candidate}
+            )
+            assert mismatch.status_code == 400
+            assert (root / "workspace.toml").read_text() == original
+            activated = await client.put(
+                "/v1/settings",
+                json={"profile": "alternate", "workspace_toml": candidate},
+            )
+            assert activated.status_code == 200, activated.text
+            assert activated.json()["profile"] == "alternate"
+        await app.state.runtime.services.source_jobs.aclose()
+    with Tychora.open(root, token_counter=Counter()) as reopened:
+        assert reopened._workspace.config.profile == "alternate"
+        assert reopened._workspace.config.config_sha == activated.json()["config_sha"]
+
+
+@pytest.mark.asyncio
 async def test_settings_failed_construction_restores_owner_and_current_services(
     tmp_path, monkeypatch
 ):
@@ -469,6 +540,219 @@ async def test_settings_failed_construction_restores_owner_and_current_services(
             assert app.state.runtime.services is previous_services
             assert (root / "workspace.toml").read_text() == original
             assert (await client.get("/v1/discovery/kinds")).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_settings_committed_activation_survives_old_bridge_close_failure(
+    tmp_path, monkeypatch
+):
+    root = tmp_path / "knowledge"
+    with Tychora.open(root, token_counter=Counter()) as kb:
+        owner = kb._workspace.owner
+        old_services = kb._workspace.services
+        app = create_app(
+            owner,
+            old_services,
+            LocalAuth({"owner-token": owner.scope}, authority="127.0.0.1:8765"),
+        )
+        original = (root / "workspace.toml").read_text()
+        candidate = original + '\n[configuration.output]\ntitle = "Committed"\n'
+
+        async def failed_close():
+            raise RuntimeError("private cleanup detail")
+
+        original_close = old_services.source_jobs.close
+
+        def failed_sync_close():
+            raise RuntimeError("another private cleanup detail")
+
+        monkeypatch.setattr(old_services.source_jobs, "aclose", failed_close)
+        monkeypatch.setattr(old_services.source_jobs, "close", failed_sync_close)
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://127.0.0.1:8765",
+            headers={"Authorization": "Bearer owner-token"},
+        ) as client:
+            result = await client.put(
+                "/v1/settings", json={"profile": "local", "workspace_toml": candidate}
+            )
+            assert result.status_code == 200
+            assert result.json()["config_sha"] == owner.config.config_sha
+            assert app.state.runtime.services is not old_services
+            assert (root / "workspace.toml").read_text() == candidate
+            assert (await client.get("/v1/settings")).json()[
+                "config_sha"
+            ] == result.json()["config_sha"]
+            assert app.state.runtime.cleanup_diagnostics == (
+                "previous source scheduler cleanup failed",
+            )
+            assert app.state.runtime.retired_count == 1
+        monkeypatch.setattr(old_services.source_jobs, "close", original_close)
+        await app.state.runtime.services.source_jobs.aclose()
+    assert app.state.runtime.retired_count == 0
+
+
+@pytest.mark.asyncio
+async def test_settings_post_commit_cancellation_finishes_cleanup_and_returns_success(
+    tmp_path, monkeypatch
+):
+    import asyncio
+
+    from tychora.contracts.operations import SettingsActivation
+
+    root = tmp_path / "knowledge"
+    with Tychora.open(root, token_counter=Counter()) as kb:
+        owner = kb._workspace.owner
+        old_services = kb._workspace.services
+        app = create_app(
+            owner,
+            old_services,
+            LocalAuth({"owner-token": owner.scope}, authority="127.0.0.1:8765"),
+        )
+        candidate = (root / "workspace.toml").read_text()
+        candidate += '\n[configuration.output]\ntitle = "Cancellation"\n'
+        reached, release = asyncio.Event(), asyncio.Event()
+        original_close = old_services.source_jobs.aclose
+
+        async def held_close():
+            reached.set()
+            await release.wait()
+            await original_close()
+
+        monkeypatch.setattr(old_services.source_jobs, "aclose", held_close)
+        app.state.runtime.admit(activation=True)
+        try:
+            activation = asyncio.create_task(
+                app.state.settings.activate(
+                    SettingsActivation(profile="local", workspace_toml=candidate)
+                )
+            )
+            await asyncio.wait_for(reached.wait(), 3)
+            activation.cancel()
+            release.set()
+            result = await activation
+            assert result.config_sha == owner.config.config_sha
+            assert (root / "workspace.toml").read_text() == candidate
+            assert app.state.runtime.services is not old_services
+        finally:
+            app.state.runtime.release(activation=True)
+        await app.state.runtime.services.source_jobs.aclose()
+
+
+@pytest.mark.asyncio
+async def test_settings_cancellation_during_cleanup_fallback_is_committed_success(
+    tmp_path, monkeypatch
+):
+    import asyncio
+    from threading import Event
+
+    from tychora.contracts.operations import SettingsActivation
+
+    root = tmp_path / "knowledge"
+    with Tychora.open(root, token_counter=Counter()) as kb:
+        owner = kb._workspace.owner
+        old_services = kb._workspace.services
+        app = create_app(
+            owner,
+            old_services,
+            LocalAuth({"owner-token": owner.scope}, authority="127.0.0.1:8765"),
+        )
+        candidate = (root / "workspace.toml").read_text()
+        candidate += '\n[configuration.output]\ntitle = "Fallback"\n'
+        reached, release = Event(), Event()
+        original_close = old_services.source_jobs.close
+
+        async def failed_async_close():
+            raise RuntimeError("private cleanup failure")
+
+        def held_sync_close():
+            reached.set()
+            release.wait()
+            original_close()
+
+        monkeypatch.setattr(old_services.source_jobs, "aclose", failed_async_close)
+        monkeypatch.setattr(old_services.source_jobs, "close", held_sync_close)
+        app.state.runtime.admit(activation=True)
+        try:
+            activation = asyncio.create_task(
+                app.state.settings.activate(
+                    SettingsActivation(profile="local", workspace_toml=candidate)
+                )
+            )
+            assert await asyncio.to_thread(reached.wait, 3)
+            activation.cancel()
+            release.set()
+            result = await activation
+            assert result.config_sha == owner.config.config_sha
+            assert app.state.runtime.retired_count == 0
+            assert (root / "workspace.toml").read_text() == candidate
+        finally:
+            release.set()
+            app.state.runtime.release(activation=True)
+        await app.state.runtime.services.source_jobs.aclose()
+
+
+@pytest.mark.asyncio
+async def test_indexed_settings_allow_credential_and_rerank_but_reject_representation(
+    tmp_path,
+):
+    from tychora.ports.execution import ExecutionContext
+
+    root = tmp_path / "knowledge"
+    with Tychora.open(root, token_counter=Counter()) as kb:
+        owner = kb._workspace.owner
+        app = create_app(
+            owner,
+            kb._workspace.services,
+            LocalAuth({"owner-token": owner.scope}, authority="127.0.0.1:8765"),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://127.0.0.1:8765",
+            headers={"Authorization": "Bearer owner-token"},
+        ) as client:
+            added = await client.post(
+                "/v1/sources",
+                json={
+                    "type": "text",
+                    "source_key": "indexed",
+                    "collection_id": "default",
+                    "kind": "manual@1",
+                    "format": "text",
+                    "text": "An indexed synthetic record.",
+                    "metadata": {
+                        "title": "Indexed",
+                        "publisher": "Example",
+                        "edition": "1",
+                    },
+                },
+            )
+            status = await app.state.runtime.services.jobs.wait(
+                added.json()["id"], ExecutionContext(), timeout=5
+            )
+            assert status.state == "succeeded"
+            original = (root / "workspace.toml").read_text()
+            safe = original + (
+                '\n[configuration.providers.text]\ncredential_ref = "env:ROTATED"\n'
+                '[configuration.providers.rerank]\nprovider = "voyage"\n'
+                'model = "rerank-2.5"\ncredential_ref = "env:RERANK"\n'
+            )
+            changed = await client.put(
+                "/v1/settings", json={"profile": "local", "workspace_toml": safe}
+            )
+            assert changed.status_code == 200, changed.text
+            for suffix in (
+                "\n[configuration.providers.image]\ndimensions = 777\n",
+                '\n[configuration.index]\ngraph = "ladybug"\n',
+            ):
+                incompatible = await client.put(
+                    "/v1/settings",
+                    json={"profile": "local", "workspace_toml": safe + suffix},
+                )
+                assert incompatible.status_code == 409, incompatible.text
+                assert incompatible.json()["code"] == "PROFILE_INCOMPATIBLE"
+            assert (root / "workspace.toml").read_text() == safe
+        await app.state.runtime.services.source_jobs.aclose()
 
 
 @pytest.mark.asyncio
@@ -853,7 +1137,10 @@ async def test_settings_rejects_missing_retained_kind_and_preserves_active_profi
                 .replace(', "manual@1"', "")
             )
             profile_file.write_text(modified)
-            candidate = before + '\n[profiles.incompatible]\npath = "custom"\n'
+            candidate = (
+                before.replace('profile = "local"', 'profile = "incompatible"')
+                + '\n[profiles.incompatible]\npath = "custom"\n'
+            )
             rejected = await client.put(
                 "/v1/settings",
                 json={"profile": "incompatible", "workspace_toml": candidate},
@@ -999,3 +1286,280 @@ async def test_settings_activation_rejects_inflight_query(tmp_path):
                 release.set()
             result = await request
             assert result.status_code == 200, result.text
+
+
+@pytest.mark.asyncio
+async def test_settings_gate_counts_held_public_python_query(tmp_path):
+    import asyncio
+    from threading import Event
+
+    from tychora.ports.execution import ExecutionContext
+
+    root = tmp_path / "knowledge"
+    with Tychora.open(root, token_counter=Counter()) as kb:
+        owner = kb._workspace.owner
+        services = kb._workspace.services
+        app = create_app(
+            owner,
+            services,
+            LocalAuth({"owner-token": owner.scope}, authority="127.0.0.1:8765"),
+        )
+        source = {
+            "type": "text",
+            "source_key": "python-query",
+            "collection_id": "default",
+            "kind": "manual@1",
+            "format": "text",
+            "text": "A synthetic Python query source.",
+            "metadata": {"title": "Python", "publisher": "Example", "edition": "1"},
+        }
+        added = await asyncio.to_thread(kb.sources.add, source)
+        await services.jobs.wait(added.id, ExecutionContext(), timeout=5)
+        started, release = Event(), Event()
+        original_prepare = services.query._prepare
+
+        async def held(*args, **kwargs):
+            started.set()
+            await asyncio.to_thread(release.wait)
+            return await original_prepare(*args, **kwargs)
+
+        services.query._prepare = held
+        searching = asyncio.create_task(
+            asyncio.to_thread(
+                kb.search, {"question": "synthetic", "modalities": ["lexical"]}
+            )
+        )
+        try:
+            assert await asyncio.to_thread(started.wait, 3)
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://127.0.0.1:8765",
+                headers={"Authorization": "Bearer owner-token"},
+            ) as client:
+                activation = asyncio.create_task(
+                    client.put(
+                        "/v1/settings",
+                        json={
+                            "profile": "local",
+                            "workspace_toml": (root / "workspace.toml").read_text(),
+                        },
+                    )
+                )
+                await asyncio.sleep(0.1)
+                release.set()
+                busy = await activation
+                assert busy.status_code == 409
+                assert busy.json()["code"] == "WORKSPACE_BUSY"
+        finally:
+            release.set()
+        assert (await searching).segments
+
+
+@pytest.mark.asyncio
+async def test_settings_final_idle_check_excludes_public_python_submission(
+    tmp_path, monkeypatch
+):
+    import asyncio
+
+    from tychora import AsyncTychora
+
+    root = tmp_path / "knowledge"
+    with Tychora.open(root, token_counter=Counter()) as kb:
+        async_kb = AsyncTychora(kb._workspace)
+        owner = kb._workspace.owner
+        old_services = kb._workspace.services
+        app = create_app(
+            owner,
+            old_services,
+            LocalAuth({"owner-token": owner.scope}, authority="127.0.0.1:8765"),
+        )
+        reached, release = asyncio.Event(), asyncio.Event()
+        original_idle = old_services.source_jobs.is_idle_async
+        calls = 0
+
+        async def held_idle():
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                reached.set()
+                await release.wait()
+            return await original_idle()
+
+        monkeypatch.setattr(old_services.source_jobs, "is_idle_async", held_idle)
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://127.0.0.1:8765",
+            headers={"Authorization": "Bearer owner-token"},
+        ) as client:
+            activation = asyncio.create_task(
+                client.put(
+                    "/v1/settings",
+                    json={
+                        "profile": "local",
+                        "workspace_toml": (root / "workspace.toml").read_text(),
+                    },
+                )
+            )
+            try:
+                await asyncio.wait_for(reached.wait(), 3)
+                source = {
+                    "type": "text",
+                    "source_key": "racing-submission",
+                    "collection_id": "default",
+                    "kind": "manual@1",
+                    "format": "text",
+                    "text": "A synthetic racing source.",
+                    "metadata": {
+                        "title": "Race",
+                        "publisher": "Example",
+                        "edition": "1",
+                    },
+                }
+                with pytest.raises(TychoraError) as error:
+                    await asyncio.to_thread(kb.sources.add, source)
+                assert error.value.code == "WORKSPACE_BUSY"
+                with pytest.raises(TychoraError) as async_error:
+                    await async_kb.sources.add(source)
+                assert async_error.value.code == "WORKSPACE_BUSY"
+            finally:
+                release.set()
+            result = await activation
+            assert result.status_code == 200, result.text
+            accepted = await asyncio.to_thread(kb.sources.add, source)
+            assert accepted.state == "queued"
+            from tychora.ports.execution import ExecutionContext
+
+            status = await kb._workspace.services.jobs.wait(
+                accepted.id, ExecutionContext(), timeout=5
+            )
+            assert status.state == "succeeded"
+            assert (await async_kb.discover({"subject": "kinds"})).definitions
+
+
+@pytest.mark.asyncio
+async def test_source_and_revision_history_use_bounded_database_pages(tmp_path):
+    from tychora.ports.execution import ExecutionContext
+
+    root = tmp_path / "knowledge"
+    with Tychora.open(root, token_counter=Counter()) as kb:
+        owner = kb._workspace.owner
+        app = create_app(
+            owner,
+            kb._workspace.services,
+            LocalAuth({"owner-token": owner.scope}, authority="127.0.0.1:8765"),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://127.0.0.1:8765",
+            headers={"Authorization": "Bearer owner-token"},
+        ) as client:
+            added = await client.post(
+                "/v1/sources",
+                json={
+                    "type": "text",
+                    "source_key": "history",
+                    "collection_id": "default",
+                    "kind": "manual@1",
+                    "format": "text",
+                    "text": "A synthetic source with bounded history.",
+                    "metadata": {
+                        "title": "History",
+                        "publisher": "Example",
+                        "edition": "1",
+                    },
+                },
+            )
+            status = await app.state.runtime.services.jobs.wait(
+                added.json()["id"], ExecutionContext(), timeout=5
+            )
+            assert status.state == "succeeded"
+
+            def seed_history():
+                source_id, revision_id = owner.db.execute(
+                    "SELECT s.source_id,r.revision_id FROM sources s "
+                    "JOIN revisions r USING(source_id) WHERE s.source_key='history'"
+                ).fetchone()
+                for number in range(30):
+                    owner.db.execute(
+                        "INSERT INTO revisions "
+                        "SELECT ?,source_id,kind_id,original_sha,?,metadata_sha,title,"
+                        "published_on,effective_from,effective_until,access_rank,"
+                        "declared_review_state,allowed_uses_json,metadata_json,captured_at "
+                        "FROM revisions WHERE revision_id=?",
+                        (f"{number:064x}", f"edition-{number}", revision_id),
+                    )
+                    owner.db.execute(
+                        "INSERT INTO sources "
+                        "SELECT ?,collection_id,?,source_type,registration_json,"
+                        "access_floor,withdrawn_at,created_at FROM sources WHERE source_id=?",
+                        (
+                            f"00000000-0000-4000-8000-{number + 10:012d}",
+                            f"synthetic-{number}",
+                            source_id,
+                        ),
+                    )
+                owner.db.commit()
+                return source_id
+
+            source_id = await owner.run_blocking(seed_history, ExecutionContext())
+            statements = []
+            await owner.run_blocking(
+                lambda: owner.db.set_trace_callback(statements.append),
+                ExecutionContext(),
+            )
+            try:
+                first = await client.get("/v1/sources?limit=2")
+                assert first.status_code == 200, first.text
+                assert len(first.json()["definitions"]) == 2
+                assert first.json()["next_cursor"]
+                second = await client.get(
+                    "/v1/sources",
+                    params={"limit": 2, "cursor": first.json()["next_cursor"]},
+                )
+                assert second.status_code == 200
+                assert {item["id"] for item in first.json()["definitions"]}.isdisjoint(
+                    {item["id"] for item in second.json()["definitions"]}
+                )
+                revisions = await client.get(
+                    f"/v1/sources/{source_id}/revisions?limit=2"
+                )
+                assert revisions.status_code == 200, revisions.text
+                assert len(revisions.json()["revisions"]) == 2
+                assert revisions.json()["next_cursor"]
+                next_revisions = await client.get(
+                    f"/v1/sources/{source_id}/revisions",
+                    params={"limit": 2, "cursor": revisions.json()["next_cursor"]},
+                )
+                assert next_revisions.status_code == 200
+                assert len(next_revisions.json()["revisions"]) == 2
+                assert {
+                    r["revision_id"] for r in revisions.json()["revisions"]
+                }.isdisjoint(
+                    {r["revision_id"] for r in next_revisions.json()["revisions"]}
+                )
+                assert len(first.content) < 1048576
+                assert len(revisions.content) < 1048576
+            finally:
+                await owner.run_blocking(
+                    lambda: owner.db.set_trace_callback(None), ExecutionContext()
+                )
+            source_queries = [
+                statement for statement in statements if "FROM sources s" in statement
+            ]
+            revision_queries = [
+                statement
+                for statement in statements
+                if "FROM revisions r" in statement and "JOIN kinds k" in statement
+            ]
+            assert source_queries and all("LIMIT" in q for q in source_queries)
+            assert revision_queries and all("LIMIT" in q for q in revision_queries)
+            await owner.run_blocking(
+                lambda: owner.db.execute(
+                    "UPDATE sources SET source_key=? WHERE source_id=?",
+                    ("x" * 1048576, source_id),
+                ),
+                ExecutionContext(),
+            )
+            too_large = await client.get(f"/v1/sources/{source_id}")
+            assert too_large.status_code == 400
+            assert too_large.json()["code"] == "BUDGET_TOO_SMALL"

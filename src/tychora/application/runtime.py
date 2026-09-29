@@ -9,6 +9,7 @@ import secrets
 import stat
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from multiprocessing.connection import Connection
 from pathlib import Path
 from threading import Lock
@@ -234,7 +235,7 @@ def parser_process[T](
 
 
 class ServiceRuntime:
-    """One current service binding and an exclusive HTTP activation gate."""
+    """One current service binding and shared local-operation activation gate."""
 
     def __init__(self, owner, services) -> None:
         self.owner = owner
@@ -242,6 +243,54 @@ class ServiceRuntime:
         self._gate = Lock()
         self._active = 0
         self._activating = False
+        self.cleanup_diagnostics: tuple[str, ...] = ()
+        self._retired_schedulers: list = []
+        self._workspace = None
+
+    def attach_workspace(self, workspace) -> None:
+        self._workspace = workspace
+
+    @contextmanager
+    def operation(self):
+        """Pin one current binding for a Python or embedded transport call."""
+        self.admit()
+        try:
+            yield self.services
+        finally:
+            self.release()
+
+    @property
+    def retired_count(self) -> int:
+        with self._gate:
+            return len(self._retired_schedulers)
+
+    def record_cleanup_failure(self, scheduler=None) -> None:
+        """Retain only bounded, public-safe post-commit cleanup information."""
+        with self._gate:
+            self.cleanup_diagnostics = (
+                *self.cleanup_diagnostics[-15:],
+                "previous source scheduler cleanup failed",
+            )
+            if scheduler is not None and scheduler not in self._retired_schedulers:
+                self._retired_schedulers.append(scheduler)
+
+    def close_retired_sync(self) -> None:
+        """Retry owned old bridges before the final owner release."""
+        with self._gate:
+            schedulers = tuple(self._retired_schedulers)
+        for scheduler in schedulers:
+            try:
+                scheduler.close()
+            except Exception:  # noqa: BLE001 - retained for the next retry/host teardown
+                self.record_cleanup_failure()
+            else:
+                with self._gate:
+                    if scheduler in self._retired_schedulers:
+                        self._retired_schedulers.remove(scheduler)
+
+    async def aclose_retired(self) -> None:
+        """Retry old bridges without blocking the host event loop."""
+        await asyncio.to_thread(self.close_retired_sync)
 
     def admit(self, *, activation: bool = False) -> None:
         with self._gate:
@@ -270,3 +319,7 @@ class ServiceRuntime:
                     "INTEGRITY_ERROR", "Settings swap requires exclusive admission."
                 )
             self.services = services
+            if self._workspace is not None:
+                self._workspace.services = services
+                self._workspace.bridge = services.source_jobs.bridge
+                self._workspace.config = self.owner.config

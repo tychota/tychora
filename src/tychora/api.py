@@ -12,9 +12,10 @@ from uuid import UUID
 
 from tychora.application.bridge import ClientBridge
 from tychora.application.owner import WorkspaceOwner
+from tychora.application.runtime import ServiceRuntime
 from tychora.application.services import Services, build_services
 from tychora.configuration.models import ResolvedConfig
-from tychora.configuration.resolve import resolve_config
+from tychora.configuration.resolve import resolve_config, selected_workspace_profile
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.requests import RequestScope, SourceInput
 from tychora.ports.execution import ExecutionContext
@@ -100,7 +101,7 @@ class LocalWorkspace:
                         "Existing workspace requires an explicit configuration.",
                     )
                 settings.write_text(_DEFAULT_CONFIG)
-            config = resolve_config(settings, "local", {})
+            config = resolve_config(settings, selected_workspace_profile(settings), {})
         if scope is None:
             scope = RequestScope(
                 principal_id="local-owner",
@@ -138,6 +139,9 @@ class LocalWorkspace:
             startup_bridge = self.bridge
             self.bridge = self.services.source_jobs.bridge
             startup_bridge.close()
+            self.runtime = ServiceRuntime(self.owner, self.services)
+            self.runtime.attach_workspace(self)
+            self.owner.service_runtime = self.runtime
         except BaseException:
             if hasattr(self, "services"):
                 self.services.source_jobs.close()
@@ -191,7 +195,10 @@ class LocalWorkspace:
             try:
                 self.services.source_jobs.close()
             finally:
-                self._stack.close()
+                try:
+                    self.runtime.close_retired_sync()
+                finally:
+                    self._stack.close()
 
     def parse_source(self, source: SourceInput | Mapping) -> SourceInput:
         if isinstance(source, SourceInput):

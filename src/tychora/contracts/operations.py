@@ -59,6 +59,7 @@ class SourceExtractionCoverage(Contract):
     extraction_id: Identifier
     stages: FrozenJsonMap
     code_resolution: FrozenJsonMap | None = None
+    channels_truncated: bool = False
 
 
 class SourceRevisionCoverage(Contract):
@@ -66,6 +67,14 @@ class SourceRevisionCoverage(Contract):
     kind_id: Identifier
     stages: FrozenJsonMap
     extractions: tuple[SourceExtractionCoverage, ...] = ()
+    extractions_truncated: bool = False
+
+
+class SourceRevisionPage(Contract):
+    source_id: Identifier
+    revisions: tuple[SourceRevisionCoverage, ...] = ()
+    next_cursor: Cursor | None = None
+    scope_limited: bool = False
 
 
 class NamedCount(Contract):

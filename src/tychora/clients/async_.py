@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Mapping
+from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
@@ -26,10 +27,24 @@ if TYPE_CHECKING:
     from tychora.ports.tokens import TokenCounter
 
 
+def _admitted(method):
+    """Hold shared admission until an async public operation completes."""
+
+    @wraps(method)
+    async def call(self, *args, **kwargs):
+        client = self.kb if hasattr(self, "kb") else self
+        ws = client._open()
+        with ws.runtime.operation():
+            return await method(self, *args, **kwargs)
+
+    return call
+
+
 class _AsyncSources:
     def __init__(self, kb: AsyncTychora) -> None:
         self.kb = kb
 
+    @_admitted
     async def add(
         self, source: SourceInput | Mapping, *, idempotency_key: str | None = None
     ):
@@ -38,6 +53,7 @@ class _AsyncSources:
             ws.parse_source(source), ws.scope, idempotency_key
         )
 
+    @_admitted
     async def sync(self, source_id: str, *, idempotency_key: str | None = None):
         ws = self.kb._open()
         return await ws.services.source_jobs.sync_async(
@@ -49,6 +65,7 @@ class _AsyncEvidence:
     def __init__(self, kb: AsyncTychora) -> None:
         self.kb = kb
 
+    @_admitted
     async def get(
         self, unit_id: str, *, start: int | None = None, end: int | None = None
     ):
@@ -74,6 +91,7 @@ class _AsyncAssets:
     def __init__(self, kb: AsyncTychora) -> None:
         self.kb = kb
 
+    @_admitted
     async def get(self, asset_id: str):
         ws = self.kb._open()
         ctx = _context()
@@ -86,6 +104,7 @@ class _AsyncAssets:
             ctx,
         )
 
+    @_admitted
     async def read(self, asset_id: str) -> bytes:
         result = await self.get(asset_id)
         if result.payload is None:
@@ -97,6 +116,7 @@ class _AsyncRelations:
     def __init__(self, kb: AsyncTychora) -> None:
         self.kb = kb
 
+    @_admitted
     async def traverse(self, request: RelationRequest | Mapping):
         ws = self.kb._open()
         ctx = _context()
@@ -112,11 +132,13 @@ class _AsyncJobs:
     def __init__(self, kb: AsyncTychora) -> None:
         self.kb = kb
 
+    @_admitted
     async def get(self, job_id: str):
         ws = self.kb._open()
         ctx = _context()
         return await ws.bridge.acall(ws.services.jobs.get(job_id, ctx), ctx)
 
+    @_admitted
     async def wait(self, job_id: str, *, timeout: float | None = None):
         ws = self.kb._open()
         ctx = _context()
@@ -127,6 +149,7 @@ class _AsyncJobs:
             ctx,
         )
 
+    @_admitted
     async def cancel(self, job_id: str):
         ws = self.kb._open()
         ctx = _context()
@@ -141,9 +164,10 @@ class _AsyncJobs:
         cursor = after
         while True:
             ctx = _context()
-            events = await ws.bridge.acall(
-                ws.services.jobs.events_after(job_id, cursor, 100, ctx), ctx
-            )
+            with ws.runtime.operation():
+                events = await ws.bridge.acall(
+                    ws.services.jobs.events_after(job_id, cursor, 100, ctx), ctx
+                )
             for event in events:
                 cursor = event.sequence
                 yield event
@@ -161,6 +185,7 @@ class _AsyncEvaluations:
     def __init__(self, kb: AsyncTychora) -> None:
         self.kb = kb
 
+    @_admitted
     async def run(self, request: EvaluationRequest | Mapping):
         ws = self.kb._open()
         if "manage" not in ws.scope.capabilities:
@@ -173,6 +198,7 @@ class _AsyncManagement:
     def __init__(self, kb: AsyncTychora) -> None:
         self.kb = kb
 
+    @_admitted
     async def run(
         self,
         request: MaintenanceRequest | Mapping,
@@ -251,6 +277,7 @@ class AsyncTychora:
     def scope(self):
         return self._open().scope
 
+    @_admitted
     async def discover(self, request: DiscoverRequest | Mapping):
         ws = self._open()
         return await ws.bridge.acall(
@@ -261,6 +288,7 @@ class AsyncTychora:
             )
         )
 
+    @_admitted
     async def search(
         self,
         request: QueryRequest | Mapping,

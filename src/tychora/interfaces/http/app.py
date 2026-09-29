@@ -97,7 +97,10 @@ def create_app(owner: WorkspaceOwner, services: Services, auth: LocalAuth) -> Fa
         try:
             yield
         finally:
-            await current.state.runtime.services.source_jobs.aclose()
+            try:
+                await current.state.runtime.services.source_jobs.aclose()
+            finally:
+                await current.state.runtime.aclose_retired()
 
     app = FastAPI(
         title="Tychora Local API",
@@ -108,7 +111,15 @@ def create_app(owner: WorkspaceOwner, services: Services, auth: LocalAuth) -> Fa
         openapi_url=None,
     )
     app.state.owner = owner
-    app.state.runtime = ServiceRuntime(owner, services)
+    runtime = owner.service_runtime
+    if runtime is None:
+        runtime = ServiceRuntime(owner, services)
+        owner.service_runtime = runtime
+    elif runtime.services is not services:
+        raise TychoraError(
+            "INTEGRITY_ERROR", "HTTP app requires the owner's current services."
+        )
+    app.state.runtime = runtime
     app.state.settings = SettingsService(owner, app.state.runtime)
     app.state.auth = auth
     app.add_middleware(RawBoundary, owner=owner, auth=auth, runtime=app.state.runtime)
