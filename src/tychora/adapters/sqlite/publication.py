@@ -11,6 +11,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, NoReturn
 
 from tychora.adapters.files.references import required_closure
+from tychora.configuration.indexed_representation import pinned_runtime_compatible
 from tychora.contracts.artifacts import ArtifactRef, ManifestRef
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.graph import GraphBatchReceipt
@@ -155,11 +156,25 @@ def _verify_batches(
     for slot in plan.slots:
         ctx.checkpoint()
         channel = slot.family.channel
-        if (
-            slot.slot != channel
-            or slot.family.config_json.get("effective_config_sha") != plan.config_sha
-        ):
+        origin_sha = slot.family.config_json.get("effective_config_sha")
+        if slot.slot != channel or not isinstance(origin_sha, str):
             _fail("Snapshot slot family or configuration differs")
+        if origin_sha != plan.config_sha:
+            if plan.base_snapshot_id is None:
+                _fail("Snapshot slot family or configuration differs")
+            previous = store.resolve_snapshot(plan.base_snapshot_id)
+            pinned_slot = next(
+                (item for item in previous.slots if item.slot == slot.slot), None
+            )
+            if (
+                pinned_slot is None
+                or pinned_slot.family != slot.family
+                or not pinned_runtime_compatible(
+                    store.retained_config_sha(origin_sha),
+                    store.retained_config_sha(plan.config_sha),
+                )
+            ):
+                _fail("Snapshot slot family or configuration differs")
         if channel == "graph":
             if len(slot.batches) != 1 or slot.batches[0].extraction_id is not None:
                 _fail("Graph slot requires one complete membership generation")

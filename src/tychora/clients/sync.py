@@ -69,6 +69,47 @@ class _Sources:
         ws = self.kb._open()
         return ws.services.source_jobs.sync(source_id, ws.scope, idempotency_key)
 
+    @_admitted
+    def revisions(self, source_id: str, *, cursor: str | None = None, limit: int = 20):
+        ws = self.kb._open()
+        return ws.services.discovery.source_revisions(
+            source_id, ws.scope, cursor=cursor, limit=limit
+        )
+
+    @_admitted
+    def extractions(
+        self,
+        source_id: str,
+        revision_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 20,
+    ):
+        ws = self.kb._open()
+        return ws.services.discovery.source_extractions(
+            source_id, revision_id, ws.scope, cursor=cursor, limit=limit
+        )
+
+    @_admitted
+    def channels(
+        self,
+        source_id: str,
+        revision_id: str,
+        extraction_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 50,
+    ):
+        ws = self.kb._open()
+        return ws.services.discovery.source_channels(
+            source_id,
+            revision_id,
+            extraction_id,
+            ws.scope,
+            cursor=cursor,
+            limit=limit,
+        )
+
 
 class _Evidence:
     def __init__(self, kb: Tychora) -> None:

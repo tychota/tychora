@@ -246,6 +246,48 @@ def register_routes(app: FastAPI) -> None:
         )
         return _source_json(result)
 
+    @app.get("/v1/sources/{source_id}/revisions/{revision_id}/extractions")
+    async def list_extractions(
+        source_id: str,
+        revision_id: str,
+        request: Request,
+        cursor: str | None = None,
+        limit: int = 20,
+    ):
+        _require(request, "read")
+        result = await asyncio.to_thread(
+            _services(request).discovery.source_extractions,
+            source_id,
+            revision_id,
+            _scope(request),
+            cursor=cursor,
+            limit=limit,
+        )
+        return _source_json(result)
+
+    @app.get(
+        "/v1/sources/{source_id}/revisions/{revision_id}/extractions/{extraction_id}/channels"
+    )
+    async def list_channels(
+        source_id: str,
+        revision_id: str,
+        extraction_id: str,
+        request: Request,
+        cursor: str | None = None,
+        limit: int = 50,
+    ):
+        _require(request, "read")
+        result = await asyncio.to_thread(
+            _services(request).discovery.source_channels,
+            source_id,
+            revision_id,
+            extraction_id,
+            _scope(request),
+            cursor=cursor,
+            limit=limit,
+        )
+        return _source_json(result)
+
     @app.get("/v1/evidence/{unit_id}")
     async def get_evidence(
         unit_id: str, request: Request, start: int | None = None, end: int | None = None

@@ -77,6 +77,27 @@ class SourceRevisionPage(Contract):
     scope_limited: bool = False
 
 
+class SourceExtractionPage(Contract):
+    source_id: Identifier
+    revision_id: Identifier
+    extractions: tuple[SourceExtractionCoverage, ...] = ()
+    next_cursor: Cursor | None = None
+
+
+class SourceChannelCoverage(Contract):
+    family_id: Identifier
+    channel: NonEmptyStr
+    state: NonEmptyStr
+
+
+class SourceChannelPage(Contract):
+    source_id: Identifier
+    revision_id: Identifier
+    extraction_id: Identifier
+    channels: tuple[SourceChannelCoverage, ...] = ()
+    next_cursor: Cursor | None = None
+
+
 class NamedCount(Contract):
     name: NonEmptyStr
     count: NonNegativeInt

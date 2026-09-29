@@ -16,6 +16,8 @@ from tychora.adapters.sqlite.history import HistoryRepository, RunMetrics
 from tychora.adapters.sqlite.lexical import LexicalIndex
 from tychora.adapters.voyage.text import QueryOperationBinding
 from tychora.application.reranking import prepare_rerank_facts
+from tychora.configuration.indexed_representation import pinned_runtime_compatible
+from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
@@ -39,7 +41,7 @@ from tychora.contracts.evidence import (
     VisualEvidence,
 )
 from tychora.contracts.graph import GraphCandidates
-from tychora.contracts.identity import digest
+from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.indexing import FamilySpec
 from tychora.contracts.requests import (
     ImageInput,
@@ -224,6 +226,16 @@ class QueryService:
         from collections.abc import Mapping
 
         snapshot = self.owner.store.resolve_snapshot(snapshot_id)
+        retained_configs: dict[str, ResolvedConfig] = {}
+        current_artifact_sha = sha256(
+            canonical_bytes(
+                {
+                    "type": "registry",
+                    "schema_version": "1",
+                    "data": self.owner.config.model_dump(mode="json"),
+                }
+            )
+        ).hexdigest()
         for channel, provider, index, settings, modality in (
             (
                 "text",
@@ -272,10 +284,37 @@ class QueryService:
                 raise TychoraError(
                     "INDEX_INCOMPLETE", "Pinned vector family is invalid."
                 ) from None
+            origin_sha = slot.family.config_json.get("effective_config_sha")
+            if not isinstance(origin_sha, str) or len(origin_sha) != 64:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Pinned vector family origin is invalid."
+                )
+            if origin_sha not in retained_configs:
+                retained_configs[origin_sha] = (
+                    self.owner.config
+                    if origin_sha == current_artifact_sha
+                    else self.owner.store.retained_config_sha(origin_sha)
+                )
+            retained_config = retained_configs[origin_sha]
+            if not pinned_runtime_compatible(retained_config, self.owner.config):
+                raise TychoraError(
+                    "INTEGRITY_ERROR",
+                    "Query representation differs from pinned configuration.",
+                )
+            retained_settings = getattr(retained_config.values.providers, channel)
+            current_identity = settings.model_dump(mode="json")
+            retained_identity = retained_settings.model_dump(mode="json")
+            current_identity.pop("credential_ref", None)
+            retained_identity.pop("credential_ref", None)
+            if current_identity != retained_identity:
+                raise TychoraError(
+                    "INTEGRITY_ERROR",
+                    "Query representation differs from pinned configuration.",
+                )
             expected = digest(
                 f"{channel}-family-config-v1",
-                snapshot.config_sha,
-                settings.model_dump(mode="json"),
+                origin_sha,
+                retained_settings.model_dump(mode="json"),
                 caps.model_dump(mode="json"),
             )
             if (

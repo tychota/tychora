@@ -115,6 +115,7 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
+from tychora.configuration.indexed_representation import pinned_runtime_compatible
 from tychora.configuration.registry import Registry, compile_filter
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
@@ -193,6 +194,8 @@ class EligibilityReader(Protocol):
     registry: Registry
 
     def read_eligibility_facts(self, snapshot: SnapshotView) -> EligibilityFacts: ...
+
+    def retained_config(self, snapshot: SnapshotView) -> ResolvedConfig: ...
 
     def policy_epoch(self, workspace_id: str) -> int: ...
 
@@ -381,13 +384,22 @@ class EligibilityCompiler:
                 }
             )
         ).hexdigest()
-        if (
-            snapshot.config_sha != retained_config_sha
-            or registry.registry_digest != config.registry_digest
-        ):
+        if registry.registry_digest != config.registry_digest:
             raise TychoraError(
                 "INVALID_REQUEST", "Snapshot and resolved profile differ"
             )
+        if snapshot.config_sha != retained_config_sha:
+            read_retained = getattr(self.reader, "retained_config", None)
+            if not callable(read_retained):
+                raise TychoraError(
+                    "INVALID_REQUEST", "Snapshot and resolved profile differ"
+                )
+            retained_config = read_retained(snapshot)
+            if not pinned_runtime_compatible(retained_config, config):
+                raise TychoraError(
+                    "PROFILE_INCOMPATIBLE",
+                    "Pinned snapshot requires publication under current settings.",
+                )
         mode_name = request.mode or config.values.mode or config.values.default_mode
         if mode_name is None or mode_name not in registry.modes:
             raise TychoraError("INVALID_REQUEST", "Retrieval mode is unavailable")

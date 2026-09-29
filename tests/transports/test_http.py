@@ -59,6 +59,235 @@ async def test_reader_cannot_add_sources(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_revision_cursor_skips_hidden_first_and_is_scope_bound(tmp_path):
+    import base64
+
+    from tychora.ports.execution import ExecutionContext
+
+    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+        owner = kb._workspace.owner
+        reader = owner.scope.model_copy(update={"access_ceiling": 0})
+        narrower = reader.model_copy(update={"uses": frozenset({"lookup"})})
+        app = create_app(
+            owner,
+            kb._workspace.services,
+            LocalAuth(
+                {"full": reader, "narrow": narrower},
+                authority="127.0.0.1:8765",
+            ),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://127.0.0.1:8765",
+            headers={"Authorization": "Bearer full"},
+        ) as client:
+            added = await client.post(
+                "/v1/sources",
+                json={
+                    "type": "text",
+                    "source_key": "cursor-test",
+                    "collection_id": "default",
+                    "kind": "manual@1",
+                    "format": "text",
+                    "text": "Visible source.",
+                    "metadata": {
+                        "title": "Visible",
+                        "publisher": "Example",
+                        "edition": "1",
+                    },
+                },
+            )
+            status = await app.state.runtime.services.jobs.wait(
+                added.json()["id"], ExecutionContext(), timeout=5
+            )
+            assert status.state == "succeeded"
+
+            def seed():
+                row = owner.db.execute(
+                    "SELECT r.revision_id,r.source_id FROM revisions r "
+                    "JOIN sources s USING(source_id) WHERE s.source_key='cursor-test'"
+                ).fetchone()
+                revision, source_id = row
+                hidden = "0" * 64
+                owner.db.execute(
+                    "INSERT INTO revisions SELECT ?,source_id,kind_id,original_sha,"
+                    "'hidden',metadata_sha,title,published_on,effective_from,"
+                    "effective_until,3,declared_review_state,allowed_uses_json,"
+                    "metadata_json,captured_at FROM revisions WHERE revision_id=?",
+                    (hidden, revision),
+                )
+                owner.db.execute(
+                    "INSERT INTO revisions SELECT ?,source_id,kind_id,original_sha,"
+                    "'later',metadata_sha,title,published_on,effective_from,"
+                    "effective_until,0,declared_review_state,allowed_uses_json,"
+                    "metadata_json,captured_at FROM revisions WHERE revision_id=?",
+                    ("f" * 64, revision),
+                )
+                owner.db.execute(
+                    "INSERT INTO sources SELECT ?,collection_id,'other-visible',"
+                    "source_type,registration_json,access_floor,withdrawn_at,created_at "
+                    "FROM sources WHERE source_id=?",
+                    ("00000000-0000-4000-8000-000000000099", source_id),
+                )
+                owner.db.commit()
+                return source_id, hidden
+
+            source_id, hidden = await owner.run_blocking(seed, ExecutionContext())
+            first = await client.get(f"/v1/sources/{source_id}/revisions?limit=1")
+            assert first.status_code == 200, first.text
+            assert len(first.json()["revisions"]) == 1
+            assert first.json()["revisions"][0]["revision_id"] != hidden
+            cursor = first.json()["next_cursor"]
+            assert cursor
+            decoded = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4))
+            assert hidden.encode() not in decoded
+            second = await client.get(
+                f"/v1/sources/{source_id}/revisions",
+                params={"limit": 1, "cursor": cursor},
+            )
+            assert second.status_code == 200
+            assert second.json()["revisions"][0]["revision_id"] == "f" * 64
+            denied = await client.get(
+                f"/v1/sources/{source_id}/revisions",
+                params={"limit": 1, "cursor": cursor},
+                headers={"Authorization": "Bearer narrow"},
+            )
+            assert denied.status_code == 400
+            sources = await client.get("/v1/sources?limit=1")
+            assert sources.json()["next_cursor"]
+            denied_sources = await client.get(
+                "/v1/sources",
+                params={"limit": 1, "cursor": sources.json()["next_cursor"]},
+                headers={"Authorization": "Bearer narrow"},
+            )
+            assert denied_sources.status_code == 400
+        await app.state.runtime.services.source_jobs.aclose()
+
+
+@pytest.mark.asyncio
+async def test_extraction_and_channel_coverage_continue_in_bounded_pages(tmp_path):
+    import asyncio
+
+    from tychora.ports.execution import ExecutionContext
+
+    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+        owner = kb._workspace.owner
+        app = create_app(
+            owner,
+            kb._workspace.services,
+            LocalAuth({"reader": owner.scope}, authority="127.0.0.1:8765"),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://127.0.0.1:8765",
+            headers={"Authorization": "Bearer reader"},
+        ) as client:
+            added = await client.post(
+                "/v1/sources",
+                json={
+                    "type": "text",
+                    "source_key": "coverage-test",
+                    "collection_id": "default",
+                    "kind": "manual@1",
+                    "format": "text",
+                    "text": "Coverage source.",
+                    "metadata": {
+                        "title": "Coverage",
+                        "publisher": "Example",
+                        "edition": "1",
+                    },
+                },
+            )
+            status = await app.state.runtime.services.jobs.wait(
+                added.json()["id"], ExecutionContext(), timeout=5
+            )
+            assert status.state == "succeeded"
+
+            def seed():
+                row = owner.db.execute(
+                    "SELECT s.source_id,r.revision_id,e.extraction_id "
+                    "FROM sources s JOIN revisions r USING(source_id) "
+                    "JOIN extractions e USING(revision_id) "
+                    "WHERE s.source_key='coverage-test'"
+                ).fetchone()
+                source_id, revision_id, original_extraction = row
+                for number in range(10):
+                    owner.db.execute(
+                        "INSERT INTO extractions SELECT ?,revision_id,?,"
+                        "normalizer_fingerprint,document_artifact_sha,"
+                        "assertions_artifact_sha,diagnostics_artifact_sha,created_at "
+                        "FROM extractions WHERE extraction_id=?",
+                        (f"{number:064x}", f"{number + 100:064x}", original_extraction),
+                    )
+                family, batch = owner.db.execute(
+                    "SELECT f.family_id,b.batch_id FROM index_families f "
+                    "JOIN index_batches b USING(family_id) "
+                    "WHERE b.extraction_id=? AND f.channel='lexical'",
+                    (original_extraction,),
+                ).fetchone()
+                for number in range(17):
+                    synthetic_family = f"{number + 1000:064x}"
+                    owner.db.execute(
+                        "INSERT INTO index_families SELECT ?,channel,backend,provider,"
+                        "model,dimension,config_sha,config_json,backend_namespace,created_at "
+                        "FROM index_families WHERE family_id=?",
+                        (synthetic_family, family),
+                    )
+                    owner.db.execute(
+                        "INSERT INTO index_batches SELECT ?,?, ?,input_manifest_sha,"
+                        "expected_count,actual_count,entry_ids_sha,state,receipt_json "
+                        "FROM index_batches WHERE batch_id=?",
+                        (f"{number + 2000:064x}", synthetic_family, f"{0:064x}", batch),
+                    )
+                owner.db.commit()
+                return source_id, revision_id, f"{0:064x}"
+
+            source_id, revision_id, extraction_id = await owner.run_blocking(
+                seed, ExecutionContext()
+            )
+            revision = await client.get(f"/v1/sources/{source_id}/revisions")
+            assert revision.status_code == 200, revision.text
+            assert revision.json()["revisions"][0]["extractions_truncated"] is True
+            path = f"/v1/sources/{source_id}/revisions/{revision_id}/extractions"
+            seen = []
+            cursor = None
+            while True:
+                page = await client.get(
+                    path, params={"limit": 4, **({"cursor": cursor} if cursor else {})}
+                )
+                assert page.status_code == 200, page.text
+                assert len(page.json()["extractions"]) <= 4
+                seen.extend(
+                    item["extraction_id"] for item in page.json()["extractions"]
+                )
+                cursor = page.json()["next_cursor"]
+                if cursor is None:
+                    break
+            assert len(seen) == 11 and len(set(seen)) == 11
+            channels_path = path + f"/{extraction_id}/channels"
+            channels = []
+            cursor = None
+            while True:
+                page = await client.get(
+                    channels_path,
+                    params={"limit": 6, **({"cursor": cursor} if cursor else {})},
+                )
+                assert page.status_code == 200, page.text
+                assert len(page.json()["channels"]) <= 6
+                channels.extend(page.json()["channels"])
+                cursor = page.json()["next_cursor"]
+                if cursor is None:
+                    break
+            assert len(channels) == 17
+            assert len({item["family_id"] for item in channels}) == 17
+            local = await asyncio.to_thread(
+                kb.sources.extractions, source_id, revision_id, limit=4
+            )
+            assert len(local.extractions) == 4
+        await app.state.runtime.services.source_jobs.aclose()
+
+
+@pytest.mark.asyncio
 async def test_add_is_durable_and_idempotent_with_scoped_cancel(tmp_path):
     with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
         owner = kb._workspace.owner

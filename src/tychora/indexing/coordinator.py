@@ -13,6 +13,7 @@ from uuid import UUID, uuid5
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.adapters.sqlite.graph import read_graph_build
 from tychora.adapters.sqlite.publication import publication_manifest
+from tychora.configuration.indexed_representation import pinned_runtime_compatible
 from tychora.configuration.models import ResolvedConfig
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
@@ -111,6 +112,49 @@ class PreparedProjection:
 
 class ProjectionCoordinator:
     """Use real canonical, provider and native ports; return a verified plan."""
+
+    def _retained_vector_spec(
+        self, slot: PublicationSlot | None, channel: str
+    ) -> FamilySpec | None:
+        if slot is None:
+            return None
+        embedder = self.text_embedder if channel == "text" else self.visual_embedder
+        index = self.text_index if channel == "text" else self.image_index
+        if embedder is None or index is None:
+            return None
+        origin_sha = slot.family.config_json.get("effective_config_sha")
+        raw = slot.family.config_json.get("spec")
+        if not isinstance(origin_sha, str) or not isinstance(raw, FrozenJsonMap):
+            _fail("Retained vector family origin is invalid")
+        retained = self.store.retained_config_sha(origin_sha)
+        if not pinned_runtime_compatible(retained, self.config):
+            return None
+        try:
+            spec = FamilySpec.model_validate_json(canonical_bytes(raw))
+        except (TypeError, ValueError):
+            _fail("Retained vector family specification is invalid")
+        caps = embedder.capabilities
+        settings = getattr(retained.values.providers, channel)
+        expected = digest(
+            f"{channel}-family-config-v1",
+            origin_sha,
+            settings.model_dump(mode="json"),
+            caps.model_dump(mode="json"),
+        )
+        if (
+            spec.family_id != slot.family.family_id
+            or spec.config_sha != expected
+            or spec.provider != caps.provider
+            or spec.model != caps.model
+            or spec.dimensions != caps.dimensions
+            or spec.representation_fingerprint != caps.representation_fingerprint
+        ):
+            _fail("Retained vector family differs from provider")
+        handle = index.create_family(spec)
+        if handle.config_sha != slot.family.config_sha:
+            _fail("Retained native vector configuration differs")
+        self.store.vector_indexes[spec.family_id] = index
+        return spec
 
     def __init__(
         self,
@@ -821,21 +865,49 @@ class ProjectionCoordinator:
         )
         selected = tuple(sorted(members.values(), key=lambda item: item.source_id))
         old_slots = {slot.slot: slot for slot in current.slots} if current else {}
-        lexical_family = self._lexical_family(
-            bundle.workspace.workspace_id,
-            config_ref.sha256,
-            bundle.workspace.created_at,
+        old_lexical = old_slots.get("lexical")
+        old_lexical_sha = (
+            old_lexical.family.config_json.get("effective_config_sha")
+            if old_lexical is not None
+            else None
+        )
+        lexical_family = (
+            old_lexical.family
+            if old_lexical is not None
+            and isinstance(old_lexical_sha, str)
+            and (
+                old_lexical_sha == config_ref.sha256
+                or pinned_runtime_compatible(
+                    self.store.retained_config_sha(old_lexical_sha), self.config
+                )
+            )
+            else self._lexical_family(
+                bundle.workspace.workspace_id,
+                config_ref.sha256,
+                bundle.workspace.created_at,
+            )
         )
         text_family = None
         text_spec = None
         text_groups: tuple[ContextGroup, ...] = ()
         if self.config.values.index.text.backend != "disabled":
-            text_family, text_spec = self._text_family(
-                bundle.workspace.workspace_id,
-                config_ref.sha256,
-                bundle.workspace.created_at,
-            )
             old_text = old_slots.get("text")
+            text_spec = (
+                self._retained_vector_spec(old_text, "text")
+                if old_text is not None
+                and old_text.family.config_json.get("effective_config_sha")
+                != config_ref.sha256
+                else None
+            )
+            if text_spec is not None:
+                assert old_text is not None
+                text_family = old_text.family
+            else:
+                text_family, text_spec = self._text_family(
+                    bundle.workspace.workspace_id,
+                    config_ref.sha256,
+                    bundle.workspace.created_at,
+                )
             reusable = (
                 old_text is not None
                 and old_text.family == text_family
@@ -850,12 +922,23 @@ class ProjectionCoordinator:
         image_spec = None
         visual_inputs: tuple[VisualInput, ...] = ()
         if self.config.values.index.image.backend != "disabled":
-            image_family, image_spec = self._image_family(
-                bundle.workspace.workspace_id,
-                config_ref.sha256,
-                bundle.workspace.created_at,
-            )
             old_image = old_slots.get("image")
+            image_spec = (
+                self._retained_vector_spec(old_image, "image")
+                if old_image is not None
+                and old_image.family.config_json.get("effective_config_sha")
+                != config_ref.sha256
+                else None
+            )
+            if image_spec is not None:
+                assert old_image is not None
+                image_family = old_image.family
+            else:
+                image_family, image_spec = self._image_family(
+                    bundle.workspace.workspace_id,
+                    config_ref.sha256,
+                    bundle.workspace.created_at,
+                )
             reusable_image = (
                 old_image is not None
                 and old_image.family == image_family
@@ -1076,7 +1159,9 @@ class ProjectionCoordinator:
         ):
             _fail("Captured revision is not the selected canonical source")
         config_ref = self._config_ref(job)
-        if current.config_sha != config_ref.sha256:
+        if current.config_sha != config_ref.sha256 and not pinned_runtime_compatible(
+            self.store.retained_config(current), self.config
+        ):
             raise TychoraError(
                 "INDEX_INCOMPLETE", "Existing projection configuration differs"
             )

@@ -30,6 +30,9 @@ from tychora.contracts.operations import (
     MaintenanceRequest,
     RelationRequest,
     RelationResult,
+    SourceChannelPage,
+    SourceExtractionPage,
+    SourceRevisionPage,
 )
 from tychora.contracts.requests import QueryRequest, RequestScope, SourceInput
 
@@ -112,6 +115,10 @@ def _id(value: str) -> str:
     return quote(value, safe="")
 
 
+def _page_params(cursor: str | None, limit: int) -> dict[str, str | int]:
+    return {"limit": limit, **({"cursor": cursor} if cursor is not None else {})}
+
+
 class _SyncSources:
     def __init__(self, client: HTTPClient):
         self.client = client
@@ -134,6 +141,50 @@ class _SyncSources:
             headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
         )
         return JobHandle.model_validate_json(response.content)
+
+    def revisions(
+        self, source_id: str, *, cursor: str | None = None, limit: int = 20
+    ) -> SourceRevisionPage:
+        return SourceRevisionPage.model_validate_json(
+            self.client._request(
+                "GET",
+                f"/v1/sources/{_id(source_id)}/revisions",
+                params=_page_params(cursor, limit),
+            ).content
+        )
+
+    def extractions(
+        self,
+        source_id: str,
+        revision_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 20,
+    ) -> SourceExtractionPage:
+        return SourceExtractionPage.model_validate_json(
+            self.client._request(
+                "GET",
+                f"/v1/sources/{_id(source_id)}/revisions/{_id(revision_id)}/extractions",
+                params=_page_params(cursor, limit),
+            ).content
+        )
+
+    def channels(
+        self,
+        source_id: str,
+        revision_id: str,
+        extraction_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> SourceChannelPage:
+        return SourceChannelPage.model_validate_json(
+            self.client._request(
+                "GET",
+                f"/v1/sources/{_id(source_id)}/revisions/{_id(revision_id)}/extractions/{_id(extraction_id)}/channels",
+                params=_page_params(cursor, limit),
+            ).content
+        )
 
 
 class _SyncEvidence:
@@ -401,6 +452,56 @@ class _AsyncSources:
             headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
         )
         return JobHandle.model_validate_json(response.content)
+
+    async def revisions(
+        self, source_id: str, *, cursor: str | None = None, limit: int = 20
+    ) -> SourceRevisionPage:
+        return SourceRevisionPage.model_validate_json(
+            (
+                await self.client._request(
+                    "GET",
+                    f"/v1/sources/{_id(source_id)}/revisions",
+                    params=_page_params(cursor, limit),
+                )
+            ).content
+        )
+
+    async def extractions(
+        self,
+        source_id: str,
+        revision_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 20,
+    ) -> SourceExtractionPage:
+        return SourceExtractionPage.model_validate_json(
+            (
+                await self.client._request(
+                    "GET",
+                    f"/v1/sources/{_id(source_id)}/revisions/{_id(revision_id)}/extractions",
+                    params=_page_params(cursor, limit),
+                )
+            ).content
+        )
+
+    async def channels(
+        self,
+        source_id: str,
+        revision_id: str,
+        extraction_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> SourceChannelPage:
+        return SourceChannelPage.model_validate_json(
+            (
+                await self.client._request(
+                    "GET",
+                    f"/v1/sources/{_id(source_id)}/revisions/{_id(revision_id)}/extractions/{_id(extraction_id)}/channels",
+                    params=_page_params(cursor, limit),
+                )
+            ).content
+        )
 
 
 class _AsyncEvidence:

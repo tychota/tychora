@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from typing import NoReturn, cast
 
 from tychora.application.leases import LeaseSet
+from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import Contract, FrozenJsonMap
@@ -133,6 +134,42 @@ class CorpusStore(PolicyRepository):
             _fail("Snapshot resolved-config artifact is invalid")
 
         return read_eligibility_facts(self, snapshot)
+
+    def retained_config(self, snapshot: SnapshotView) -> ResolvedConfig:
+        return self.retained_config_sha(snapshot.config_sha)
+
+    def retained_config_sha(self, config_sha: str) -> ResolvedConfig:
+        """Open a canonical retained config artifact with CAS verification."""
+
+        row = self.db.execute(
+            "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
+            (config_sha,),
+        ).fetchone()
+        if row is None or row[2] != config_sha or row[3] != "present":
+            _fail("Retained resolved-config artifact is unavailable")
+        ref = ArtifactRef(
+            sha256=config_sha,
+            size_bytes=row[0],
+            media_type=row[1],
+            storage_key=row[2],
+        )
+        with self.artifacts.open_verified(ref) as stream:
+            try:
+                payload = json.load(stream)
+            except (ValueError, UnicodeError):
+                _fail("Retained resolved-config artifact is invalid")
+        if (
+            not isinstance(payload, dict)
+            or payload.get("type") != "registry"
+            or payload.get("schema_version") != "1"
+            or not isinstance(payload.get("data"), dict)
+        ):
+            _fail("Retained resolved-config artifact is invalid")
+
+        try:
+            return ResolvedConfig.model_validate_json(canonical_bytes(payload["data"]))
+        except ValueError:
+            _fail("Retained resolved-config artifact is invalid")
 
     def policy_epoch(self, workspace_id: str) -> int:
         from .eligibility import policy_epoch

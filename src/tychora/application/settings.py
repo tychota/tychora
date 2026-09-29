@@ -8,30 +8,14 @@ import os
 from uuid import uuid4
 
 from tychora.adapters.sqlite.corpus import CorpusStore
+from tychora.configuration.indexed_representation import indexed_representation_identity
 from tychora.configuration.registry import Registry
 from tychora.configuration.resolve import resolve_config, selected_workspace_profile
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.identity import digest
 from tychora.contracts.operations import SettingsActivation
 from tychora.ports.execution import ExecutionContext
 
 from .services import build_services
-
-
-def _indexed_representation_identity(config) -> str:
-    """Compare persisted representation semantics, not query credentials/cache identity."""
-    providers = config.values.providers
-    embeddings = {}
-    for modality in ("text", "image"):
-        settings = getattr(providers, modality).model_dump(mode="json")
-        settings.pop("credential_ref", None)
-        embeddings[modality] = settings
-    return digest(
-        "indexed-representation-compat-v1",
-        embeddings,
-        config.values.index.model_dump(mode="json"),
-        config.extraction_fingerprint,
-    )
 
 
 async def _complete_committed(coroutine) -> bool:
@@ -121,8 +105,8 @@ class SettingsService:
                 registry.validate_activation(frozenset(retained), retained)
                 if (
                     owner.store.active_snapshot_id() is not None
-                    and _indexed_representation_identity(candidate)
-                    != _indexed_representation_identity(owner.config)
+                    and indexed_representation_identity(candidate)
+                    != indexed_representation_identity(owner.config)
                 ):
                     raise TychoraError(
                         "PROFILE_INCOMPATIBLE",
