@@ -147,8 +147,25 @@ class LocalWorkspace:
             raise
 
     def _ensure_default_collection(self) -> None:
+        registered = self.owner.db.execute(
+            "SELECT collection_id FROM collections WHERE workspace_id=? AND slug='default'",
+            (self.owner.workspace_id,),
+        ).fetchone()
+        fixed = self.owner.db.execute(
+            "SELECT slug FROM collections WHERE workspace_id=? AND collection_id=?",
+            (self.owner.workspace_id, str(DEFAULT_COLLECTION_ID)),
+        ).fetchone()
+        if (registered is not None and registered[0] != str(DEFAULT_COLLECTION_ID)) or (
+            fixed is not None and fixed[0] != "default"
+        ):
+            raise TychoraError(
+                "PROFILE_INCOMPATIBLE",
+                "Existing default collection identity conflicts with this workspace.",
+            )
+        if registered is not None:
+            return
         self.owner.db.execute(
-            "INSERT OR IGNORE INTO collections "
+            "INSERT INTO collections "
             "(collection_id,workspace_id,slug,title,access_floor,policy_json) "
             'VALUES (?,?,?, ?,0,\'{"schema_version":1,"upload_providers":[]}\')',
             (str(DEFAULT_COLLECTION_ID), self.owner.workspace_id, "default", "Default"),

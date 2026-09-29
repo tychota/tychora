@@ -10,8 +10,6 @@ from io import BytesIO
 from typing import NoReturn
 from uuid import UUID, uuid5
 
-from PIL import Image, ImageOps
-
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.adapters.sqlite.graph import read_graph_build
 from tychora.adapters.sqlite.publication import publication_manifest
@@ -555,6 +553,13 @@ class ProjectionCoordinator:
                 media_type=artifact[1],
                 storage_key=artifact[2],
             )
+            try:
+                from PIL import Image, ImageOps
+            except ImportError:
+                raise TychoraError(
+                    "CAPABILITY_MISSING",
+                    "Image operations require the documents extra.",
+                ) from None
             with (
                 self.artifacts.open_verified(ref) as stream,
                 Image.open(stream) as encoded,

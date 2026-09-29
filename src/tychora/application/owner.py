@@ -907,7 +907,12 @@ class CanonicalUploadPolicy:
     def _verify_captured_pixels(
         self, authorization: CapturedRegionAuthorization
     ) -> None:
-        from PIL import Image, ImageOps
+        try:
+            from PIL import Image, ImageOps
+        except ImportError:
+            raise TychoraError(
+                "CAPABILITY_MISSING", "Image operations require the documents extra."
+            ) from None
 
         capture, region = authorization.capture, authorization.region
         try:

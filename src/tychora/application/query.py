@@ -12,8 +12,6 @@ from hashlib import sha256
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
-from PIL import Image, ImageOps
-
 from tychora.adapters.sqlite.history import HistoryRepository, RunMetrics
 from tychora.adapters.sqlite.lexical import LexicalIndex
 from tychora.adapters.voyage.text import QueryOperationBinding
@@ -966,6 +964,12 @@ class QueryService:
         ref = ArtifactRef(
             sha256=row[2], size_bytes=row[9], media_type=row[10], storage_key=row[11]
         )
+        try:
+            from PIL import Image, ImageOps
+        except ImportError:
+            raise TychoraError(
+                "CAPABILITY_MISSING", "Image operations require the documents extra."
+            ) from None
         with (
             self.owner.artifacts.open_verified(ref) as stream,
             Image.open(stream) as encoded,
