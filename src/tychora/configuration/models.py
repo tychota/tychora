@@ -54,7 +54,7 @@ class OutputSettings(Contract):
     include_empty_lanes: bool = True
     locale: NonEmptyStr = "en"
     title: str = "Evidence pack"
-    envelope_tag: Annotated[str, Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")] = (
+    envelope_tag: Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")] = (
         "evidence_context"
     )
 

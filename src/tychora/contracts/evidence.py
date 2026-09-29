@@ -212,9 +212,10 @@ class DecisionRequirement(Contract):
 
 
 class RelationChecks(Contract):
-    status: Literal["complete", "partial", "not_requested"] = "not_requested"
+    status: Literal["complete", "partial", "not_evaluated"] = "not_evaluated"
     predicates: tuple[NonEmptyStr, ...] = ()
     assertion_ids: tuple[Identifier, ...] = ()
+    assertions: tuple[RelationPath, ...] = ()
     decisions: tuple[DecisionRequirement, ...] = ()
     truncated: bool = False
 

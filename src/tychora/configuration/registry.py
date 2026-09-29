@@ -15,6 +15,7 @@ from tychora.contracts.requests import (
     InFilter,
     OrFilter,
 )
+from tychora.contracts.requirements import ResponseRequirement
 
 from .models import ResolvedConfig
 from .schemas import LocalSchemas
@@ -480,6 +481,33 @@ def _validate_definitions(data: dict[str, Any]) -> None:
             mode["required_lanes"], nonempty=False
         ):
             _invalid("Mode required lanes must be a unique string list")
+        requirements = mode.get("requirements", [])
+        if not isinstance(requirements, list) or len(requirements) > 64:
+            _invalid("Invalid mode requirements")
+        checked_requirements = [
+            ResponseRequirement.model_validate(item) for item in requirements
+        ]
+        if len({item.requirement_id for item in checked_requirements}) != len(
+            checked_requirements
+        ):
+            _invalid("Duplicate mode requirement")
+        for requirement in checked_requirements:
+            if requirement.minimum > 100:
+                _invalid("Mode requirement count exceeds response bound")
+            if (
+                requirement.target == "lane"
+                and requirement.value not in mode["allowed_lanes"]
+            ):
+                _invalid("Unresolved required lane")
+            if requirement.target == "kind" and requirement.value not in data[
+                "kinds"
+            ] | data["compatibility"].get("kind_lanes", {}):
+                _invalid("Unresolved required kind")
+            if (
+                requirement.target == "record_schema"
+                and requirement.value not in data["schemas"]
+            ):
+                _invalid("Unresolved required record schema")
         if set(mode["allowed_lanes"]) - data["lanes"].keys() or set(
             mode.get("required_lanes", [])
         ) - set(mode["allowed_lanes"]):

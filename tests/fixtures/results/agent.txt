@@ -1,0 +1,8 @@
+<evidence_context>
+Evidence pack
+run=run-1 snapshot=snapshot-1
+coverage=complete checks=not_evaluated
+[segment-1] lane=feedback kind=feedback@1 source=original
+quoted source
+citation=unit-1 source=source-1 revision=revision-1
+</evidence_context>

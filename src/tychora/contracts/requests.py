@@ -231,6 +231,7 @@ class QueryRequest(Contract):
     mode: NonEmptyStr | None = None
     filters: FilterExpr | None = None
     hints: tuple[NonEmptyStr, ...] = ()
+    context: FrozenJsonMap = Field(default_factory=FrozenJsonMap)
     revision_ids: tuple[Identifier, ...] = ()
     revision_selector: Literal["current", "all"] = "current"
     as_of: date | None = None

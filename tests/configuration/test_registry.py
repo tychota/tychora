@@ -720,3 +720,61 @@ def test_optional_relation_and_mode_fields_preserve_supported_values(
     assert registry.artifact[category][key][field] == (
         tuple(value) if isinstance(value, list) else value
     )
+
+
+@pytest.mark.parametrize(
+    "requirements",
+    [
+        [
+            {
+                "requirement_id": "r",
+                "target": "lane",
+                "value": "hidden",
+                "when": {"exists": "project"},
+            }
+        ],
+        [
+            {
+                "requirement_id": "r",
+                "target": "lane",
+                "value": "standard",
+                "when": {"eval": "yes"},
+            }
+        ],
+        [{"requirement_id": "r", "target": "lane", "value": "standard", "minimum": 0}],
+        [
+            {"requirement_id": "r", "target": "lane", "value": "standard"},
+            {"requirement_id": "r", "target": "kind", "value": "manual@1"},
+        ],
+    ],
+)
+def test_mode_requirements_reject_unknown_targets_and_unbounded_conditions(
+    builtin_config, requirements
+):
+    config = changed_config(
+        builtin_config(),
+        lambda data: data["modes"]["compose"].update({"requirements": requirements}),
+    )
+    with pytest.raises(TychoraError) as err:
+        Registry.from_config(config)
+    assert err.value.code == "INVALID_REQUEST"
+
+
+def test_mode_requirement_accepts_bounded_explicit_context(builtin_config):
+    requirement = {
+        "requirement_id": "r",
+        "description": "Needs standard",
+        "target": "lane",
+        "value": "standard",
+        "when": {"and": [{"eq": ["mode", "compose"]}, {"exists": "project"}]},
+    }
+    config = changed_config(
+        builtin_config(),
+        lambda data: data["modes"]["compose"].update({"requirements": [requirement]}),
+    )
+    assert (
+        Registry.from_config(config).model_dump(mode="json")["modes"]["compose"][
+            "requirements"
+        ][0]
+        == requirement
+    )
