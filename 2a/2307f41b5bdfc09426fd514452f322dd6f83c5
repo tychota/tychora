@@ -1,0 +1,39 @@
+src/tychora/interfaces/commands/_common.py
+  s_35b641b930a96d::t_ce38dbc2675ae5 24-25,28-29,31-32,34,36-57,63-67
+src/tychora/interfaces/commands/serve.py
+  s_35b641b930a96d::t_ce38dbc2675ae5 7,27,31,35
+  s_35b641b930a96d::t_1ca121d9e5d59c 36-37
+tests/cli/test_output.py
+  s_35b641b930a96d::t_78b11c43f36cfa 110-120
+  s_35b641b930a96d::t_16f3ea271702a2 121-122,124-137
+tests/cli/test_commands.py
+  s_35b641b930a96d::t_0083fe90710099 164-242
+  s_35b641b930a96d::t_ebbb76be0f62f3 243-271,455-505
+src/tychora/interfaces/cli.py
+  s_35b641b930a96d::t_ce38dbc2675ae5 10,35-36,38,40
+  s_35b641b930a96d::t_61142f428afee2 41-42
+src/tychora/interfaces/http/routes.py
+  s_35b641b930a96d::t_ce38dbc2675ae5 194-195
+src/tychora/adapters/sqlite/jobs.py
+  s_35b641b930a96d::t_ce38dbc2675ae5 417
+src/tychora/interfaces/mcp/server.py
+  s_35b641b930a96d::t_318a4e15a8da4e 6,18-20,154-158,170
+src/tychora/interfaces/http/server.py
+  s_35b641b930a96d::t_318a4e15a8da4e 9,18-19,21-28,31,46,53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "2a2307f41b5bdfc09426fd514452f322dd6f83c5",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
