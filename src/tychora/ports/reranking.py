@@ -33,6 +33,14 @@ class RankingSpan(Contract):
         return self
 
 
+class RankingTruncation(Contract):
+    window_id: Identifier
+    original_char_start: NonNegativeInt
+    original_char_end: PositiveInt
+    selected_char_start: NonNegativeInt
+    selected_char_end: PositiveInt
+
+
 def render_ranking_input(
     source_kind: str,
     title: str,
@@ -60,6 +68,12 @@ class RankingInput(Contract):
     dependency_ids: frozenset[Identifier] = Field(min_length=1)
     token_count: PositiveInt
     omitted_match_count: NonNegativeInt = 0
+    truncations: tuple[RankingTruncation, ...] = ()
+
+    @property
+    def anchor_ranges(self) -> tuple[AnchorRange, ...]:
+        """Selected exact anchors, under the plan's public field name."""
+        return self.anchors
 
     @model_validator(mode="after")
     def exact_render(self) -> Self:

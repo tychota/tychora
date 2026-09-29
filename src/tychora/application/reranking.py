@@ -5,18 +5,21 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from threading import Lock, get_ident
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
+from tychora.contracts.candidates import CandidateKey, ChannelCandidate
 from tychora.contracts.corpus import (
     AssetProxyRow,
     AssetRow,
+    ChunkRow,
     ExtractionBundle,
     ExtractionRow,
     IdentifierRow,
@@ -45,6 +48,9 @@ if TYPE_CHECKING:
     from tychora.adapters.voyage.rerank import VoyageReranker
     from tychora.adapters.voyage.runtime import VoyageRuntime
     from tychora.application.owner import WorkspaceOwner
+    from tychora.retrieval.admission import Admission
+    from tychora.retrieval.eligibility import EligibilityAttempt
+    from tychora.retrieval.rerank import RerankFacts
 
 
 @dataclass(slots=True)
@@ -326,8 +332,12 @@ def load_retained_representation(
         db.rollback()
 
 
+class RerankAttestationError(TychoraError):
+    """An invalid canonical representation, distinct from upload policy denial."""
+
+
 def _deny_ranking() -> NoReturn:
-    raise TychoraError(
+    raise RerankAttestationError(
         "FORBIDDEN_SCOPE", "Ranking input is not canonical in this scope."
     )
 
@@ -545,6 +555,23 @@ class OwnerRerankAccess:
             ctx.checkpoint()
             for item in group:
                 dependencies.update(attest_ranking_input(item, rows, prepared))
+                for anchor in item.anchors:
+                    if anchor.indexed_window_id is None:
+                        continue
+                    stored = owner.db.execute(
+                        "SELECT unit_id,char_start,char_end FROM chunks "
+                        "WHERE chunk_id=? AND extraction_id=?",
+                        (anchor.indexed_window_id, extraction_id),
+                    ).fetchone()
+                    if (
+                        stored is None
+                        or stored[0] != anchor.unit_id
+                        or not stored[1]
+                        <= anchor.char_start
+                        < anchor.char_end
+                        <= stored[2]
+                    ):
+                        _deny_ranking()
         if len(dependencies) > 2048:
             raise TychoraError("INVALID_REQUEST", "Rerank dependency limit exceeded.")
         return frozenset(dependencies)
@@ -680,3 +707,118 @@ async def rank_with_owner(
         )
     finally:
         access.close_operation()
+
+
+async def prepare_rerank_facts(
+    owner: WorkspaceOwner,
+    attempt: EligibilityAttempt,
+    admission: Admission,
+    channels: Mapping[str, tuple[ChannelCandidate, ...]],
+    ctx: ExecutionContext,
+) -> Mapping[CandidateKey, RerankFacts]:
+    """Hydrate bounded retained source/window facts on the pinned owner's read lane."""
+    from tychora.retrieval.rerank import RerankFacts, matches_from_channels
+
+    if attempt.owner is not owner or len(admission.selected) > 64:
+        raise TychoraError("INTEGRITY_ERROR", "Rerank attempt owner differs.")
+
+    def load() -> Mapping[CandidateKey, RerankFacts]:
+        budget = RetainedReadBudget()
+        prepared_by_extraction: dict[
+            str, tuple[RetainedRepresentationRows, PreparedExtraction]
+        ] = {}
+        output: dict[CandidateKey, RerankFacts] = {}
+        for candidate in admission.selected:
+            ctx.checkpoint()
+            kind, candidate_id = candidate.key
+            if kind == "asset":
+                continue  # Native image ranking is independent of text reranking.
+            if candidate_id not in attempt.view.source_unit_ids:
+                raise TychoraError(
+                    "FORBIDDEN_SCOPE", "Rerank candidate is not eligible."
+                )
+            row = owner.db.execute(
+                "SELECT extraction_id FROM evidence_units WHERE unit_id=?",
+                (candidate_id,),
+            ).fetchone()
+            if row is None:
+                raise TychoraError("INTEGRITY_ERROR", "Rerank candidate is absent.")
+            extraction_id = row[0]
+            budget.accept({"extraction_id": extraction_id})
+            if extraction_id not in prepared_by_extraction:
+                rows = load_retained_representation(
+                    owner.db, extraction_id, budget, ctx
+                )
+                try:
+                    prepared = prepare_extraction(rows)
+                except (ValueError, TypeError, KeyError, AttributeError):
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Retained ownership is invalid."
+                    ) from None
+                prepared_by_extraction[extraction_id] = rows, prepared
+            rows, prepared = prepared_by_extraction[extraction_id]
+            window_ids = tuple(
+                dict.fromkeys(
+                    window_id
+                    for hits in channels.values()
+                    for hit in hits
+                    if hit.key == candidate.key
+                    for window_id in hit.matching_window_ids
+                )
+            )
+            if len(window_ids) > 2048:
+                raise TychoraError("INVALID_REQUEST", "Rerank window limit exceeded.")
+            chunks: dict[str, ChunkRow] = {}
+            for window_id in window_ids:
+                ctx.checkpoint()
+                if window_id not in attempt.view.chunk_ids:
+                    raise TychoraError(
+                        "FORBIDDEN_SCOPE", "Ranking window is not eligible."
+                    )
+                dependencies = attempt.dependencies_for(window_id)
+                allowed = (
+                    attempt.view.revision_ids
+                    | attempt.view.context_unit_ids
+                    | attempt.view.structural_unit_ids
+                    | attempt.view.asset_ids
+                )
+                if not dependencies <= allowed:
+                    raise TychoraError(
+                        "FORBIDDEN_SCOPE", "Ranking window is not eligible."
+                    )
+                raw = owner.db.execute(
+                    "SELECT * FROM chunks WHERE chunk_id=?", (window_id,)
+                ).fetchone()
+                if raw is None:
+                    raise TychoraError("INTEGRITY_ERROR", "Ranking window is absent.")
+                columns = tuple(
+                    column[1]
+                    for column in owner.db.execute("PRAGMA table_info(chunks)")
+                )
+                stored = dict(zip(columns, raw, strict=True))
+                budget.accept(stored)
+                try:
+                    unit = prepared.representation(stored["unit_id"]).unit
+                    chunk = ChunkRow.model_validate(
+                        {
+                            **stored,
+                            "text": unit.text[
+                                stored["char_start"] : stored["char_end"]
+                            ],
+                        }
+                    )
+                except (ValueError, TypeError, KeyError, AttributeError):
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Ranking window is invalid."
+                    ) from None
+                chunks[window_id] = chunk
+            output[candidate.key] = RerankFacts(
+                rows,
+                prepared,
+                matches_from_channels(
+                    candidate, channels, chunks, prepared, attempt.view
+                ),
+            )
+        return MappingProxyType(output)
+
+    return await owner.run_blocking(load, ctx)
