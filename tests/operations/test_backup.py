@@ -674,3 +674,81 @@ def test_publish_withdraw_and_purge_wait_for_export_copy(tmp_path, monkeypatch):
         assert not errors, errors
         assert set(outcomes) == {"backup", "publish", "withdraw", "purge"}
         assert (tmp_path / "backup" / "backup-receipt.json").is_file()
+
+
+@pytest.mark.parametrize(
+    ("manifest_type", "reference_field"),
+    [
+        ("snapshot", "required_artifacts"),
+        ("job_capture", "original_artifacts"),
+    ],
+)
+def test_backup_rejects_manifest_payload_size_disagreeing_with_registry(
+    backup_case, manifest_type, reference_field
+):
+    from tychora.contracts.artifacts import ArtifactRef
+
+    f = backup_case
+
+    def seed_bad_reference():
+        payload = f.owner.artifacts.put_stream(
+            BytesIO(b"registered opaque payload"), "application/octet-stream"
+        )
+        bad_ref = ArtifactRef(
+            sha256=payload.sha256,
+            size_bytes=payload.size_bytes + 1,
+            media_type=payload.media_type,
+            storage_key=payload.storage_key,
+        )
+        root = f.owner.artifacts.put_stream(
+            BytesIO(
+                canonical_bytes(
+                    {
+                        "type": manifest_type,
+                        "schema_version": "1",
+                        reference_field: [bad_ref.model_dump()],
+                    }
+                )
+            ),
+            "application/json",
+        )
+        for ref in (payload, root):
+            f.owner.db.execute(
+                "INSERT INTO artifacts (artifact_sha,size_bytes,media_type,storage_key,created_at) "
+                "VALUES (?,?,?,?,?)",
+                (
+                    ref.sha256,
+                    ref.size_bytes,
+                    ref.media_type,
+                    ref.storage_key,
+                    "2026-01-01T00:00:00+00:00",
+                ),
+            )
+        if manifest_type == "snapshot":
+            f.owner.db.execute(
+                "UPDATE snapshots SET manifest_sha=? WHERE snapshot_id='snapshot-one'",
+                (root.sha256,),
+            )
+        else:
+            f.owner.db.execute(
+                "INSERT INTO jobs (job_id,operation,principal_id,request_digest,"
+                "effective_config_sha,captured_inputs_sha,state,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (
+                    "job-bad-capture",
+                    "add",
+                    "owner",
+                    "b" * 64,
+                    f.nested_schema_sha,
+                    root.sha256,
+                    "running",
+                    "2026-01-01T00:00:00+00:00",
+                    "2026-01-01T00:00:00+00:00",
+                ),
+            )
+
+    f.owner.run_blocking_sync(seed_bad_reference, ExecutionContext())
+    with pytest.raises(TychoraError) as error:
+        f.export()
+    assert error.value.code == "INTEGRITY_ERROR"
+    assert not f.destination.exists()

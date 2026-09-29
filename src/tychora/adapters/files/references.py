@@ -368,13 +368,27 @@ def from_backup(db, *, artifacts) -> BackupInventory:
                     for line in raw.splitlines()
                 ):
                     raise _fail("Assertion record exceeds line byte limit")
-                return [
+                content = [
                     json.loads(line, object_pairs_hook=unique)
                     for line in raw.splitlines()
                 ]
-            return json.loads(raw, object_pairs_hook=unique)
+            else:
+                content = json.loads(raw, object_pairs_hook=unique)
         except (UnicodeError, ValueError):
             raise _fail("Required manifest is malformed") from None
+        # The closure returns SHAs, so check complete typed declarations here
+        # before the registry descriptor can replace their size/storage key.
+        parsed = _parse(content, capture_published=False)
+        for declared in (
+            *parsed.artifacts,
+            *(child.artifact for child in parsed.manifests),
+        ):
+            stored = registered.get(declared.sha256)
+            if stored is None or physical_identity(declared) != physical_identity(
+                stored
+            ):
+                raise _fail("Required artifact declaration differs from registration")
+        return content
 
     # Published job captures may link repository captures. Their status is
     # derived solely from the successful canonical job, never payload metadata.

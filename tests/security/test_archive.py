@@ -31,3 +31,22 @@ def test_archive_receipt_files_are_private(tmp_path):
     with ArchiveWriter(tmp_path / "backup") as writer:
         writer.write_json("backup-receipt.json", {"complete": True})
         assert (writer.stage / "backup-receipt.json").stat().st_mode & 0o077 == 0
+
+
+def test_archive_stage_is_removed_if_child_creation_fails(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    destination = tmp_path / "backup"
+    writer = ArchiveWriter(destination)
+    mkdir = Path.mkdir
+
+    def fail_child(self, *args, **kwargs):
+        if self == writer.stage / "artifacts":
+            raise OSError("synthetic child creation failure")
+        return mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", fail_child)
+    with pytest.raises(OSError, match="synthetic child creation failure"), writer:
+        pass
+    assert not writer.stage.exists()
+    assert not destination.exists()

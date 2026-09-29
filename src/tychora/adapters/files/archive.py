@@ -75,7 +75,13 @@ class ArchiveWriter(AbstractContextManager["ArchiveWriter"]):
         if not self.destination.parent.is_dir():
             raise TychoraError("INVALID_REQUEST", "Backup parent directory is missing")
         self.stage.mkdir(mode=0o700)
-        (self.stage / "artifacts").mkdir(mode=0o700)
+        ready = False
+        try:
+            (self.stage / "artifacts").mkdir(mode=0o700)
+            ready = True
+        finally:
+            if not ready:
+                shutil.rmtree(self.stage, ignore_errors=True)
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
