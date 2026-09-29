@@ -76,11 +76,14 @@ class RawBoundary:
             activation = (
                 scope.get("path") == "/v1/settings" and scope.get("method") == "PUT"
             )
-            self.runtime.admit(activation=activation)
+            is_mcp = scope.get("path", "").startswith("/mcp/")
+            if not is_mcp:
+                self.runtime.admit(activation=activation)
             try:
                 await self.app(scope, replay, send)
             finally:
-                self.runtime.release(activation=activation)
+                if not is_mcp:
+                    self.runtime.release(activation=activation)
         except TychoraError as error:
             response = error_response(error)
             await response(scope, receive, send)
@@ -95,7 +98,8 @@ def create_app(owner: WorkspaceOwner, services: Services, auth: LocalAuth) -> Fa
     @asynccontextmanager
     async def lifespan(current: FastAPI):
         try:
-            yield
+            async with current.state.mcp_server.session_manager.run():
+                yield
         finally:
             try:
                 await current.state.runtime.services.source_jobs.aclose()
@@ -122,6 +126,11 @@ def create_app(owner: WorkspaceOwner, services: Services, auth: LocalAuth) -> Fa
     app.state.runtime = runtime
     app.state.settings = SettingsService(owner, app.state.runtime)
     app.state.auth = auth
+    from tychora.interfaces.mcp.server import build_mcp
+
+    app.state.mcp_server = build_mcp(services, owner.scope)
+    mcp_app = app.state.mcp_server.streamable_http_app(streamable_http_path="/")
+    app.mount("/mcp", mcp_app)
     app.add_middleware(RawBoundary, owner=owner, auth=auth, runtime=app.state.runtime)
 
     @app.exception_handler(TychoraError)

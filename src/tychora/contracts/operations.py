@@ -128,6 +128,35 @@ class InspectRequest(Contract):
     view: Literal["summary", "full", "original"] = "summary"
 
 
+class SourceCoverageRequest(Contract):
+    """Bounded continuation over one authorized source lineage."""
+
+    subject: Literal["source_revisions", "source_extractions", "source_channels"]
+    source_id: Identifier
+    revision_id: Identifier | None = None
+    extraction_id: Identifier | None = None
+    cursor: Cursor | None = None
+    limit: Annotated[int, Field(ge=1, le=100)] = 20
+
+    @model_validator(mode="after")
+    def lineage(self) -> Self:
+        if self.subject == "source_revisions":
+            if self.revision_id is not None or self.extraction_id is not None:
+                raise ValueError("Revision coverage needs only source ID")
+        elif self.subject == "source_extractions":
+            if (
+                self.revision_id is None
+                or self.extraction_id is not None
+                or self.limit > 20
+            ):
+                raise ValueError(
+                    "Extraction coverage needs revision ID and limit <= 20"
+                )
+        elif self.revision_id is None or self.extraction_id is None:
+            raise ValueError("Channel coverage needs revision and extraction IDs")
+        return self
+
+
 class InspectionItem(Contract):
     id: Identifier
     record_type: NonEmptyStr

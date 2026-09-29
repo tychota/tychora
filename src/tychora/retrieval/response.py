@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
@@ -65,6 +66,8 @@ class ResponseContext:
     checks_required: bool = False
     max_tokens: int = 6000
     max_response_bytes: int = 1048576
+    delivery_serializer: Callable[[QueryResult], bytes] | None = None
+    delivery_serialization: str | None = None
 
 
 @dataclass(frozen=True)
@@ -75,15 +78,18 @@ class DeliveredResult:
     byte_count: int
 
 
-def _target(profile: OutputProfile) -> RenderTarget:
+def _target(profile: OutputProfile, serialization: str | None = None) -> RenderTarget:
     return RenderTarget(
         renderer=profile.renderer,
         profile_digest=digest("output-profile-v1", profile.model_dump(mode="json")),
         schema_digest=digest("output-schema-v1", profile.renderer),
-        serialization="canonical-json-utf8"
-        if profile.renderer.endswith("json@1")
-        or profile.renderer == "hierarchical-evidence@1"
-        else "utf8-text",
+        serialization=serialization
+        or (
+            "canonical-json-utf8"
+            if profile.renderer.endswith("json@1")
+            or profile.renderer == "hierarchical-evidence@1"
+            else "utf8-text"
+        ),
     )
 
 
@@ -118,7 +124,22 @@ class ResponseAssembler:
             raise TychoraError(
                 "INVALID_REQUEST", "Output counter or target selection is invalid."
             )
-        targets = tuple(_target(profile) for profile in ctx.profiles)
+        if (ctx.delivery_serializer is None) != (ctx.delivery_serialization is None):
+            raise TychoraError(
+                "INVALID_REQUEST", "Delivery serializer and target differ."
+            )
+        if (
+            ctx.delivery_serializer is not None
+            and ctx.profiles[0].renderer != "canonical-json@1"
+        ):
+            raise TychoraError(
+                "INVALID_REQUEST",
+                "Transport delivery requires canonical first profile.",
+            )
+        targets = tuple(
+            _target(profile, ctx.delivery_serialization if index == 0 else None)
+            for index, profile in enumerate(ctx.profiles)
+        )
         if request.render_targets and request.render_targets != targets:
             raise TychoraError("INVALID_REQUEST", "Output target fingerprints differ.")
         cap_tokens = min(request.budgets.max_tokens, ctx.max_tokens)
@@ -311,7 +332,10 @@ class ResponseAssembler:
         def fit() -> DeliveredResult | None:
             result = materialize()
             payloads = tuple(
-                render_unchecked(result, profile) for profile in ctx.profiles
+                ctx.delivery_serializer(result)
+                if index == 0 and ctx.delivery_serializer is not None
+                else render_unchecked(result, profile)
+                for index, profile in enumerate(ctx.profiles)
             )
             measured = measure_payloads(payloads, ctx.counter)
             token_count, byte_count = measured.tokens, measured.bytes

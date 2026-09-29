@@ -190,12 +190,21 @@ class QueryService:
         self.history = history or HistoryRepository(owner.db, artifacts=owner.artifacts)
         self.profiles = profiles or (_default_profile(owner.config, self.registry),)
         self.assembler = ResponseAssembler()
+        self.delivery_serializer = None
+        self.delivery_serialization = None
 
     def _projection_fingerprint(self) -> str:
-        return digest(
-            "query-projection-v1",
+        parts = (
             self.owner.config.output_fingerprint,
             tuple(profile.model_dump(mode="json") for profile in self.profiles),
+        )
+        return digest(
+            "query-projection-v1",
+            *(
+                parts
+                if self.delivery_serialization is None
+                else (*parts, self.delivery_serialization)
+            ),
         )
 
     def _provider_fingerprint(self) -> str:
@@ -1069,6 +1078,8 @@ class QueryService:
                 checks_required=self.owner.config.values.checks.relations.required,
                 max_tokens=self.owner.config.values.limits.max_tokens,
                 max_response_bytes=self.owner.config.values.limits.max_response_bytes,
+                delivery_serializer=self.delivery_serializer,
+                delivery_serialization=self.delivery_serialization,
             ),
         )
 
