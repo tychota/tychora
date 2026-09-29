@@ -1,6 +1,8 @@
 """Compiled eligibility from pinned membership and detached current policy."""
 
 import json
+from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -9,7 +11,7 @@ from tychora.configuration.registry import Registry
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.identity import digest
+from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.indexing import IndexRecordDigest
 from tychora.contracts.publication import (
     IndexFamily,
@@ -229,7 +231,15 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
         snapshot_id="snapshot",
         workspace_id="workspace",
         membership_sha=digest("membership"),
-        config_sha=config.config_sha,
+        config_sha=sha256(
+            canonical_bytes(
+                {
+                    "type": "registry",
+                    "schema_version": "1",
+                    "data": config.model_dump(mode="json"),
+                }
+            )
+        ).hexdigest(),
         manifest=artifact,
         members=(
             SnapshotMember(
@@ -238,6 +248,22 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
         ),
         slots=tuple(slots),
     )
+
+
+def _register_config_artifact(db, artifacts, config):
+    body = canonical_bytes(
+        {
+            "type": "registry",
+            "schema_version": "1",
+            "data": config.model_dump(mode="json"),
+        }
+    )
+    ref = artifacts.put_stream(BytesIO(body), "application/json")
+    db.execute(
+        "INSERT OR IGNORE INTO artifacts(artifact_sha,size_bytes,media_type,storage_key,created_at) VALUES (?,?,?,?,?)",
+        (ref.sha256, ref.size_bytes, ref.media_type, ref.storage_key, "2025-01-01"),
+    )
+    db.commit()
 
 
 def _facts(
@@ -324,6 +350,16 @@ def test_reviewed_child_blocks_ancestor_representation_and_proxy(config, scope):
     assert view.asset_ids == frozenset()
 
 
+def test_snapshot_semantic_digest_cannot_substitute_retained_artifact(config, scope):
+    reader = _Reader(config, _facts())
+    snapshot = _snapshot(config).model_copy(update={"config_sha": config.config_sha})
+    with pytest.raises(TychoraError) as error:
+        EligibilityCompiler(reader).compile_eligibility(
+            snapshot, scope, _request(), config
+        )
+    assert error.value.code == "INVALID_REQUEST"
+
+
 def test_access_floor_and_withdrawal_remove_every_channel(config, scope):
     snapshot = _snapshot(config)
     reader = _Reader(config, _facts(source_floor=3))
@@ -405,6 +441,7 @@ def test_sqlite_reader_detaches_current_floor_and_epoch(tmp_path, config):
         registry=Registry.from_config(config),
         artifacts=LocalArtifacts(tmp_path / "artifacts"),
     )
+    _register_config_artifact(db, store.artifacts, config)
     snapshot = _snapshot(config, chunks=())
     first = store.read_eligibility_facts(snapshot)
     assert first.policy_epoch == 0
@@ -888,6 +925,10 @@ async def test_owner_runner_retries_after_canonical_withdrawal_and_releases_pin(
 
     with prepared(tmp_path) as (owner, scope):
         bundle = await owner.run_blocking(lambda: install(owner), ExecutionContext())
+        await owner.run_blocking(
+            lambda: _register_config_artifact(owner.db, owner.artifacts, owner.config),
+            ExecutionContext(),
+        )
         snapshot = _snapshot(owner.config, chunks=()).model_copy(
             update={
                 "snapshot_id": "synthetic-pin",
@@ -962,6 +1003,10 @@ async def test_owner_runner_releases_pin_after_cancellation(tmp_path):
 
     with prepared(tmp_path) as (owner, scope):
         bundle = await owner.run_blocking(lambda: install(owner), ExecutionContext())
+        await owner.run_blocking(
+            lambda: _register_config_artifact(owner.db, owner.artifacts, owner.config),
+            ExecutionContext(),
+        )
         snapshot = _snapshot(owner.config, chunks=()).model_copy(
             update={
                 "snapshot_id": "synthetic-pin",
@@ -1018,6 +1063,10 @@ async def test_owner_provider_denied_grant_never_dispatches(tmp_path):
 
     with prepared(tmp_path) as (owner, scope):
         bundle = await owner.run_blocking(lambda: install(owner), ExecutionContext())
+        await owner.run_blocking(
+            lambda: _register_config_artifact(owner.db, owner.artifacts, owner.config),
+            ExecutionContext(),
+        )
         snapshot = _snapshot(owner.config, chunks=()).model_copy(
             update={
                 "snapshot_id": "synthetic-pin",
@@ -1224,6 +1273,10 @@ async def test_retired_original_is_not_reopened_for_range_ownership(tmp_path):
 
     with prepared(tmp_path) as (owner, _scope):
         bundle = await owner.run_blocking(lambda: install(owner), ExecutionContext())
+        await owner.run_blocking(
+            lambda: _register_config_artifact(owner.db, owner.artifacts, owner.config),
+            ExecutionContext(),
+        )
         snapshot = _snapshot(owner.config, chunks=()).model_copy(
             update={
                 "workspace_id": owner.workspace_id,

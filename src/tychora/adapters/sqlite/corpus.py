@@ -7,6 +7,7 @@ from typing import NoReturn, cast
 
 from tychora.application.leases import LeaseSet
 from tychora.configuration.registry import Registry
+from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import Contract, FrozenJsonMap
 from tychora.contracts.candidates import ChannelCandidates
 from tychora.contracts.corpus import ExtractionBundle, ReviewTarget
@@ -106,6 +107,31 @@ class CorpusStore(PolicyRepository):
     def read_eligibility_facts(self, snapshot: SnapshotView):
         from .eligibility import read_eligibility_facts
 
+        row = self.db.execute(
+            "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
+            (snapshot.config_sha,),
+        ).fetchone()
+        if row is None or row[2] != snapshot.config_sha or row[3] != "present":
+            _fail("Snapshot resolved-config artifact is unavailable")
+        ref = ArtifactRef(
+            sha256=snapshot.config_sha,
+            size_bytes=row[0],
+            media_type=row[1],
+            storage_key=row[2],
+        )
+        with self.artifacts.open_verified(ref) as stream:
+            try:
+                payload = json.load(stream)
+            except (ValueError, UnicodeError):
+                _fail("Snapshot resolved-config artifact is invalid")
+        if (
+            not isinstance(payload, dict)
+            or payload.get("type") != "registry"
+            or payload.get("schema_version") != "1"
+            or not isinstance(payload.get("data"), dict)
+        ):
+            _fail("Snapshot resolved-config artifact is invalid")
+
         return read_eligibility_facts(self, snapshot)
 
     def policy_epoch(self, workspace_id: str) -> int:
@@ -144,6 +170,7 @@ class CorpusStore(PolicyRepository):
         payloads = frozenset(
             {
                 view.manifest.sha256,
+                view.config_sha,
                 *(
                     batch.input_manifest.sha256
                     for slot in view.slots

@@ -1,7 +1,9 @@
 """Temporal selection over retained snapshot editions."""
 
 from datetime import date
+from hashlib import sha256
 
+from tychora.contracts.identity import canonical_bytes
 from tychora.retrieval.eligibility import RevisionFact, select_temporal_revisions
 
 
@@ -131,7 +133,15 @@ def test_compiled_attempt_exposes_overlap_warning(tmp_path):
         snapshot_id="snapshot",
         workspace_id="workspace",
         membership_sha=digest("membership"),
-        config_sha=config.config_sha,
+        config_sha=sha256(
+            canonical_bytes(
+                {
+                    "type": "registry",
+                    "schema_version": "1",
+                    "data": config.model_dump(mode="json"),
+                }
+            )
+        ).hexdigest(),
         manifest=artifact,
         members=(
             SnapshotMember(

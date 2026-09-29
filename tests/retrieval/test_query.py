@@ -1,0 +1,644 @@
+"""Query identity and orchestration guards."""
+
+import os
+import sqlite3
+from hashlib import sha256
+from io import BytesIO
+from pathlib import Path
+from types import SimpleNamespace
+from uuid import UUID
+
+import pytest
+from PIL import Image
+
+from tests.helpers.corpus import artifact, reader, registry, seed_bundle
+from tests.indexing.test_publication import RecordingCounter, RecordingEmbedder
+from tests.providers.test_visual import CharacterCounter, RecordingRawTransport, _limits
+from tychora.adapters.chroma.index import ChromaVectorIndex
+from tychora.adapters.sqlite.connection import open_corpus
+from tychora.adapters.sqlite.corpus import CorpusStore
+from tychora.adapters.sqlite.lexical import LexicalIndex
+from tychora.adapters.voyage.request_types import RawVoyageResponse
+from tychora.adapters.voyage.runtime import VoyageRuntime
+from tychora.adapters.voyage.text import VoyageTextEmbedder
+from tychora.adapters.voyage.validation import qualify_voyage_visual_capabilities
+from tychora.application.owner import WorkspaceOwner
+from tychora.application.query import (
+    QueryService,
+    linked_visual_context,
+    query_binding_from_owner,
+)
+from tychora.application.sources import SourceService
+from tychora.application.visual import create_visual_embedder
+from tychora.configuration.resolve import resolve_config
+from tychora.contracts.candidates import ChannelCandidate
+from tychora.contracts.corpus import AssetRow, RevisionArtifactRow, UnitAssetRow
+from tychora.contracts.errors import TychoraError
+from tychora.contracts.evidence import ImageLocator
+from tychora.contracts.identity import digest
+from tychora.contracts.requests import QueryRequest, RequestScope, SourceInput
+from tychora.indexing.coordinator import ProjectionCoordinator
+from tychora.ports.execution import ExecutionContext
+from tychora.retrieval.cache import QueryCaches
+from tychora.retrieval.query import result_cache_key, validate_query_text
+from tychora.retrieval.segments import OutputTokenCounter
+
+
+class Counter:
+    model = "local"
+    tokenizer_id = "provider@1"
+
+    def count(self, text: str) -> int:
+        return len(text.split())
+
+
+def test_full_result_identity_changes_with_filters_context_and_lexical_epoch() -> None:
+    base = QueryRequest.from_mapping({"question": "verification"})
+    filtered = QueryRequest.from_mapping(
+        {
+            "question": "verification",
+            "filters": {"op": "eq", "field": "project", "value": "beta"},
+        }
+    )
+    contextual = QueryRequest.from_mapping(
+        {"question": "verification", "context": {"code": "sensitive"}}
+    )
+    key = result_cache_key(base, "snapshot", 1, 5, "scope", "config")
+    assert key != result_cache_key(filtered, "snapshot", 1, 5, "scope", "config")
+    assert key != result_cache_key(contextual, "snapshot", 1, 5, "scope", "config")
+    assert key != result_cache_key(base, "snapshot", 1, 6, "scope", "config")
+    assert key != result_cache_key(base, "snapshot", 2, 5, "scope", "config")
+    assert key != result_cache_key(
+        base, "snapshot", 1, 5, "scope", "config", "new credential"
+    )
+    assert key != result_cache_key(
+        base, "snapshot", 1, 5, "scope", "config", "", "new output"
+    )
+
+
+def test_over_2000_provider_tokens_fails_before_search() -> None:
+    request = QueryRequest.from_mapping({"question": "word " * 2001})
+    with pytest.raises(TychoraError) as error:
+        validate_query_text(request, Counter())
+    assert error.value.code == "INVALID_REQUEST"
+    assert "2,000" in error.value.message
+
+
+def test_query_upload_binding_uses_actual_owner_scope_and_epoch() -> None:
+    owner_scope = RequestScope(
+        principal_id="reader",
+        collection_ids=frozenset({"alpha", "beta"}),
+        access_ceiling=2,
+        uses=frozenset({"lookup"}),
+        upload_providers=frozenset({"voyage"}),
+    )
+    owner = SimpleNamespace(scope=owner_scope, workspace_id="workspace")
+    requested = owner_scope.model_copy(update={"collection_ids": frozenset({"alpha"})})
+    bound = query_binding_from_owner(owner, requested, 7)
+    assert bound.collection_ids == frozenset({"alpha"})
+    assert bound.policy_epoch == 7
+    assert (
+        bound.principal_upload_scope_sha
+        != query_binding_from_owner(owner, requested, 8).principal_upload_scope_sha
+    )
+    with pytest.raises(TychoraError):
+        query_binding_from_owner(
+            owner,
+            requested.model_copy(update={"principal_id": "other"}),
+            7,
+        )
+
+
+def test_image_match_links_only_pinned_canonical_source_units() -> None:
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE unit_assets(unit_id TEXT, asset_id TEXT, role TEXT)")
+    db.executemany(
+        "INSERT INTO unit_assets VALUES (?,?,?)",
+        [
+            ("eligible", "image", "source"),
+            ("hidden", "image", "source"),
+            ("caption", "image", "caption"),
+        ],
+    )
+    linked = linked_visual_context(
+        db,
+        (ChannelCandidate(key=("asset", "image"), rank=1),),
+        frozenset({"eligible"}),
+    )
+    assert [candidate.key for candidate in linked] == [("unit", "eligible")]
+    db.close()
+
+
+def test_text_vector_proxy_maps_to_eligible_canonical_asset() -> None:
+    db = sqlite3.connect(":memory:")
+    db.execute(
+        "CREATE TABLE vector_records(record_id TEXT, chunk_id TEXT, asset_id TEXT)"
+    )
+    db.execute("CREATE TABLE chunks(chunk_id TEXT, unit_id TEXT)")
+    db.execute("CREATE TABLE asset_proxies(proxy_unit_id TEXT, asset_id TEXT)")
+    db.execute("INSERT INTO vector_records VALUES ('record', 'chunk', NULL)")
+    db.execute("INSERT INTO chunks VALUES ('chunk', 'proxy')")
+    db.execute("INSERT INTO asset_proxies VALUES ('proxy', 'asset')")
+    service = QueryService.__new__(QueryService)
+    service.owner = SimpleNamespace(db=db)
+    view = SimpleNamespace(
+        vector_record_ids=frozenset({"record"}),
+        source_unit_ids=frozenset(),
+        proxy_unit_ids=frozenset({"proxy"}),
+        asset_ids=frozenset({"asset"}),
+    )
+    assert service._vector_owners(SimpleNamespace(view=view), "unit") == {
+        "record": ("asset", "asset")
+    }
+    db.close()
+
+
+def test_image_query_descriptor_uses_registered_pixels_and_source_links(tmp_path):
+    bundle = seed_bundle("", source_key="image.png")
+    encoded = BytesIO()
+    Image.new("RGB", (2, 2), (255, 0, 0)).save(encoded, format="PNG")
+    pixels = artifact(encoded.getvalue(), "image/png")
+    locator = ImageLocator(artifact_ref=pixels.sha256, native_ref="image.png")
+    asset_id = digest(
+        "asset-v1", bundle.extraction.extraction_id, "image.png", pixels.sha256
+    )
+    asset = AssetRow(
+        asset_id=asset_id,
+        extraction_id=bundle.extraction.extraction_id,
+        artifact_sha=pixels.sha256,
+        asset_type="image",
+        native_ref="image.png",
+        locator=locator,
+    )
+    unit = bundle.units[0].model_copy(
+        update={"unit_type": "image_original", "locators": (locator,)}
+    )
+    bundle = bundle.model_copy(
+        update={
+            "units": (unit,),
+            "locators": (bundle.locators[0].model_copy(update={"locator": locator}),),
+            "assets": (asset,),
+            "artifacts": (*bundle.artifacts, pixels),
+            "revision_artifacts": (
+                *bundle.revision_artifacts,
+                RevisionArtifactRow(
+                    revision_id=bundle.revision.revision_id,
+                    role="sidecar",
+                    source_ref="image.png",
+                    artifact_sha=pixels.sha256,
+                ),
+            ),
+            "unit_assets": (
+                UnitAssetRow(unit_id=unit.unit_id, asset_id=asset_id, role="source"),
+            ),
+        }
+    )
+    db = open_corpus(tmp_path / "corpus.sqlite3", initialize=True)
+    CorpusStore(db, registry=registry(), artifacts=reader()).commit_extraction(bundle)
+    service = QueryService.__new__(QueryService)
+    service.owner = SimpleNamespace(db=db, artifacts=reader())
+    view = SimpleNamespace(
+        asset_ids=frozenset({asset_id}),
+        revision_ids=frozenset({bundle.revision.revision_id}),
+        graph_eligible_unit_ids=frozenset({unit.unit_id}),
+    )
+    attempt = SimpleNamespace(
+        view=view,
+        dependencies_for=lambda identifier: frozenset(
+            {identifier, unit.unit_id, bundle.revision.revision_id}
+        ),
+    )
+    query = service._registered_image_query(asset_id, attempt)
+    assert query.image.dependency_ids == frozenset({asset_id, unit.unit_id})
+    assert query.image.pixel_sha256 == sha256(bytes((255, 0, 0)) * 4).hexdigest()
+    with pytest.raises(TychoraError) as error:
+        service._registered_image_query("unselected", attempt)
+    assert error.value.code == "FORBIDDEN_SCOPE"
+    db.close()
+
+
+@pytest.mark.asyncio
+async def test_filter_change_retrieves_again_from_real_fts(tmp_path: Path) -> None:
+    settings = tmp_path / "workspace.toml"
+    settings.write_text('schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n')
+    config = resolve_config(settings, "test", {})
+    collection = "55825936-6a6a-4d29-945a-327d771a76b7"
+    scope = RequestScope(
+        principal_id="reader",
+        collection_ids=frozenset({collection}),
+        capabilities=frozenset({"read", "write", "manage"}),
+        uses=frozenset({"lookup", "compose"}),
+    )
+    with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
+        await owner.run_blocking(
+            lambda: owner.db.execute(
+                "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,'{}')",
+                (collection, owner.workspace_id, "manuals", "Manuals"),
+            ),
+            ExecutionContext(),
+        )
+        source_service = SourceService(
+            owner,
+            ProjectionCoordinator(
+                store=owner.store,
+                artifacts=owner.artifacts,
+                config=config,
+                counter=Counter(),
+            ),
+        )
+        for project in ("alpha", "beta"):
+            await source_service.add(
+                SourceInput.from_mapping(
+                    {
+                        "type": "text",
+                        "text": f"Verification evidence for {project}.",
+                        "format": "text",
+                        "kind": "manual@1",
+                        "metadata": {
+                            "title": f"{project} manual",
+                            "publisher": "Example Team",
+                            "edition": "1",
+                            "scope": {"project": project},
+                        },
+                        "source_key": f"{project}.txt",
+                        "collection_id": collection,
+                    }
+                ),
+                scope,
+            )
+
+        def bind_facets() -> None:
+            owner.db.execute(
+                "INSERT OR IGNORE INTO facet_definitions(facet_key,value_type,operators_json,filter_scope,definition_hash) VALUES (?,?,?,?,?)",
+                ("scope.project", "text", '["eq","in"]', "all_units", "synthetic"),
+            )
+            for revision_id, metadata_json in owner.db.execute(
+                "SELECT revision_id,metadata_json FROM revisions"
+            ).fetchall():
+                import json
+
+                project = json.loads(metadata_json)["scope"]["project"]
+                owner.db.execute(
+                    "INSERT INTO facet_values(revision_id,facet_key,text_value) VALUES (?,?,?)",
+                    (revision_id, "scope.project", project),
+                )
+            owner.db.commit()
+
+        await owner.run_blocking(bind_facets, ExecutionContext())
+        service = QueryService(
+            owner,
+            output_counter=OutputTokenCounter(
+                Path(os.environ["TYCHORA_TEST_MODEL_CACHE"])
+            ),
+        )
+        outputs = []
+        for project in ("alpha", "beta"):
+            result = await service.search(
+                QueryRequest.from_mapping(
+                    {
+                        "question": "verification",
+                        "filters": {
+                            "op": "eq",
+                            "field": "project",
+                            "value": project,
+                        },
+                    }
+                ),
+                scope,
+                ExecutionContext(),
+            )
+            outputs.append(result.result)
+        assert outputs[0].run_id != outputs[1].run_id
+        assert outputs[0].segments and outputs[1].segments
+        assert not (
+            {segment.source_id for segment in outputs[0].segments}
+            & {segment.source_id for segment in outputs[1].segments}
+        )
+        with pytest.raises(TychoraError) as error:
+            await service.replay(outputs[0].run_id, scope, ExecutionContext())
+        assert error.value.code == "REPLAY_UNAVAILABLE"
+        from tychora.adapters.sqlite.history import HistoryRepository
+
+        opted = QueryService(
+            owner,
+            output_counter=service.counter,
+            history=HistoryRepository(
+                owner.db, artifacts=owner.artifacts, retain_payloads=True
+            ),
+        )
+        retained = await opted.search(
+            QueryRequest.from_mapping({"question": "verification", "exact_only": True}),
+            scope,
+            ExecutionContext(),
+        )
+        replayed = await opted.replay(retained.result.run_id, scope, ExecutionContext())
+        assert replayed.result.run_id != retained.result.run_id
+        assert replayed.result.snapshot_id == retained.result.snapshot_id
+        assert replayed.result.segments == retained.result.segments
+        common = QueryRequest.from_mapping({"question": "verification"})
+        warmed = await service.search(common, scope, ExecutionContext())
+        removed_source = outputs[0].segments[0].source_id
+        assert removed_source in {s.source_id for s in warmed.result.segments}
+        await owner.run_blocking(
+            lambda: owner.store.withdraw_source(removed_source), ExecutionContext()
+        )
+        after_withdrawal = await service.search(common, scope, ExecutionContext())
+        assert removed_source not in {
+            segment.source_id for segment in after_withdrawal.result.segments
+        }
+        assert after_withdrawal.result.run_id != warmed.result.run_id
+
+
+@pytest.mark.asyncio
+async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
+    tmp_path: Path,
+) -> None:
+    settings = tmp_path / "workspace.toml"
+    settings.write_text(
+        'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
+        "[configuration]\noffline=false\n"
+        '[configuration.providers.text]\nprovider="voyage"\nmodel="voyage-context-4"\ndimensions=2\n'
+        '[configuration.index.text]\nbackend="chroma"\n'
+    )
+    config = resolve_config(settings, "test", {})
+    collection = "55825936-6a6a-4d29-945a-327d771a76b7"
+    scope = RequestScope(
+        principal_id="reader",
+        collection_ids=frozenset({collection}),
+        capabilities=frozenset({"read", "write", "manage"}),
+        uses=frozenset({"lookup", "compose"}),
+        upload_providers=frozenset({"voyage"}),
+    )
+    with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
+        await owner.run_blocking(
+            lambda: owner.db.execute(
+                "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,?)",
+                (
+                    collection,
+                    owner.workspace_id,
+                    "manuals",
+                    "Manuals",
+                    '{"schema_version":1,"upload_providers":["voyage"]}',
+                ),
+            ),
+            ExecutionContext(),
+        )
+        counter = RecordingCounter()
+        index = ChromaVectorIndex(tmp_path / "vectors")
+        sources = SourceService(
+            owner,
+            ProjectionCoordinator(
+                store=owner.store,
+                artifacts=owner.artifacts,
+                config=config,
+                counter=counter,
+                text_embedder=RecordingEmbedder(counter),
+                text_index=index,
+            ),
+        )
+        for project in ("alpha", "beta"):
+            await sources.add(
+                SourceInput.from_mapping(
+                    {
+                        "type": "text",
+                        "text": f"Verification evidence for {project}.",
+                        "format": "text",
+                        "kind": "manual@1",
+                        "metadata": {
+                            "title": f"{project} manual",
+                            "publisher": "Example Team",
+                            "edition": "1",
+                            "scope": {"project": project},
+                        },
+                        "source_key": f"{project}.txt",
+                        "collection_id": collection,
+                    }
+                ),
+                scope,
+            )
+
+        def bind_facets() -> None:
+            import json
+
+            owner.db.execute(
+                "INSERT OR IGNORE INTO facet_definitions(facet_key,value_type,operators_json,filter_scope,definition_hash) VALUES (?,?,?,?,?)",
+                ("scope.project", "text", '["eq","in"]', "all_units", "synthetic"),
+            )
+            for revision_id, metadata_json in owner.db.execute(
+                "SELECT revision_id,metadata_json FROM revisions"
+            ).fetchall():
+                owner.db.execute(
+                    "INSERT INTO facet_values(revision_id,facet_key,text_value) VALUES (?,?,?)",
+                    (
+                        revision_id,
+                        "scope.project",
+                        json.loads(metadata_json)["scope"]["project"],
+                    ),
+                )
+            owner.db.commit()
+
+        await owner.run_blocking(bind_facets, ExecutionContext())
+
+        class Transport:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def post_json(self, path, body, timeout):
+                self.calls += 1
+                return RawVoyageResponse(
+                    200,
+                    b'{"data":[{"index":0,"data":[{"index":0,"embedding":[1.0,0.0]}]}]}',
+                )
+
+            def close(self):
+                pass
+
+        class CountingLexical:
+            def __init__(self):
+                self.inner = LexicalIndex(owner.db)
+                self.calls = 0
+
+            def search(self, view, query, candidate_limit, ctx):
+                self.calls += 1
+                return self.inner.search(view, query, candidate_limit, ctx)
+
+        transport = Transport()
+        caches = QueryCaches()
+        runtime = VoyageRuntime(
+            lambda: transport,
+            workspace_id=owner.workspace_id,
+            credential_binding_id="synthetic-credential",
+            query_caches=caches,
+        )
+        embedder = VoyageTextEmbedder(
+            capabilities=RecordingEmbedder(counter).capabilities,
+            counter=counter,
+            runtime=runtime,
+            authorize_document=lambda payload_sha, dependencies, ctx: None,
+        )
+        lexical = CountingLexical()
+        service = QueryService(
+            owner,
+            output_counter=OutputTokenCounter(
+                Path(os.environ["TYCHORA_TEST_MODEL_CACHE"])
+            ),
+            caches=caches,
+            lexical=lexical,
+            text_embedder=embedder,
+            text_index=index,
+        )
+        results = []
+        for project in ("alpha", "beta"):
+            results.append(
+                await service.search(
+                    QueryRequest.from_mapping(
+                        {
+                            "question": "verification",
+                            "filters": {
+                                "op": "eq",
+                                "field": "project",
+                                "value": project,
+                            },
+                        }
+                    ),
+                    scope,
+                    ExecutionContext(),
+                )
+            )
+        assert transport.calls == 1
+        assert lexical.calls == 2
+        assert results[0].result.run_id != results[1].result.run_id
+        assert not (
+            {s.source_id for s in results[0].result.segments}
+            & {s.source_id for s in results[1].result.segments}
+        )
+        repeated = await service.search(
+            QueryRequest.from_mapping(
+                {
+                    "question": "verification",
+                    "filters": {"op": "eq", "field": "project", "value": "alpha"},
+                }
+            ),
+            scope,
+            ExecutionContext(),
+        )
+        assert repeated.result.run_id != results[0].result.run_id
+        assert repeated.byte_count == results[0].byte_count
+        assert lexical.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_image_only_query_uses_registered_original_and_visual_channel(
+    tmp_path: Path,
+) -> None:
+    model_root = os.environ.get("TYCHORA_TEST_DOCLING_MODELS")
+    if model_root is None:
+        pytest.skip("requires the provisioned Docling cache")
+    settings = tmp_path / "workspace.toml"
+    settings.write_text(
+        'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
+        "[configuration]\noffline=false\n"
+        '[configuration.providers.image]\nprovider="voyage"\nmodel="voyage-multimodal-3.5"\ndimensions=1024\n'
+        '[configuration.index.image]\nbackend="chroma"\n'
+        '[configuration.extraction]\nparser="docling"\n'
+    )
+    config = resolve_config(settings, "test", {})
+    collection = "55825936-6a6a-4d29-945a-327d771a76b7"
+    scope = RequestScope(
+        principal_id="reader",
+        collection_ids=frozenset({collection}),
+        capabilities=frozenset({"read", "write", "manage"}),
+        uses=frozenset({"lookup"}),
+        upload_providers=frozenset({"voyage"}),
+    )
+    image = BytesIO()
+    Image.new("RGB", (256, 256), (20, 40, 60)).save(image, format="PNG")
+    with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
+        await owner.run_blocking(
+            lambda: owner.db.execute(
+                "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,?)",
+                (
+                    collection,
+                    owner.workspace_id,
+                    "figures",
+                    "Figures",
+                    '{"schema_version":1,"upload_providers":["voyage"]}',
+                ),
+            ),
+            ExecutionContext(),
+        )
+        caches = QueryCaches()
+        transport = RecordingRawTransport()
+        runtime = VoyageRuntime(
+            lambda: transport,
+            workspace_id=owner.workspace_id,
+            credential_binding_id="synthetic-credential",
+            query_caches=caches,
+        )
+        provider = await create_visual_embedder(
+            owner,
+            capabilities=qualify_voyage_visual_capabilities(
+                counter=CharacterCounter(), limits=_limits()
+            ),
+            counter=CharacterCounter(),
+            runtime=runtime,
+            scope=scope,
+            ctx=ExecutionContext(),
+        )
+        index = ChromaVectorIndex(tmp_path / "images")
+        sources = SourceService(
+            owner,
+            ProjectionCoordinator(
+                store=owner.store,
+                artifacts=owner.artifacts,
+                config=config,
+                counter=Counter(),
+                visual_embedder=provider,
+                image_index=index,
+            ),
+            docling_models=Path(model_root),
+        )
+        await sources.add(
+            SourceInput.model_validate(
+                {
+                    "type": "bytes",
+                    "data": image.getvalue(),
+                    "format": "png",
+                    "media_type": "image/png",
+                    "kind": "manual@1",
+                    "metadata": {
+                        "title": "Synthetic Figure",
+                        "publisher": "Example Team",
+                        "edition": "1",
+                    },
+                    "source_key": "figure.png",
+                    "collection_id": UUID(collection),
+                }
+            ),
+            scope,
+        )
+        asset_id = await owner.run_blocking(
+            lambda: owner.db.execute("SELECT asset_id FROM assets").fetchone()[0],
+            ExecutionContext(),
+        )
+        service = QueryService(
+            owner,
+            output_counter=OutputTokenCounter(
+                Path(os.environ["TYCHORA_TEST_MODEL_CACHE"])
+            ),
+            visual_embedder=provider,
+            visual_index=index,
+            caches=caches,
+        )
+        before = len(transport.calls)
+        result = await service.search(
+            QueryRequest(
+                input={"type": "image", "asset_ref": asset_id},
+                mode="lookup",
+                modalities=frozenset({"image"}),
+            ),
+            scope,
+            ExecutionContext(),
+        )
+        assert len(transport.calls) == before + 1
+        assert [item.asset_id for item in result.result.visuals] == [asset_id]

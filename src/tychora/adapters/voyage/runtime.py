@@ -8,6 +8,7 @@ from collections.abc import Callable
 from threading import Lock
 
 from tychora.contracts.errors import TychoraError
+from tychora.retrieval.cache import QueryCaches
 
 from .request_types import VoyageTransport
 
@@ -24,6 +25,7 @@ class VoyageRuntime:
         cache_capacity: int = 256,
         cache_ttl: float = 300.0,
         clock: Callable[[], float] = time.monotonic,
+        query_caches: QueryCaches | None = None,
     ) -> None:
         if (
             not workspace_id
@@ -42,6 +44,7 @@ class VoyageRuntime:
         self._cache_capacity = cache_capacity
         self._cache_ttl = cache_ttl
         self._clock = clock
+        self.query_caches = query_caches
         self._query_cache: OrderedDict[tuple[object, ...], tuple[float, bytes]] = (
             OrderedDict()
         )
@@ -74,6 +77,8 @@ class VoyageRuntime:
         with self._lock:
             if self._closed:
                 return None
+            if self.query_caches is not None:
+                return self.query_caches.get_embedding(key)
             entry = self._query_cache.get(key)
             if entry is None:
                 return None
@@ -87,6 +92,9 @@ class VoyageRuntime:
     def cache_query(self, key: tuple[object, ...], value: bytes) -> None:
         with self._lock:
             if self._closed:
+                return
+            if self.query_caches is not None:
+                self.query_caches.put_embedding(key, value)
                 return
             self._query_cache[key] = (self._clock(), value)
             self._query_cache.move_to_end(key)

@@ -111,6 +111,7 @@ def select_temporal_revisions(
     return frozenset(selected), tuple(warnings)
 
 
+from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
@@ -118,7 +119,7 @@ from tychora.configuration.registry import Registry, compile_filter
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.graph import GraphBatchReceipt
-from tychora.contracts.identity import JsonValue, digest
+from tychora.contracts.identity import JsonValue, canonical_bytes, digest
 from tychora.contracts.publication import SnapshotView
 from tychora.contracts.requests import (
     AndFilter,
@@ -371,8 +372,17 @@ class EligibilityCompiler:
             raise TychoraError(
                 "INVALID_REQUEST", "Request exceeds resolved profile limits"
             )
+        retained_config_sha = sha256(
+            canonical_bytes(
+                {
+                    "type": "registry",
+                    "schema_version": "1",
+                    "data": config.model_dump(mode="json"),
+                }
+            )
+        ).hexdigest()
         if (
-            snapshot.config_sha != config.config_sha
+            snapshot.config_sha != retained_config_sha
             or registry.registry_digest != config.registry_digest
         ):
             raise TychoraError(
