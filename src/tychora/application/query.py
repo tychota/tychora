@@ -16,10 +16,8 @@ from PIL import Image, ImageOps
 
 from tychora.adapters.sqlite.history import HistoryRepository, RunMetrics
 from tychora.adapters.sqlite.lexical import LexicalIndex
-from tychora.adapters.voyage.text import QueryOperationBinding, VoyageTextEmbedder
-from tychora.adapters.voyage.visual import VoyageVisualEmbedder
+from tychora.adapters.voyage.text import QueryOperationBinding
 from tychora.application.reranking import prepare_rerank_facts
-from tychora.application.visual import create_visual_embedder
 from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
@@ -29,7 +27,6 @@ from tychora.contracts.candidates import (
 )
 from tychora.contracts.corpus import AssetRow
 from tychora.contracts.embeddings import (
-    QueryUploadAuthorization,
     RegisteredImageQuery,
     TextQuery,
     VisualInput,
@@ -56,6 +53,7 @@ from tychora.contracts.requirements import ResponseRequirement, active_requireme
 from tychora.contracts.vectors import WorkLimits
 from tychora.formatting.render import OutputProfile
 from tychora.ports.execution import ExecutionContext
+from tychora.ports.query import TextQueryProvider, VisualQueryProvider
 from tychora.ports.tokens import TokenCounter
 from tychora.ports.vectors import VectorIndex
 from tychora.retrieval.admission import LanePolicy, admit
@@ -163,9 +161,9 @@ class QueryService:
         output_counter: TokenCounter,
         lexical: LexicalIndex | None = None,
         graph: GraphStore | None = None,
-        text_embedder: VoyageTextEmbedder | None = None,
+        text_provider: TextQueryProvider | None = None,
         text_index: VectorIndex | None = None,
-        visual_embedder: VoyageVisualEmbedder | None = None,
+        visual_provider: VisualQueryProvider | None = None,
         visual_index: VectorIndex | None = None,
         reranker: VoyageReranker | None = None,
         rerank_counter: TokenCounter | None = None,
@@ -179,9 +177,9 @@ class QueryService:
         self.compiler = EligibilityCompiler(owner.store)
         self.lexical = lexical or LexicalIndex(owner.db)
         self.graph = graph
-        self.text_embedder = text_embedder
+        self.text_provider = text_provider
         self.text_index = text_index
-        self.visual_embedder = visual_embedder
+        self.visual_provider = visual_provider
         self.visual_index = visual_index
         self.reranker = reranker
         self.rerank_counter = rerank_counter
@@ -205,13 +203,53 @@ class QueryService:
             self.owner.config.query_fingerprint,
             self.owner.config.values.providers.model_dump(mode="json"),
             self.owner.config.values.index.model_dump(mode="json"),
-            self.text_embedder._runtime.credential_binding_id
-            if self.text_embedder
+            self.text_provider.credential_binding_id if self.text_provider else None,
+            self.visual_provider.credential_binding_id
+            if self.visual_provider
             else None,
-            self.visual_embedder._runtime.credential_binding_id
-            if self.visual_embedder
-            else None,
-            self.reranker._runtime.credential_binding_id if self.reranker else None,
+            self.reranker.credential_binding_id if self.reranker else None,
+        )
+
+    def _replay_ready(self, request: QueryRequest) -> bool:
+        """Conservatively establish current local/remote capability before channels."""
+        if request.exact_only:
+            return True
+        offline = self.owner.config.values.offline
+        if (
+            _needs_text(request)
+            and self.owner.config.values.index.text.backend != "disabled"
+        ):
+            provider = self.text_provider
+            if (
+                provider is None
+                or self.text_index is None
+                or provider.caches is not self.caches
+                or not provider.available
+                or (offline and provider.remote)
+            ):
+                return False
+        if (
+            _needs_visual(request)
+            and self.owner.config.values.index.image.backend != "disabled"
+        ):
+            visual = self.visual_provider
+            if (
+                visual is None
+                or self.visual_index is None
+                or visual.caches is not self.caches
+                or not visual.available
+                or (offline and visual.remote)
+            ):
+                return False
+        return not (
+            _needs_text(request)
+            and self.owner.config.values.providers.rerank.provider != "disabled"
+            and (
+                self.reranker is None
+                or self.rerank_counter is None
+                or not self.reranker.available
+                or offline
+            )
         )
 
     async def replay(
@@ -228,23 +266,10 @@ class QueryService:
                 config_sha=self.owner.config.config_sha,
                 projection_fingerprint=self._projection_fingerprint(),
                 provider_fingerprint=self._provider_fingerprint(),
-                providers_available=True,
+                providers_available=self._replay_ready,
             ),
             ctx,
         )
-        if not request.exact_only:
-            if self.owner.config.values.index.text.backend != "disabled" and (
-                self.text_embedder is None or self.text_index is None
-            ):
-                raise TychoraError(
-                    "REPLAY_UNAVAILABLE", "Text retrieval is unavailable."
-                )
-            if self.owner.config.values.index.image.backend != "disabled" and (
-                self.visual_embedder is None or self.visual_index is None
-            ):
-                raise TychoraError(
-                    "REPLAY_UNAVAILABLE", "Visual retrieval is unavailable."
-                )
         return await self.search(request, granted, ctx)
 
     async def search(
@@ -258,10 +283,10 @@ class QueryService:
             )
         validate_query_text(
             request,
-            self.text_embedder._counter
-            if self.text_embedder is not None
-            else self.visual_embedder._counter
-            if self.visual_embedder is not None
+            self.text_provider.counter
+            if self.text_provider is not None
+            else self.visual_provider.counter
+            if self.visual_provider is not None
             else self.rerank_counter or self.counter,
         )
         granted = self.owner.scope.narrow(scope)
@@ -274,7 +299,7 @@ class QueryService:
 
         async def operation(
             attempt: EligibilityAttempt,
-        ) -> tuple[DeliveredResult, RunMetrics]:
+        ) -> DeliveredResult:
             lexical_epoch = await self.owner.run_blocking(self._lexical_epoch, ctx)
             key = result_cache_key(
                 request,
@@ -321,9 +346,33 @@ class QueryService:
                 candidate_count=prepared.candidate_count,
                 cache_hit=cache_hit,
             )
-            return delivered, metrics
 
-        delivered, metrics = await run_pinned_eligibility(
+            def record() -> None:
+                retained = (
+                    self.history.retain_request(
+                        delivered.result.run_id,
+                        request,
+                        scope=granted,
+                        snapshot_id=delivered.result.snapshot_id,
+                        config_sha=self.owner.config.config_sha,
+                        projection_fingerprint=self._projection_fingerprint(),
+                        provider_fingerprint=self._provider_fingerprint(),
+                    )
+                    if self.history.retains_requests
+                    else None
+                )
+                self.history.record(delivered, metrics, retained)
+
+            await self.owner.run_blocking(record, ctx)
+            return delivered
+
+        async def supersede(delivered: DeliveredResult) -> None:
+            await self.owner.run_blocking(
+                lambda: self.history.supersede(delivered.result.run_id),
+                ExecutionContext(),
+            )
+
+        return await run_pinned_eligibility(
             self.compiler,
             None,
             granted,
@@ -332,26 +381,8 @@ class QueryService:
             operation,
             owner=self.owner,
             ctx=ctx,
+            on_invalidated=supersede,
         )
-
-        def record() -> None:
-            retained = (
-                self.history.retain_request(
-                    delivered.result.run_id,
-                    request,
-                    scope=granted,
-                    snapshot_id=delivered.result.snapshot_id,
-                    config_sha=self.owner.config.config_sha,
-                    projection_fingerprint=self._projection_fingerprint(),
-                    provider_fingerprint=self._provider_fingerprint(),
-                )
-                if self.history.retains_requests
-                else None
-            )
-            self.history.record(delivered, metrics, retained)
-
-        await self.owner.run_blocking(record, ctx)
-        return delivered
 
     def _lexical_epoch(self) -> int:
         row = self.owner.db.execute(
@@ -397,6 +428,9 @@ class QueryService:
         incomplete: list[str] = [
             channel.channel for channel in channels if not channel.complete
         ]
+        completed: list[str] = [
+            channel.channel for channel in channels if channel.complete
+        ]
         if incomplete and not self.owner.config.values.retrieval.allow_degraded:
             raise TychoraError("INDEX_INCOMPLETE", "A retrieval channel is incomplete.")
         votes: dict[str, tuple[ChannelCandidate, ...]] = {
@@ -404,13 +438,14 @@ class QueryService:
             for channel in channels
         }
         if (
-            not request.exact_only
+            _needs_text(request)
             and self.owner.config.values.index.text.backend != "disabled"
         ):
             try:
                 votes["text"] = await self._text_candidates(
                     request, scope, attempt, ctx
                 )
+                completed.append("text")
             except TychoraError as error:
                 if (
                     not self.owner.config.values.retrieval.allow_degraded
@@ -425,7 +460,7 @@ class QueryService:
                     raise
                 incomplete.append("text")
         if (
-            not request.exact_only
+            _needs_visual(request)
             and self.owner.config.values.index.image.backend != "disabled"
         ):
             try:
@@ -439,6 +474,7 @@ class QueryService:
                     ctx,
                 )
                 votes["visual"] = (*visual_votes, *linked)
+                completed.append("visual")
             except TychoraError as error:
                 if (
                     not self.owner.config.values.retrieval.allow_degraded
@@ -543,6 +579,7 @@ class QueryService:
             continuation_paths=paths,
             historical_kind_roles=attempt.historical_kind_roles,
             total_tokens=request.budgets.max_tokens,
+            result_limit=request.limit,
         )
         visual_candidates = await prepare_visual_candidates(
             self.owner, attempt, ranked, ctx
@@ -577,7 +614,7 @@ class QueryService:
             status="partial"
             if unavailable or not graph_candidates.exhausted
             else "complete",
-            completed_channels=tuple(ch.channel for ch in channels if ch.complete),
+            completed_channels=tuple(completed),
             unavailable_channels=unavailable,
         )
         decisions = tuple(
@@ -642,40 +679,21 @@ class QueryService:
         if not isinstance(request.input, (QuestionInput, PassageInput)):
             return ()
         query_text = request.input.text
-        base = self.text_embedder
+        base = self.text_provider
         index = self.text_index
         if base is None or index is None:
             raise TychoraError(
                 "CAPABILITY_MISSING", "Configured text retrieval is unavailable."
             )
-        if base._runtime.query_caches is not self.caches:
+        if base.caches is not self.caches:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Query embedding cache ownership differs."
             )
-        binding = query_binding_from_owner(
-            self.owner,
-            scope,
-            attempt.view.policy_epoch,
-        )
-
-        def authorize_query(
-            authorization: QueryUploadAuthorization, execution: ExecutionContext
-        ) -> None:
-            self.owner.run_blocking_sync(
-                lambda: self.owner.upload_policy.authorize_query(
-                    scope, base.capabilities.provider, authorization
-                ),
-                execution,
+        embedder = base.bind(self.owner, scope, attempt.view.policy_epoch)
+        if embedder.capabilities != base.capabilities:
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Text query capability binding differs."
             )
-
-        embedder = VoyageTextEmbedder(
-            capabilities=base.capabilities,
-            counter=base._counter,
-            runtime=base._runtime,
-            authorize_document=base._authorize_document,
-            query_binding=binding,
-            authorize_query=authorize_query,
-        )
         (query_vector,) = await attempt.owner_provider(
             lambda: self.owner.embed_queries(
                 embedder,
@@ -749,24 +767,21 @@ class QueryService:
         attempt: EligibilityAttempt,
         ctx: ExecutionContext,
     ) -> tuple[ChannelCandidate, ...]:
-        base = self.visual_embedder
+        base = self.visual_provider
         index = self.visual_index
         if base is None or index is None:
             raise TychoraError(
                 "CAPABILITY_MISSING", "Configured visual retrieval is unavailable."
             )
-        if base._runtime.query_caches is not self.caches:
+        if base.caches is not self.caches:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Visual query cache ownership differs."
             )
-        current = await create_visual_embedder(
-            self.owner,
-            capabilities=base.capabilities,
-            counter=base._counter,
-            runtime=base._runtime,
-            scope=scope,
-            ctx=ctx,
-        )
+        current = await base.bind(self.owner, scope, ctx)
+        if current.capabilities != base.capabilities:
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Visual query capability binding differs."
+            )
         query: TextQuery | RegisteredImageQuery
         if isinstance(request.input, ImageInput):
             asset_ref = request.input.asset_ref
@@ -924,6 +939,20 @@ class QueryService:
                 max_response_bytes=self.owner.config.values.limits.max_response_bytes,
             ),
         )
+
+
+def _needs_text(request: QueryRequest) -> bool:
+    return (
+        not request.exact_only
+        and "text" in request.modalities
+        and isinstance(request.input, (QuestionInput, PassageInput))
+    )
+
+
+def _needs_visual(request: QueryRequest) -> bool:
+    return not request.exact_only and (
+        "image" in request.modalities or isinstance(request.input, ImageInput)
+    )
 
 
 def _mode(registry: Registry, config: object, request: QueryRequest) -> FrozenJsonMap:

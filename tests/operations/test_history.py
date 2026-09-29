@@ -152,3 +152,15 @@ def test_opt_in_retained_request_checks_current_bindings_before_replay(
             providers_available=True,
         )
     assert error.value.code == "REPLAY_UNAVAILABLE"
+    repository.supersede("run-1")
+    with pytest.raises(TychoraError) as superseded:
+        repository.replay_request(
+            "run-1",
+            scope=scope,
+            snapshot_id="snapshot",
+            config_sha="c" * 64,
+            projection_fingerprint="e" * 64,
+            provider_fingerprint="f" * 64,
+            providers_available=True,
+        )
+    assert superseded.value.code == "REPLAY_UNAVAILABLE"

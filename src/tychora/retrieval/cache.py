@@ -7,6 +7,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Hashable
 from dataclasses import dataclass
+from hashlib import sha256
 from threading import RLock
 from typing import Protocol
 
@@ -17,13 +18,15 @@ class MonotonicClock(Protocol):
 
 @dataclass(frozen=True)
 class _Entry:
-    value: object
+    value: bytes
     size: int
     expires_at: float
 
 
 class QueryCaches:
     """Two independent LRU pools sharing one hard byte ceiling."""
+
+    _ENTRY_OVERHEAD = 256
 
     def __init__(
         self,
@@ -45,40 +48,51 @@ class QueryCaches:
         self._capacity = (embedding_capacity, result_capacity)
         self._ttl = ttl_seconds
         self._max_bytes = max_bytes
-        self._entries: tuple[OrderedDict[Hashable, _Entry], ...] = (
+        self._entries: tuple[OrderedDict[str, _Entry], ...] = (
             OrderedDict(),
             OrderedDict(),
         )
-        self._recency: OrderedDict[tuple[int, Hashable], None] = OrderedDict()
+        self._recency: OrderedDict[tuple[int, str], None] = OrderedDict()
         self._bytes = 0
         self._lock = RLock()
 
-    def _drop(self, pool: int, key: Hashable) -> None:
+    @property
+    def retained_bytes(self) -> int:
+        with self._lock:
+            return self._bytes
+
+    @staticmethod
+    def _key(key: Hashable) -> str:
+        return sha256(pickle.dumps(key, protocol=pickle.HIGHEST_PROTOCOL)).hexdigest()
+
+    def _drop(self, pool: int, key: str) -> None:
         entry = self._entries[pool].pop(key, None)
         self._recency.pop((pool, key), None)
         if entry is not None:
             self._bytes -= entry.size
 
     def _get(self, pool: int, key: Hashable) -> object | None:
+        compact_key = self._key(key)
         with self._lock:
-            entry = self._entries[pool].get(key)
+            entry = self._entries[pool].get(compact_key)
             if entry is None or self._clock.monotonic() >= entry.expires_at:
-                self._drop(pool, key)
+                self._drop(pool, compact_key)
                 return None
-            self._entries[pool].move_to_end(key)
-            self._recency.move_to_end((pool, key))
+            self._entries[pool].move_to_end(compact_key)
+            self._recency.move_to_end((pool, compact_key))
             return entry.value
 
-    def _put(self, pool: int, key: Hashable, value: object) -> None:
-        size = len(value) if isinstance(value, bytes) else len(pickle.dumps(value))
+    def _put(self, pool: int, key: Hashable, value: bytes) -> None:
+        compact_key = self._key(key)
+        size = len(value) + self._ENTRY_OVERHEAD
         with self._lock:
-            self._drop(pool, key)
+            self._drop(pool, compact_key)
             if size > self._max_bytes or not self._capacity[pool]:
                 return
-            self._entries[pool][key] = _Entry(
+            self._entries[pool][compact_key] = _Entry(
                 value, size, self._clock.monotonic() + self._ttl
             )
-            self._recency[(pool, key)] = None
+            self._recency[(pool, compact_key)] = None
             self._bytes += size
             while len(self._entries[pool]) > self._capacity[pool]:
                 self._drop(pool, next(iter(self._entries[pool])))
@@ -94,10 +108,11 @@ class QueryCaches:
         self._put(0, key, value)
 
     def get_result(self, key: Hashable) -> object | None:
-        return self._get(1, key)
+        value = self._get(1, key)
+        return pickle.loads(value) if isinstance(value, bytes) else None
 
     def put_result(self, key: Hashable, value: object) -> None:
-        self._put(1, key, value)
+        self._put(1, key, pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL))
 
     def purge(self) -> int:
         """Discard volatile query data without touching durable history."""

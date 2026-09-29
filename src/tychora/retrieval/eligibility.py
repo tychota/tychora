@@ -776,6 +776,7 @@ async def run_pinned_eligibility[T](
     *,
     owner: WorkspaceOwner | None = None,
     ctx: ExecutionContext | None = None,
+    on_invalidated: Callable[[T], Awaitable[None]] | None = None,
 ) -> T:
     """Hold one pin through both attempts, provider operations and delivery."""
     if owner is not None and (ctx is None or owner.store is not compiler.reader):
@@ -809,8 +810,10 @@ async def run_pinned_eligibility[T](
                 else compiler.compile_attempt(snapshot, scope, request, config)
             )
             attempt = replace(compiled, owner=owner, ctx=ctx)
+            completed_operation = False
             try:
                 result = await operation(attempt)
+                completed_operation = True
                 if owner is not None and ctx is not None:
                     await owner.run_blocking(
                         lambda view=attempt.view: compiler.revalidate_epoch(
@@ -821,6 +824,12 @@ async def run_pinned_eligibility[T](
                 else:
                     compiler.revalidate_epoch(attempt.view, "delivery")
             except TychoraError as error:
+                if (
+                    error.code == "SCOPE_CHANGED"
+                    and completed_operation
+                    and on_invalidated is not None
+                ):
+                    await on_invalidated(result)
                 if error.code != "SCOPE_CHANGED" or attempt_number:
                     raise
                 continue

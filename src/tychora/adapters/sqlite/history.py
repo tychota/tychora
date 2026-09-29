@@ -221,6 +221,13 @@ class HistoryRepository:
         self._db.commit()
         return cursor.rowcount
 
+    def supersede(self, run_id: str) -> None:
+        """Mark an attempt invalidated by final policy revalidation."""
+        self._db.execute(
+            "UPDATE query_runs SET state='superseded' WHERE run_id=?", (run_id,)
+        )
+        self._db.commit()
+
     def replay_request(
         self,
         run_id: str,
@@ -230,10 +237,11 @@ class HistoryRepository:
         config_sha: str | None = None,
         projection_fingerprint: str | None = None,
         provider_fingerprint: str | None = None,
-        providers_available: bool = False,
+        providers_available: bool | Callable[[QueryRequest], bool] = False,
     ) -> QueryRequest:
         row = self._db.execute(
-            "SELECT retained_payload_sha FROM query_runs WHERE run_id=? AND expires_at>=?",
+            "SELECT retained_payload_sha FROM query_runs "
+            "WHERE run_id=? AND expires_at>=? AND state!='superseded'",
             (run_id, self._now().isoformat()),
         ).fetchone()
         if row is None or row[0] is None:
@@ -263,7 +271,6 @@ class HistoryRepository:
             or config_sha is None
             or projection_fingerprint is None
             or provider_fingerprint is None
-            or not providers_available
             or data.get("run_id") != run_id
             or data.get("principal_id") != scope.principal_id
             or data.get("scope_digest")
@@ -277,6 +284,16 @@ class HistoryRepository:
                 "REPLAY_UNAVAILABLE",
                 "Current access, snapshot, projection, configuration or provider differs.",
             )
-        return QueryRequest.from_mapping(
+        request = QueryRequest.from_mapping(
             data["request"] if isinstance(data["request"], Mapping) else {}
         )
+        available = (
+            providers_available(request)
+            if callable(providers_available)
+            else providers_available
+        )
+        if not available:
+            raise TychoraError(
+                "REPLAY_UNAVAILABLE", "Current query capabilities are unavailable."
+            )
+        return request

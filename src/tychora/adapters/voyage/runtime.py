@@ -57,6 +57,11 @@ class VoyageRuntime:
     def credential_binding_id(self) -> str:
         return self._credential_binding_id
 
+    @property
+    def available(self) -> bool:
+        with self._lock:
+            return not self._closed
+
     def transport(self) -> VoyageTransport:
         with self._lock:
             if self._closed:

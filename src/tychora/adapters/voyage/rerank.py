@@ -42,6 +42,14 @@ def build_rerank_body(
 class VoyageReranker:
     """Raw, complete one-request rerank through a mandatory owner gate."""
 
+    @property
+    def credential_binding_id(self) -> str:
+        return self._runtime.credential_binding_id
+
+    @property
+    def available(self) -> bool:
+        return self._runtime.available
+
     def __init__(
         self,
         *,

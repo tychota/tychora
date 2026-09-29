@@ -763,6 +763,7 @@ def assemble_segments(
     continuation_paths: tuple[GraphPath, ...] = (),
     historical_kind_roles: Mapping[str, str] | None = None,
     total_tokens: int | None = None,
+    result_limit: int | None = None,
 ) -> Selection:
     """Apply final lane and source diversity limits to exact original ranges."""
     if counter.tokenizer_id != "cl100k_base" or not 0 <= visual_limit <= 3:
@@ -771,12 +772,14 @@ def assemble_segments(
         )
     if total_tokens is not None and total_tokens <= 0:
         raise TychoraError("INVALID_REQUEST", "Output token budget must be positive.")
+    if result_limit is not None and result_limit <= 0:
+        raise TychoraError("INVALID_REQUEST", "Result limit must be positive.")
     total = min(
         config.values.limits.max_tokens, total_tokens or config.values.limits.max_tokens
     )
     visual_reserve = min(200 * visual_limit, total // 10)
     text_budget = total - visual_reserve
-    cap = min(8, config.values.limits.limit)
+    cap = min(8, config.values.limits.limit, result_limit or config.values.limits.limit)
     options: list[tuple[int, int, Segment]] = []
     omitted: list[AnchorRange] = []
     for order, item in enumerate(ranked.items):

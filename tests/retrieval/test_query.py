@@ -2,6 +2,7 @@
 
 import os
 import sqlite3
+import struct
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -18,6 +19,10 @@ from tychora.adapters.chroma.index import ChromaVectorIndex
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.adapters.sqlite.lexical import LexicalIndex
+from tychora.adapters.voyage.query import (
+    VoyageTextQueryProvider,
+    VoyageVisualQueryProvider,
+)
 from tychora.adapters.voyage.request_types import RawVoyageResponse
 from tychora.adapters.voyage.runtime import VoyageRuntime
 from tychora.adapters.voyage.text import VoyageTextEmbedder
@@ -33,6 +38,7 @@ from tychora.application.visual import create_visual_embedder
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.candidates import ChannelCandidate
 from tychora.contracts.corpus import AssetRow, RevisionArtifactRow, UnitAssetRow
+from tychora.contracts.embeddings import EmbeddingRecord, QueryEmbeddingProbe
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import ImageLocator
 from tychora.contracts.identity import digest
@@ -314,6 +320,19 @@ async def test_filter_change_retrieves_again_from_real_fts(tmp_path: Path) -> No
             {segment.source_id for segment in outputs[0].segments}
             & {segment.source_id for segment in outputs[1].segments}
         )
+        limited = await service.search(
+            QueryRequest.from_mapping({"question": "verification", "limit": 1}),
+            scope,
+            ExecutionContext(),
+        )
+        assert len(limited.result.segments) == 1
+        limited_hit = await service.search(
+            QueryRequest.from_mapping({"question": "verification", "limit": 1}),
+            scope,
+            ExecutionContext(),
+        )
+        assert len(limited_hit.result.segments) == 1
+        assert limited_hit.result.run_id != limited.result.run_id
         with pytest.raises(TychoraError) as error:
             await service.replay(outputs[0].run_id, scope, ExecutionContext())
         assert error.value.code == "REPLAY_UNAVAILABLE"
@@ -347,6 +366,37 @@ async def test_filter_change_retrieves_again_from_real_fts(tmp_path: Path) -> No
             segment.source_id for segment in after_withdrawal.result.segments
         }
         assert after_withdrawal.result.run_id != warmed.result.run_id
+        remaining_source = outputs[1].segments[0].source_id
+
+        class WithdrawingHistory(HistoryRepository):
+            def __init__(self):
+                super().__init__(owner.db, artifacts=owner.artifacts)
+                self.did_withdraw = False
+
+            def record(self, result, metrics, retained_payload):
+                super().record(result, metrics, retained_payload)
+                if not self.did_withdraw:
+                    self.did_withdraw = True
+                    owner.store.withdraw_source(remaining_source)
+
+        timed_history = WithdrawingHistory()
+        timed_service = QueryService(
+            owner, output_counter=service.counter, history=timed_history
+        )
+        during_history = await timed_service.search(common, scope, ExecutionContext())
+        assert remaining_source not in {
+            segment.source_id for segment in during_history.result.segments
+        }
+        states = await owner.run_blocking(
+            lambda: owner.db.execute(
+                "SELECT state FROM query_runs WHERE run_id=? OR "
+                "(principal_id=? AND state='superseded') ORDER BY created_at",
+                (during_history.result.run_id, scope.principal_id),
+            ).fetchall(),
+            ExecutionContext(),
+        )
+        assert ("superseded",) in states
+        assert timed_history.did_withdraw
 
 
 @pytest.mark.asyncio
@@ -484,7 +534,7 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
             ),
             caches=caches,
             lexical=lexical,
-            text_embedder=embedder,
+            text_provider=VoyageTextQueryProvider(embedder),
             text_index=index,
         )
         results = []
@@ -525,6 +575,106 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
         assert repeated.result.run_id != results[0].result.run_id
         assert repeated.byte_count == results[0].byte_count
         assert lexical.calls == 2
+        assert "text" in results[0].result.coverage.completed_channels
+
+        class LocalTextBinding:
+            credential_binding_id = "synthetic-local-binding"
+            remote = False
+            available = True
+
+            def __init__(self):
+                self.capabilities = embedder.capabilities
+                self.counter = counter
+                self.caches = caches
+
+            def bind(self, bound_owner, bound_scope, policy_epoch):
+                assert bound_owner is owner
+                assert bound_scope == scope
+                assert policy_epoch >= 0
+                capabilities = self.capabilities
+
+                class LocalEmbedder:
+                    def __init__(self):
+                        self.capabilities = capabilities
+
+                    def probe_queries(self, queries, ctx):
+                        assert len(queries) == 1
+                        value = EmbeddingRecord.from_normalized_bytes(
+                            record_id="synthetic-local-query",
+                            input_sha=digest("synthetic-query-v1", queries),
+                            space_id=capabilities.space_id,
+                            stored=struct.pack("<ff", 1.0, 0.0),
+                        )
+                        return QueryEmbeddingProbe(
+                            workspace_id=owner.workspace_id,
+                            provider=capabilities.provider,
+                            query_batch_sha=digest("query-embedding-probe-v1", queries),
+                            input_count=1,
+                            state="hit",
+                            records=(value,),
+                        )
+
+                    def embed_queries(self, queries, ctx):
+                        raise AssertionError(
+                            "Local hit must not call a remote provider"
+                        )
+
+                    def embed_groups(self, groups, ctx):
+                        raise AssertionError("Query binding must not index documents")
+
+                return LocalEmbedder()
+
+        local = QueryService(
+            owner,
+            output_counter=service.counter,
+            text_provider=LocalTextBinding(),
+            text_index=index,
+            caches=caches,
+        )
+        local_result = await local.search(
+            QueryRequest.from_mapping(
+                {
+                    "question": "verification",
+                    "filters": {"op": "eq", "field": "project", "value": "alpha"},
+                }
+            ),
+            scope,
+            ExecutionContext(),
+        )
+        assert local_result.result.segments
+        assert transport.calls == 1
+
+        from tychora.adapters.sqlite.history import HistoryRepository
+
+        retained_service = QueryService(
+            owner,
+            output_counter=service.counter,
+            lexical=lexical,
+            text_provider=VoyageTextQueryProvider(embedder),
+            text_index=index,
+            caches=caches,
+            history=HistoryRepository(
+                owner.db, artifacts=owner.artifacts, retain_payloads=True
+            ),
+        )
+        retained = await retained_service.search(
+            QueryRequest.from_mapping({"question": "verification"}),
+            scope,
+            ExecutionContext(),
+        )
+        caches.purge()
+        owner.config = config.model_copy(
+            update={"values": config.values.model_copy(update={"offline": True})}
+        )
+        calls_before = transport.calls
+        lexical_before = lexical.calls
+        with pytest.raises(TychoraError) as unavailable:
+            await retained_service.replay(
+                retained.result.run_id, scope, ExecutionContext()
+            )
+        assert unavailable.value.code == "REPLAY_UNAVAILABLE"
+        assert transport.calls == calls_before
+        assert lexical.calls == lexical_before
 
 
 @pytest.mark.asyncio
@@ -626,7 +776,7 @@ async def test_image_only_query_uses_registered_original_and_visual_channel(
             output_counter=OutputTokenCounter(
                 Path(os.environ["TYCHORA_TEST_MODEL_CACHE"])
             ),
-            visual_embedder=provider,
+            visual_provider=VoyageVisualQueryProvider(provider),
             visual_index=index,
             caches=caches,
         )
@@ -642,3 +792,4 @@ async def test_image_only_query_uses_registered_original_and_visual_channel(
         )
         assert len(transport.calls) == before + 1
         assert [item.asset_id for item in result.result.visuals] == [asset_id]
+        assert "visual" in result.result.coverage.completed_channels
