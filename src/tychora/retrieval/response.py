@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
+from tychora.configuration.compatibility import validate_historical_record
+from tychora.configuration.registry import Registry
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import (
@@ -35,9 +37,9 @@ from tychora.ports.tokens import TokenCounter
 from tychora.retrieval.segments import Selection
 
 if TYPE_CHECKING:
-    from tychora.configuration.registry import Registry
     from tychora.ports.execution import ExecutionContext
     from tychora.ports.graph import GraphStore
+    from tychora.retrieval.eligibility import EligibilityAttempt
     from tychora.retrieval.rerank import RankedEvidence
 
 
@@ -242,6 +244,14 @@ class ResponseAssembler:
                             else "not_selected_in_bounded_search",
                         )
                     )
+            if "owner" in omitted or "visual" in omitted:
+                gaps.append(
+                    CoverageGap(
+                        code="output_budget_omission",
+                        channel="delivery",
+                        message="selected_evidence_omitted",
+                    )
+                )
             status = ctx.coverage.status
             if (
                 gaps or (ctx.checks_required and checks.status != "complete")
@@ -446,11 +456,26 @@ def inspect_relations(
     ctx: ExecutionContext,
     *,
     expansion_inspected_rows: int,
+    registry: Registry,
     max_rows: int = 2000,
     max_assertions: int = 100,
     enabled: bool = True,
 ) -> RelationChecks:
     """Inspect selected owners within the same request's consumed graph work."""
+    policy = {}
+    for predicate in predicates:
+        definition = registry.relations.get(predicate)
+        if not isinstance(definition, FrozenJsonMap):
+            raise TychoraError(
+                "INVALID_REQUEST", "Inspection predicate is not configured."
+            )
+        required = definition.get("requires_decision", False)
+        category = definition.get("diagnostic_category", "none")
+        if type(required) is not bool or not isinstance(category, str):
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Relation decision policy is invalid."
+            )
+        policy[predicate] = (required, category)
     if not enabled or view.graph_generation_id is None:
         return RelationChecks(status="not_evaluated", predicates=predicates)
     if (
@@ -495,22 +520,23 @@ def inspect_relations(
                 predicates=(path.predicate,),
                 support_unit_ids=path.required_support_ids,
                 provenance=FrozenJsonMap(
-                    {"status": path.status, "confidence": path.confidence}
+                    {
+                        "status": path.status,
+                        "confidence": path.confidence,
+                        "diagnostic_category": policy[path.predicate][1],
+                    }
                 ),
             )
         )
-        if any(
-            term in path.predicate.lower() for term in ("conflict", "contradict")
-        ) and path.status in {
-            "recorded",
-            "confirmed",
-        }:
+        if policy[path.predicate][0] and path.status in {"recorded", "confirmed"}:
             decisions.append(
                 DecisionRequirement(
                     requirement_id=digest(
                         "conflict-decision-v1", list(path.assertion_ids)
                     ),
-                    reason="Recorded conflict requires a human decision.",
+                    reason="Recorded conflict requires a human decision."
+                    if policy[path.predicate][1] == "conflict"
+                    else "Recorded relation requires a human decision.",
                     unit_ids=endpoints,
                     assertion_ids=path.assertion_ids,
                 )
@@ -567,18 +593,15 @@ def _record_dependencies(value: FrozenJsonMap, owner_id: str) -> frozenset[str]:
 def prepare_records(
     selection: Selection,
     ranked: RankedEvidence,
-    view: EligibilityView,
-    registry: Registry,
+    attempt: EligibilityAttempt,
 ) -> tuple[StructuredRecord, ...]:
-    """Materialize only selected, same-extraction validated retained records."""
-    from tychora.contracts.base import thaw_json
+    """Materialize records using the pinned original kind/schema envelopes."""
+    import json
 
-    bindings = cast(
-        dict[str, dict[str, str]],
-        registry.model_dump(mode="json")["artifact"]["definition_schema_bindings"][
-            "kinds"
-        ],
-    )
+    from tychora.contracts.base import thaw_json
+    from tychora.contracts.identity import canonical_bytes
+
+    view = attempt.view
     eligible = view.context_unit_ids | view.structural_unit_ids
     results: dict[str, StructuredRecord] = {}
     for segment in selection.segments:
@@ -599,39 +622,51 @@ def prepare_records(
             raise TychoraError(
                 "INTEGRITY_ERROR", "Selected record owner has no retained facts."
             )
-        schema = bindings.get(segment.kind, {}).get("record_schema")
-        if schema is None:
+        selected_rows = tuple(
+            row for row in owner.rows.records if row.unit_id in segment.matched_unit_ids
+        )
+        if not selected_rows:
             continue
-        for row in owner.rows.records:
-            if row.unit_id not in segment.matched_unit_ids:
-                continue
-            if (
-                row.record_type != schema
-                or row.schema_hash != registry.schema_digests[schema]
-            ):
-                raise TychoraError("INTEGRITY_ERROR", "Retained record schema differs.")
-            try:
+        envelope = attempt.historical_kind_envelopes.get(segment.kind)
+        if envelope is None:
+            raise TychoraError(
+                "PROFILE_INCOMPATIBLE",
+                "Original record schema envelope is unavailable.",
+            )
+        try:
+            original = json.loads(canonical_bytes(envelope))
+            if original["kind"]["id"] != segment.kind:
+                raise ValueError("Kind identity differs")
+            schema = original["schema_bindings"].get("record_schema")
+            if schema is None:
+                if all(row.record_type == "code_symbol" for row in selected_rows):
+                    continue
+                raise ValueError("Original record binding is absent")
+            schema_hash = original["schema_digests"][schema]
+            for row in selected_rows:
+                if row.record_type != schema or row.schema_hash != schema_hash:
+                    raise ValueError("Retained record type or hash differs")
                 owner.prepared.representation(row.unit_id)
-                registry.validate_record(segment.kind, thaw_json(row.data_json))
-            except (ValueError, KeyError, TychoraError):
-                raise TychoraError(
-                    "INTEGRITY_ERROR", "Retained record validation failed."
-                ) from None
-            dependencies = _record_dependencies(row.data_json, row.unit_id)
-            if not dependencies <= eligible:
-                continue
-            record_id = digest(
-                "structured-record-v1",
-                row.unit_id,
-                row.record_type,
-                thaw_json(row.data_json),
-            )
-            results[record_id] = StructuredRecord(
-                record_id=record_id,
-                unit_id=row.unit_id,
-                record_type=row.record_type,
-                schema_id=schema,
-                value=row.data_json,
-                dependencies=dependencies,
-            )
+                validate_historical_record(envelope, thaw_json(row.data_json))
+                dependencies = _record_dependencies(row.data_json, row.unit_id)
+                if not dependencies <= eligible:
+                    continue
+                record_id = digest(
+                    "structured-record-v1",
+                    row.unit_id,
+                    row.record_type,
+                    thaw_json(row.data_json),
+                )
+                results[record_id] = StructuredRecord(
+                    record_id=record_id,
+                    unit_id=row.unit_id,
+                    record_type=row.record_type,
+                    schema_id=schema,
+                    value=row.data_json,
+                    dependencies=dependencies,
+                )
+        except (ValueError, TypeError, KeyError, TychoraError):
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Original retained record validation failed."
+            ) from None
     return tuple(results[key] for key in sorted(results))

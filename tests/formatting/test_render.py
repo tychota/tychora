@@ -149,3 +149,83 @@ def test_localized_markdown_labels_are_counted_on_reformat():
     with pytest.raises(TychoraError) as error:
         format_result(constrained, profile, counter=Counter())
     assert error.value.code == "OUTPUT_BUDGET_EXCEEDED"
+
+
+def test_agent_preserves_physical_ranges_and_partial_check_identifiers():
+    import html
+
+    from tychora.contracts.evidence import (
+        Citation,
+        DecisionRequirement,
+        DocumentLocator,
+        Excerpt,
+        Segment,
+    )
+
+    citation = Citation(
+        unit_id="unit-1",
+        source_id="source-1",
+        revision_id="revision-1",
+        physical_page=2,
+        printed_page="ii",
+        locators=(
+            DocumentLocator(
+                artifact_ref="artifact-1",
+                native_ref="page-2",
+                char_start=5,
+                char_end=12,
+                physical_page=2,
+                printed_page="ii",
+            ),
+        ),
+    )
+    selected = Segment(
+        segment_id="segment-1",
+        source_id="source-1",
+        revision_id="revision-1",
+        extraction_id="extraction-1",
+        kind="manual@1",
+        role="source",
+        lane="evidence",
+        excerpts=(
+            Excerpt(unit_id="unit-1", char_start=5, char_end=12, text="<quote>"),
+        ),
+        text="<quote>",
+        matched_unit_ids=("unit-1",),
+        citations=(citation,),
+        complete=False,
+        truncated=True,
+    )
+    decision = DecisionRequirement(
+        requirement_id="decision-1",
+        reason="Recorded conflict",
+        unit_ids=("unit-1", "unit-2"),
+        assertion_ids=("a" * 64,),
+    )
+    data = result().model_copy(
+        update={
+            "segments": (selected,),
+            "citations": (citation,),
+            "checks": RelationChecks(
+                status="partial",
+                predicates=("supports@1",),
+                assertion_ids=("a" * 64,),
+                decisions=(decision,),
+                truncated=True,
+            ),
+            "decision_requirements": (decision,),
+        }
+    )
+    rendered = format_result(data, OutputProfile(renderer="agent@1"), counter=Counter())
+    assert "&lt;quote&gt;" in rendered
+    payload = json.loads(html.unescape(rendered.split("\n", 1)[1].rsplit("\n", 1)[0]))
+    assert payload["segments"][0]["citations"][0]["locators"][0]["char_start"] == 5
+    assert payload["segments"][0]["citations"][0]["physical_page"] == 2
+    assert payload["segments"][0]["citations"][0]["printed_page"] == "ii"
+    assert payload["segments"][0]["excerpts"][0]["char_end"] == 12
+    assert payload["checks"]["assertion_ids"] == ["a" * 64]
+    assert payload["checks"]["predicates"] == ["supports@1"]
+    assert payload["checks"]["truncated"] is True
+    assert payload["checks"]["decisions"][0]["assertion_ids"] == ["a" * 64]
+    assert payload["citations"][0]["physical_page"] == 2
+    assert payload["decisions"][0]["unit_ids"] == ["unit-1", "unit-2"]

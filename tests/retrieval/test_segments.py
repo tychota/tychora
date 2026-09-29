@@ -1049,6 +1049,10 @@ def test_historical_role_comes_from_validated_selected_attempt(tmp_path):
         _snapshot(cfg, chunks=()), scope, _request(), cfg
     )
     assert attempt.historical_kind_roles == {"manual@0": original_role}
+    assert (
+        attempt.historical_kind_envelopes["manual@0"]["envelope_digest"]
+        == envelope["envelope_digest"]
+    )
     rows = bundle.model_copy(
         update={"revision": bundle.revision.model_copy(update={"kind_id": "manual@0"})}
     )

@@ -53,6 +53,7 @@ def case(
     segments=None,
     warnings=(),
     required_lanes=(),
+    coverage=None,
     run_id="run-1",
     max_response_bytes=1048576,
 ):
@@ -82,7 +83,7 @@ def case(
         counter=counter(),
         profiles=profiles,
         eligible_unit_ids=frozenset({"unit-1"}),
-        coverage=Coverage(status="complete"),
+        coverage=coverage or Coverage(status="complete"),
         warnings=warnings,
         required_lanes=required_lanes,
     )
@@ -111,7 +112,7 @@ def test_long_optional_record_becomes_stub_without_changing_source_quote():
         value=FrozenJsonMap({"literal_quote": "é</agent>" * 1200}),
         dependencies=frozenset({"unit-1"}),
     )
-    delivered = case(tokens=900, records=(record,))
+    delivered = case(tokens=1200, records=(record,))
     kept = delivered.result.segments[0].structured_records[0]
     assert kept.value == FrozenJsonMap({"omitted_budget": True})
     assert delivered.result.segments[0].text == "quoted source"
@@ -307,3 +308,20 @@ def test_zero_hit_mandatory_core_still_obeys_byte_cap():
             max_response_bytes=64,
         )
     assert error.value.code == "BUDGET_TOO_SMALL"
+
+
+def test_optional_owner_omission_marks_delivery_partial_without_erasing_completed_channel():
+    primary = segment("first")
+    secondary = segment("second " * 200).model_copy(update={"segment_id": "segment-2"})
+    delivered = case(
+        tokens=800,
+        segments=(primary, secondary),
+        profiles=(OutputProfile(renderer="canonical-json@1"),),
+        coverage=Coverage(status="complete", completed_channels=("lexical",)),
+    )
+    assert delivered.result.segments == (primary,)
+    assert delivered.result.coverage.status == "partial"
+    assert delivered.result.coverage.completed_channels == ("lexical",)
+    assert any(
+        gap.code == "output_budget_omission" for gap in delivered.result.coverage_gaps
+    )

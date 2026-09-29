@@ -115,6 +115,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
 from tychora.configuration.registry import Registry, compile_filter
+from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.graph import GraphBatchReceipt
 from tychora.contracts.identity import JsonValue, digest
@@ -315,11 +316,16 @@ class EligibilityCompiler:
         facts = self.reader.read_eligibility_facts(snapshot)
         view, warnings = self._compile(snapshot, scope, request, config, facts)
         definitions = dict(facts.historical_definitions)
-        selected_kinds = {
+        selected_all_kinds = {
             item.kind_id
             for item in facts.revisions
             if item.revision_id in view.revision_ids
-            and item.kind_id not in self.reader.registry.kinds
+        }
+        selected_kinds = selected_all_kinds - set(self.reader.registry.kinds)
+        stored_envelopes = {
+            kind: FrozenJsonMap(envelope)
+            for kind in selected_all_kinds
+            if isinstance((envelope := definitions.get(kind)), dict)
         }
         historical_roles: dict[str, str] = {}
         for kind in selected_kinds:
@@ -342,6 +348,7 @@ class EligibilityCompiler:
             compiler=self,
             dependencies=MappingProxyType(_dependency_lookup(view, facts)),
             historical_kind_roles=MappingProxyType(historical_roles),
+            historical_kind_envelopes=MappingProxyType(stored_envelopes),
             warnings=warnings,
         )
 
@@ -723,6 +730,9 @@ class EligibilityAttempt:
     owner: WorkspaceOwner | None = None
     ctx: ExecutionContext | None = None
     historical_kind_roles: Mapping[str, str] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    historical_kind_envelopes: Mapping[str, FrozenJsonMap] = field(
         default_factory=lambda: MappingProxyType({})
     )
 

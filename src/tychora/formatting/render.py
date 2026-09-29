@@ -160,38 +160,73 @@ def render_unchecked(result: QueryResult, profile: OutputProfile) -> bytes:
     if profile.renderer == "hierarchical-evidence@1":
         return canonical_bytes(projected)
     if profile.renderer == "agent@1":
-        lines = [
-            profile.title,
-            f"run={result.run_id} snapshot={result.snapshot_id}",
-            f"coverage={result.coverage.status} checks={result.checks.status}",
-        ]
-        lines.extend(f"warning={warning}" for warning in result.warnings)
-        for segment in result.segments:
-            lines.append(
-                f"[{segment.segment_id}] lane={segment.lane} kind={segment.kind} source=original"
-            )
-            lines.append(segment.text)
-            for citation in segment.citations:
-                lines.append(
-                    f"citation={citation.unit_id or citation.asset_id} source={citation.source_id} revision={citation.revision_id}"
-                )
-            for record in segment.structured_records:
-                lines.append(
-                    f"record={record.record_id} schema={record.schema_id} value={json.dumps(record.value, ensure_ascii=False, sort_keys=True, default=dict)}"
-                )
-        for visual in result.visuals:
-            lines.append(
-                f"visual={visual.asset_id} source={visual.source_id} revision={visual.revision_id}"
-            )
-            for proxy in visual.proxies:
-                lines.append(
-                    f"proxy={proxy.proxy_id} origin={proxy.origin}: {proxy.text}"
-                )
-        for gap in result.coverage_gaps:
-            lines.append(f"gap={gap.code} {gap.channel or ''} {gap.message}")
-        for decision in result.decision_requirements:
-            lines.append(f"decision={decision.requirement_id} {decision.reason}")
-        return envelope(profile.envelope_tag, "\n".join(lines)).encode("utf-8")
+        payload = {
+            "run_id": result.run_id,
+            "snapshot_id": result.snapshot_id,
+            "coverage": result.coverage.model_dump(mode="json"),
+            "checks": {
+                "status": result.checks.status,
+                "predicates": result.checks.predicates,
+                "assertion_ids": result.checks.assertion_ids,
+                "assertions": tuple(
+                    path.model_dump(mode="json") for path in result.checks.assertions
+                ),
+                "decisions": tuple(
+                    item.model_dump(mode="json") for item in result.checks.decisions
+                ),
+                "truncated": result.checks.truncated,
+            },
+            "segments": tuple(
+                {
+                    "segment_id": segment.segment_id,
+                    "source_id": segment.source_id,
+                    "revision_id": segment.revision_id,
+                    "extraction_id": segment.extraction_id,
+                    "kind": segment.kind,
+                    "lane": segment.lane,
+                    "text_origin": "source",
+                    "text": segment.text,
+                    "matched_unit_ids": segment.matched_unit_ids,
+                    "context_only_unit_ids": segment.context_only_unit_ids,
+                    "excerpts": tuple(
+                        item.model_dump(mode="json") for item in segment.excerpts
+                    ),
+                    "context_excerpts": tuple(
+                        item.model_dump(mode="json")
+                        for item in segment.context_excerpts
+                    ),
+                    "anchors": tuple(
+                        item.model_dump(mode="json") for item in segment.anchors
+                    ),
+                    "citations": tuple(
+                        item.model_dump(mode="json") for item in segment.citations
+                    ),
+                    "structured_records": tuple(
+                        item.model_dump(mode="json")
+                        for item in segment.structured_records
+                    ),
+                    "complete": segment.complete,
+                    "truncated": segment.truncated,
+                }
+                for segment in result.segments
+            ),
+            "visuals": tuple(
+                visual.model_dump(mode="json") for visual in result.visuals
+            ),
+            "citations": tuple(
+                item.model_dump(mode="json") for item in result.citations
+            ),
+            "decisions": tuple(
+                item.model_dump(mode="json") for item in result.decision_requirements
+            ),
+            "coverage_gaps": tuple(
+                item.model_dump(mode="json") for item in result.coverage_gaps
+            ),
+            "warnings": result.warnings,
+        }
+        return envelope(
+            profile.envelope_tag, canonical_bytes(payload).decode("utf-8")
+        ).encode("utf-8")
     labels = profile.labels
     lines = [
         f"# {profile.title}",
