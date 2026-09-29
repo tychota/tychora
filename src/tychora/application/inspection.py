@@ -354,11 +354,11 @@ class InspectionService:
             | attempt.view.structural_unit_ids
             | attempt.view.asset_ids
         )
+        full_unit_readable = request.id in (
+            attempt.view.context_unit_ids | attempt.view.structural_unit_ids
+        )
         if not selected:
-            if (
-                request.id
-                not in attempt.view.context_unit_ids | attempt.view.structural_unit_ids
-            ):
+            if not full_unit_readable:
                 _deny()
             evidence = unit
             partial_evidence = None
@@ -408,8 +408,8 @@ class InspectionService:
                 unit_id=unit.unit_id,
                 extraction_id=unit.extraction_id,
                 unit_type=unit.unit_type,
-                canonical_text_sha=unit.text_sha,
-                canonical_text_length=len(unit.text),
+                canonical_text_sha=unit.text_sha if full_unit_readable else None,
+                canonical_text_length=len(unit.text) if full_unit_readable else None,
             )
         records = ()
         if not selected:

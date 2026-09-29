@@ -111,7 +111,10 @@ async def test_exact_range_and_unknown_id(published):
     )
     assert result.evidence is None
     assert result.partial_evidence is not None
-    assert result.partial_evidence.canonical_text_sha
+    assert (
+        result.partial_evidence.canonical_text_sha
+        == sha256(b"Exact source evidence.").hexdigest()
+    )
     assert result.partial_evidence.canonical_text_length == len(
         "Exact source evidence."
     )
@@ -194,6 +197,12 @@ async def test_native_overlap_denies_child_slice_and_allows_disjoint_parent_rang
         ExecutionContext(),
     )
     assert [item.text for item in allowed.excerpts] == ["Exact ", " evidence."]
+    assert allowed.partial_evidence is not None
+    assert allowed.partial_evidence.canonical_text_sha is None
+    assert allowed.partial_evidence.canonical_text_length is None
+    assert (
+        sha256(b"Exact source evidence.").hexdigest() not in allowed.model_dump_json()
+    )
 
 
 @pytest.mark.asyncio
@@ -308,6 +317,12 @@ async def test_retained_docling_source_parts_denies_rejected_child_overlap(publi
         ExecutionContext(),
     )
     assert [item.text for item in allowed.excerpts] == ["Exact ", " evidence."]
+    assert allowed.partial_evidence is not None
+    assert allowed.partial_evidence.canonical_text_sha is None
+    assert allowed.partial_evidence.canonical_text_length is None
+    assert (
+        sha256(b"Exact source evidence.").hexdigest() not in allowed.model_dump_json()
+    )
     assert "doc-child" not in allowed.model_dump_json()
 
 

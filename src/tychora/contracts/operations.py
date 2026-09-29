@@ -106,13 +106,13 @@ class InspectionItem(Contract):
 
 
 class PartialEvidenceMetadata(Contract):
-    """Canonical unit identity without a claim that its full text was delivered."""
+    """Canonical identity; full-text facts are null unless the whole unit is readable."""
 
     unit_id: Identifier
     extraction_id: Identifier
     unit_type: NonEmptyStr
-    canonical_text_sha: Sha256
-    canonical_text_length: NonNegativeInt
+    canonical_text_sha: Sha256 | None = None
+    canonical_text_length: NonNegativeInt | None = None
 
 
 class InspectionResult(Contract):
