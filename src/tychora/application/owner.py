@@ -225,6 +225,21 @@ class WorkspaceOwner:
             leases=self.leases,
         )
 
+    @contextmanager
+    def maintenance_barrier(self) -> Iterator[None]:
+        """Hold the owner-thread canonical cut and pause physical CAS mutations.
+
+        Canonical SQLite publication, registration, withdrawal, deletion and GC
+        run on this single worker. The CAS barrier also waits for off-owner
+        payload writes before the copied database inventory is pinned.
+        """
+        if get_ident() != self._thread_id:
+            raise TychoraError(
+                "INVALID_REQUEST", "Maintenance barrier requires owner thread"
+            )
+        with self.artifacts.maintenance_barrier():
+            yield
+
     def _close_storage(self) -> None:
         try:
             self._handles.close()

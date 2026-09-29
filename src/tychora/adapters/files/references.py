@@ -214,3 +214,227 @@ def required_closure(
             remember(artifact)
         pending.extend(reversed(refs.manifests))
     return frozenset(artifacts)
+
+
+@dataclass(frozen=True)
+class BackupInventory:
+    """Required bytes and copied canonical state at one SQLite backup cut."""
+
+    artifacts: tuple[ArtifactRef, ...]
+    required_shas: frozenset[str]
+    payload_states: tuple[tuple[str, str], ...]
+    workspace_id: str
+    policy_epoch: int
+    lexical_statistics_epoch: int
+    active_snapshot_id: str | None
+    snapshot_ids: tuple[str, ...]
+    tombstones: tuple[tuple[str, str], ...]
+    config_shas: tuple[str, ...]
+
+
+def from_backup(db, *, artifacts) -> BackupInventory:
+    """Enumerate only typed roots from a validated, copied canonical database.
+
+    Hashes in provenance/data JSON and identity columns never create edges.
+    The caller holds the owner barrier until it pins ``required_shas``.
+    """
+    import json
+
+    rows = db.execute(
+        "SELECT workspace_id,policy_epoch,lexical_statistics_epoch,active_snapshot_id "
+        "FROM workspaces"
+    ).fetchall()
+    if len(rows) != 1:
+        raise _fail("Copied database has ambiguous workspace identity")
+    workspace_id, policy_epoch, lexical_epoch, active_snapshot = rows[0]
+    registered = {}
+    states = {}
+    for sha, size, media, key, state in db.execute(
+        "SELECT artifact_sha,size_bytes,media_type,storage_key,payload_state FROM artifacts"
+    ):
+        try:
+            ref = ArtifactRef(
+                sha256=sha, size_bytes=size, media_type=media, storage_key=key
+            )
+        except ValueError:
+            raise _fail("Invalid copied artifact registration") from None
+        if ref.storage_key != ref.sha256:
+            raise _fail("Invalid copied artifact storage key")
+        registered[sha] = ref
+        states[sha] = state
+
+    roots: list[ManifestRef] = []
+    direct: set[str] = set()
+    published_job_roots: set[str] = set()
+
+    def add_direct(query: str) -> None:
+        direct.update(sha for (sha,) in db.execute(query) if sha is not None)
+
+    def add_manifest(query: str, kind: str) -> None:
+        for (sha,) in db.execute(query):
+            if sha is None:
+                continue
+            ref = registered.get(sha)
+            if ref is None:
+                raise _fail("Required manifest registration is missing")
+            roots.append(ManifestRef(artifact=ref, type=kind, schema_version="1"))
+
+    for query, kind in (
+        ("SELECT manifest_sha FROM snapshots", "snapshot"),
+        ("SELECT input_manifest_sha FROM index_batches", "index_input"),
+        ("SELECT effective_config_sha FROM jobs", "registry"),
+        (
+            "SELECT captured_inputs_sha FROM jobs WHERE captured_inputs_sha IS NOT NULL",
+            "job_capture",
+        ),
+        ("SELECT document_artifact_sha FROM extractions", "extraction"),
+        (
+            "SELECT assertions_artifact_sha FROM extractions WHERE assertions_artifact_sha IS NOT NULL",
+            "assertion",
+        ),
+        (
+            "SELECT retained_payload_sha FROM query_runs WHERE retained_payload_sha IS NOT NULL",
+            "retained_run",
+        ),
+        ("SELECT manifest_sha FROM evaluation_datasets", "evaluation"),
+    ):
+        add_manifest(query, kind)
+    for (sha,) in db.execute(
+        "SELECT captured_inputs_sha FROM jobs WHERE captured_inputs_sha IS NOT NULL "
+        "AND state='complete' AND result_snapshot_id IS NOT NULL"
+    ):
+        published_job_roots.add(sha)
+
+    for query in (
+        "SELECT artifact_sha FROM revision_artifacts WHERE role NOT IN ('original','source_file')",
+        (
+            "SELECT artifact_sha FROM revision_artifacts r WHERE role IN ('original','source_file') "
+            "AND NOT EXISTS (SELECT 1 FROM original_payload_tombstones t "
+            "WHERE t.revision_id=r.revision_id AND t.artifact_sha=r.artifact_sha)"
+        ),
+        (
+            "SELECT original_sha FROM revisions r WHERE NOT EXISTS "
+            "(SELECT 1 FROM original_payload_tombstones t WHERE t.revision_id=r.revision_id "
+            "AND t.artifact_sha=r.original_sha)"
+        ),
+        "SELECT diagnostics_artifact_sha FROM extractions WHERE diagnostics_artifact_sha IS NOT NULL",
+        "SELECT artifact_sha FROM assets",
+        "SELECT derivation_sha FROM asset_proxies",
+        "SELECT embedding_cache_sha FROM vector_records WHERE embedding_cache_sha IS NOT NULL",
+        "SELECT request_artifact_sha FROM jobs WHERE request_artifact_sha IS NOT NULL",
+        "SELECT output_artifact_sha FROM job_steps WHERE output_artifact_sha IS NOT NULL",
+        "SELECT reason_artifact_sha FROM review_events WHERE reason_artifact_sha IS NOT NULL",
+        "SELECT provenance_artifact_sha FROM assertion_decisions",
+        "SELECT reason_artifact_sha FROM assertion_decisions WHERE reason_artifact_sha IS NOT NULL",
+        "SELECT payload_sha FROM evaluation_cases",
+        "SELECT result_artifact_sha FROM evaluation_results",
+    ):
+        add_direct(query)
+    for revision_id, sha in db.execute(
+        "SELECT e.revision_id,l.artifact_sha FROM locators l "
+        "JOIN evidence_units u USING(unit_id) JOIN extractions e USING(extraction_id)"
+    ):
+        if db.execute(
+            "SELECT 1 FROM original_payload_tombstones WHERE revision_id=? AND artifact_sha=?",
+            (revision_id, sha),
+        ).fetchone():
+            original = db.execute(
+                "SELECT 1 FROM revisions WHERE revision_id=? AND original_sha=? "
+                "UNION ALL SELECT 1 FROM revision_artifacts WHERE revision_id=? "
+                "AND artifact_sha=? AND role IN ('original','source_file') LIMIT 1",
+                (revision_id, sha, revision_id, sha),
+            ).fetchone()
+            if original:
+                continue
+        direct.add(sha)
+
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise _fail("Duplicate required manifest field")
+            result[key] = value
+        return result
+
+    def load(link: ManifestRef):
+        with artifacts.open_verified(link.artifact) as stream:
+            raw = stream.read(MAX_MANIFEST_BYTES + 1)
+        if len(raw) > MAX_MANIFEST_BYTES:
+            raise _fail("Required manifest exceeds byte limit")
+        try:
+            if link.type == "assertion":
+                if any(
+                    len(line) + 1 > MAX_ASSERTION_LINE_BYTES
+                    for line in raw.splitlines()
+                ):
+                    raise _fail("Assertion record exceeds line byte limit")
+                return [
+                    json.loads(line, object_pairs_hook=unique)
+                    for line in raw.splitlines()
+                ]
+            return json.loads(raw, object_pairs_hook=unique)
+        except (UnicodeError, ValueError):
+            raise _fail("Required manifest is malformed") from None
+
+    # Published job captures may link repository captures. Their status is
+    # derived solely from the successful canonical job, never payload metadata.
+    published = set(published_job_roots)
+    pending = [root for root in roots if root.artifact.sha256 in published_job_roots]
+    seen: set[str] = set()
+    while pending:
+        link = pending.pop()
+        if link.artifact.sha256 in seen:
+            continue
+        seen.add(link.artifact.sha256)
+        content = load(link)
+        required_refs(content, capture_published=False)
+        if not isinstance(content, dict):
+            raise _fail("Capture must be a typed object")
+        for item in content.get("required_manifests", []):
+            child = ManifestRef.model_validate(item)
+            if child.type in CAPTURE_TYPES:
+                published.add(child.artifact.sha256)
+            pending.append(child)
+        if len(seen) > MAX_CLOSURE_MANIFESTS:
+            raise _fail("Required closure exceeds manifest limit")
+
+    required = set(
+        required_closure(
+            tuple(roots), load=load, published_captures=frozenset(published)
+        )
+    )
+    required.update(direct)
+    required.update(
+        sha for sha, state in states.items() if state in {"present", "delete_pending"}
+    )
+    for sha in required:
+        if sha not in registered:
+            raise _fail("Required artifact registration is missing")
+        if states[sha] == "deleted":
+            raise _fail("Required artifact is marked deleted")
+    return BackupInventory(
+        artifacts=tuple(registered[sha] for sha in sorted(required)),
+        required_shas=frozenset(required),
+        payload_states=tuple(sorted((sha, states[sha]) for sha in required)),
+        workspace_id=workspace_id,
+        policy_epoch=policy_epoch,
+        lexical_statistics_epoch=lexical_epoch,
+        active_snapshot_id=active_snapshot,
+        snapshot_ids=tuple(
+            row[0]
+            for row in db.execute(
+                "SELECT snapshot_id FROM snapshots ORDER BY snapshot_id"
+            )
+        ),
+        tombstones=tuple(
+            db.execute(
+                "SELECT revision_id,artifact_sha FROM original_payload_tombstones ORDER BY revision_id,artifact_sha"
+            )
+        ),
+        config_shas=tuple(
+            row[0]
+            for row in db.execute(
+                "SELECT DISTINCT effective_config_sha FROM jobs ORDER BY effective_config_sha"
+            )
+        ),
+    )

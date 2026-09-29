@@ -33,6 +33,7 @@ class _Guard:
 @dataclass
 class _RootState:
     lock: RLock = field(default_factory=RLock)
+    mutation: RLock = field(default_factory=RLock)
     guards: dict[str, _Guard] = field(default_factory=dict)
     pins: dict[str, int] = field(default_factory=dict)
 
@@ -122,7 +123,9 @@ class LocalArtifacts:
             guard = self._state.guards.setdefault(sha, _Guard())
             guard.users += 1
         try:
-            with guard.lock:
+            # Physical mutations and per-SHA binding guards use one lock order.
+            # A backup can hold mutation while acquiring every inventory pin.
+            with self._state.mutation, guard.lock:
                 yield
         finally:
             with self._state.lock:
@@ -156,7 +159,17 @@ class LocalArtifacts:
         with self._state.lock:
             return self._state.pins.get(sha, 0) > 0
 
+    @contextmanager
+    def maintenance_barrier(self) -> Iterator[None]:
+        """Wait for in-flight physical mutations and pause new ones."""
+        with self._state.mutation:
+            yield
+
     def put_stream(self, stream: BinaryIO, media_type: str) -> ArtifactRef:
+        with self._state.mutation:
+            return self._put_stream(stream, media_type)
+
+    def _put_stream(self, stream: BinaryIO, media_type: str) -> ArtifactRef:
         staging = ".staging-" + uuid4().hex
         with self._directory() as directory:
             try:
@@ -269,6 +282,10 @@ class LocalArtifacts:
 
     def unlink_registered(self, ref: ArtifactRef) -> None:
         """Unlink a verified registered hash path; caller holds its SHA guard."""
+        with self._state.mutation:
+            self._unlink_registered(ref)
+
+    def _unlink_registered(self, ref: ArtifactRef) -> None:
         with self._directory() as directory:
             try:
                 with self._verified(directory, ref):
