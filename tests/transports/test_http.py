@@ -747,7 +747,7 @@ async def test_settings_failed_construction_restores_owner_and_current_services(
         original = (root / "workspace.toml").read_text()
         candidate = original + '\n[configuration.output]\ntitle = "Candidate"\n'
 
-        def fail_construction(*args):
+        def fail_construction(*args, **kwargs):
             assert owner.config is not previous_config
             assert owner.store is not previous_store
             raise TychoraError("INVALID_REQUEST", "Candidate construction failed.")

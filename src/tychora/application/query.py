@@ -169,6 +169,7 @@ class QueryService:
         reranker: VoyageReranker | None = None,
         rerank_counter: TokenCounter | None = None,
         rerank_unavailable: TychoraError | None = None,
+        auto_rerank: bool = False,
         caches: QueryCaches | None = None,
         history: HistoryRepository | None = None,
         profiles: tuple[OutputProfile, ...] | None = None,
@@ -185,6 +186,7 @@ class QueryService:
         self.reranker = reranker
         self.rerank_counter = rerank_counter
         self.rerank_unavailable = rerank_unavailable
+        self.auto_rerank = auto_rerank
         self.counter = output_counter
         self.caches = caches or QueryCaches()
         self.history = history or HistoryRepository(owner.db, artifacts=owner.artifacts)
@@ -691,13 +693,28 @@ class QueryService:
                 )
             )
         else:
+            reranker = self.reranker
+            if (
+                self.auto_rerank
+                and reranker is not None
+                and self.rerank_counter is not None
+            ):
+                from tychora.application.reranking import _create_injected_reranker
+
+                reranker = await _create_injected_reranker(
+                    self.owner,
+                    runtime=reranker._runtime,
+                    scope=scope,
+                    counter=self.rerank_counter,
+                    ctx=ctx,
+                )
             ranked = await rerank_candidates(
                 request,
                 admission,
                 RerankContext(
                     owner=self.owner,
                     attempt=attempt,
-                    reranker=self.reranker,
+                    reranker=reranker,
                     counter=self.rerank_counter,
                     facts=cast(Any, facts),
                     execution=ctx,

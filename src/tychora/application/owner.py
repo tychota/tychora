@@ -10,12 +10,13 @@ import tempfile
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
 from contextlib import ExitStack, contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from threading import Lock, get_ident
-from typing import BinaryIO, Literal, NoReturn, Protocol, cast, overload
+from typing import Any, BinaryIO, Literal, NoReturn, Protocol, cast, overload
 from uuid import UUID, uuid4
 
 from tychora.adapters.files.cas import LocalArtifacts
@@ -73,6 +74,9 @@ class CloseableRuntime(Protocol):
 
 
 MAX_PARSER_OUTPUT_BYTES = 256 * 1024 * 1024
+_DOCUMENT_UPLOAD: ContextVar[tuple[RequestScope, int] | None] = ContextVar(
+    "document_upload", default=None
+)
 
 
 @dataclass(frozen=True)
@@ -111,6 +115,7 @@ class WorkspaceOwner:
         self._admission = Lock()
         self._closing = False
         self._handles = ExitStack()
+        self._configured_graph_store: Any = None
 
     @classmethod
     @contextmanager
@@ -237,7 +242,8 @@ class WorkspaceOwner:
 
     def register_runtime(self, runtime: CloseableRuntime) -> None:
         """Transfer a generic provider runtime's lifecycle to this owner."""
-        self.register_close(runtime.close)
+        if not getattr(runtime, "service_owned", False):
+            self.register_close(runtime.close)
 
     def _sync_thread(self) -> None:
         if get_ident() == self._thread_id:
@@ -462,9 +468,30 @@ class WorkspaceOwner:
                 )
             ).result()
             ctx.checkpoint()
-            return call()
+            binding = _DOCUMENT_UPLOAD.set((scope, policy_epoch))
+            try:
+                return call()
+            finally:
+                _DOCUMENT_UPLOAD.reset(binding)
 
         return await drain_result(lane.submit(invoke), ctx)
+
+    def authorize_current_document(
+        self, provider: str, dependencies: frozenset[str], ctx: ExecutionContext
+    ) -> None:
+        """Recheck the operation's effective scope before each transport attempt."""
+        binding = _DOCUMENT_UPLOAD.get()
+        if binding is None:
+            raise TychoraError(
+                "FORBIDDEN_SCOPE", "Document upload has no owner operation."
+            )
+        scope, policy_epoch = binding
+        self.run_blocking_sync(
+            lambda: self.upload_policy.authorize(
+                scope, provider, dependencies, policy_epoch
+            ),
+            ctx,
+        )
 
     async def run_local_text[T](
         self,

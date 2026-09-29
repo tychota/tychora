@@ -47,7 +47,7 @@ class LocalTextBinding:
 
 @dataclass(frozen=True)
 class ProviderBindings:
-    """Explicit qualified ports; no provider is constructed by open()."""
+    """Caller-supplied qualified ports that override default composition."""
 
     text_embedder: TextEmbedder | None = None
     local_text: LocalTextBinding | None = None
@@ -91,6 +91,7 @@ class LocalWorkspace:
         config: ResolvedConfig | None,
         providers: ProviderBindings | None,
         token_counter: TokenCounter | None,
+        credential_resolver: Callable[[str], str] | None = None,
     ) -> None:
         root = Path(path)
         existed = root.exists()
@@ -116,6 +117,8 @@ class LocalWorkspace:
             )
         self.scope = scope
         self.config = config
+        self.credential_resolver = credential_resolver
+        self.injected_providers = providers
         self._stack = ExitStack()
         self.bridge = ClientBridge()
         self.closed = False
@@ -132,13 +135,29 @@ class LocalWorkspace:
             counter = token_counter or _LazyOutputCounter(
                 Path(os.environ.get("TYCHORA_MODEL_CACHE", root / "models"))
             )
+
+            def prepare_services() -> Services:
+                if providers is None:
+                    from tychora.application.default_bindings import (
+                        compose_default_bindings,
+                    )
+
+                    bindings, runtimes = compose_default_bindings(
+                        self.owner, config, credential_resolver=credential_resolver
+                    )
+                else:
+                    bindings, runtimes = providers, ()
+                try:
+                    return build_services(
+                        self.owner, config, bindings, counter, owned_runtimes=runtimes
+                    )
+                except BaseException:
+                    for runtime in runtimes:
+                        runtime.close()
+                    raise
+
             self.services: Services = self.bridge.call(
-                self.owner.run_blocking(
-                    lambda: build_services(
-                        self.owner, config, providers or ProviderBindings(), counter
-                    ),
-                    ExecutionContext(),
-                )
+                self.owner.run_blocking(prepare_services, ExecutionContext())
             )
             startup_bridge = self.bridge
             self.bridge = self.services.source_jobs.bridge
@@ -202,7 +221,11 @@ class LocalWorkspace:
                 try:
                     self.runtime.close_retired_sync()
                 finally:
-                    self._stack.close()
+                    try:
+                        for runtime in self.services.owned_runtimes:
+                            runtime.close()
+                    finally:
+                        self._stack.close()
 
     def parse_source(self, source: SourceInput | Mapping) -> SourceInput:
         if isinstance(source, SourceInput):

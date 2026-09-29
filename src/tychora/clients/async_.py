@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Self
@@ -302,6 +302,7 @@ class AsyncTychora:
         config: ResolvedConfig | None = None,
         providers: ProviderBindings | None = None,
         token_counter: TokenCounter | None = None,
+        credential_resolver: Callable[[str], str] | None = None,
     ) -> AsyncTychora:
         return cls(
             LocalWorkspace(
@@ -310,6 +311,7 @@ class AsyncTychora:
                 config=config,
                 providers=providers,
                 token_counter=token_counter,
+                credential_resolver=credential_resolver,
             )
         )
 

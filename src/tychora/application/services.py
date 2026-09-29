@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from base64 import b64encode
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from tychora.adapters.sqlite.jobs import JobRepository
@@ -40,6 +42,7 @@ class Services:
     source_jobs: SourceJobScheduler
     provider_bindings: ProviderBindings
     output_counter: TokenCounter
+    owned_runtimes: tuple = ()
 
     def jobs_for_scope(self, scope: RequestScope) -> JobService:
         """Bind job reads and controls to an individual transport request grant."""
@@ -289,6 +292,8 @@ def build_services(
     config: ResolvedConfig,
     providers: ProviderBindings,
     counter: TokenCounter,
+    *,
+    owned_runtimes: tuple = (),
 ) -> Services:
     """Construct all canonical ports for one owner; never create remote clients."""
     caches = (
@@ -353,7 +358,13 @@ def build_services(
         workspace_id=owner.workspace_id,
         receipts=PublicationReceipts(owner.store),
     )
-    sources = SourceService(owner, coordinator)
+    cache_root = Path(os.environ.get("TYCHORA_MODEL_CACHE", owner.path / "models"))
+    sources = SourceService(
+        owner,
+        coordinator,
+        auto_visual=bool(owned_runtimes),
+        docling_models=cache_root,
+    )
     jobs = JobService(owner, repository, owner.scope)
     return Services(
         discovery=DiscoveryService(config, Registry.from_config(config), owner),
@@ -370,9 +381,11 @@ def build_services(
             rerank_counter=providers.rerank_counter,
             caches=caches,
             graph=providers.graph,
+            auto_rerank=bool(owned_runtimes),
         ),
         sources=sources,
         source_jobs=SourceJobScheduler(sources, jobs),
         provider_bindings=providers,
         output_counter=counter,
+        owned_runtimes=owned_runtimes,
     )

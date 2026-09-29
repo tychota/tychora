@@ -1531,6 +1531,14 @@ raise typer.Exit(exit_code)
 - [ ] `serve` defaults HTTP+MCP loopback; `--stdio` uses protocol stdout and private delegation endpoint. Help/completion/config inspection perform no model imports/downloads/db creation. Add concrete help examples for local docs, code, exact lookup, kinds and original inspection. Maintenance commands call typed jobs, including original-removal plan preview and explicit confirmation flag from Task 39.
 - [ ] Test subprocess help/no runtime side effects, shell completion, all public examples, progress on stderr, JSON errors, unknown nouns, request-file/passage/image input, Ctrl-C=130, busy owner delegation and no network offline. Run `uv run --locked pytest tests/cli -q`; commit with message `feat: provide a compact discoverable command line`.
 
+### Task 38a: Configured runtime composition through public interfaces
+
+**Files:** Add `src/tychora/application/default_bindings.py`; extend `api.py`, `application/{services,settings,sources,owner,query}.py`, qualified native/provider adapters, `tests/api/test_configured_runtime.py`, `docs/{api,cli}.md`. Dependencies: 20–26, 35–38. Task 39 owns explicit collection upload consent; Task 39a owns separately selected ingestion vision.
+
+**Interfaces:** Ordinary `Tychora.open` and `AsyncTychora.open`, CLI and local HTTP/MCP hosts compose enabled configured text, image, rerank, Chroma and Ladybug ports after acquiring one owner. Caller-injected `ProviderBindings` retain their ownership and activation behavior. `env:` credentials resolve at first authorized operation; `secret:` references require an explicit runtime-only resolver. Settings activation rebuilds automatically owned ports, changes non-secret query-cache binding identity on rollover, preserves indexed representation identity, and retires old runtimes only after drain. Offline keeps native storage and disables remote ports. Model assets remain verified and lazy; no implicit download, consent, or fallback embedding.
+
+**Coverage:** Start RED at the default public path, then qualify scoped mocked-provider add/search and zero-payload denial, native text/image separation and graph persistence, CLI add/search, a server query, missing credential/asset/dependency errors, offline no-network behavior, settings rollover/rollback/cleanup, affected suites and scoped Ruff/ty. Record exact results in the Task 38a report and commit only scoped code/docs/tests.
+
 ### Task 39: Withdrawal and explicit shared-original removal
 
 **Files:** Create `src/tychora/application/removal.py`, extend `adapters/files/references.py`, `adapters/sqlite/corpus.py`, `application/services.py`; create `tests/operations/test_removal.py`, `tests/security/test_original_access.py`.

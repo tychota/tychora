@@ -121,6 +121,17 @@ class LadybugGraphStore:
             relation_view=relation_view,
         )
 
+    def set_traversal_policy(self, policy: GraphTraversalPolicy) -> None:
+        """Activate current query policy after the owner quiesces operations."""
+        with self._lock:
+            self._traversal = GraphTraversal(self, policy)
+
+    def prepare_build(self, build: GraphBuildInput) -> "LadybugGraphStore":
+        """Bind canonical input for the next generation on this owner-owned store."""
+        with self._lock:
+            self._build = build
+        return self
+
     def close(self) -> None:
         self._connection.close()
         self._database.close()

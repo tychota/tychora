@@ -169,7 +169,7 @@ class VoyageVisualEmbedder:
                 "INVALID_REQUEST", "Visual context exceeds staging capacity."
             )
         limits = self._limits
-        count = self._counter.count(text) if text else 0
+        count = self._counter.count(text)
         if type(count) is not int or count < 0:
             raise TychoraError(
                 "CAPABILITY_MISSING", "Visual accounting is unavailable."

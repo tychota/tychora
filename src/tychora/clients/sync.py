@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import math
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
@@ -283,6 +283,7 @@ class Tychora:
         config: ResolvedConfig | None = None,
         providers: ProviderBindings | None = None,
         token_counter: TokenCounter | None = None,
+        credential_resolver: Callable[[str], str] | None = None,
     ) -> Tychora:
         return cls(
             LocalWorkspace(
@@ -291,6 +292,7 @@ class Tychora:
                 config=config,
                 providers=providers,
                 token_counter=token_counter,
+                credential_resolver=credential_resolver,
             )
         )
 

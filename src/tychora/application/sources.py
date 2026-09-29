@@ -91,6 +91,7 @@ class SourceService:
         *,
         url_reader: UrlReader | None = None,
         docling_models: Path | None = None,
+        auto_visual: bool = False,
     ) -> None:
         if (
             coordinator.store is not owner.store
@@ -101,6 +102,7 @@ class SourceService:
         self.coordinator = coordinator
         self.url_reader = url_reader
         self.docling_models = docling_models
+        self.auto_visual = auto_visual
         self._jobs: JobRepository | None = None
         self._acquirer: Acquirer | None = None
 
@@ -697,6 +699,19 @@ class SourceService:
             raise TychoraError(
                 "CAPABILITY_MISSING", "Configured visual provider is unavailable"
             )
+        if self.auto_visual:
+            from tychora.adapters.voyage.visual import VoyageVisualEmbedder
+            from tychora.application.visual import create_visual_embedder
+
+            if isinstance(embedder, VoyageVisualEmbedder):
+                embedder = await create_visual_embedder(
+                    self.owner,
+                    capabilities=embedder.capabilities,
+                    counter=embedder._counter,
+                    runtime=embedder._runtime,
+                    scope=scope,
+                    ctx=ctx,
+                )
         return await self.owner.embed_visual_assets(
             embedder,
             prepared.visual_inputs,

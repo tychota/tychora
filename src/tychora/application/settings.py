@@ -134,12 +134,31 @@ class SettingsService:
                     # owner's canonical ports; restore the live owner before
                     # returning from this worker even when preparation fails.
                     owner.config, owner.store = candidate, store
-                    prepared = build_services(
-                        owner,
-                        candidate,
-                        previous_services.provider_bindings,
-                        previous_services.output_counter,
-                    )
+                    workspace = self.runtime._workspace
+                    if workspace is not None and workspace.injected_providers is None:
+                        from tychora.application.default_bindings import (
+                            compose_default_bindings,
+                        )
+
+                        bindings, runtimes = compose_default_bindings(
+                            owner,
+                            candidate,
+                            credential_resolver=workspace.credential_resolver,
+                        )
+                    else:
+                        bindings, runtimes = previous_services.provider_bindings, ()
+                    try:
+                        prepared = build_services(
+                            owner,
+                            candidate,
+                            bindings,
+                            previous_services.output_counter,
+                            owned_runtimes=runtimes,
+                        )
+                    except BaseException:
+                        for runtime in runtimes:
+                            runtime.close()
+                        raise
                 finally:
                     owner.config, owner.store = previous_config, previous_store
                 return store, prepared
@@ -186,6 +205,8 @@ class SettingsService:
                     self.runtime.record_cleanup_failure(previous_services.source_jobs)
                 else:
                     self.runtime.record_cleanup_failure()
+            for runtime in previous_services.owned_runtimes:
+                runtime.close()
             return candidate
         except BaseException:
             if (
@@ -193,6 +214,21 @@ class SettingsService:
                 and self.runtime.services is not candidate_services
             ):
                 await candidate_services.source_jobs.aclose()
+                for runtime in candidate_services.owned_runtimes:
+                    runtime.close()
+            if self.runtime.services is not candidate_services:
+                graph = getattr(owner, "_configured_graph_store", None)
+                if graph is not None and owner.config.values.index.graph == "ladybug":
+                    from tychora.adapters.ladybug.traversal import (
+                        resolve_graph_traversal_policy,
+                    )
+
+                    policy = resolve_graph_traversal_policy(
+                        owner.config, Registry.from_config(owner.config)
+                    )
+                    await owner.run_blocking(
+                        lambda: graph.set_traversal_policy(policy), ExecutionContext()
+                    )
             if replaced and self.runtime.services is not candidate_services:
                 rollback = owner.path / (".workspace-rollback-" + str(uuid4()))
                 rollback.write_bytes(original)

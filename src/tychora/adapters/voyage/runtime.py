@@ -45,6 +45,7 @@ class VoyageRuntime:
         self._cache_ttl = cache_ttl
         self._clock = clock
         self.query_caches = query_caches
+        self.service_owned = False
         self._query_cache: OrderedDict[tuple[object, ...], tuple[float, bytes]] = (
             OrderedDict()
         )

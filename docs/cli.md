@@ -14,9 +14,14 @@ tychora --workspace ./knowledge inspect capabilities --json
 
 `init --provider configured --config workspace.toml` uses an explicitly supplied
 profile document. `init` never fetches model assets. The configuration must
-register acquisition roots before `add PATH` can read local files. As of this
-CLI release, runtime provider and index bindings still require explicit Python
-composition; a configured provider setting alone does not activate one.
+register acquisition roots before `add PATH` can read local files. The ordinary CLI and loopback server open the same configured owner: enabled
+Voyage text, image and rerank settings compose their qualified adapters, while
+Chroma uses separate text/image collections and Ladybug persists graph generations.
+An offline profile keeps native storage without constructing remote clients.
+Tokenizers and parser models must be explicitly provisioned with `manage setup`;
+`add` and `search` never download them. `env:NAME` credentials resolve only at a
+remote operation. `secret:NAME` is available through the Python API's explicit
+resolver; CLI/server operations without one report a typed missing-credential error.
 
 The kind registry defines required metadata. For example, `manual@1` requires
 `title`, `publisher`, and `edition`. Supply actual values in a JSON file:
