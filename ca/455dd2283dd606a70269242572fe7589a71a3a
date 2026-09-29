@@ -1,0 +1,55 @@
+src/tychora/api.py
+  s_35b641b930a96d::t_64f6fe71e75331 110,136-143
+  s_35b641b930a96d::t_2f81b68479e8e4 144-147
+src/tychora/contracts/operations.py
+  s_35b641b930a96d::t_ad7919c0a3a4cb 293
+  s_35b641b930a96d::t_0017cb7aadbc34 367-376,384
+src/tychora/interfaces/commands/manage.py
+  s_35b641b930a96d::t_a8d975dedb77de 120-140
+  s_35b641b930a96d::t_12d55598682768 141-142
+tests/security/test_upload_consent.py
+  s_35b641b930a96d::t_16b4b6df27384f 143,152
+  s_35b641b930a96d::t_63458b45baf393 122,305-317
+  s_35b641b930a96d::t_e26c4295c03e6e 1-16,19-22,27-40,42-55,58-70,74-77,81-83,93-97,99-105,118-121,124-126,130-142,145-151,153-162,204-217,221
+  s_35b641b930a96d::t_1dbcdcb62a8c0f 56
+  s_35b641b930a96d::t_22204845383779 222-228
+  s_35b641b930a96d::t_70f61e2936b1c5 17-18,23-26,71-73,144,163-203,218-220,302-304,321,323-324,326-339,368-369,395-396,398-400,424-426
+  s_35b641b930a96d::t_a564b00ddf9d6e 370-383
+  s_35b641b930a96d::t_af6855fc4c5c27 41,57,106-117,127-129,229-301,318-320,322,325,384-394,397,401-423
+  s_35b641b930a96d::t_6373409eea1449 78-80,84-92,98,123,340-367
+src/tychora/application/owner.py
+  s_35b641b930a96d::t_5ceed82b5d66a7 469-472,577-580,622-625,834-837,841,844,846-848,1386-1389
+  s_35b641b930a96d::t_c6f84d0a6108f3 61,109,466-468,473,574-576,581,619-621,626
+  s_35b641b930a96d::t_a87c9f425ef7b1 832-833,838-840,842-843,845,849-851,1225,1332,1384-1385,1390-1393
+src/tychora/interfaces/http/routes.py
+  s_35b641b930a96d::t_a8d975dedb77de 456-462
+src/tychora/clients/sync.py
+  s_35b641b930a96d::t_a8d975dedb77de 271-276
+src/tychora/clients/async_.py
+  s_35b641b930a96d::t_a8d975dedb77de 290-295
+tests/security/test_original_access.py
+  s_35b641b930a96d::t_6681d09b8d99c9 22,40
+src/tychora/application/consent.py
+  s_35b641b930a96d::t_08d252b7ce926a 7,77-78,128-129,201
+  s_35b641b930a96d::t_5ceed82b5d66a7 54,57,59,65-67,86-88
+  s_35b641b930a96d::t_6681d09b8d99c9 130
+  s_35b641b930a96d::t_63458b45baf393 188-190,206
+  s_35b641b930a96d::t_b470154faa80dd 1-6,8-53,55-56,58,60-64,68-76,79-85,89-127,131-142,147-187,191-200,202-205,207-218
+  s_35b641b930a96d::t_46dcd1c1af9022 143-146
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "ca455dd2283dd606a70269242572fe7589a71a3a",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
