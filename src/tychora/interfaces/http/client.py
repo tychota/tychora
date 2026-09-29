@@ -16,6 +16,7 @@ from urllib.parse import quote, urlsplit
 from uuid import UUID
 
 import httpx
+from pydantic import TypeAdapter
 
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import QueryResult
@@ -25,9 +26,11 @@ from tychora.contracts.operations import (
     DiscoveryResult,
     EvaluationRequest,
     InspectionResult,
+    InspectRequest,
     JobEvent,
     JobHandle,
     MaintenanceRequest,
+    MaintenanceResult,
     RelationRequest,
     RelationResult,
     SourceChannelPage,
@@ -290,6 +293,14 @@ class _SyncJobs:
                 "WORKSPACE_BUSY", "Local HTTP owner is unavailable."
             ) from None
 
+    def events_after(self, job_id: str, *, after: int = 0) -> tuple[JobEvent, ...]:
+        if after < 0:
+            raise TychoraError("INVALID_REQUEST", "Event cursor must be nonnegative.")
+        response = self.client._request(
+            "GET", f"/v1/jobs/{_id(job_id)}/events/page", params={"after": after}
+        )
+        return TypeAdapter(tuple[JobEvent, ...]).validate_json(response.content)
+
 
 class _SyncEvaluations:
     def __init__(self, client: HTTPClient):
@@ -309,11 +320,15 @@ class _SyncManagement:
         *,
         idempotency_key: str | None = None,
     ):
-        self.client._request(
-            "POST",
-            "/v1/jobs",
-            json=_payload(request),
-            headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
+        return MaintenanceResult.model_validate_json(
+            self.client._request(
+                "POST",
+                "/v1/jobs",
+                json=_payload(request),
+                headers={"Idempotency-Key": idempotency_key}
+                if idempotency_key
+                else None,
+            ).content
         )
 
 
@@ -405,6 +420,11 @@ class HTTPClient:
             },
         )
         return DiscoveryResult.model_validate_json(response.content)
+
+    def inspect(self, request: InspectRequest | Mapping) -> InspectionResult:
+        return InspectionResult.model_validate_json(
+            self._request("POST", "/v1/inspect", json=_payload(request)).content
+        )
 
     def search(
         self,
@@ -613,6 +633,16 @@ class _AsyncJobs:
                 "WORKSPACE_BUSY", "Local HTTP owner is unavailable."
             ) from None
 
+    async def events_after(
+        self, job_id: str, *, after: int = 0
+    ) -> tuple[JobEvent, ...]:
+        if after < 0:
+            raise TychoraError("INVALID_REQUEST", "Event cursor must be nonnegative.")
+        response = await self.client._request(
+            "GET", f"/v1/jobs/{_id(job_id)}/events/page", params={"after": after}
+        )
+        return TypeAdapter(tuple[JobEvent, ...]).validate_json(response.content)
+
 
 class _AsyncEvaluations:
     def __init__(self, client: AsyncHTTPClient):
@@ -632,11 +662,17 @@ class _AsyncManagement:
         *,
         idempotency_key: str | None = None,
     ):
-        await self.client._request(
-            "POST",
-            "/v1/jobs",
-            json=_payload(request),
-            headers={"Idempotency-Key": idempotency_key} if idempotency_key else None,
+        return MaintenanceResult.model_validate_json(
+            (
+                await self.client._request(
+                    "POST",
+                    "/v1/jobs",
+                    json=_payload(request),
+                    headers={"Idempotency-Key": idempotency_key}
+                    if idempotency_key
+                    else None,
+                )
+            ).content
         )
 
 
@@ -733,6 +769,11 @@ class AsyncHTTPClient:
             },
         )
         return DiscoveryResult.model_validate_json(response.content)
+
+    async def inspect(self, request: InspectRequest | Mapping) -> InspectionResult:
+        return InspectionResult.model_validate_json(
+            (await self._request("POST", "/v1/inspect", json=_payload(request))).content
+        )
 
     async def search(
         self,

@@ -233,6 +233,14 @@ class _AsyncJobs:
                 return
             await asyncio.sleep(0.05)
 
+    @_admitted
+    async def events_after(self, job_id: str, *, after: int = 0):
+        ws = self.kb._open()
+        ctx = _context()
+        return await ws.bridge.acall(
+            ws.services.jobs.events_after(job_id, after, 100, ctx), ctx
+        )
+
 
 class _AsyncEvaluations:
     def __init__(self, kb: AsyncTychora) -> None:
@@ -263,6 +271,14 @@ class _AsyncManagement:
         required = "read" if parsed.root.operation == "health" else "manage"
         if required not in ws.scope.capabilities:
             raise TychoraError("FORBIDDEN_SCOPE", "Maintenance is outside the grant.")
+        if parsed.root.operation == "setup":
+            from tychora.application.setup import run_public_setup
+
+            return await ws.bridge.acall(
+                run_public_setup(
+                    ws.owner, ws.services.jobs.repository, ws.scope, parsed.root
+                )
+            )
         raise TychoraError("CAPABILITY_MISSING", "Maintenance service is unavailable.")
 
 
@@ -339,6 +355,17 @@ class AsyncTychora:
                 _parsed(DiscoverRequest, request),
                 ws.scope,
             )
+        )
+
+    @_admitted
+    async def inspect(self, request: InspectRequest | Mapping):
+        ws = self._open()
+        ctx = _context()
+        return await ws.bridge.acall(
+            ws.services.inspection.inspect(
+                _parsed(InspectRequest, request), ws.scope, ctx
+            ),
+            ctx,
         )
 
     @_admitted

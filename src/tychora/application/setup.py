@@ -458,7 +458,7 @@ def _verified_selection(cache_root: Path, selection: str) -> tuple[ModelAsset, .
     ):
         raise TychoraError(
             "CAPABILITY_MISSING",
-            "Selected local tokenizer assets are missing or corrupt",
+            "Selected local tokenizer assets are missing or corrupt; run manage setup --asset output-tokenizer with a verified bundle.",
         )
     return assets
 
@@ -576,3 +576,60 @@ def load_voyage_multimodal_accounting(cache_root: Path) -> VisualEmbeddingLimits
         request_wire_bytes_max=64 * 1024 * 1024,
         decoded_image_bytes_max=48_000_000,
     )
+
+
+async def run_public_setup(owner, repository, scope, request):
+    """Execute a scoped explicit asset selection through the durable setup job."""
+    from tychora.contracts.operations import MaintenancePlan, MaintenanceResult
+
+    if "manage" not in owner.scope.narrow(scope).capabilities:
+        raise TychoraError("FORBIDDEN_SCOPE", "Setup is outside the grant.")
+    if not request.assets:
+        raise TychoraError(
+            "INVALID_REQUEST", "Select at least one manifest asset for setup."
+        )
+
+    def execute():
+        effective_config = owner.artifacts.put_stream(
+            BytesIO(
+                canonical_bytes(
+                    {
+                        "type": "registry",
+                        "schema_version": "1",
+                        "data": owner.config.model_dump(mode="json"),
+                    }
+                )
+            ),
+            "application/json",
+        )
+        service = SetupService(
+            Path(os.environ.get("TYCHORA_MODEL_CACHE", owner.path / "models")),
+            offline=request.offline or owner.config.values.offline,
+            jobs=repository,
+            scope=owner.scope.narrow(scope),
+            effective_config=effective_config,
+            artifacts=owner.artifacts,
+        )
+        try:
+            selected = service.plan(request.assets)
+        except ValueError:
+            raise TychoraError(
+                "INVALID_REQUEST",
+                "Unknown or duplicate model asset selection; inspect capabilities.",
+            ) from None
+        handle = service.apply(
+            selected,
+            Path(request.local_bundle) if request.local_bundle else None,
+            ExecutionContext(),
+        )
+        return MaintenanceResult(
+            plan=MaintenancePlan(
+                operation="setup",
+                target_ids=request.assets,
+                actions=("verify and provision selected model assets",),
+                estimated_bytes=selected.total_size_bytes,
+            ),
+            job=handle,
+        )
+
+    return await owner.run_blocking(execute, ExecutionContext())

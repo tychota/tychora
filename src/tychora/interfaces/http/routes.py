@@ -102,6 +102,15 @@ def _source_json(value) -> Response:
     return Response(content=payload, media_type="application/json")
 
 
+def _inspection_json(value) -> Response:
+    payload = value.model_dump_json().encode("utf-8")
+    if len(payload) > 24 * 1024 * 1024:
+        raise TychoraError(
+            "OUTPUT_BUDGET_EXCEEDED", "Inspection response exceeds local limit."
+        )
+    return Response(content=payload, media_type="application/json")
+
+
 def register_routes(app: FastAPI) -> None:
     @app.get("/v1/handshake")
     async def handshake(request: Request):
@@ -179,6 +188,29 @@ def register_routes(app: FastAPI) -> None:
             .get(job_id, ExecutionContext())
         )
         return event_stream(_services(request), _scope(request), job_id, int(raw))
+
+    @app.get("/v1/jobs/{job_id}/events/page")
+    async def job_event_page(job_id: str, request: Request, after: int = 0):
+        events = (
+            await _services(request)
+            .jobs_for_scope(_scope(request))
+            .events_after(job_id, after, 100, ExecutionContext())
+        )
+        payload = canonical_bytes([event.model_dump(mode="json") for event in events])
+        if len(payload) > 1024 * 1024:
+            raise TychoraError(
+                "OUTPUT_BUDGET_EXCEEDED", "Job event page exceeds local limit."
+            )
+        return Response(content=payload, media_type="application/json")
+
+    @app.post("/v1/inspect")
+    async def inspect_record(request: Request):
+        _require(request, "read")
+        parsed = InspectRequest.from_mapping(await _body_map(request))
+        result = await _services(request).inspection.inspect(
+            parsed, _scope(request), ExecutionContext()
+        )
+        return _inspection_json(result)
 
     @app.get("/v1/discovery")
     async def discover_default(
@@ -394,6 +426,16 @@ def register_routes(app: FastAPI) -> None:
     async def run_maintenance(request: Request):
         parsed = MaintenanceRequest.from_mapping(await _body_map(request))
         _require(request, "read" if parsed.root.operation == "health" else "manage")
+        if parsed.root.operation == "setup":
+            from tychora.application.setup import run_public_setup
+
+            result = await run_public_setup(
+                request.app.state.owner,
+                _services(request).jobs.repository,
+                _scope(request),
+                parsed.root,
+            )
+            return _json(result, status_code=202)
         raise TychoraError("CAPABILITY_MISSING", "Maintenance service is unavailable.")
 
     @app.post("/v1/jobs/{job_id}/retry")

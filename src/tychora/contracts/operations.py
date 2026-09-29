@@ -229,6 +229,8 @@ class SetupMaintenance(Contract):
     operation: Literal["setup"] = "setup"
     profile: Identifier | None = None
     offline: bool = False
+    assets: tuple[NonEmptyStr, ...] = ()
+    local_bundle: NonEmptyStr | None = None
 
 
 class SyncMaintenance(Contract):

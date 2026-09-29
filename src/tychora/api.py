@@ -73,9 +73,13 @@ class _LazyOutputCounter:
         self._loaded: OutputTokenCounter | None = None
 
     def count(self, text: str) -> int:
+        self.ensure_available()
+        assert self._loaded is not None
+        return self._loaded.count(text)
+
+    def ensure_available(self) -> None:
         if self._loaded is None:
             self._loaded = OutputTokenCounter(self.path)
-        return self._loaded.count(text)
 
 
 class LocalWorkspace:

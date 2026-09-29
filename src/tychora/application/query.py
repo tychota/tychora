@@ -409,6 +409,10 @@ class QueryService:
     ) -> DeliveredResult:
         started = time.monotonic()
         ctx.checkpoint()
+        preflight = getattr(self.counter, "ensure_available", None)
+        if preflight is not None:
+            await asyncio.to_thread(preflight)
+            ctx.checkpoint()
         if request.profile is not None and request.profile != self.owner.config.profile:
             raise TychoraError(
                 "INVALID_REQUEST", "Request profile differs from workspace."
