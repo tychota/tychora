@@ -159,6 +159,18 @@ class RuntimeIdentity:
             "pid": os.getpid(),
             "token": secrets.token_urlsafe(32),
         }
+        self.record = record
+        self._write_record(record)
+
+    def publish_endpoint(self, authority: str) -> None:
+        """Publish the bound loopback authority after the socket is reserved."""
+        if not self._published or not hasattr(self, "record"):
+            raise TychoraError("INTEGRITY_ERROR", "Owner runtime is unpublished")
+        record = {**self.record, "authority": authority}
+        self._write_record(record)
+        self.record = record
+
+    def _write_record(self, record: dict) -> None:
         temporary = self.directory / (".endpoint-" + self.instance_id)
         try:
             fd = os.open(
@@ -219,3 +231,42 @@ def parser_process[T](
             child.close()
         receiver.close()
         sender.close()
+
+
+class ServiceRuntime:
+    """One current service binding and an exclusive HTTP activation gate."""
+
+    def __init__(self, owner, services) -> None:
+        self.owner = owner
+        self.services = services
+        self._gate = Lock()
+        self._active = 0
+        self._activating = False
+
+    def admit(self, *, activation: bool = False) -> None:
+        with self._gate:
+            if self._activating or (activation and self._active):
+                raise TychoraError(
+                    "WORKSPACE_BUSY",
+                    "Workspace configuration is busy; retry shortly.",
+                    retryable=True,
+                )
+            if activation:
+                self._activating = True
+            else:
+                self._active += 1
+
+    def release(self, *, activation: bool = False) -> None:
+        with self._gate:
+            if activation:
+                self._activating = False
+            else:
+                self._active -= 1
+
+    def swap(self, services) -> None:
+        with self._gate:
+            if not self._activating:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Settings swap requires exclusive admission."
+                )
+            self.services = services

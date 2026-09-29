@@ -112,6 +112,7 @@ class SourceService:
                     artifacts=self.owner.artifacts,
                     workspace_id=self.owner.workspace_id,
                     receipts=PublicationReceipts(self.owner.store),
+                    operation_capabilities={"sync": "write"},
                 )
             if self._acquirer is None:
                 self._acquirer = Acquirer(
@@ -332,7 +333,7 @@ class SourceService:
         if (
             row is None
             or row[0] not in granted.collection_ids
-            or "manage" not in granted.capabilities
+            or "write" not in granted.capabilities
         ):
             raise TychoraError("FORBIDDEN_SCOPE", "Registered source is unavailable")
         registration = json.loads(row[1])
@@ -408,8 +409,9 @@ class SourceService:
         scope: RequestScope,
         *,
         ctx: ExecutionContext | None = None,
+        retained_capture_sha: str | None = None,
     ) -> JobHandle:
-        """Resume only the exact canonical intent and configuration accepted by owner."""
+        """Resume exact accepted intent or its verified retained retry capture."""
         context = ctx or ExecutionContext()
         granted = self.owner.scope.narrow(scope)
         jobs, acquirer = await self._ports(context)
@@ -420,13 +422,19 @@ class SourceService:
             jobs.authorize(handle.id, granted, write=True)
             if (
                 status.operation != handle.operation
-                or status.request_digest
-                != digest(
-                    "request-v1",
-                    self.owner.workspace_id,
-                    granted.principal_id,
-                    handle.operation,
-                    source_intent(source),
+                or (
+                    status.request_digest
+                    != digest(
+                        "request-v1",
+                        self.owner.workspace_id,
+                        granted.principal_id,
+                        handle.operation,
+                        source_intent(source),
+                    )
+                    if retained_capture_sha is None
+                    else status.retry_count < 1
+                    or status.captured_inputs is None
+                    or status.captured_inputs.sha256 != retained_capture_sha
                 )
                 or status.effective_config.sha256 != config_ref.sha256
                 or str(source.root.collection_id) not in granted.collection_ids

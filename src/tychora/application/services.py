@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from base64 import b64encode
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from tychora.adapters.sqlite.jobs import JobRepository
+from tychora.adapters.sqlite.publication import PublicationReceipts
 from tychora.application.bridge import ClientBridge
 from tychora.application.discovery import DiscoveryService
 from tychora.application.inspection import InspectionService
@@ -36,6 +38,8 @@ class Services:
     query: QueryService
     sources: SourceService
     source_jobs: SourceJobScheduler
+    provider_bindings: ProviderBindings
+    output_counter: TokenCounter
 
     def jobs_for_scope(self, scope: RequestScope) -> JobService:
         """Bind job reads and controls to an individual transport request grant."""
@@ -128,6 +132,107 @@ class SourceJobScheduler:
         self, source_id: str, scope: RequestScope, key: str | None = None
     ) -> JobHandle:
         return await self.bridge.acall(self._submit("sync", source_id, scope, key))
+
+    async def _idle(self) -> bool:
+        return not self._submitting and not self._tasks and not self._closing
+
+    async def is_idle_async(self) -> bool:
+        return await self.bridge.acall(self._idle())
+
+    async def _retry(self, job_id: str, scope: RequestScope) -> JobHandle:
+        if self._closing:
+            raise TychoraError(
+                "WORKSPACE_BUSY", "Job scheduler is closing.", retryable=True
+            )
+        if self._slots is None:
+            self._slots = asyncio.Semaphore(8)
+        slots = self._slots
+        await slots.acquire()
+        launched = False
+        try:
+            scoped = JobService(self.jobs.owner, self.jobs.repository, scope)
+            status = await scoped.get(job_id, ExecutionContext())
+            if status.operation not in {"add", "sync"}:
+                await self.jobs.owner.run_blocking(
+                    lambda: self.jobs.repository.authorize(
+                        job_id, self.jobs.owner.scope.narrow(scope), write=True
+                    ),
+                    ExecutionContext(),
+                )
+                raise TychoraError(
+                    "CAPABILITY_MISSING", "Maintenance retry execution is unavailable."
+                )
+            while job_id in self._tasks and self._tasks[job_id][0].done():
+                await asyncio.sleep(0)
+            if job_id in self._tasks:
+                return JobHandle(
+                    id=job_id, operation=status.operation, state=status.state
+                )
+            capture_ref = status.captured_inputs
+            if capture_ref is None:
+                raise TychoraError(
+                    "REPLAY_UNAVAILABLE",
+                    "Retained source input is unavailable for retry.",
+                )
+            capture = await self.jobs.owner.run_blocking(
+                lambda: self.sources._committed_capture(capture_ref),
+                ExecutionContext(),
+            )
+
+            def retained_source():
+                value = dict(capture.source)
+                if value.get("type") in {"text", "bytes"}:
+                    with self.jobs.owner.artifacts.open_verified(
+                        capture.original_ref
+                    ) as stream:
+                        payload = stream.read(capture.original_ref.size_bytes + 1)
+                    if len(payload) != capture.original_ref.size_bytes:
+                        raise TychoraError(
+                            "INTEGRITY_ERROR", "Retained source bytes differ."
+                        )
+                    if value["type"] == "text":
+                        value["text"] = payload.decode("utf-8")
+                    else:
+                        value["data"] = b64encode(payload).decode("ascii")
+                return SourceInput.from_mapping(value)
+
+            source = await self.jobs.owner.run_blocking(
+                retained_source, ExecutionContext()
+            )
+            if status.state == "running":
+                status = await scoped.recover(job_id, ExecutionContext())
+            if status.state in {"failed", "interrupted"}:
+                status = await scoped.retry(job_id, ExecutionContext())
+            elif status.state != "queued":
+                raise TychoraError("IDEMPOTENCY_CONFLICT", "Job is not retryable.")
+            handle = JobHandle(id=job_id, operation=status.operation, state="queued")
+            work_ctx = ExecutionContext()
+            task = asyncio.create_task(
+                self.sources.execute_accepted(
+                    handle,
+                    source,
+                    scope,
+                    ctx=work_ctx,
+                    retained_capture_sha=capture_ref.sha256,
+                )
+            )
+            self._tasks[job_id] = (task, work_ctx)
+            launched = True
+
+            def completed(finished: asyncio.Task[JobHandle]) -> None:
+                self._tasks.pop(job_id, None)
+                slots.release()
+                if not finished.cancelled():
+                    finished.exception()
+
+            task.add_done_callback(completed)
+            return handle
+        finally:
+            if not launched:
+                slots.release()
+
+    async def retry_async(self, job_id: str, scope: RequestScope) -> JobHandle:
+        return await self.bridge.acall(self._retry(job_id, scope))
 
     async def _signal_cancel(self, job_id: str) -> None:
         active = self._tasks.get(job_id)
@@ -243,7 +348,10 @@ def build_services(
         graph_factory=providers.graph_factory,
     )
     repository = JobRepository(
-        owner.db, artifacts=owner.artifacts, workspace_id=owner.workspace_id
+        owner.db,
+        artifacts=owner.artifacts,
+        workspace_id=owner.workspace_id,
+        receipts=PublicationReceipts(owner.store),
     )
     sources = SourceService(owner, coordinator)
     jobs = JobService(owner, repository, owner.scope)
@@ -265,4 +373,6 @@ def build_services(
         ),
         sources=sources,
         source_jobs=SourceJobScheduler(sources, jobs),
+        provider_bindings=providers,
+        output_counter=counter,
     )

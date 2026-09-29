@@ -19,6 +19,11 @@ class JobStatus(JobHandle):
     retention_limited: bool = False
 
 
+class JobPage(Contract):
+    jobs: tuple[JobStatus, ...] = ()
+    next_cursor: Identifier | None = None
+
+
 class PublicationReceipt(Contract):
     job_id: Identifier
     result_snapshot_id: Identifier

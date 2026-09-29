@@ -213,8 +213,10 @@ class Tychora:
         )
 
     @classmethod
-    def connect(cls, endpoint: str, credential: str, workspace_id: str) -> Tychora:
-        raise TychoraError("CAPABILITY_MISSING", "Remote transport is unavailable.")
+    def connect(cls, endpoint: str, credential: str, workspace_id: str):
+        from tychora.interfaces.http.client import HTTPClient
+
+        return HTTPClient(endpoint, credential, workspace_id)
 
     def __enter__(self) -> Self:
         self._workspace.require_open()

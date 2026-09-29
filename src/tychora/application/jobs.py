@@ -5,11 +5,12 @@ import hashlib
 import math
 import time
 from collections.abc import Callable
+from uuid import UUID
 
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import JsonValue
-from tychora.contracts.jobs import JobStatus
+from tychora.contracts.jobs import JobPage, JobStatus
 from tychora.contracts.operations import JobEvent, JobHandle
 from tychora.contracts.requests import (
     BytesSource,
@@ -82,6 +83,44 @@ class JobService:
             ctx,
         )
 
+    async def list(
+        self, ctx: ExecutionContext, *, cursor: str | None = None, limit: int = 100
+    ) -> JobPage:
+        if not 1 <= limit <= 100 or (
+            cursor is not None and (len(cursor) > 64 or not _valid_job_cursor(cursor))
+        ):
+            raise TychoraError("INVALID_REQUEST", "Invalid job page cursor or limit.")
+        scope = self.owner.scope.narrow(self.scope)
+
+        def read() -> JobPage:
+            rows = self.owner.db.execute(
+                "SELECT job_id FROM jobs WHERE principal_id=? AND job_id>? "
+                "ORDER BY job_id LIMIT 1000",
+                (scope.principal_id, cursor or ""),
+            ).fetchall()
+            selected = []
+            last = None
+            for index, (job_id,) in enumerate(rows):
+                last = job_id
+                try:
+                    self.repository.authorize(job_id, scope, write=False)
+                except TychoraError as error:
+                    if error.code == "FORBIDDEN_SCOPE":
+                        continue
+                    raise
+                selected.append(self.repository.get(job_id))
+                if len(selected) == limit:
+                    return JobPage(
+                        jobs=tuple(selected),
+                        next_cursor=last if index < len(rows) - 1 else None,
+                    )
+            return JobPage(
+                jobs=tuple(selected),
+                next_cursor=last if len(rows) == 1000 else None,
+            )
+
+        return await self.owner.run_blocking(read, ctx)
+
     async def get(self, job_id: str, ctx: ExecutionContext) -> JobStatus:
         return await self._call(job_id, lambda: self.repository.get(job_id), ctx)
 
@@ -124,3 +163,10 @@ class JobService:
                 return status
             await asyncio.sleep(min(0.05, max(0.0, end - time.monotonic())))
             ctx.checkpoint()
+
+
+def _valid_job_cursor(value: str) -> bool:
+    try:
+        return str(UUID(value)) == value
+    except ValueError:
+        return False

@@ -219,8 +219,10 @@ class AsyncTychora:
         )
 
     @classmethod
-    def connect(cls, endpoint: str, credential: str, workspace_id: str) -> AsyncTychora:
-        raise TychoraError("CAPABILITY_MISSING", "Remote transport is unavailable.")
+    def connect(cls, endpoint: str, credential: str, workspace_id: str):
+        from tychora.interfaces.http.client import AsyncHTTPClient
+
+        return AsyncHTTPClient(endpoint, credential, workspace_id)
 
     async def __aenter__(self) -> Self:
         self._open()

@@ -281,6 +281,13 @@ class MaintenanceResult(Contract):
     receipt: OperationReceipt | None = None
 
 
+class SettingsActivation(Contract):
+    """Complete owner-supplied workspace configuration for validated activation."""
+
+    profile: NonEmptyStr
+    workspace_toml: Annotated[str, Field(min_length=1, max_length=1048576)]
+
+
 class ConfigurationVariant(Contract):
     name: NonEmptyStr
     profile: Identifier

@@ -557,6 +557,27 @@ class DiscoveryService:
             compiler.revalidate_epoch(view, "delivery")
             return summary
 
+    def definition(
+        self, subject: str, item_id: str, scope: RequestScope
+    ) -> DefinitionEntry:
+        """Return one scoped definition with the same schema identity as pages."""
+        if subject == "sources":
+            definitions = self._source_definitions(scope)
+        elif subject == "runs":
+            definitions = self._run_definitions(scope)
+        else:
+            definitions = self._definitions(subject)
+        value = definitions.get(item_id)
+        if value is None:
+            raise TychoraError("NOT_FOUND", "Definition is unavailable.")
+        return DefinitionEntry(
+            id=item_id,
+            version=str(value.get("schema_version", 1)),
+            label=str(value.get("label", item_id)),
+            definition=value,
+            schema_digest=digest("discovery-definition-v1", subject, item_id, value),
+        )
+
     def discover(
         self, request: DiscoverRequest | str, scope: RequestScope
     ) -> DiscoveryResult:
