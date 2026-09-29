@@ -266,3 +266,16 @@ class LocalArtifacts:
             return ArtifactStat(
                 **ref.model_dump(), available=True, payload_state="present"
             )
+
+    def unlink_registered(self, ref: ArtifactRef) -> None:
+        """Unlink a verified registered hash path; caller holds its SHA guard."""
+        with self._directory() as directory:
+            try:
+                with self._verified(directory, ref):
+                    pass
+            except FileNotFoundError:
+                # A prior unlink may have completed before its SQL state transition.
+                os.fsync(directory)
+                return
+            os.unlink(ref.storage_key, dir_fd=directory)
+            os.fsync(directory)

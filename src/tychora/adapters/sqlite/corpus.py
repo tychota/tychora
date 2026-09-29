@@ -264,7 +264,12 @@ class CorpusStore(PolicyRepository):
         payloads = verify_artifacts(bundle, self.artifacts)
         validate_bundle(bundle, self.registry, payloads)
         try:
-            with self._write():
+            with (
+                self.artifacts.pin_payloads(
+                    frozenset(ref.sha256 for ref in bundle.artifacts)
+                ),
+                self._write(),
+            ):
                 self._check_membership(bundle)
                 self._insert(
                     "workspaces",
@@ -274,6 +279,14 @@ class CorpusStore(PolicyRepository):
                 raised = self._register(
                     "collections", _row(bundle.collection), "collection_id"
                 )
+                existing_source = self.db.execute(
+                    "SELECT withdrawn_at FROM sources WHERE source_id=?",
+                    (bundle.source.source_id,),
+                ).fetchone()
+                if existing_source is not None and existing_source[0] is not None:
+                    raise TychoraError(
+                        "FORBIDDEN_SCOPE", "Withdrawn source cannot be republished."
+                    )
                 raised |= self._register("sources", _row(bundle.source), "source_id")
                 if raised:
                     self._bump(bundle.workspace.workspace_id)
@@ -301,7 +314,23 @@ class CorpusStore(PolicyRepository):
                         (ref.sha256,),
                     ).fetchone()
                     if current and current[0] != "present":
-                        _fail("Artifact payload is not currently present")
+                        if (
+                            self.db.execute(
+                                "SELECT 1 FROM revisions WHERE revision_id=?",
+                                (bundle.revision.revision_id,),
+                            ).fetchone()
+                            or not self.db.execute(
+                                "SELECT 1 FROM original_payload_tombstones WHERE artifact_sha=?",
+                                (ref.sha256,),
+                            ).fetchone()
+                        ):
+                            _fail("Deleted artifact cannot satisfy an old binding")
+                        # verify_artifacts already proved that the new binding
+                        # rematerialized and verified the complete hash bytes.
+                        self.db.execute(
+                            "UPDATE artifacts SET payload_state='present',payload_deleted_at=NULL WHERE artifact_sha=?",
+                            (ref.sha256,),
+                        )
                     self._insert(
                         "artifacts",
                         {

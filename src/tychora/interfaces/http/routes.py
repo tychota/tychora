@@ -438,6 +438,21 @@ def register_routes(app: FastAPI) -> None:
                 parsed.root,
             )
             return _json(result, status_code=202)
+        from tychora.contracts.operations import (
+            PurgeOriginalsMaintenance,
+            RemoveMaintenance,
+        )
+
+        if isinstance(parsed.root, (RemoveMaintenance, PurgeOriginalsMaintenance)):
+            from tychora.application.removal import run_public_removal
+
+            result = await run_public_removal(
+                request.app.state.owner,
+                _services(request).jobs.repository,
+                _scope(request),
+                parsed.root,
+            )
+            return _json(result, status_code=202 if result.job else 200)
         raise TychoraError("CAPABILITY_MISSING", "Maintenance service is unavailable.")
 
     @app.post("/v1/jobs/{job_id}/retry")

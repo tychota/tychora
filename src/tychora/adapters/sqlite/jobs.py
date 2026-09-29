@@ -95,8 +95,23 @@ class JobRepository:
         ).fetchone()
         expected = (ref.size_bytes, ref.storage_key, "present")
         if current is not None:
-            if current != expected:
+            if current[:2] != expected[:2]:
                 _fail("Artifact metadata or availability differs")
+            if current[2] != "present":
+                if not self.db.execute(
+                    "SELECT 1 FROM original_payload_tombstones WHERE artifact_sha=?",
+                    (ref.sha256,),
+                ).fetchone():
+                    _fail("Deleted artifact has no original-removal provenance")
+                # A new captured binding can reuse bytes whose prior revision
+                # was tombstoned. Verify rematerialization before restoring the
+                # payload state; old revision tombstones remain untouched.
+                with self.artifacts.open_verified(ref):
+                    pass
+                self.db.execute(
+                    "UPDATE artifacts SET payload_state='present',payload_deleted_at=NULL WHERE artifact_sha=?",
+                    (ref.sha256,),
+                )
             return
         self.db.execute(
             "INSERT INTO artifacts VALUES (?,?,?,?,'present',NULL,?)",

@@ -326,7 +326,7 @@ class SourceService:
     ) -> SourceInput:
         granted = self.owner.scope.narrow(scope)
         row = self.owner.db.execute(
-            "SELECT s.collection_id,s.registration_json,r.kind_id,r.metadata_json,r.original_sha "
+            "SELECT s.collection_id,s.registration_json,r.kind_id,r.metadata_json,r.original_sha,s.withdrawn_at "
             "FROM sources s JOIN revisions r USING(source_id) "
             "WHERE s.source_id=? AND s.collection_id IN (SELECT collection_id FROM collections WHERE workspace_id=?) "
             "ORDER BY r.captured_at DESC LIMIT 1",
@@ -336,6 +336,7 @@ class SourceService:
             row is None
             or row[0] not in granted.collection_ids
             or "write" not in granted.capabilities
+            or row[5] is not None
         ):
             raise TychoraError("FORBIDDEN_SCOPE", "Registered source is unavailable")
         registration = json.loads(row[1])

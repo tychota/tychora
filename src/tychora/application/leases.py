@@ -25,3 +25,7 @@ class LeaseSet:
     def is_pinned(self, key: str) -> bool:
         with self._lock:
             return self._counts[key] > 0
+
+    def any_pinned(self) -> bool:
+        with self._lock:
+            return bool(self._counts)

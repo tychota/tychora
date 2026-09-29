@@ -99,20 +99,22 @@ def evaluate(ctx: typer.Context, dataset_id: str, split: str) -> None:
 @group.command("purge-originals")
 def purge_originals(
     ctx: typer.Context,
+    source_id: str = typer.Argument(..., help="Withdrawn source ID."),
     revision_id: list[str] = typer.Argument(...),
     confirm: bool = False,
+    json_output: bool = typer.Option(False, "--json"),
 ) -> None:
     """Preview retained-original removal; execution requires explicit confirmation."""
-    if confirm:
-        from tychora.contracts.errors import TychoraError
-
-        fail(
-            TychoraError(
-                "CAPABILITY_MISSING",
-                "Original-removal confirmation is unavailable until the owner-authorized maintenance service is installed.",
-            )
-        )
-    _run(ctx, {"operation": "purge-originals", "revision_ids": revision_id})
+    _run(
+        ctx,
+        {
+            "operation": "purge-originals",
+            "source_id": source_id,
+            "revision_ids": revision_id,
+            "confirm_original_removal": confirm,
+        },
+        json_output=json_output,
+    )
 
 
 @group.command("purge-history")

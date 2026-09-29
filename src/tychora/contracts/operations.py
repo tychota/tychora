@@ -284,7 +284,18 @@ class CachePurgeMaintenance(Contract):
 
 class PurgeOriginalsMaintenance(Contract):
     operation: Literal["purge-originals"] = "purge-originals"
+    source_id: Identifier
     revision_ids: Annotated[tuple[Identifier, ...], Field(min_length=1)]
+    confirm_original_removal: bool = False
+
+
+class ProviderUploadConsentMaintenance(Contract):
+    """Typed, still-unavailable consent action; no runtime grant is inferred."""
+
+    operation: Literal["provider-upload-consent"] = "provider-upload-consent"
+    collection_id: Identifier
+    provider: NonEmptyStr
+    action: Literal["grant", "revoke"]
 
 
 class MigrateMaintenance(Contract):
@@ -304,6 +315,7 @@ type MaintenanceVariant = Annotated[
     | HistoryPurgeMaintenance
     | CachePurgeMaintenance
     | PurgeOriginalsMaintenance
+    | ProviderUploadConsentMaintenance
     | MigrateMaintenance,
     Field(discriminator="operation"),
 ]
@@ -340,6 +352,9 @@ class MaintenanceResult(Contract):
     plan: MaintenancePlan
     job: JobHandle | None = None
     receipt: OperationReceipt | None = None
+    deleted_payloads: NonNegativeInt = 0
+    shared_payloads: NonNegativeInt = 0
+    pending_payloads: NonNegativeInt = 0
 
 
 class SettingsActivation(Contract):

@@ -260,6 +260,14 @@ class _Management:
                     ws.owner, ws.services.jobs.repository, ws.scope, parsed.root
                 )
             )
+        if parsed.root.operation in {"remove", "purge-originals"}:
+            from tychora.application.removal import run_public_removal
+
+            return ws.bridge.call(
+                run_public_removal(
+                    ws.owner, ws.services.jobs.repository, ws.scope, parsed.root
+                )
+            )
         raise TychoraError("CAPABILITY_MISSING", "Maintenance service is unavailable.")
 
 

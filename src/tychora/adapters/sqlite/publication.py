@@ -542,7 +542,7 @@ def publish_snapshot(store: CorpusStore, plan: PublicationPlan) -> str:
                     _fail("Publication workspace identity differs")
                 for member in plan.members:
                     row = store.db.execute(
-                        "SELECT r.source_id,e.revision_id,c.workspace_id FROM extractions e JOIN revisions r USING(revision_id) JOIN sources s USING(source_id) JOIN collections c USING(collection_id) WHERE e.extraction_id=?",
+                        "SELECT r.source_id,e.revision_id,c.workspace_id FROM extractions e JOIN revisions r USING(revision_id) JOIN sources s USING(source_id) JOIN collections c USING(collection_id) WHERE e.extraction_id=? AND s.withdrawn_at IS NULL",
                         (member.extraction_id,),
                     ).fetchone()
                     if row != (member.source_id, member.revision_id, plan.workspace_id):

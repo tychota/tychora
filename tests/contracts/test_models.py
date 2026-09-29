@@ -398,7 +398,13 @@ def test_query_result_roundtrip_preserves_exact_excerpts_and_nested_records():
         {"operation": "evaluate", "dataset_id": "d", "split": "test"},
         {"operation": "history-purge", "before": "2025-02-01T12:00:00Z"},
         {"operation": "cache-purge", "namespaces": ["results"]},
-        {"operation": "purge-originals", "revision_ids": ["r"]},
+        {"operation": "purge-originals", "source_id": "s", "revision_ids": ["r"]},
+        {
+            "operation": "provider-upload-consent",
+            "collection_id": "c",
+            "provider": "voyage",
+            "action": "grant",
+        },
         {"operation": "migrate", "target_version": "2"},
     ],
 )

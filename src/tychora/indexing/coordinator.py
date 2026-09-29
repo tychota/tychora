@@ -856,7 +856,16 @@ class ProjectionCoordinator:
             self.store.resolve_snapshot(base_snapshot_id) if base_snapshot_id else None
         )
         members = (
-            {member.source_id: member for member in current.members} if current else {}
+            {
+                member.source_id: member
+                for member in current.members
+                if self.store.db.execute(
+                    "SELECT 1 FROM sources WHERE source_id=? AND withdrawn_at IS NULL",
+                    (member.source_id,),
+                ).fetchone()
+            }
+            if current
+            else {}
         )
         members[bundle.source.source_id] = SnapshotMember(
             source_id=bundle.source.source_id,

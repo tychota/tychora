@@ -540,6 +540,33 @@ class InspectionService:
             return self._inspect_job(request, granted)
         if request.subject == "runs":
             return self._inspect_run(request, scope)
+        if (
+            request.subject == "revisions"
+            and (request.original or request.view == "original")
+            and "manage" in granted.capabilities
+        ):
+            # A collection manager may distinguish a removed original binding
+            # after withdrawal. Ordinary readers still pass through eligibility
+            # below, so the tombstone is never disclosed to a hidden reader.
+            row = self.owner.db.execute(
+                "SELECT c.collection_id,c.access_floor,s.access_floor,r.access_rank,"
+                "r.original_sha,s.withdrawn_at FROM revisions r "
+                "JOIN sources s USING(source_id) JOIN collections c USING(collection_id) "
+                "WHERE r.revision_id=? AND c.workspace_id=?",
+                (request.id, self.owner.workspace_id),
+            ).fetchone()
+            if (
+                row is not None
+                and row[0] in granted.collection_ids
+                and max(row[1:4]) <= granted.access_ceiling
+                and row[5] is not None
+                and self.owner.db.execute(
+                    "SELECT 1 FROM original_payload_tombstones "
+                    "WHERE revision_id=? AND artifact_sha=?",
+                    (request.id, row[4]),
+                ).fetchone()
+            ):
+                raise TychoraError("ORIGINAL_REMOVED", "Original payload was removed.")
         with self.owner.store.pin_snapshot(None) as snapshot:
             ctx.checkpoint()
             attempt = self._attempt(snapshot, granted)

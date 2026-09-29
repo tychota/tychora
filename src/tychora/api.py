@@ -158,6 +158,16 @@ class LocalWorkspace:
             self.services: Services = self.bridge.call(
                 self.owner.run_blocking(prepare_services, ExecutionContext())
             )
+            from tychora.application.removal import RemovalService
+
+            self.bridge.call(
+                self.owner.run_blocking(
+                    lambda: RemovalService(
+                        self.owner, self.services.jobs.repository
+                    ).reconcile_pending_deletions(),
+                    ExecutionContext(),
+                )
+            )
             startup_bridge = self.bridge
             self.bridge = self.services.source_jobs.bridge
             startup_bridge.close()
