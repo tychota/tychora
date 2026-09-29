@@ -211,6 +211,96 @@ def test_disabled_or_unregistered_provider_cannot_be_granted(tmp_path):
             with pytest.raises(TychoraError) as error:
                 kb.management.run(_request("grant", provider=provider))
             assert error.value.code == "INVALID_REQUEST"
+        with pytest.raises(TychoraError) as absent:
+            kb.management.run(_request("revoke"))
+        assert absent.value.code == "INVALID_REQUEST"
+
+
+def test_disabled_profile_can_revoke_dormant_registered_grant(tmp_path):
+    workspace = tmp_path / "knowledge"
+    enabled = _config(tmp_path)
+    with Tychora.open(workspace, config=enabled, providers=ProviderBindings()) as kb:
+        granted = kb.management.run(_request("grant"))
+        grant_epoch = granted.upload_consent.policy_epoch
+    disabled = _config(tmp_path, enabled=False)
+    with Tychora.open(workspace, config=disabled, providers=ProviderBindings()) as kb:
+        assert kb._workspace.scope.upload_providers == frozenset()
+        revoked = kb.management.run(_request("revoke"))
+        assert revoked.upload_consent.collection_upload_providers == ()
+        assert revoked.upload_consent.owner_upload_providers == ()
+        assert revoked.upload_consent.policy_epoch == grant_epoch + 1
+    reenabled = _config(tmp_path)
+    with Tychora.open(workspace, config=reenabled, providers=ProviderBindings()) as kb:
+        assert kb._workspace.scope.upload_providers == frozenset()
+        with pytest.raises(TychoraError) as denied:
+            _dispatch(kb, kb.default_collection_id)
+        assert denied.value.code == "FORBIDDEN_SCOPE"
+
+
+@pytest.mark.asyncio
+async def test_public_revoke_blocks_actual_queued_provider_admission(tmp_path):
+    import asyncio
+    import threading
+
+    workspace = tmp_path / "knowledge"
+    config = _config(tmp_path)
+    with Tychora.open(workspace, config=config, providers=ProviderBindings()) as kb:
+        kb.management.run(_request("grant"))
+    with Tychora.open(workspace, config=config, providers=ProviderBindings()) as kb:
+        owner = kb._workspace.owner
+        scope = kb._workspace.scope
+        epoch = await owner.run_blocking(
+            lambda: owner.db.execute(
+                "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
+                (owner.workspace_id,),
+            ).fetchone()[0],
+            ExecutionContext(),
+        )
+        authorization = QueryUploadAuthorization(
+            payload_sha="a" * 64,
+            input_shas=("b" * 64,),
+            collection_ids=frozenset({str(kb.default_collection_id)}),
+            policy_epoch=epoch,
+        )
+        release = threading.Event()
+        lock = threading.Lock()
+        started = []
+
+        def mock_dispatch():
+            with lock:
+                started.append(True)
+            assert release.wait(5)
+            return "mock"
+
+        tasks = [
+            asyncio.create_task(
+                owner.run_query_provider(
+                    "voyage",
+                    mock_dispatch,
+                    ExecutionContext(),
+                    scope=scope,
+                    authorization=authorization,
+                )
+            )
+            for _ in range(3)
+        ]
+        try:
+            for _ in range(100):
+                if len(started) == 2:
+                    break
+                await asyncio.sleep(0.01)
+            assert len(started) == 2
+            revoked = await asyncio.to_thread(kb.management.run, _request("revoke"))
+            assert revoked.upload_consent.owner_upload_providers == ()
+            release.set()
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            assert results[:2] == ["mock", "mock"]
+            assert isinstance(results[2], TychoraError)
+            assert results[2].code == "SCOPE_CHANGED"
+            assert len(started) == 2
+        finally:
+            release.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def test_offline_profile_keeps_mock_provider_blocked_after_grant(tmp_path):

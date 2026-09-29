@@ -141,11 +141,19 @@ def apply_upload_consent(
             raise TychoraError(
                 "FORBIDDEN_SCOPE", "Collection is outside the management grant."
             )
-        if request.provider not in enabled_upload_providers(owner.config):
-            raise TychoraError(
-                "INVALID_REQUEST", "Provider is not enabled in this profile."
-            )
         collection_set, owner_set = parse_upload_policy(row[1])
+        if request.action == "grant":
+            if request.provider not in enabled_upload_providers(owner.config):
+                raise TychoraError(
+                    "INVALID_REQUEST", "Provider is not enabled in this profile."
+                )
+        elif request.provider not in REGISTERED_UPLOAD_PROVIDERS or (
+            request.provider not in enabled_upload_providers(owner.config)
+            and request.provider not in collection_set | owner_set
+        ):
+            raise TychoraError(
+                "INVALID_REQUEST", "Provider has no registered consent to revoke."
+            )
         collection_updated = set(collection_set)
         owner_updated = set(owner_set)
         for selected in (collection_updated, owner_updated):
