@@ -201,6 +201,106 @@ async def test_settings_activation_recomposes_credential_without_changing_space(
         assert current_transport.closed
 
 
+def _two_provider_config(tmp_path):
+    settings = tmp_path / "workspace.toml"
+    content = (
+        'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
+        '[defaults]\nprofile="test"\n'
+        "[configuration]\noffline=false\n"
+        '[configuration.providers.text]\nprovider="voyage"\n'
+        'model="voyage-context-4"\ncredential_ref="env:TEST_VOYAGE_KEY"\n'
+        '[configuration.providers.rerank]\nprovider="voyage"\n'
+        'model="rerank-2.5"\ncredential_ref="env:TEST_VOYAGE_KEY"\n'
+    )
+    settings.write_text(content)
+    return content, resolve_config(settings, "test", {})
+
+
+@pytest.mark.asyncio
+async def test_committed_activation_settles_each_owned_runtime_close(
+    tmp_path, monkeypatch
+):
+    from tychora.application.settings import SettingsService
+    from tychora.contracts.operations import SettingsActivation
+
+    monkeypatch.setenv("TEST_VOYAGE_KEY", "synthetic-test-key")
+    closed = []
+    transports = []
+
+    class Transport:
+        def __init__(self, *, api_key):
+            assert api_key == "synthetic-test-key"
+            self.position = len(transports)
+            transports.append(self)
+
+        def close(self):
+            closed.append(self.position)
+            if self.position == 0:
+                raise RuntimeError("private transport close detail")
+
+    monkeypatch.setattr(
+        "tychora.application.default_bindings.HttpxVoyageTransport", Transport
+    )
+    content, config = _two_provider_config(tmp_path)
+    workspace = tmp_path / "knowledge"
+    workspace.mkdir()
+    (workspace / "workspace.toml").write_text(content)
+    with Tychora.open(workspace, config=config, token_counter=OutputCounter()) as kb:
+        ws = kb._workspace
+        old = ws.services
+        for runtime in old.owned_runtimes:
+            runtime.transport()
+        assert len(transports) == 2
+        candidate = content + '\n[configuration.output]\ntitle="Committed"\n'
+        ws.runtime.admit(activation=True)
+        try:
+            accepted = await SettingsService(ws.owner, ws.runtime).activate(
+                SettingsActivation(profile="test", workspace_toml=candidate)
+            )
+        finally:
+            ws.runtime.release(activation=True)
+        assert accepted.config_sha == ws.owner.config.config_sha
+        assert ws.runtime.services is not old
+        assert (workspace / "workspace.toml").read_text() == candidate
+        assert closed == [0, 1]
+        assert ws.runtime.cleanup_diagnostics == (
+            "owned provider runtime cleanup failed",
+        )
+        assert "private transport close detail" not in repr(
+            ws.runtime.cleanup_diagnostics
+        )
+
+
+def test_workspace_close_settles_each_owned_runtime_close(tmp_path, monkeypatch):
+    monkeypatch.setenv("TEST_VOYAGE_KEY", "synthetic-test-key")
+    closed = []
+    transports = []
+
+    class Transport:
+        def __init__(self, *, api_key):
+            assert api_key == "synthetic-test-key"
+            self.position = len(transports)
+            transports.append(self)
+
+        def close(self):
+            closed.append(self.position)
+            if self.position == 0:
+                raise RuntimeError("private transport close detail")
+
+    monkeypatch.setattr(
+        "tychora.application.default_bindings.HttpxVoyageTransport", Transport
+    )
+    _, config = _two_provider_config(tmp_path)
+    with Tychora.open(
+        tmp_path / "knowledge", config=config, token_counter=OutputCounter()
+    ) as kb:
+        ws = kb._workspace
+        for runtime in ws.services.owned_runtimes:
+            runtime.transport()
+    assert closed == [0, 1]
+    assert ws.runtime.cleanup_diagnostics == ("owned provider runtime cleanup failed",)
+
+
 def test_secret_reference_uses_explicit_resolver_only_on_operation(
     tmp_path, monkeypatch
 ):
@@ -847,6 +947,8 @@ def test_failed_service_build_closes_composed_provider_runtime(tmp_path, monkeyp
 
     def counted_close(self):
         closed.append(self)
+        if len(closed) == 1:
+            raise RuntimeError("private cleanup detail")
         original_close(self)
 
     monkeypatch.setattr(VoyageRuntime, "close", counted_close)
@@ -861,13 +963,15 @@ def test_failed_service_build_closes_composed_provider_runtime(tmp_path, monkeyp
         "[configuration]\noffline=false\n"
         '[configuration.providers.text]\nprovider="voyage"\n'
         'model="voyage-context-4"\ncredential_ref="env:UNSET_TEST_KEY"\n'
+        '[configuration.providers.rerank]\nprovider="voyage"\n'
+        'model="rerank-2.5"\ncredential_ref="env:UNSET_TEST_KEY"\n'
     )
     config = resolve_config(settings, "test", {})
     with pytest.raises(RuntimeError, match="synthetic service construction"):
         Tychora.open(
             tmp_path / "knowledge", config=config, token_counter=OutputCounter()
         )
-    assert len(closed) == 1
+    assert len(closed) == 2
 
 
 def test_empty_visual_context_still_requires_verified_accounting_asset(

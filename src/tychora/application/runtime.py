@@ -234,6 +234,17 @@ def parser_process[T](
         sender.close()
 
 
+def close_owned_runtimes(runtimes: tuple) -> bool:
+    """Attempt every owned close without replacing a committed or primary result."""
+    succeeded = True
+    for runtime in runtimes:
+        try:
+            runtime.close()
+        except BaseException:  # noqa: BLE001 - cleanup cannot hide the primary result
+            succeeded = False
+    return succeeded
+
+
 class ServiceRuntime:
     """One current service binding and shared local-operation activation gate."""
 
@@ -273,6 +284,14 @@ class ServiceRuntime:
             )
             if scheduler is not None and scheduler not in self._retired_schedulers:
                 self._retired_schedulers.append(scheduler)
+
+    def record_provider_cleanup_failure(self) -> None:
+        """Keep a bounded, sanitized diagnostic for failed owned-provider cleanup."""
+        with self._gate:
+            self.cleanup_diagnostics = (
+                *self.cleanup_diagnostics[-15:],
+                "owned provider runtime cleanup failed",
+            )
 
     def close_retired_sync(self) -> None:
         """Retry owned old bridges before the final owner release."""

@@ -12,7 +12,7 @@ from uuid import UUID
 
 from tychora.application.bridge import ClientBridge
 from tychora.application.owner import WorkspaceOwner
-from tychora.application.runtime import ServiceRuntime
+from tychora.application.runtime import ServiceRuntime, close_owned_runtimes
 from tychora.application.services import Services, build_services
 from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.resolve import resolve_config, selected_workspace_profile
@@ -152,8 +152,7 @@ class LocalWorkspace:
                         self.owner, config, bindings, counter, owned_runtimes=runtimes
                     )
                 except BaseException:
-                    for runtime in runtimes:
-                        runtime.close()
+                    close_owned_runtimes(runtimes)
                     raise
 
             self.services: Services = self.bridge.call(
@@ -222,8 +221,8 @@ class LocalWorkspace:
                     self.runtime.close_retired_sync()
                 finally:
                     try:
-                        for runtime in self.services.owned_runtimes:
-                            runtime.close()
+                        if not close_owned_runtimes(self.services.owned_runtimes):
+                            self.runtime.record_provider_cleanup_failure()
                     finally:
                         self._stack.close()
 

@@ -15,6 +15,7 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.operations import SettingsActivation
 from tychora.ports.execution import ExecutionContext
 
+from .runtime import close_owned_runtimes
 from .services import build_services
 
 
@@ -156,8 +157,7 @@ class SettingsService:
                             owned_runtimes=runtimes,
                         )
                     except BaseException:
-                        for runtime in runtimes:
-                            runtime.close()
+                        close_owned_runtimes(runtimes)
                         raise
                 finally:
                     owner.config, owner.store = previous_config, previous_store
@@ -205,8 +205,8 @@ class SettingsService:
                     self.runtime.record_cleanup_failure(previous_services.source_jobs)
                 else:
                     self.runtime.record_cleanup_failure()
-            for runtime in previous_services.owned_runtimes:
-                runtime.close()
+            if not close_owned_runtimes(previous_services.owned_runtimes):
+                self.runtime.record_provider_cleanup_failure()
             return candidate
         except BaseException:
             if (
@@ -214,8 +214,7 @@ class SettingsService:
                 and self.runtime.services is not candidate_services
             ):
                 await candidate_services.source_jobs.aclose()
-                for runtime in candidate_services.owned_runtimes:
-                    runtime.close()
+                close_owned_runtimes(candidate_services.owned_runtimes)
             if self.runtime.services is not candidate_services:
                 graph = getattr(owner, "_configured_graph_store", None)
                 if graph is not None and owner.config.values.index.graph == "ladybug":
