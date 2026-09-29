@@ -55,6 +55,69 @@ def case(text, matches, *, kind="manual@1", source_key="manual.md"):
     return bundle, prepared, RankedEvidence((item,)), view
 
 
+def _mapped_code_rows(bundle, units, file_texts):
+    from tychora.adapters.code.syntax import source_maps
+    from tychora.contracts.base import FrozenJsonMap
+    from tychora.contracts.code_storage import CodeFileDescriptor
+    from tychora.contracts.corpus import LocatorRow
+    from tychora.contracts.identity import digest
+
+    mapped_units = tuple(
+        unit.model_copy(
+            update={
+                "attributes": FrozenJsonMap(
+                    {
+                        **dict(unit.attributes),
+                        "range_dependency_ids": [unit.unit_id],
+                    }
+                )
+            }
+        )
+        for unit in units
+    )
+    descriptors = []
+    for path, text in file_texts.items():
+        encoded = text.encode()
+        offsets, reverse, starts, lines = source_maps(encoded, text, "utf-8")
+        descriptors.append(
+            CodeFileDescriptor(
+                relative_path=path,
+                artifact_ref=bundle.revision.original_sha,
+                capture_entry_digest="1" * 64,
+                language="python",
+                encoding="utf-8",
+                coverage="parsed",
+                adapter_fingerprint="2" * 64,
+                byte_length=len(encoded),
+                char_length=len(text),
+                codepoint_to_byte=offsets,
+                byte_to_codepoint=reverse,
+                line_starts=starts,
+                byte_to_line=lines,
+            )
+        )
+    rows = bundle.model_copy(
+        update={
+            "units": mapped_units,
+            "locators": tuple(
+                LocatorRow(
+                    locator_id=digest("locator-v1", unit.unit_id, index),
+                    unit_id=unit.unit_id,
+                    fragment_ordinal=index,
+                    locator=locator,
+                )
+                for unit in mapped_units
+                for index, locator in enumerate(unit.locators)
+            ),
+            "code_files": tuple(descriptors),
+        }
+    )
+    from tychora.indexing.representations import _bundle_index
+
+    _bundle_index(rows)
+    return rows
+
+
 def test_segment_keeps_winning_range_and_never_bridges_denied_gap(tmp_path):
     text = "left gap right"
     match = RerankMatch(None, "placeholder", 0, len(text), "lexical", 1, 1.0)
@@ -284,7 +347,7 @@ def test_code_parent_and_child_original_ranges_do_not_duplicate(tmp_path):
             ),
         ),
     )
-    rows = bundle.model_copy(update={"units": (parent, child)})
+    rows = _mapped_code_rows(bundle, (parent, child), {"box.py": text})
     candidates = (
         FusedCandidate(("unit", parent.unit_id), 1, 1.0, {"lexical": 1}),
         FusedCandidate(("unit", child.unit_id), 2, 0.5, {"lexical": 2}),
@@ -829,7 +892,9 @@ def test_code_import_context_is_separate_bounded_and_owner_checked(tmp_path):
             }
         ),
     )
-    rows = bundle.model_copy(update={"units": tuple(units), "records": (record,)})
+    rows = _mapped_code_rows(bundle, tuple(units), {"demo.py": source}).model_copy(
+        update={"records": (record,)}
+    )
     candidate = FusedCandidate(("unit", units[1].unit_id), 1, 1.0, {"lexical": 1})
     ranked = RankedEvidence(
         (
@@ -1096,7 +1161,7 @@ def test_code_diversity_counts_each_file_not_entire_repository(tmp_path):
             for unit in units
         ),
     )
-    rows = bundle.model_copy(update={"units": units})
+    rows = _mapped_code_rows(bundle, units, {"a.py": "ABCD", "b.py": "ABCD"})
     ranked = RankedEvidence(
         tuple(
             RankedEvidenceItem(
@@ -1128,3 +1193,161 @@ def test_code_diversity_counts_each_file_not_entire_repository(tmp_path):
     result = assemble_segments(ranked, view, config(tmp_path), Counter())
     assert [segment.excerpts[0].text for segment in result.segments] == ["A", "B", "D"]
     assert result.omitted_anchors[0].unit_id == units[2].unit_id
+
+
+def test_clipped_code_citation_uses_retained_encoding_and_cr_line_map(tmp_path):
+    from hashlib import sha256
+
+    from tests.helpers.corpus import artifact
+    from tychora.contracts.base import FrozenJsonMap
+    from tychora.contracts.corpus import LocatorRow, RevisionArtifactRow
+    from tychora.contracts.evidence import CodeLocator
+    from tychora.contracts.identity import digest
+    from tychora.retrieval.segments import _citation
+
+    cases = (
+        ("latin-1", "café\rnext\rfin", 0, 6, 10),
+        ("utf-8-sig", "café\rnext\rfin", 3, 6, 10),
+    )
+    for encoding, text, preamble, start, end in cases:
+        bundle = seed_bundle(text, kind="code_file@1")
+        original = artifact(text.encode(encoding), "text/plain")
+        path = "src/é.py"
+        empty_sha = sha256(b"").hexdigest()
+        container = bundle.units[0].model_copy(
+            update={
+                "unit_id": "file-container",
+                "unit_type": "code_file",
+                "native_ref": f"{path}#file",
+                "boundary_key": path,
+                "text": "",
+                "text_sha": empty_sha,
+                "citable": False,
+                "locators": (
+                    CodeLocator(
+                        artifact_ref=original.sha256,
+                        native_ref=path,
+                        relative_path=path,
+                        char_start=0,
+                        char_end=0,
+                        byte_start=preamble,
+                        byte_end=preamble,
+                        line_start=1,
+                        line_end=1,
+                    ),
+                ),
+                "attributes": FrozenJsonMap(
+                    {
+                        "relative_path": path,
+                        "language": "python",
+                        "encoding": encoding,
+                        "coverage": "text_fallback",
+                        "artifact_ref": original.sha256,
+                        "adapter_fingerprint": "1" * 64,
+                    }
+                ),
+            }
+        )
+        source = bundle.units[0].model_copy(
+            update={
+                "parent_id": container.unit_id,
+                "ordinal": 1,
+                "unit_type": "code",
+                "boundary_key": path,
+                "locators": (
+                    CodeLocator(
+                        artifact_ref=original.sha256,
+                        native_ref=path,
+                        relative_path=path,
+                        char_start=0,
+                        char_end=len(text),
+                        byte_start=preamble,
+                        byte_end=len(text.encode(encoding)),
+                        line_start=1,
+                        line_end=3,
+                    ),
+                ),
+                "attributes": FrozenJsonMap(
+                    {
+                        "relative_path": path,
+                        "language": "python",
+                        "range_dependency_ids": [bundle.units[0].unit_id],
+                    }
+                ),
+            }
+        )
+        rows = bundle.model_copy(
+            update={
+                "units": (container, source),
+                "locators": tuple(
+                    LocatorRow(
+                        locator_id=digest("locator-v1", unit.unit_id, 0),
+                        unit_id=unit.unit_id,
+                        fragment_ordinal=0,
+                        locator=unit.locators[0],
+                    )
+                    for unit in (container, source)
+                ),
+                "artifacts": (*bundle.artifacts, original),
+                "revision_artifacts": (
+                    *bundle.revision_artifacts,
+                    RevisionArtifactRow(
+                        revision_id=bundle.revision.revision_id,
+                        role="source_file",
+                        source_ref=path,
+                        artifact_sha=original.sha256,
+                    ),
+                ),
+            }
+        )
+        prepared = prepare_extraction(rows)
+        item = RankedEvidenceItem(
+            FusedCandidate(("unit", source.unit_id), 1, 1.0, {"lexical": 1}),
+            None,
+            RerankFacts(rows, prepared, ()),
+            "disabled",
+        )
+        clipped = _citation(item, source.unit_id, start, end).locators[0]
+        assert clipped.char_start == start and clipped.char_end == end
+        assert clipped.byte_start == len(text[:start].encode(encoding))
+        assert clipped.byte_end == len(text[:end].encode(encoding))
+        assert clipped.line_start == 2
+        assert clipped.line_end == 2
+
+
+def test_clipped_code_citation_uses_validated_capture_descriptor_map():
+    from tychora.contracts.evidence import CodeLocator
+    from tychora.retrieval.segments import _citation
+
+    text = "café\rnext\rfin"
+    bundle = seed_bundle(text, kind="code_file@1")
+    source = bundle.units[0].model_copy(
+        update={
+            "unit_type": "symbol",
+            "locators": (
+                CodeLocator(
+                    artifact_ref=bundle.revision.original_sha,
+                    native_ref="x.py",
+                    relative_path="x.py",
+                    char_start=0,
+                    char_end=len(text),
+                    byte_start=0,
+                    byte_end=len(text.encode()),
+                    line_start=1,
+                    line_end=3,
+                ),
+            ),
+        }
+    )
+    rows = _mapped_code_rows(bundle, (source,), {"x.py": text})
+    prepared = prepare_extraction(rows)
+    item = RankedEvidenceItem(
+        FusedCandidate(("unit", source.unit_id), 1, 1.0, {"lexical": 1}),
+        None,
+        RerankFacts(rows, prepared, ()),
+        "disabled",
+    )
+    clipped = _citation(item, source.unit_id, 6, 10).locators[0]
+    assert clipped.byte_start == len(text[:6].encode())
+    assert clipped.byte_end == len(text[:10].encode())
+    assert clipped.line_start == clipped.line_end == 2

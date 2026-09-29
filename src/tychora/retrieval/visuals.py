@@ -207,6 +207,8 @@ def select_visuals(
                 item
                 for item in ordered
                 if item.rows.source.source_id == strongest.source_id
+                and item.rows.revision.revision_id == strongest.revision_id
+                and item.rows.extraction.extraction_id == strongest.extraction_id
             ),
             key=companion_order,
         )

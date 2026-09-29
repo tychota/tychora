@@ -611,6 +611,53 @@ def _bundle_index(bundle: RepresentationRows) -> _RetainedIndex:
     )
 
 
+def project_code_excerpt_locator(
+    bundle: RepresentationRows, unit_id: str, start: int, end: int
+) -> CodeLocator:
+    """Project a unit-local excerpt through its validated original-file code map."""
+    index = _bundle_index(bundle)
+    unit = index.units.get(unit_id)
+    if unit is None or not 0 <= start < end <= len(unit.text):
+        raise ValueError("Code excerpt is outside its retained unit")
+    locator = _one_code_locator(unit)
+    if locator is None:
+        raise ValueError("Code excerpt has no retained file locator")
+    char_start = locator.char_start + start
+    char_end = locator.char_start + end
+    descriptor = next(
+        (
+            file
+            for file in bundle.code_files
+            if (file.artifact_ref, file.relative_path)
+            == (locator.artifact_ref, locator.relative_path)
+        ),
+        None,
+    )
+    if descriptor is not None:
+        byte_start = descriptor.codepoint_to_byte[char_start]
+        byte_end = descriptor.codepoint_to_byte[char_end]
+        line_start = descriptor.byte_to_line[byte_start]
+        line_end = descriptor.byte_to_line[max(byte_start, byte_end - 1)]
+    else:
+        local_map = index.code_maps.get(unit_id)
+        if local_map is None:
+            raise ValueError("Code excerpt has no validated retained map")
+        byte_start = locator.byte_start + local_map.byte_offsets[start]
+        byte_end = locator.byte_start + local_map.byte_offsets[end]
+        line_start = locator.line_start + local_map.line_offsets[start]
+        line_end = locator.line_start + local_map.line_offsets[end - 1]
+    return locator.model_copy(
+        update={
+            "char_start": char_start,
+            "char_end": char_end,
+            "byte_start": byte_start,
+            "byte_end": byte_end,
+            "line_start": line_start,
+            "line_end": line_end,
+        }
+    )
+
+
 def _locator_intervals(
     target: EvidenceUnit, index: _RetainedIndex
 ) -> list[tuple[int, int, str]] | None:

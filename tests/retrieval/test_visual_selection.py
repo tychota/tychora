@@ -126,7 +126,11 @@ def test_native_wins_tight_limit_and_companion_is_distinct():
         "reserved_companion",
     )
     same_source = strongest.model_copy(
-        update={"source_id": native.rows.source.source_id}
+        update={
+            "source_id": native.rows.source.source_id,
+            "revision_id": native.rows.revision.revision_id,
+            "extraction_id": native.rows.extraction.extraction_id,
+        }
     )
     selected = select_visuals((native, companion), (same_source,), limit=2)
     assert [item.asset_id for item in selected] == [
@@ -176,3 +180,74 @@ async def test_visual_producer_reads_retained_zero_text_original(tmp_path):
     selected = select_visuals(candidates, ())
     assert selected[0].citations[0].locators == (fixture.rows.assets[0].locator,)
     db.close()
+
+
+def test_companion_reservation_requires_selected_text_revision():
+    from dataclasses import replace
+
+    old = visual_case("shared.png", rank=1, score=0.9, visual=False)
+    current = visual_case("shared.png", rank=2, score=0.1, visual=False)
+    assert old.rows.source.source_id == current.rows.source.source_id
+    new_revision = "revision-current"
+    new_extraction = "extraction-current"
+    new_asset = "asset-current"
+    current_rows = current.rows.model_copy(
+        update={
+            "revision": current.rows.revision.model_copy(
+                update={"revision_id": new_revision}
+            ),
+            "extraction": current.rows.extraction.model_copy(
+                update={"extraction_id": new_extraction, "revision_id": new_revision}
+            ),
+            "assets": (
+                current.rows.assets[0].model_copy(
+                    update={"asset_id": new_asset, "extraction_id": new_extraction}
+                ),
+            ),
+            "unit_assets": (
+                current.rows.unit_assets[0].model_copy(update={"asset_id": new_asset}),
+            ),
+        }
+    )
+    current_view = type(
+        "View",
+        (),
+        {
+            "asset_ids": frozenset({new_asset}),
+            "revision_ids": frozenset({new_revision}),
+            "context_unit_ids": frozenset({current_rows.units[0].unit_id}),
+            "structural_unit_ids": frozenset(),
+            "proxy_unit_ids": frozenset(),
+        },
+    )()
+    current = replace(
+        current,
+        candidate=replace(current.candidate, key=("asset", new_asset)),
+        rows=current_rows,
+        view=current_view,
+        dependency_ids=frozenset(
+            {new_asset, new_revision, current_rows.units[0].unit_id}
+        ),
+    )
+    strongest = Segment(
+        segment_id="current-text",
+        source_id=current_rows.source.source_id,
+        revision_id=new_revision,
+        extraction_id=new_extraction,
+        kind="manual@1",
+        role="supporting_evidence",
+        lane="standard",
+        excerpts=(),
+        text="current text",
+        matched_unit_ids=(),
+    )
+    selected = select_visuals((old, current), (strongest,), limit=1)
+    assert selected[0].asset_id == new_asset
+    assert selected[0].selection_reasons == (
+        "proxy_match",
+        "source_link",
+        "reserved_companion",
+    )
+    selected = select_visuals((old, current), (strongest,), limit=2)
+    assert selected[1].asset_id == old.candidate.key[1]
+    assert selected[1].selection_reasons == ("proxy_match",)

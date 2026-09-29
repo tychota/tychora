@@ -21,6 +21,7 @@ from tychora.contracts.evidence import (
 )
 from tychora.contracts.graph import EligibilityView, GraphPath
 from tychora.contracts.identity import digest
+from tychora.indexing.representations import project_code_excerpt_locator
 from tychora.ingestion.tables import continuation_context_allowed
 from tychora.ports.tokens import TokenCounter
 from tychora.retrieval.anchors import permitted_ranges, source_anchors
@@ -84,34 +85,39 @@ def _citation(item: RankedEvidenceItem, unit_id: str, start: int, end: int) -> C
     unit = item.facts.prepared.representation(unit_id).unit
     locators = []
     for locator in unit.locators:
-        if isinstance(locator, (TextLocator, CodeLocator)):
-            # These locators use original artifact coordinates; excerpts are unit-local.
+        if isinstance(locator, CodeLocator):
+            try:
+                locators.append(project_code_excerpt_locator(rows, unit_id, start, end))
+            except ValueError:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Retained code excerpt map is invalid."
+                ) from None
+        elif isinstance(locator, TextLocator):
+            # Native text locators use original artifact codepoint coordinates.
             source_start = locator.char_start + start
             source_end = locator.char_start + end
             if source_end > locator.char_end:
                 raise TychoraError(
                     "INTEGRITY_ERROR", "Source locator is shorter than retained text."
                 )
-            updates = {"char_start": source_start, "char_end": source_end}
-            if isinstance(locator, CodeLocator):
-                updates.update(
-                    byte_start=locator.byte_start
-                    + len(unit.text[:start].encode("utf-8")),
-                    byte_end=locator.byte_start + len(unit.text[:end].encode("utf-8")),
-                    line_start=locator.line_start + unit.text[:start].count("\n"),
-                    line_end=locator.line_start + unit.text[: end - 1].count("\n"),
+            locators.append(
+                locator.model_copy(
+                    update={"char_start": source_start, "char_end": source_end}
                 )
-            locators.append(locator.model_copy(update=updates))
-        elif isinstance(locator, DocumentLocator):
-            if locator.char_start < end and locator.char_end > start:
-                locators.append(
-                    locator.model_copy(
-                        update={
-                            "char_start": max(start, locator.char_start),
-                            "char_end": min(end, locator.char_end),
-                        }
-                    )
+            )
+        elif (
+            isinstance(locator, DocumentLocator)
+            and locator.char_start < end
+            and locator.char_end > start
+        ):
+            locators.append(
+                locator.model_copy(
+                    update={
+                        "char_start": max(start, locator.char_start),
+                        "char_end": min(end, locator.char_end),
+                    }
                 )
+            )
     refs = {row.artifact_sha: row.source_ref for row in rows.revision_artifacts}
     source_ref = next(
         (
