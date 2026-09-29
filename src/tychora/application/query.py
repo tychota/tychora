@@ -42,6 +42,7 @@ from tychora.contracts.evidence import (
 )
 from tychora.contracts.graph import GraphCandidates
 from tychora.contracts.identity import digest
+from tychora.contracts.indexing import FamilySpec
 from tychora.contracts.requests import (
     ImageInput,
     PassageInput,
@@ -198,17 +199,100 @@ class QueryService:
         )
 
     def _provider_fingerprint(self) -> str:
+        def factory_identity(provider: TextQueryProvider | VisualQueryProvider | None):
+            if provider is None:
+                return None
+            return {
+                "capabilities": provider.capabilities.model_dump(mode="json"),
+                "credential_binding_id": provider.credential_binding_id,
+                "remote": provider.remote,
+                "available": provider.available,
+            }
+
         return digest(
             "query-provider-v1",
             self.owner.config.query_fingerprint,
             self.owner.config.values.providers.model_dump(mode="json"),
             self.owner.config.values.index.model_dump(mode="json"),
-            self.text_provider.credential_binding_id if self.text_provider else None,
-            self.visual_provider.credential_binding_id
-            if self.visual_provider
-            else None,
+            factory_identity(self.text_provider),
+            factory_identity(self.visual_provider),
+            self.text_index is not None,
+            self.visual_index is not None,
             self.reranker.credential_binding_id if self.reranker else None,
         )
+
+    def _validate_provider_families(self, snapshot_id: str) -> None:
+        """Check actual factory identity against configured and pinned family before cache reuse."""
+        from collections.abc import Mapping
+
+        snapshot = self.owner.store.resolve_snapshot(snapshot_id)
+        for channel, provider, index, settings, modality in (
+            (
+                "text",
+                self.text_provider,
+                self.text_index,
+                self.owner.config.values.providers.text,
+                "text",
+            ),
+            (
+                "image",
+                self.visual_provider,
+                self.visual_index,
+                self.owner.config.values.providers.image,
+                "visual",
+            ),
+        ):
+            if provider is None:
+                continue
+            caps = provider.capabilities
+            if (
+                provider.caches is not self.caches
+                or caps.provider != settings.provider
+                or caps.model != settings.model
+                or caps.dimensions != settings.dimensions
+                or caps.modality != modality
+            ):
+                raise TychoraError(
+                    "INTEGRITY_ERROR",
+                    "Query provider binding differs from configuration.",
+                )
+            slot = next((slot for slot in snapshot.slots if slot.slot == channel), None)
+            if slot is None:
+                continue
+            if index is None:
+                raise TychoraError(
+                    "CAPABILITY_MISSING", "Pinned vector index is unavailable."
+                )
+            raw = slot.family.config_json.get("spec")
+            if not isinstance(raw, Mapping):
+                raise TychoraError(
+                    "INDEX_INCOMPLETE", "Pinned vector family is unavailable."
+                )
+            try:
+                spec = FamilySpec.model_validate(dict(raw))
+            except ValueError:
+                raise TychoraError(
+                    "INDEX_INCOMPLETE", "Pinned vector family is invalid."
+                ) from None
+            expected = digest(
+                f"{channel}-family-config-v1",
+                snapshot.config_sha,
+                settings.model_dump(mode="json"),
+                caps.model_dump(mode="json"),
+            )
+            if (
+                spec.config_sha != expected
+                or spec.family_id != slot.family.family_id
+                or spec.modality != modality
+                or spec.provider != caps.provider
+                or spec.model != caps.model
+                or spec.dimensions != caps.dimensions
+                or spec.representation_fingerprint != caps.representation_fingerprint
+            ):
+                raise TychoraError(
+                    "INTEGRITY_ERROR",
+                    "Query provider differs from pinned vector family.",
+                )
 
     def _replay_ready(self, request: QueryRequest) -> bool:
         """Conservatively establish current local/remote capability before channels."""
@@ -302,6 +386,9 @@ class QueryService:
         async def operation(
             attempt: EligibilityAttempt,
         ) -> DeliveredResult:
+            await self.owner.run_blocking(
+                lambda: self._validate_provider_families(attempt.view.snapshot_id), ctx
+            )
             lexical_epoch = await self.owner.run_blocking(self._lexical_epoch, ctx)
             key = result_cache_key(
                 request,

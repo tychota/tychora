@@ -105,6 +105,7 @@ class WorkspaceOwner:
         self._runtime = RuntimeIdentity(self.path)
         self._parsers = BoundedWorker(workers=2)
         self._providers: dict[str, BoundedWorker] = {}
+        self._local_text: BoundedWorker | None = None
         self._admission = Lock()
         self._closing = False
         self._handles = ExitStack()
@@ -129,11 +130,15 @@ class WorkspaceOwner:
                     owner._parsers.stop_admission()
                     for lane in owner._providers.values():
                         lane.stop_admission()
+                    if owner._local_text is not None:
+                        owner._local_text.stop_admission()
                 with ExitStack() as cleanup:
                     cleanup.callback(owner._worker.close, owner._close_storage)
                     cleanup.callback(owner._parsers.close)
                     for lane in owner._providers.values():
                         cleanup.callback(lane.close)
+                    if owner._local_text is not None:
+                        cleanup.callback(owner._local_text.close)
             finally:
                 owner._runtime.close()
 
@@ -458,6 +463,47 @@ class WorkspaceOwner:
             return call()
 
         return await drain_result(lane.submit(invoke), ctx)
+
+    async def run_local_text[T](
+        self,
+        call: Callable[[], T],
+        ctx: ExecutionContext,
+        *,
+        scope: RequestScope,
+        dependencies: frozenset[str],
+        policy_epoch: int,
+    ) -> T:
+        """Run an explicitly local port off the owner after current read authorization."""
+        ctx.checkpoint()
+        with self._admission:
+            if self._closing:
+                raise TychoraError(
+                    "WORKSPACE_BUSY",
+                    "Workspace is closing; retry shortly",
+                    retryable=True,
+                )
+            if self._local_text is None:
+                self._local_text = BoundedWorker(workers=2)
+            lane = self._local_text
+
+        def invoke() -> T:
+            ctx.checkpoint()
+            self._worker.submit(
+                lambda: self.upload_policy.authorize_local(
+                    scope, dependencies, policy_epoch
+                )
+            ).result()
+            ctx.checkpoint()
+            return call()
+
+        result = await drain_result(lane.submit(invoke), ctx)
+        await self.run_blocking(
+            lambda: self.upload_policy.authorize_local(
+                scope, dependencies, policy_epoch
+            ),
+            ctx,
+        )
+        return result
 
     async def run_captured_provider[T](
         self,
@@ -1130,6 +1176,33 @@ class CanonicalUploadPolicy:
         try:
             self._check_epoch(policy_epoch)
             self._authorize_dependencies(dependencies, provider, granted)
+        except (ValueError, TypeError, KeyError):
+            _deny()
+        finally:
+            owner.db.rollback()
+
+    def authorize_local(
+        self,
+        scope: RequestScope,
+        dependencies: frozenset[str],
+        policy_epoch: int,
+    ) -> None:
+        owner = self._owner
+        granted = owner.scope.narrow(scope)
+        if (
+            "read" not in granted.capabilities
+            or not dependencies
+            or len(dependencies) > 2048
+        ):
+            _deny()
+        if owner.db.in_transaction:
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Local authorization requires a fresh canonical read"
+            )
+        owner.db.execute("BEGIN")
+        try:
+            self._check_epoch(policy_epoch)
+            self._authorize_dependencies(dependencies, None, granted)
         except (ValueError, TypeError, KeyError):
             _deny()
         finally:

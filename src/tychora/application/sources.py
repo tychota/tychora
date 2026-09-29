@@ -275,6 +275,35 @@ class SourceService:
             "add", source, scope, idempotency_key, ctx or ExecutionContext()
         )
 
+    async def accept_add(
+        self,
+        source: SourceInput,
+        scope: RequestScope,
+        idempotency_key: str | None = None,
+        *,
+        ctx: ExecutionContext | None = None,
+    ) -> JobHandle:
+        return await self._accept(
+            "add", source, scope, idempotency_key, ctx or ExecutionContext()
+        )
+
+    async def accept_sync(
+        self,
+        source_id_value: str,
+        scope: RequestScope,
+        idempotency_key: str | None = None,
+        *,
+        ctx: ExecutionContext | None = None,
+    ) -> tuple[JobHandle, SourceInput]:
+        context = ctx or ExecutionContext()
+        source = await self.owner.run_blocking(
+            lambda: self._source_for_sync(source_id_value, scope), context
+        )
+        return (
+            await self._accept("sync", source, scope, idempotency_key, context),
+            source,
+        )
+
     async def sync(
         self,
         source_id_value: str,
@@ -347,21 +376,73 @@ class SourceService:
         key: str | None,
         ctx: ExecutionContext,
     ) -> JobHandle:
+        handle = await self._accept(operation, source, scope, key, ctx)
+        return await self.execute_accepted(handle, source, scope, ctx=ctx)
+
+    async def _accept(
+        self,
+        operation: str,
+        source: SourceInput,
+        scope: RequestScope,
+        key: str | None,
+        ctx: ExecutionContext,
+    ) -> JobHandle:
         granted = self.owner.scope.narrow(scope)
         if str(source.root.collection_id) not in granted.collection_ids:
             raise TychoraError(
                 "FORBIDDEN_SCOPE", "Source collection is outside the grant"
             )
-        jobs, acquirer = await self._ports(ctx)
+        jobs, _ = await self._ports(ctx)
         config_ref = await self._config_ref(ctx)
-        handle = await self.owner.run_blocking(
+        return await self.owner.run_blocking(
             lambda: jobs.accept(
                 operation, granted, key, source_intent(source), config_ref
             ),
             ctx,
         )
+
+    async def execute_accepted(
+        self,
+        handle: JobHandle,
+        source: SourceInput,
+        scope: RequestScope,
+        *,
+        ctx: ExecutionContext | None = None,
+    ) -> JobHandle:
+        """Resume only the exact canonical intent and configuration accepted by owner."""
+        context = ctx or ExecutionContext()
+        granted = self.owner.scope.narrow(scope)
+        jobs, acquirer = await self._ports(context)
+        config_ref = await self._config_ref(context)
+
+        def validated() -> JobHandle:
+            status = jobs.get(handle.id)
+            jobs.authorize(handle.id, granted, write=True)
+            if (
+                status.operation != handle.operation
+                or status.request_digest
+                != digest(
+                    "request-v1",
+                    self.owner.workspace_id,
+                    granted.principal_id,
+                    handle.operation,
+                    source_intent(source),
+                )
+                or status.effective_config.sha256 != config_ref.sha256
+                or str(source.root.collection_id) not in granted.collection_ids
+            ):
+                raise TychoraError(
+                    "IDEMPOTENCY_CONFLICT", "Accepted job input differs."
+                )
+            return JobHandle(
+                id=status.id, operation=status.operation, state=status.state
+            )
+
+        handle = await self.owner.run_blocking(validated, context)
         if handle.state != "queued":
             return handle
+        operation = handle.operation
+        ctx = context
         await self.owner.run_blocking(lambda: jobs.start(handle.id), ctx)
         try:
             await self.owner.run_blocking(lambda: jobs.stage(handle.id, "acquire"), ctx)
@@ -578,14 +659,23 @@ class SourceService:
             ).fetchone()[0],
             ctx,
         )
+        dependencies = frozenset().union(
+            *(group.dependency_ids for group in prepared.text_groups)
+        )
+        if self.coordinator.local_text_embedder is embedder:
+            return await self.owner.run_local_text(
+                lambda: embedder.embed_groups(prepared.text_groups, ctx),
+                ctx,
+                scope=scope,
+                dependencies=dependencies,
+                policy_epoch=epoch,
+            )
         return await self.owner.run_provider(
             embedder.capabilities.provider,
             lambda: embedder.embed_groups(prepared.text_groups, ctx),
             ctx,
             scope=scope,
-            dependencies=frozenset().union(
-                *(group.dependency_ids for group in prepared.text_groups)
-            ),
+            dependencies=dependencies,
             policy_epoch=epoch,
         )
 
