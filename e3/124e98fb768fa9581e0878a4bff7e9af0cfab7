@@ -1,0 +1,69 @@
+tests/retrieval/test_caches.py
+  s_35b641b930a96d::t_2a0b182cd3992f 43,45,55
+  s_35b641b930a96d::t_2c9d533d7fac9a 66-79
+  s_35b641b930a96d::t_ea855bcdf2eb3d 80-81
+src/tychora/retrieval/eligibility.py
+  s_35b641b930a96d::t_0ce6844c3d097d 779,813,816,827-828
+  s_35b641b930a96d::t_2ed37d3cedf2e5 829-832
+src/tychora/retrieval/segments.py
+  s_35b641b930a96d::t_8ffaa26072e43f 766,775-776,782
+src/tychora/adapters/voyage/rerank.py
+  s_35b641b930a96d::t_03b9f06e3eea53 45-48
+  s_35b641b930a96d::t_3f7c305b6a8622 49-52
+src/tychora/adapters/voyage/query.py
+  s_35b641b930a96d::t_6fd2b68bab5514 1-45,50-100,105-116
+  s_35b641b930a96d::t_07eb05d9dde85b 46-49,101-104
+src/tychora/retrieval/cache.py
+  s_35b641b930a96d::t_1b2b3310da17e1 10,21,29-30,51,55,59-68,75,77,79,81-82,85-87,89,92,95,111-112,115
+tests/operations/test_history.py
+  s_35b641b930a96d::t_07053a64e6d03c 155-166
+src/tychora/ports/query.py
+  s_35b641b930a96d::t_86a40c1aeb78ce 36-38,61-63
+  s_35b641b930a96d::t_69952dda367389 1-35,39-60,64-67
+src/tychora/application/query.py
+  s_35b641b930a96d::t_157b1423991a5d 206,218-221,231-234,302,431-432,694-695,782-784
+  s_35b641b930a96d::t_9e485e86ee8034 433,448,477,582,617
+  s_35b641b930a96d::t_ec2901f5844433 441,463
+  s_35b641b930a96d::t_1afd719bc766f9 213-217,222-230,235-243,269
+  s_35b641b930a96d::t_5e74fbb70fc78c 19,56,164,166,180,182,207-208,210,286-289,682,688,692-693,770,776,780-781
+  s_35b641b930a96d::t_7d637b80ed4b3d 944-957
+  s_35b641b930a96d::t_38ff1d57a76050 245-246
+  s_35b641b930a96d::t_277b6675067c66 350-375,384
+  s_35b641b930a96d::t_50d9f2a8779e9c 244,247-252
+  s_35b641b930a96d::t_bb562c0c12dc80 211-212
+tests/retrieval/test_query.py
+  s_35b641b930a96d::t_d6446533065994 583
+  s_35b641b930a96d::t_7162ebd580c7c0 369-389,398-399
+  s_35b641b930a96d::t_8918a7c3d8dfd0 5,41,579-582,589-617,621-645
+  s_35b641b930a96d::t_1ff80a9a86dbab 329-335,618-620,672-674
+  s_35b641b930a96d::t_7b2e0d89aec206 323-328,578,795
+  s_35b641b930a96d::t_caf5ff1943bd4c 390-397
+  s_35b641b930a96d::t_5fde0b1970768f 584-588
+  s_35b641b930a96d::t_fef8084b1bb3c9 22-25
+  s_35b641b930a96d::t_342fd4545465fc 647-651,653-671,675-677
+  s_35b641b930a96d::t_6fefaf72cd3220 652
+  s_35b641b930a96d::t_cf3cd78d095c70 537,779
+  s_35b641b930a96d::t_983a247fcc1140 646
+src/tychora/adapters/voyage/runtime.py
+  s_35b641b930a96d::t_ecbb032107ad93 60-64
+src/tychora/adapters/sqlite/history.py
+  s_35b641b930a96d::t_f9b1c380e0406b 224-229,243-244
+  s_35b641b930a96d::t_134e03040b1ffb 240,287,290-299
+  s_35b641b930a96d::t_4227208cd60a4c 230
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "e3124e98fb768fa9581e0878a4bff7e9af0cfab7",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
