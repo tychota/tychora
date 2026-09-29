@@ -1,0 +1,65 @@
+src/tychora/interfaces/http/server.py
+  s_35b641b930a96d::t_7365f637273ac6 1-59
+src/tychora/interfaces/http/__init__.py
+  s_35b641b930a96d::t_2f075872194b34 1
+tests/transports/test_http.py
+  s_35b641b930a96d::t_8006441bbd275f 1-6,8-1001
+  s_35b641b930a96d::t_5b00c08242e82b 7
+src/tychora/application/services.py
+  s_35b641b930a96d::t_1fd1c6bc4b650d 6,11,41-42,136-236,351-353,376-377
+  s_35b641b930a96d::t_ad181f77124ce0 354
+docs/http.md
+  s_35b641b930a96d::t_6ef8a9c78e8868 1-2,4,6-23,25-26
+  s_35b641b930a96d::t_68c65d0ca06d13 3
+  s_35b641b930a96d::t_b7a1524d947335 5
+  s_35b641b930a96d::t_95fd43f3300f09 24
+src/tychora/application/settings.py
+  s_35b641b930a96d::t_a2ec8f5fcd833b 1-98,113-162
+  s_35b641b930a96d::t_ad181f77124ce0 99-112
+src/tychora/application/discovery.py
+  s_35b641b930a96d::t_4842dbd49d3e02 560-580
+src/tychora/application/jobs.py
+  s_35b641b930a96d::t_df2fcf953f7b72 8,13,86-123,166-172
+src/tychora/application/runtime.py
+  s_35b641b930a96d::t_cd854ab0917dbe 162-173,234-272
+src/tychora/application/sources.py
+  s_35b641b930a96d::t_3809fa35c04abe 115,336,412,414,425-437
+src/tychora/clients/async_.py
+  s_35b641b930a96d::t_6bc8548665fa14 222-225
+src/tychora/clients/sync.py
+  s_35b641b930a96d::t_e37cb1901d4c19 216-219
+src/tychora/contracts/errors.py
+  s_35b641b930a96d::t_e2d215f2e27e1d 24
+src/tychora/contracts/jobs.py
+  s_35b641b930a96d::t_d9bae9296d4f9c 22-26
+src/tychora/contracts/operations.py
+  s_35b641b930a96d::t_8ba911712934db 284-290
+src/tychora/interfaces/http/app.py
+  s_35b641b930a96d::t_14850736ee3df0 1-144
+src/tychora/interfaces/http/auth.py
+  s_35b641b930a96d::t_6388702be26a5e 1-120
+src/tychora/interfaces/http/client.py
+  s_35b641b930a96d::t_6f721bdc2935c3 1-724
+src/tychora/interfaces/http/events.py
+  s_35b641b930a96d::t_e6833a3aca957d 1-45
+src/tychora/interfaces/http/routes.py
+  s_35b641b930a96d::t_e971965de177c9 1-389
+tests/transports/test_delegation.py
+  s_35b641b930a96d::t_80ebe7e5a1ab02 1-176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "82a8cf23d9d4bc30002d04b46ce8ac6e044b745e",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
