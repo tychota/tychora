@@ -21,34 +21,50 @@ def state(ctx: typer.Context) -> CLIState:
     return ctx.obj
 
 
+def resolved_config(options: CLIState):
+    """Resolve explicit profile/offline intent before owner construction."""
+    from tychora.contracts.errors import TychoraError
+
+    if not (options.profile or options.offline):
+        return None
+    settings = options.workspace / "workspace.toml"
+    if not settings.exists():
+        if options.profile:
+            raise TychoraError(
+                "INVALID_REQUEST", "Initialize a workspace before selecting --profile."
+            )
+        return None  # A newly created workspace uses the built-in offline profile.
+    from tychora.configuration.resolve import (
+        resolve_config,
+        selected_workspace_profile,
+    )
+
+    config = resolve_config(
+        settings, options.profile or selected_workspace_profile(settings), {}
+    )
+    if options.offline and not config.values.offline:
+        raise TychoraError(
+            "CAPABILITY_MISSING", "Select an offline workspace profile for --offline."
+        )
+    return config
+
+
 @contextmanager
 def client(options: CLIState):
     from tychora import Tychora
     from tychora.contracts.errors import TychoraError
 
-    config = None
-    settings = options.workspace / "workspace.toml"
-    if (options.profile or options.offline) and settings.exists():
-        from tychora.configuration.resolve import (
-            resolve_config,
-            selected_workspace_profile,
-        )
-
-        config = resolve_config(
-            settings,
-            options.profile or selected_workspace_profile(settings),
-            {},
-        )
-        if options.offline and not config.values.offline:
-            raise TychoraError(
-                "CAPABILITY_MISSING",
-                "Select an offline workspace profile for --offline.",
-            )
+    config = resolved_config(options)
     try:
         kb = Tychora.open(options.workspace, config=config)
     except TychoraError as error:
         if error.code != "WORKSPACE_BUSY":
             raise
+        if options.profile:
+            raise TychoraError(
+                "PROFILE_INCOMPATIBLE",
+                "Cannot verify the busy owner's profile; retry without --profile or stop that owner.",
+            ) from None
         if options.offline:
             raise TychoraError(
                 "CAPABILITY_MISSING",

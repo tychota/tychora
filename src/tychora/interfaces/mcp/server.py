@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextvars import ContextVar
+from typing import TYPE_CHECKING
 
 from mcp.server import MCPServer
 from mcp.server.context import ServerRequestContext
@@ -13,6 +14,9 @@ from tychora.application.runtime import ServiceRuntime
 from tychora.application.services import Services
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.requests import RequestScope
+
+if TYPE_CHECKING:
+    from tychora.configuration.models import ResolvedConfig
 
 _current: ContextVar[tuple[Services, RequestScope] | None] = ContextVar(
     "tychora_mcp_operation", default=None
@@ -147,7 +151,11 @@ def build_mcp(services: Services, principal: RequestScope) -> MCPServer:
 
 
 async def serve_stdio(
-    path, *, principal: RequestScope | None = None, token_counter=None
+    path,
+    *,
+    principal: RequestScope | None = None,
+    token_counter=None,
+    config: ResolvedConfig | None = None,
 ) -> None:
     """Own stdio and a private authenticated sibling-control listener together."""
     import asyncio
@@ -159,7 +167,7 @@ async def serve_stdio(
     from tychora.interfaces.http.app import create_app
     from tychora.interfaces.http.auth import LocalAuth
 
-    with Tychora.open(path, token_counter=token_counter) as kb:
+    with Tychora.open(path, token_counter=token_counter, config=config) as kb:
         owner = kb._workspace.owner
         scope = owner.scope if principal is None else owner.scope.narrow(principal)
         mcp_server = build_mcp(kb._workspace.services, scope)

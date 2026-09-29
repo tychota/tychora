@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import socket
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import uvicorn
 
@@ -14,11 +15,20 @@ from tychora import Tychora
 from .app import create_app
 from .auth import LocalAuth
 
+if TYPE_CHECKING:
+    from tychora.configuration.models import ResolvedConfig
 
-async def serve(path: Path, *, port: int = 0, token_counter=None) -> None:
+
+async def serve(
+    path: Path,
+    *,
+    port: int = 0,
+    token_counter=None,
+    config: ResolvedConfig | None = None,
+) -> None:
     if not 0 <= port <= 65535:
         raise ValueError("Port is out of range")
-    with Tychora.open(path, token_counter=token_counter) as kb:
+    with Tychora.open(path, token_counter=token_counter, config=config) as kb:
         owner = kb._workspace.owner
         services = kb._workspace.services
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -33,14 +43,14 @@ async def serve(path: Path, *, port: int = 0, token_counter=None) -> None:
             auth = LocalAuth({token: owner.scope}, authority=authority)
             app = create_app(owner, services, auth)
             owner._runtime.publish_endpoint(authority)
-            config = uvicorn.Config(
+            uvicorn_config = uvicorn.Config(
                 app,
                 host="127.0.0.1",
                 port=sock.getsockname()[1],
                 workers=1,
                 log_level="warning",
             )
-            server = uvicorn.Server(config)
+            server = uvicorn.Server(uvicorn_config)
             try:
                 await server.serve(sockets=[sock])
             finally:

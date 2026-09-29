@@ -7,7 +7,7 @@ from pathlib import Path
 import typer
 
 from .commands import add, init, inspect, manage, search, serve
-from .commands._common import CLIState
+from .commands._common import CLIState, fail
 
 app = typer.Typer(
     no_args_is_help=True,
@@ -32,10 +32,14 @@ def root(
     json_output: bool = typer.Option(False, "--json", help="Canonical JSON on stdout."),
 ) -> None:
     """Configure a workspace, add sources, search and inspect evidence."""
+    from tychora.contracts.errors import TychoraError
+
     if json_output and format not in (None, "json"):
-        raise typer.BadParameter("--json conflicts with --format")
+        fail(TychoraError("INVALID_REQUEST", "--json conflicts with --format."))
     if format not in (None, "json", "markdown", "agent"):
-        raise typer.BadParameter("Format must be json, markdown, or agent")
+        fail(
+            TychoraError("INVALID_REQUEST", "Format must be json, markdown, or agent.")
+        )
     ctx.obj = CLIState(workspace, profile, offline, "json" if json_output else format)
 
 

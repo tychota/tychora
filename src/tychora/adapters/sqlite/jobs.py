@@ -414,6 +414,7 @@ class JobRepository:
         if (
             type(sequence) is not int
             or sequence < 0
+            or sequence > 9223372036854775807
             or type(limit) is not int
             or not 1 <= limit <= 1000
         ):

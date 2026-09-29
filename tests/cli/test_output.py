@@ -107,7 +107,34 @@ def test_busy_owner_cli_delegates_discovery(tmp_path):
         )
         assert result.returncode == 0, result.stderr
         assert json.loads(result.stdout)["subject"] == "kinds"
+        profiled = _run(
+            "--workspace",
+            workspace,
+            "--profile",
+            "local",
+            "inspect",
+            "kinds",
+            "--json",
+            cwd=tmp_path,
+        )
+        assert profiled.returncode == 1
+        assert profiled.stdout == ""
+        assert json.loads(profiled.stderr)["code"] == "PROFILE_INCOMPATIBLE"
         if cache:
+            profiled_setup = _run(
+                "--workspace",
+                workspace,
+                "--profile",
+                "local",
+                "manage",
+                "setup",
+                "--asset",
+                "output-tokenizer",
+                "--json",
+                cwd=tmp_path,
+            )
+            assert profiled_setup.returncode == 1
+            assert json.loads(profiled_setup.stderr)["code"] == "PROFILE_INCOMPATIBLE"
             setup = _run(
                 "--workspace",
                 workspace,

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import typer
 
-from ._common import fail, state
+from ._common import fail, resolved_config, state
 
 
 def register(app: typer.Typer) -> None:
@@ -24,14 +24,17 @@ def register(app: typer.Typer) -> None:
 
         options = state(ctx)
         try:
+            config = resolved_config(options)
             if stdio:
                 from tychora.interfaces.mcp.server import serve_stdio
 
-                asyncio.run(serve_stdio(Path(options.workspace)))
+                asyncio.run(serve_stdio(Path(options.workspace), config=config))
             else:
                 from tychora.interfaces.http.server import serve as serve_http
 
-                asyncio.run(serve_http(Path(options.workspace), port=port))
+                asyncio.run(
+                    serve_http(Path(options.workspace), port=port, config=config)
+                )
         except KeyboardInterrupt:
             raise typer.Exit(130) from None
         except Exception as error:  # noqa: BLE001 - command boundary rethrows unknown exceptions

@@ -161,6 +161,114 @@ def test_conflicting_output_switches_are_rejected(tmp_path):
     assert not (tmp_path / "workspace").exists()
 
 
+def test_root_output_conflict_is_canonical_before_workspace_creation(tmp_path):
+    workspace = tmp_path / "workspace"
+    result = CliRunner().invoke(
+        app,
+        [
+            "--workspace",
+            str(workspace),
+            "--json",
+            "--format",
+            "markdown",
+            "inspect",
+            "kinds",
+        ],
+    )
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert json.loads(result.stderr)["code"] == "INVALID_REQUEST"
+    assert not workspace.exists()
+
+
+def test_serve_passes_explicit_profile_to_http_host(tmp_path, monkeypatch):
+    from tychora.interfaces.http import server
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "workspace.toml").write_text(
+        'schema_version = 1\n[profiles.local]\nbuiltin = "documents@1"\n'
+        '[profiles.alternate]\nbuiltin = "documents@1"\n'
+        '[defaults]\nprofile = "local"\n'
+    )
+    selected = []
+
+    async def fake_serve(path, *, port, config):
+        selected.append((path, port, config.profile, config.values.offline))
+
+    monkeypatch.setattr(server, "serve", fake_serve)
+    result = CliRunner().invoke(
+        app,
+        [
+            "--workspace",
+            str(workspace),
+            "--profile",
+            "alternate",
+            "--offline",
+            "serve",
+        ],
+    )
+    assert result.exit_code == 0, result.stderr
+    assert selected == [(workspace, 0, "alternate", True)]
+
+
+def test_serve_rejects_offline_flag_for_online_profile_before_host(
+    tmp_path, monkeypatch
+):
+    from tychora.interfaces.http import server
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "workspace.toml").write_text(
+        'schema_version = 1\n[profiles.local]\nbuiltin = "documents@1"\n'
+        '[defaults]\nprofile = "local"\n[configuration]\noffline = false\n'
+    )
+    called = []
+
+    async def fake_serve(path, *, port, config):
+        called.append(path)
+
+    monkeypatch.setattr(server, "serve", fake_serve)
+    result = CliRunner().invoke(
+        app, ["--workspace", str(workspace), "--offline", "serve"]
+    )
+    assert result.exit_code == 1
+    assert json.loads(result.stderr)["code"] == "CAPABILITY_MISSING"
+    assert called == []
+
+
+def test_serve_passes_explicit_profile_to_stdio_host(tmp_path, monkeypatch):
+    from tychora.interfaces.mcp import server
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "workspace.toml").write_text(
+        'schema_version = 1\n[profiles.local]\nbuiltin = "documents@1"\n'
+        '[profiles.alternate]\nbuiltin = "documents@1"\n'
+        '[defaults]\nprofile = "local"\n'
+    )
+    selected = []
+
+    async def fake_stdio(path, *, config):
+        selected.append((path, config.profile, config.values.offline))
+
+    monkeypatch.setattr(server, "serve_stdio", fake_stdio)
+    result = CliRunner().invoke(
+        app,
+        [
+            "--workspace",
+            str(workspace),
+            "--profile",
+            "alternate",
+            "--offline",
+            "serve",
+            "--stdio",
+        ],
+    )
+    assert result.exit_code == 0, result.stderr
+    assert selected == [(workspace, "alternate", True)]
+
+
 def test_public_inspect_api_exposes_scoped_records(tmp_path):
     from tychora import Tychora
     from tychora.contracts.errors import TychoraError
@@ -344,3 +452,54 @@ async def test_generic_http_inspect_roundtrips_binary_original(tmp_path):
         assert response.status_code == 200, response.text
         result = InspectionResult.model_validate_json(response.content)
         assert result.payload == payload
+
+
+@pytest.mark.asyncio
+async def test_job_event_cursor_rejects_oversized_integer_at_public_and_http_boundaries(
+    tmp_path,
+):
+    from tychora import Tychora
+    from tychora.contracts.errors import TychoraError
+    from tychora.interfaces.http.app import create_app
+    from tychora.interfaces.http.auth import LocalAuth
+
+    class Counter:
+        model = "synthetic-counter"
+        tokenizer_id = "cl100k_base"
+
+        def count(self, text):
+            return len(text)
+
+    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+        accepted = kb.sources.add(
+            {
+                "type": "text",
+                "source_key": "cursor-source",
+                "collection_id": "default",
+                "kind": "manual@1",
+                "format": "text",
+                "text": "Synthetic cursor record.",
+                "metadata": {"title": "Cursor", "publisher": "Example", "edition": "1"},
+            }
+        )
+        assert kb.jobs.wait(accepted.id, timeout=5).state == "succeeded"
+        huge = 2**100
+        with pytest.raises(TychoraError) as direct:
+            kb.jobs.events_after(accepted.id, after=huge)
+        assert direct.value.code == "INVALID_REQUEST"
+        owner = kb._workspace.owner
+        app = create_app(
+            owner,
+            kb._workspace.services,
+            LocalAuth({"owner": owner.scope}, authority="127.0.0.1:8765"),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://127.0.0.1:8765",
+            headers={"Authorization": "Bearer owner"},
+        ) as http:
+            response = await http.get(
+                f"/v1/jobs/{accepted.id}/events/page", params={"after": huge}
+            )
+        assert response.status_code == 400
+        assert response.json()["code"] == "INVALID_REQUEST"

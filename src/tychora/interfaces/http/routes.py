@@ -191,6 +191,8 @@ def register_routes(app: FastAPI) -> None:
 
     @app.get("/v1/jobs/{job_id}/events/page")
     async def job_event_page(job_id: str, request: Request, after: int = 0):
+        if after < 0 or after > 9223372036854775807:
+            raise TychoraError("INVALID_REQUEST", "Event cursor is invalid.")
         events = (
             await _services(request)
             .jobs_for_scope(_scope(request))
