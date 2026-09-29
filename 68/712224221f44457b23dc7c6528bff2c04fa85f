@@ -1,0 +1,24 @@
+tests/security/test_upload_consent.py
+  s_35b641b930a96d::t_6d7a68e59e1d30 214-216
+  s_35b641b930a96d::t_cc75cdae47288d 219-303
+  s_35b641b930a96d::t_1369a801e9165b 217-218
+src/tychora/application/consent.py
+  s_35b641b930a96d::t_6bfe423851de68 152-153
+  s_35b641b930a96d::t_6d4975715becdd 144-151,155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "68712224221f44457b23dc7c6528bff2c04fa85f",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
