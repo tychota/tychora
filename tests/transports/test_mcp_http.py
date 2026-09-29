@@ -6,6 +6,7 @@ import os
 import socket
 import sys
 import time
+from io import BytesIO
 from typing import Annotated
 
 import httpx2
@@ -18,10 +19,12 @@ from pydantic import BaseModel
 
 from tychora import Tychora
 from tychora.contracts.identity import canonical_bytes
+from tychora.contracts.operations import InspectRequest
 from tychora.contracts.requests import RequestScope
 from tychora.interfaces.http.app import create_app
 from tychora.interfaces.http.auth import LocalAuth
 from tychora.interfaces.mcp.tools import _result, _serialized_structured
+from tychora.ports.execution import ExecutionContext
 
 
 class RecordingStream(httpx2.AsyncByteStream):
@@ -160,6 +163,15 @@ async def test_mounted_http_reader_auth_and_sdk_client(tmp_path):
                             t.name for t in tools.tools
                         }
                         assert "add_sources" not in {t.name for t in tools.tools}
+                        malformed = await client.call_tool(
+                            "discover", {"request": {"subject": "secret-example"}}
+                        )
+                        assert malformed.is_error
+                        assert (
+                            json.loads(malformed.content[0].text)["code"]
+                            == "INVALID_REQUEST"
+                        )
+                        assert "secret-example" not in malformed.content[0].text
                         result = await client.call_tool(
                             "discover", {"request": {"subject": "kinds"}}
                         )
@@ -199,6 +211,31 @@ async def test_mounted_http_reader_auth_and_sdk_client(tmp_path):
                             mode="legacy",
                         ) as writer,
                     ):
+                        writer_tools = await writer.list_tools()
+                        add_schema = next(
+                            tool.input_schema
+                            for tool in writer_tools.tools
+                            if tool.name == "add_sources"
+                        )
+                        source_schema = add_schema["properties"]["source"]
+                        assert {"$ref": "#/$defs/SourceVariant"} in source_schema[
+                            "anyOf"
+                        ]
+                        assert {"source_key", "collection_id", "kind", "text"} <= set(
+                            add_schema["$defs"]["TextSource"]["required"]
+                        )
+                        assert {"const": "default", "type": "string"} in add_schema[
+                            "$defs"
+                        ]["TextSource"]["properties"]["collection_id"]["anyOf"]
+                        malformed_action = await writer.call_tool(
+                            "add_sources", {"action": "secret-example"}
+                        )
+                        assert malformed_action.is_error
+                        assert (
+                            json.loads(malformed_action.content[0].text)["code"]
+                            == "INVALID_REQUEST"
+                        )
+                        assert "secret-example" not in malformed_action.content[0].text
                         accepted = await writer.call_tool(
                             "add_sources",
                             {
@@ -355,6 +392,91 @@ async def test_mounted_http_reader_auth_and_sdk_client(tmp_path):
                         finally:
                             release.set()
                         assert not (await asyncio.wait_for(active, 5)).is_error
+                        revision_id = coverage.structured_content["result"][
+                            "revisions"
+                        ][0]["revision_id"]
+                        original = await writer.call_tool(
+                            "inspect",
+                            {
+                                "request": {
+                                    "subject": "revisions",
+                                    "id": revision_id,
+                                    "original": True,
+                                }
+                            },
+                        )
+                        assert not original.is_error, original.content
+
+                        def enlarge_original():
+                            payload = b"x" * (4 * 1024 * 1024 + 256)
+                            ref = owner.artifacts.put_stream(
+                                BytesIO(payload), "text/plain"
+                            )
+                            owner.db.execute(
+                                "INSERT INTO artifacts(artifact_sha,size_bytes,media_type,storage_key,created_at) "
+                                "VALUES (?,?,?,?,?)",
+                                (
+                                    ref.sha256,
+                                    ref.size_bytes,
+                                    ref.media_type,
+                                    ref.storage_key,
+                                    "2026-01-01T00:00:00Z",
+                                ),
+                            )
+                            old_sha = owner.db.execute(
+                                "SELECT original_sha FROM revisions WHERE revision_id=?",
+                                (revision_id,),
+                            ).fetchone()[0]
+                            owner.db.execute(
+                                "UPDATE revisions SET original_sha=? WHERE revision_id=?",
+                                (ref.sha256, revision_id),
+                            )
+                            owner.db.execute(
+                                "UPDATE revision_artifacts SET artifact_sha=? "
+                                "WHERE revision_id=? AND role='original'",
+                                (ref.sha256, revision_id),
+                            )
+                            owner.db.execute(
+                                "UPDATE locators SET artifact_sha=?, "
+                                "details_json=json_set(details_json,'$.artifact_ref',?) "
+                                "WHERE artifact_sha=?",
+                                (ref.sha256, ref.sha256, old_sha),
+                            )
+
+                        await owner.run_blocking(enlarge_original, ExecutionContext())
+                        direct_original = (
+                            await kb._workspace.services.inspection.inspect(
+                                InspectRequest(
+                                    subject="revisions", id=revision_id, original=True
+                                ),
+                                owner.scope,
+                                ExecutionContext(),
+                            )
+                        )
+                        assert len(direct_original.payload) > 4 * 1024 * 1024
+                        assert (
+                            len(
+                                _result(direct_original, wrapped=True)
+                                .model_dump_json(by_alias=True, exclude_unset=True)
+                                .encode("utf-8")
+                            )
+                            > 4 * 1024 * 1024
+                        )
+                        oversized_original = await writer.call_tool(
+                            "inspect",
+                            {
+                                "request": {
+                                    "subject": "revisions",
+                                    "id": revision_id,
+                                    "original": True,
+                                }
+                            },
+                        )
+                        assert oversized_original.is_error
+                        assert (
+                            json.loads(oversized_original.content[0].text)["code"]
+                            == "OUTPUT_BUDGET_EXCEEDED"
+                        ), oversized_original.content[0].text
                     async with Client(
                         streamable_http_client(url, http_client=http), mode="legacy"
                     ) as reconnected:

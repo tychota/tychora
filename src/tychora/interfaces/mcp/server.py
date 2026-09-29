@@ -6,6 +6,7 @@ from contextvars import ContextVar
 
 from mcp.server import MCPServer
 from mcp.server.context import ServerRequestContext
+from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
 from mcp.shared.exceptions import MCPError
 from mcp.types import CallToolResult, TextContent
 from tychora.application.runtime import ServiceRuntime
@@ -23,6 +24,46 @@ def current_operation() -> tuple[Services, RequestScope]:
     if value is None:
         raise TychoraError("INTEGRITY_ERROR", "MCP operation context is unavailable.")
     return value
+
+
+MAX_MCP_TOOL_RESULT_BYTES = 4 * 1024 * 1024
+
+
+def _tool_error(error: TychoraError) -> CallToolResult:
+    return CallToolResult(
+        content=[TextContent(type="text", text=error.to_json())], is_error=True
+    )
+
+
+class BoundedMCPServer(MCPServer):
+    """Normalize SDK validation and bound every serialized tool result."""
+
+    async def call_tool(self, name, arguments, context=None):
+        try:
+            result = await super().call_tool(name, arguments, context)
+        except UnexpectedToolError:
+            raise
+        except ToolError:
+            # SDK argument validation runs before a tool body can sanitize it.
+            # Never return its ToolError text, which may contain caller values.
+            return _tool_error(
+                TychoraError("INVALID_REQUEST", "Tool arguments are invalid.")
+            )
+        if (
+            len(
+                result.model_dump_json(by_alias=True, exclude_unset=True).encode(
+                    "utf-8"
+                )
+            )
+            > MAX_MCP_TOOL_RESULT_BYTES
+        ):
+            return _tool_error(
+                TychoraError(
+                    "OUTPUT_BUDGET_EXCEEDED",
+                    "MCP protocol result exceeds framing limit.",
+                )
+            )
+        return result
 
 
 class RuntimeMiddleware:
@@ -75,10 +116,9 @@ class RuntimeMiddleware:
                     _current.reset(marker)
         except TychoraError as error:
             if ctx.method == "tools/call":
-                return CallToolResult(
-                    content=[TextContent(type="text", text=error.to_json())],
-                    is_error=True,
-                ).model_dump(mode="json", by_alias=True, exclude_unset=True)
+                return _tool_error(error).model_dump(
+                    mode="json", by_alias=True, exclude_unset=True
+                )
             raise MCPError(code=-32000, message=error.to_json()) from None
 
 
@@ -93,7 +133,7 @@ def build_mcp(services: Services, principal: RequestScope) -> MCPServer:
         owner.service_runtime = runtime
     elif runtime.services is not services:
         raise TychoraError("INTEGRITY_ERROR", "MCP requires current owner services.")
-    server = MCPServer(
+    server = BoundedMCPServer(
         "tychora",
         description="Scoped local evidence discovery and retrieval",
         middleware=[RuntimeMiddleware(runtime, owner.scope.narrow(principal))],

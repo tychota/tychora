@@ -177,18 +177,6 @@ def register_tools(server: MCPServer) -> None:
                 raise TychoraError(
                     "INTEGRITY_ERROR", "Serialized MCP output measure differs."
                 )
-            if (
-                len(
-                    block.model_dump_json(by_alias=True, exclude_unset=True).encode(
-                        "utf-8"
-                    )
-                )
-                > 4 * 1024 * 1024
-            ):
-                raise TychoraError(
-                    "OUTPUT_BUDGET_EXCEEDED",
-                    "MCP protocol result exceeds framing limit.",
-                )
             return block
         except TychoraError as error:
             return _error(error)
@@ -350,4 +338,27 @@ def register_tools(server: MCPServer) -> None:
                 SourceCoverageRequest.model_json_schema(),
             ],
             "description": "Public inspection or bounded source-lineage coverage request.",
+        }
+
+    add_tool = server._tool_manager.get_tool("add_sources")
+    if add_tool is not None:
+        source_schema = SourceInput.model_json_schema()
+        definitions = source_schema.pop("$defs")
+        for definition in definitions.values():
+            collection = definition.get("properties", {}).get("collection_id")
+            if collection is not None:
+                collection.clear()
+                collection.update(
+                    {
+                        "anyOf": [
+                            {"type": "string", "format": "uuid"},
+                            {"type": "string", "const": "default"},
+                        ]
+                    }
+                )
+        add_tool.parameters.setdefault("$defs", {}).update(definitions)
+        add_tool.parameters["properties"]["source"] = {
+            "anyOf": [{"$ref": source_schema["$ref"]}, {"type": "null"}],
+            "default": None,
+            "description": "Public SourceInput; discover the registered kind and metadata schema first. The default collection shorthand requires its grant.",
         }
