@@ -1,0 +1,30 @@
+src/tychora/application/runtime.py
+  s_35b641b930a96d::t_5f4b4618270285 288-292,294-295
+  s_35b641b930a96d::t_3d5ada1952ca8a 237-247
+  s_35b641b930a96d::t_7cfdcaf577eede 293
+src/tychora/application/settings.py
+  s_35b641b930a96d::t_dc7911c9b81d8b 160,208-209,217
+  s_35b641b930a96d::t_277b30ca379f69 18
+src/tychora/api.py
+  s_35b641b930a96d::t_b677121b9c1b13 15,155,224-225
+tests/api/test_configured_runtime.py
+  s_35b641b930a96d::t_7cfdcaf577eede 265,298
+  s_35b641b930a96d::t_9ad5e2ebc573ec 204-264,266-297,299-301,966
+  s_35b641b930a96d::t_d4561717d72c25 302-303,950-951,967,974
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "9d3583a0716f31b6b8afdb80095c8366fbae3eb6",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
