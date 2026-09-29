@@ -15,7 +15,7 @@ class _Counter:
         return len(value)
 
 
-def _add(kb: Tychora, key: str) -> tuple[str, str]:
+def _add(kb: Tychora, key: str, *, text: str = "shared original") -> tuple[str, str]:
     from tychora.contracts.identity import source_id
 
     job = kb.sources.add(
@@ -25,7 +25,7 @@ def _add(kb: Tychora, key: str) -> tuple[str, str]:
             "collection_id": "default",
             "kind": "manual@1",
             "format": "text",
-            "text": "shared original",
+            "text": text,
             "metadata": {
                 "title": "Synthetic record",
                 "publisher": "Example Team",
@@ -103,6 +103,217 @@ def test_withdraw_and_purge_preserve_shared_original_binding(tmp_path):
             ).payload
             == b"shared original"
         )
+
+
+def test_preview_enumerates_binding_cut_shared_bytes_and_retained_derived(tmp_path):
+    with Tychora.open(tmp_path / "knowledge", token_counter=_Counter()) as kb:
+        source, revision = _add(kb, "preview-a")
+        _add(kb, "preview-b")
+        unique_source, unique_revision = _add(
+            kb, "preview-unique", text="unique synthetic original"
+        )
+        kb.management.run({"operation": "remove", "source_ids": [source]})
+        kb.management.run({"operation": "remove", "source_ids": [unique_source]})
+        shared = kb.management.run(
+            {
+                "operation": "purge-originals",
+                "source_id": source,
+                "revision_ids": [revision],
+            }
+        ).plan
+        assert any(
+            binding.revision_id == revision
+            and binding.artifact_sha == _original_sha(kb, revision)
+            for binding in shared.original_bindings
+        )
+        assert any(cut.disposition == "shared" for cut in shared.reference_cut)
+        assert shared.retained_derived_artifact_shas
+        unique_sha = _original_sha(kb, unique_revision)
+        with kb._workspace.owner.artifacts.pin_payloads(frozenset({unique_sha})):
+            preview = kb.management.run(
+                {
+                    "operation": "purge-originals",
+                    "source_id": unique_source,
+                    "revision_ids": [unique_revision],
+                }
+            ).plan
+            assert any(
+                cut.artifact_sha == unique_sha and cut.disposition == "pending_lease"
+                for cut in preview.reference_cut
+            )
+        confirmed = kb.management.run(
+            {
+                "operation": "purge-originals",
+                "source_id": unique_source,
+                "revision_ids": [unique_revision],
+                "confirm_original_removal": True,
+            }
+        )
+        assert any(
+            cut.artifact_sha == unique_sha and cut.disposition == "delete"
+            for cut in confirmed.plan.reference_cut
+        )
+
+
+def test_oversized_removal_plan_fails_before_tombstone_or_job(tmp_path, monkeypatch):
+    from tychora.application import removal
+    from tychora.ports.execution import ExecutionContext
+
+    with Tychora.open(tmp_path / "knowledge", token_counter=_Counter()) as kb:
+        source, revision = _add(kb, "bounded-plan")
+        kb.management.run({"operation": "remove", "source_ids": [source]})
+        monkeypatch.setattr(removal, "MAX_REMOVAL_PLAN_ITEMS", 0)
+        with pytest.raises(TychoraError) as error:
+            kb.management.run(
+                {
+                    "operation": "purge-originals",
+                    "source_id": source,
+                    "revision_ids": [revision],
+                    "confirm_original_removal": True,
+                }
+            )
+        assert error.value.code == "INVALID_REQUEST"
+        owner = kb._workspace.owner
+        count = kb._workspace.bridge.call(
+            owner.run_blocking(
+                lambda: owner.db.execute(
+                    "SELECT COUNT(*) FROM original_payload_tombstones WHERE revision_id=?",
+                    (revision,),
+                ).fetchone()[0],
+                ExecutionContext(),
+            )
+        )
+        assert count == 0
+
+
+def test_repository_file_binding_is_tombstoned_and_released(tmp_path):
+    from tests.code.conftest import make_repo
+    from tychora.configuration.resolve import resolve_config
+    from tychora.contracts.identity import source_id
+    from tychora.ports.execution import ExecutionContext
+
+    repository = make_repo(tmp_path)
+    settings = tmp_path / "workspace.toml"
+    settings.write_text(
+        'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
+        f'[configuration.acquisition]\nroots=["{tmp_path}"]\n'
+        '[configuration.extraction]\nparser="code"\n'
+    )
+    config = resolve_config(settings, "test", {})
+    with Tychora.open(
+        tmp_path / "knowledge", config=config, token_counter=_Counter()
+    ) as kb:
+        job = kb.sources.add(
+            {
+                "type": "repository",
+                "path": str(repository),
+                "kind": "code_file@1",
+                "metadata": {"title": "Synthetic Repository"},
+                "source_key": "repository-removal",
+                "collection_id": "default",
+            }
+        )
+        assert kb.jobs.wait(job.id).state == "succeeded"
+        source = source_id(kb.default_collection_id, "repository-removal")
+        revision = kb.sources.revisions(source).revisions[0].revision_id
+        owner = kb._workspace.owner
+        file_sha = kb._workspace.bridge.call(
+            owner.run_blocking(
+                lambda: owner.db.execute(
+                    "SELECT artifact_sha FROM revision_artifacts "
+                    "WHERE revision_id=? AND role='source_file' AND source_ref='notes.txt'",
+                    (revision,),
+                ).fetchone()[0],
+                ExecutionContext(),
+            )
+        )
+        kb.management.run({"operation": "remove", "source_ids": [source]})
+        preview = kb.management.run(
+            {
+                "operation": "purge-originals",
+                "source_id": source,
+                "revision_ids": [revision],
+            }
+        )
+        assert any(
+            binding.artifact_sha == file_sha and "source_file" in binding.roles
+            for binding in preview.plan.original_bindings
+        )
+        kb.management.run(
+            {
+                "operation": "purge-originals",
+                "source_id": source,
+                "revision_ids": [revision],
+                "confirm_original_removal": True,
+            }
+        )
+        state = kb._workspace.bridge.call(
+            owner.run_blocking(
+                lambda: owner.db.execute(
+                    "SELECT a.payload_state, COUNT(t.revision_id) FROM artifacts a "
+                    "LEFT JOIN original_payload_tombstones t ON t.artifact_sha=a.artifact_sha "
+                    "AND t.revision_id=? WHERE a.artifact_sha=? GROUP BY a.artifact_sha",
+                    (revision, file_sha),
+                ).fetchone(),
+                ExecutionContext(),
+            )
+        )
+        assert state == ("deleted", 1)
+        assert not (owner.path / "artifacts" / file_sha).exists()
+
+
+@pytest.mark.parametrize("operation", ["remove", "purge-originals"])
+def test_reopen_interrupts_persisted_running_removal_after_committed_effect(
+    tmp_path, operation
+):
+    from tychora.ports.execution import ExecutionContext
+
+    workspace = tmp_path / "knowledge"
+    with Tychora.open(workspace, token_counter=_Counter()) as kb:
+        source, revision = _add(kb, f"crash-{operation}")
+        removed = kb.management.run({"operation": "remove", "source_ids": [source]})
+        assert removed.job is not None
+        if operation == "purge-originals":
+            result = kb.management.run(
+                {
+                    "operation": "purge-originals",
+                    "source_id": source,
+                    "revision_ids": [revision],
+                    "confirm_original_removal": True,
+                }
+            )
+            assert result.job is not None
+            job_id = result.job.id
+        else:
+            job_id = removed.job.id
+        owner = kb._workspace.owner
+        kb._workspace.bridge.call(
+            owner.run_blocking(
+                lambda: owner.db.execute(
+                    "UPDATE jobs SET state='running',error_code=NULL WHERE job_id=?",
+                    (job_id,),
+                ),
+                ExecutionContext(),
+            )
+        )
+        assert kb.jobs.get(job_id).state == "running"
+    with Tychora.open(workspace, token_counter=_Counter()) as reopened:
+        status = reopened.jobs.wait(job_id, timeout=0.1)
+        assert status.state == "interrupted"
+        assert status.error_code == "JOB_INTERRUPTED"
+        assert reopened.jobs.events_after(job_id)[-1].stage == (
+            "interrupted-effect-may-have-committed"
+        )
+        if operation == "remove":
+            with pytest.raises(TychoraError) as error:
+                reopened.sources.sync(source)
+            assert error.value.code == "FORBIDDEN_SCOPE"
+        else:
+            with pytest.raises(TychoraError) as error:
+                reopened.inspect(
+                    {"subject": "revisions", "id": revision, "original": True}
+                )
+            assert error.value.code == "ORIGINAL_REMOVED"
 
 
 def test_remove_requires_one_explicit_source_per_job(tmp_path):
@@ -558,6 +769,8 @@ def test_cli_purge_previews_then_requires_confirmed_source_binding(tmp_path):
     )
     assert preview.exit_code == 0, preview.stderr
     assert json.loads(preview.stdout)["job"] is None
+    assert json.loads(preview.stdout)["plan"]["original_bindings"]
+    assert json.loads(preview.stdout)["plan"]["reference_cut"]
     confirmed = runner.invoke(
         app,
         [
@@ -615,6 +828,8 @@ async def test_http_maintenance_uses_same_preview_and_confirm_handler(tmp_path):
             )
             assert preview.status_code == 200, preview.text
             assert preview.json()["job"] is None
+            assert preview.json()["plan"]["original_bindings"]
+            assert preview.json()["plan"]["reference_cut"]
             confirmed = await client.post(
                 "/v1/jobs",
                 json={

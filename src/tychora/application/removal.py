@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from io import BytesIO
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, cast
 
 from tychora.adapters.files.references import MAX_MANIFEST_BYTES, required_closure
 from tychora.contracts.artifacts import ArtifactRef, ManifestRef
@@ -15,6 +15,8 @@ from tychora.contracts.operations import (
     JobHandle,
     MaintenancePlan,
     MaintenanceResult,
+    OriginalBindingCut,
+    OriginalReferenceCut,
     PurgeOriginalsMaintenance,
     RemoveMaintenance,
 )
@@ -28,6 +30,9 @@ if TYPE_CHECKING:
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+MAX_REMOVAL_PLAN_ITEMS = 10_000
 
 
 class RemovalService:
@@ -100,8 +105,8 @@ class RemovalService:
     def _bindings(
         self, source_id: str, revision_ids: tuple[str, ...], scope: RequestScope
     ) -> dict[str, set[str]]:
-        if len(set(revision_ids)) != len(revision_ids):
-            raise TychoraError("INVALID_REQUEST", "Revision selection has duplicates.")
+        if not revision_ids or len(set(revision_ids)) != len(revision_ids):
+            raise TychoraError("INVALID_REQUEST", "Select distinct revisions.")
         found: dict[str, set[str]] = {}
         for revision_id in revision_ids:
             row = self.owner.db.execute(
@@ -116,7 +121,8 @@ class RemovalService:
             shas.update(
                 sha
                 for (sha,) in self.owner.db.execute(
-                    "SELECT artifact_sha FROM revision_artifacts WHERE revision_id=? AND role='original'",
+                    "SELECT artifact_sha FROM revision_artifacts WHERE revision_id=? "
+                    "AND role IN ('original','source_file')",
                     (revision_id,),
                 )
             )
@@ -126,6 +132,117 @@ class RemovalService:
                 )
             found[revision_id] = shas
         return found
+
+    def _plan(
+        self, revision_ids: tuple[str, ...], bindings: dict[str, set[str]]
+    ) -> MaintenancePlan:
+        db = self.owner.db
+        binding_rows: list[OriginalBindingCut] = []
+        proposed = frozenset(
+            (revision_id, sha) for revision_id, shas in bindings.items() for sha in shas
+        )
+        if len(proposed) > MAX_REMOVAL_PLAN_ITEMS:
+            raise TychoraError("INVALID_REQUEST", "Original binding plan is too large.")
+        derived: set[str] = set()
+        for revision_id in revision_ids:
+            original = db.execute(
+                "SELECT original_sha FROM revisions WHERE revision_id=?", (revision_id,)
+            ).fetchone()[0]
+            roles: dict[str, set[str]] = {original: {"revision_original"}}
+            for role, sha in db.execute(
+                "SELECT role,artifact_sha FROM revision_artifacts WHERE revision_id=?",
+                (revision_id,),
+            ):
+                if role in {"original", "source_file"}:
+                    roles.setdefault(sha, set()).add(role)
+                else:
+                    derived.add(sha)
+            for row in db.execute(
+                "SELECT document_artifact_sha,assertions_artifact_sha,diagnostics_artifact_sha "
+                "FROM extractions WHERE revision_id=?",
+                (revision_id,),
+            ):
+                derived.update(sha for sha in row if sha is not None)
+            for (sha,) in db.execute(
+                "SELECT a.artifact_sha FROM assets a JOIN extractions e USING(extraction_id) "
+                "WHERE e.revision_id=? UNION SELECT p.derivation_sha FROM asset_proxies p "
+                "JOIN assets a USING(asset_id) JOIN extractions e USING(extraction_id) "
+                "WHERE e.revision_id=?",
+                (revision_id, revision_id),
+            ):
+                derived.add(sha)
+            for (sha,) in db.execute(
+                "SELECT v.embedding_cache_sha FROM vector_records v "
+                "LEFT JOIN chunks c USING(chunk_id) LEFT JOIN assets a USING(asset_id) "
+                "LEFT JOIN extractions ec ON ec.extraction_id=c.extraction_id "
+                "LEFT JOIN extractions ea ON ea.extraction_id=a.extraction_id "
+                "WHERE v.embedding_cache_sha IS NOT NULL "
+                "AND (ec.revision_id=? OR ea.revision_id=?)",
+                (revision_id, revision_id),
+            ):
+                derived.add(sha)
+            for sha, role_set in sorted(roles.items()):
+                binding_rows.append(
+                    OriginalBindingCut(
+                        revision_id=revision_id,
+                        artifact_sha=sha,
+                        roles=cast(
+                            tuple[
+                                Literal["revision_original", "original", "source_file"],
+                                ...,
+                            ],
+                            tuple(sorted(role_set)),
+                        ),
+                        already_removed=db.execute(
+                            "SELECT 1 FROM original_payload_tombstones "
+                            "WHERE revision_id=? AND artifact_sha=?",
+                            (revision_id, sha),
+                        ).fetchone()
+                        is not None,
+                    )
+                )
+        selected = sorted({sha for _, sha in proposed})
+        if len(derived) + len(binding_rows) + len(selected) > MAX_REMOVAL_PLAN_ITEMS:
+            raise TychoraError("INVALID_REQUEST", "Removal plan is too large.")
+        cut: list[OriginalReferenceCut] = []
+        for sha in selected:
+            row = db.execute(
+                "SELECT size_bytes,payload_state FROM artifacts WHERE artifact_sha=?",
+                (sha,),
+            ).fetchone()
+            if row is None:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Original registration is missing."
+                )
+            disposition = (
+                "shared"
+                if self._live_root(sha, proposed)
+                else "already_deleted"
+                if row[1] == "deleted"
+                else "pending_lease"
+                if self.owner.artifacts.payload_is_pinned(sha)
+                or self.owner.leases.any_pinned()
+                else "delete"
+            )
+            cut.append(
+                OriginalReferenceCut(
+                    artifact_sha=sha,
+                    size_bytes=row[0],
+                    disposition=disposition,
+                )
+            )
+        return MaintenancePlan(
+            operation="purge-originals",
+            target_ids=revision_ids,
+            actions=(
+                "remove selected revision original bindings",
+                "release unreferenced payloads after lease checks",
+            ),
+            estimated_bytes=sum(item.size_bytes for item in cut),
+            original_bindings=tuple(binding_rows),
+            reference_cut=tuple(cut),
+            retained_derived_artifact_shas=tuple(sorted(derived)),
+        )
 
     def purge_originals(
         self,
@@ -138,24 +255,7 @@ class RemovalService:
         collection_id = self._authorized_source(source_id, scope, withdrawn=True)
         bindings = self._bindings(source_id, revision_ids, scope)
         selected = frozenset(sha for shas in bindings.values() for sha in shas)
-        bytes_total = sum(
-            row[0]
-            for sha in selected
-            if (
-                row := self.owner.db.execute(
-                    "SELECT size_bytes FROM artifacts WHERE artifact_sha=?", (sha,)
-                ).fetchone()
-            )
-        )
-        plan = MaintenancePlan(
-            operation="purge-originals",
-            target_ids=revision_ids,
-            actions=(
-                "remove selected revision original bindings",
-                "release unreferenced payloads after lease checks",
-            ),
-            estimated_bytes=bytes_total,
-        )
+        plan = self._plan(revision_ids, bindings)
         if not confirm_original_removal:
             return MaintenanceResult(plan=plan)
         for sha in selected:
@@ -200,6 +300,7 @@ class RemovalService:
                         "Original bindings changed; preview again.",
                         retryable=True,
                     )
+                plan = self._plan(revision_ids, bindings)
                 for revision_id, shas in bindings.items():
                     for sha in shas:
                         if not self.owner.db.execute(
@@ -299,14 +400,33 @@ class RemovalService:
             )
         return closure
 
-    def _live_root(self, sha: str) -> bool:
+    def _live_root(
+        self, sha: str, proposed: frozenset[tuple[str, str]] = frozenset()
+    ) -> bool:
         db = self.owner.db
+        for (revision_id,) in db.execute(
+            "SELECT revision_id FROM revisions WHERE original_sha=?", (sha,)
+        ):
+            if (revision_id, sha) not in proposed and not db.execute(
+                "SELECT 1 FROM original_payload_tombstones "
+                "WHERE revision_id=? AND artifact_sha=?",
+                (revision_id, sha),
+            ).fetchone():
+                return True
+        for revision_id, role in db.execute(
+            "SELECT revision_id,role FROM revision_artifacts WHERE artifact_sha=?",
+            (sha,),
+        ):
+            if role not in {"original", "source_file"}:
+                return True
+            if (revision_id, sha) not in proposed and not db.execute(
+                "SELECT 1 FROM original_payload_tombstones "
+                "WHERE revision_id=? AND artifact_sha=?",
+                (revision_id, sha),
+            ).fetchone():
+                return True
         direct = (
-            "SELECT 1 FROM revisions r WHERE r.original_sha=? AND NOT EXISTS "
-            "(SELECT 1 FROM original_payload_tombstones t WHERE t.revision_id=r.revision_id AND t.artifact_sha=r.original_sha) "
-            "UNION ALL SELECT 1 FROM revision_artifacts ra WHERE ra.artifact_sha=? AND "
-            "(ra.role!='original' OR NOT EXISTS (SELECT 1 FROM original_payload_tombstones t WHERE t.revision_id=ra.revision_id AND t.artifact_sha=ra.artifact_sha)) "
-            "UNION ALL SELECT 1 FROM extractions WHERE document_artifact_sha=? OR assertions_artifact_sha=? OR diagnostics_artifact_sha=? "
+            "SELECT 1 FROM extractions WHERE document_artifact_sha=? OR assertions_artifact_sha=? OR diagnostics_artifact_sha=? "
             "UNION ALL SELECT 1 FROM assets WHERE artifact_sha=? "
             "UNION ALL SELECT 1 FROM asset_proxies WHERE derivation_sha=? "
             "UNION ALL SELECT 1 FROM vector_records WHERE embedding_cache_sha=? "
@@ -320,14 +440,29 @@ class RemovalService:
             "UNION ALL SELECT 1 FROM job_steps WHERE output_artifact_sha=? "
             "UNION ALL SELECT 1 FROM review_events WHERE reason_artifact_sha=? "
             "UNION ALL SELECT 1 FROM assertion_decisions WHERE provenance_artifact_sha=? OR reason_artifact_sha=? "
-            "UNION ALL SELECT 1 FROM locators l JOIN evidence_units u USING(unit_id) "
-            "JOIN extractions e USING(extraction_id) JOIN revisions r USING(revision_id) "
-            "WHERE l.artifact_sha=? AND NOT (l.artifact_sha=r.original_sha AND EXISTS "
-            "(SELECT 1 FROM original_payload_tombstones t WHERE t.revision_id=r.revision_id AND t.artifact_sha=l.artifact_sha)) "
             "LIMIT 1"
         )
-        if db.execute(direct, (sha,) * 21).fetchone():
+        if db.execute(direct, (sha,) * 18).fetchone():
             return True
+        for (revision_id,) in db.execute(
+            "SELECT e.revision_id FROM locators l JOIN evidence_units u USING(unit_id) "
+            "JOIN extractions e USING(extraction_id) WHERE l.artifact_sha=?",
+            (sha,),
+        ):
+            original_binding = db.execute(
+                "SELECT 1 FROM revisions WHERE revision_id=? AND original_sha=? "
+                "UNION ALL SELECT 1 FROM revision_artifacts WHERE revision_id=? "
+                "AND artifact_sha=? AND role IN ('original','source_file') LIMIT 1",
+                (revision_id, sha, revision_id, sha),
+            ).fetchone()
+            if original_binding is None:
+                return True
+            if (revision_id, sha) not in proposed and not db.execute(
+                "SELECT 1 FROM original_payload_tombstones "
+                "WHERE revision_id=? AND artifact_sha=?",
+                (revision_id, sha),
+            ).fetchone():
+                return True
         typed_roots = (
             ("SELECT manifest_sha FROM snapshots", "snapshot"),
             ("SELECT input_manifest_sha FROM index_batches", "index_input"),

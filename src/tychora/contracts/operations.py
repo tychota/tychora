@@ -333,11 +333,27 @@ class MaintenanceRequest(RootModel[MaintenanceVariant]):
         )
 
 
+class OriginalBindingCut(Contract):
+    revision_id: Identifier
+    artifact_sha: Sha256
+    roles: tuple[Literal["revision_original", "original", "source_file"], ...]
+    already_removed: bool = False
+
+
+class OriginalReferenceCut(Contract):
+    artifact_sha: Sha256
+    size_bytes: NonNegativeInt
+    disposition: Literal["delete", "shared", "pending_lease", "already_deleted"]
+
+
 class MaintenancePlan(Contract):
     operation: NonEmptyStr
     target_ids: tuple[Identifier, ...]
     actions: tuple[NonEmptyStr, ...]
     estimated_bytes: NonNegativeInt | None = None
+    original_bindings: tuple[OriginalBindingCut, ...] = ()
+    reference_cut: tuple[OriginalReferenceCut, ...] = ()
+    retained_derived_artifact_shas: tuple[Sha256, ...] = ()
 
 
 class OperationReceipt(Contract):

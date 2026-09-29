@@ -526,6 +526,30 @@ class JobRepository:
             )
         return self.get(job_id)
 
+    def interrupt_removal_jobs(self) -> int:
+        """Close orphaned management jobs; their committed effects may remain."""
+        with self._write():
+            ids = tuple(
+                job_id
+                for (job_id,) in self.db.execute(
+                    "SELECT job_id FROM jobs WHERE operation IN ('remove','purge-originals') "
+                    "AND state IN ('running','cancelling') ORDER BY job_id"
+                )
+            )
+            for job_id in ids:
+                self.db.execute(
+                    "UPDATE job_steps SET state='permanent' WHERE job_id=? "
+                    "AND step_key='__tychora__/retry'",
+                    (job_id,),
+                )
+                self._state(
+                    job_id,
+                    "failed",
+                    "interrupted-effect-may-have-committed",
+                    "JOB_INTERRUPTED",
+                )
+        return len(ids)
+
     def retry(self, job_id: str) -> JobStatus:
         reconciled = self._reconcile(job_id)
         if reconciled is not None:

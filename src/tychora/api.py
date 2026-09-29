@@ -160,11 +160,15 @@ class LocalWorkspace:
             )
             from tychora.application.removal import RemovalService
 
+            def reconcile_removal() -> None:
+                RemovalService(
+                    self.owner, self.services.jobs.repository
+                ).reconcile_pending_deletions()
+                self.services.jobs.repository.interrupt_removal_jobs()
+
             self.bridge.call(
                 self.owner.run_blocking(
-                    lambda: RemovalService(
-                        self.owner, self.services.jobs.repository
-                    ).reconcile_pending_deletions(),
+                    reconcile_removal,
                     ExecutionContext(),
                 )
             )
