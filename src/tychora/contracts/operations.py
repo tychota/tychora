@@ -21,6 +21,7 @@ from .base import (
     Identifier,
     NonEmptyStr,
     NonNegativeInt,
+    Sha256,
 )
 from .evidence import EvidenceUnit, Excerpt, RelationPath
 from .identity import canonical_bytes
@@ -52,6 +53,19 @@ class DefinitionEntry(Contract):
     label: str
     definition: FrozenJsonMap
     schema_digest: Identifier
+
+
+class SourceExtractionCoverage(Contract):
+    extraction_id: Identifier
+    stages: FrozenJsonMap
+    code_resolution: FrozenJsonMap | None = None
+
+
+class SourceRevisionCoverage(Contract):
+    revision_id: Identifier
+    kind_id: Identifier
+    stages: FrozenJsonMap
+    extractions: tuple[SourceExtractionCoverage, ...] = ()
 
 
 class NamedCount(Contract):
@@ -91,10 +105,21 @@ class InspectionItem(Contract):
     value: FrozenJsonMap
 
 
+class PartialEvidenceMetadata(Contract):
+    """Canonical unit identity without a claim that its full text was delivered."""
+
+    unit_id: Identifier
+    extraction_id: Identifier
+    unit_type: NonEmptyStr
+    canonical_text_sha: Sha256
+    canonical_text_length: NonNegativeInt
+
+
 class InspectionResult(Contract):
     subject: Literal["evidence", "assets", "revisions", "jobs", "runs", "diagnostics"]
     id: Identifier
     evidence: EvidenceUnit | None = None
+    partial_evidence: PartialEvidenceMetadata | None = None
     excerpts: tuple[Excerpt, ...] = ()
     records: tuple[InspectionItem, ...] = ()
     original_ref: Identifier | None = None

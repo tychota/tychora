@@ -9,6 +9,10 @@ from typing import TYPE_CHECKING, cast
 from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
 from tychora.adapters.sqlite.eligibility import _retained_rows
 from tychora.adapters.sqlite.jobs import JobRepository
+from tychora.application.discovery import (
+    _permitted_resolutions,
+    _scoped_resolution_rates,
+)
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import CodepointRange, FrozenJsonMap
 from tychora.contracts.errors import TychoraError
@@ -19,6 +23,7 @@ from tychora.contracts.operations import (
     InspectionItem,
     InspectionResult,
     InspectRequest,
+    PartialEvidenceMetadata,
     RelationRequest,
     RelationResult,
 )
@@ -45,7 +50,7 @@ def _ranges(request: InspectRequest, length: int) -> tuple[CodepointRange, ...]:
     selected = request.ranges or ((request.range,) if request.range is not None else ())
     previous = -1
     for interval in selected:
-        if not (0 <= interval.char_start <= interval.char_end <= length):
+        if not (0 <= interval.char_start < interval.char_end <= length):
             raise TychoraError("INVALID_REQUEST", "Range lies outside the source unit.")
         if interval.char_start < previous:
             raise TychoraError(
@@ -203,12 +208,15 @@ class InspectionService:
         if member.revision_id not in attempt.view.revision_ids:
             _deny()
         row = self.owner.db.execute(
-            "SELECT diagnostics_artifact_sha FROM extractions WHERE extraction_id=?",
+            "SELECT e.diagnostics_artifact_sha,r.source_id FROM extractions e "
+            "JOIN revisions r USING(revision_id) WHERE e.extraction_id=?",
             (request.id,),
         ).fetchone()
         if row is None:
             raise TychoraError("NOT_FOUND", "Diagnostic extraction is unavailable.")
         retained = row[0] is not None
+        detail: list[InspectionItem] = []
+        summary: dict = {"retained": retained, "scope_limited": True}
         if retained:
             payload, _ = self._artifact(row[0], max_bytes=MAX_DIAGNOSTIC_BYTES)
             try:
@@ -221,6 +229,89 @@ class InspectionService:
                 raise TychoraError(
                     "INTEGRITY_ERROR", "Retained diagnostics are invalid."
                 )
+            data = parsed.get("data") if isinstance(parsed, dict) else None
+            if isinstance(data, dict) and "resolutions" in data:
+                from tychora.contracts.code import Resolution
+                from tychora.ports.language import SyntaxDiagnostic
+
+                try:
+                    raw = data["resolutions"]
+                    if not isinstance(raw, list) or len(raw) > 100000:
+                        raise ValueError
+                    records = tuple(Resolution.from_mapping(item) for item in raw)
+                    syntax = data.get("syntax", [])
+                    if not isinstance(syntax, list) or len(syntax) > 100000:
+                        raise ValueError
+                except (ValueError, KeyError, TypeError):
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Retained diagnostics are invalid."
+                    ) from None
+                eligible = attempt.view.graph_eligible_unit_ids
+                permitted, limited = _permitted_resolutions(
+                    records, eligible, attempt.view.revision_ids, row[1]
+                )
+                summary = dict(
+                    _scoped_resolution_rates(
+                        records, eligible, attempt.view.revision_ids, row[1]
+                    )
+                )
+                summary["retained"] = True
+                for item in permitted:
+                    detail.append(
+                        InspectionItem(
+                            id=item.reference_id,
+                            record_type="resolution",
+                            schema_id="code-resolution@1",
+                            value=FrozenJsonMap(item.model_dump(mode="json")),
+                        )
+                    )
+                for entry in syntax:
+                    try:
+                        path = entry["relative_path"]
+                        file_units = {
+                            unit_id
+                            for (unit_id,) in self.owner.db.execute(
+                                "SELECT DISTINCT l.unit_id FROM locators l "
+                                "JOIN evidence_units u USING(unit_id) "
+                                "WHERE u.extraction_id=? AND l.locator_type='code' "
+                                "AND l.source_ref=?",
+                                (request.id, path),
+                            )
+                        }
+                        diagnostics = tuple(
+                            SyntaxDiagnostic.from_mapping(value)
+                            for value in entry["diagnostics"]
+                        )
+                        coverage = entry["coverage"]
+                        if not isinstance(path, str) or not isinstance(coverage, str):
+                            raise TypeError
+                    except (ValueError, KeyError, TypeError):
+                        raise TychoraError(
+                            "INTEGRITY_ERROR", "Retained diagnostics are invalid."
+                        ) from None
+                    if not file_units or not file_units <= eligible:
+                        limited = True
+                        continue
+                    detail.append(
+                        InspectionItem(
+                            id=digest("diagnostic-file-v1", request.id, path),
+                            record_type="syntax_diagnostics",
+                            schema_id="code-syntax-diagnostics@1",
+                            value=FrozenJsonMap(
+                                {
+                                    "relative_path": path,
+                                    "coverage": coverage,
+                                    "diagnostics": [
+                                        item.model_dump(mode="json")
+                                        for item in diagnostics
+                                    ],
+                                }
+                            ),
+                        )
+                    )
+                summary["scope_limited"] = limited
+            else:
+                summary["unavailable_fields"] = ["resolution_records", "rates"]
         return InspectionResult(
             subject="diagnostics",
             id=request.id,
@@ -229,8 +320,9 @@ class InspectionService:
                     id=request.id,
                     record_type="diagnostic_summary",
                     schema_id="diagnostic-summary@1",
-                    value=FrozenJsonMap({"retained": retained, "scope_limited": True}),
+                    value=FrozenJsonMap(summary),
                 ),
+                *detail,
             ),
         )
 
@@ -269,6 +361,7 @@ class InspectionService:
             ):
                 _deny()
             evidence = unit
+            partial_evidence = None
             excerpts = ()
         else:
             # The retained representation validator reconstructs exact per-range
@@ -310,7 +403,14 @@ class InspectionService:
                 )
                 for interval in selected
             )
-            evidence = unit.model_copy(update={"text": ""})
+            evidence = None
+            partial_evidence = PartialEvidenceMetadata(
+                unit_id=unit.unit_id,
+                extraction_id=unit.extraction_id,
+                unit_type=unit.unit_type,
+                canonical_text_sha=unit.text_sha,
+                canonical_text_length=len(unit.text),
+            )
         records = ()
         if not selected:
             rows = owner.db.execute(
@@ -330,6 +430,7 @@ class InspectionService:
             subject="evidence",
             id=request.id,
             evidence=evidence,
+            partial_evidence=partial_evidence,
             excerpts=excerpts,
             records=records,
         )
@@ -501,6 +602,43 @@ class InspectionService:
                     "INVALID_REQUEST", "Relation predicates exceed the pinned policy."
                 )
             predicates = tuple(sorted(request.predicates or allowed))
+            query_digest = digest(
+                "relation-inspection-query-v1",
+                {
+                    "unit_ids": sorted(set(request.unit_ids)),
+                    "predicates": predicates,
+                    "direction": request.direction,
+                    "view": request.view,
+                    "max_hops": request.max_hops,
+                },
+            )
+            cursor_identity = [
+                view.snapshot_id,
+                view.policy_epoch,
+                view.scope_digest,
+                view.graph_generation_id,
+                view.graph_manifest_digest,
+                query_digest,
+            ]
+            last = ""
+            if request.cursor is not None:
+                try:
+                    raw = urlsafe_b64decode(
+                        request.cursor + "=" * (-len(request.cursor) % 4)
+                    )
+                    cursor = json.loads(raw)
+                    if (
+                        not isinstance(cursor, list)
+                        or len(cursor) != 7
+                        or cursor[:6] != cursor_identity
+                        or not isinstance(cursor[6], str)
+                    ):
+                        raise ValueError
+                    last = cursor[6]
+                except (ValueError, UnicodeError, TypeError):
+                    raise TychoraError(
+                        "INVALID_REQUEST", "Invalid relation cursor."
+                    ) from None
             if not predicates or request.max_hops == 0:
                 return RelationResult()
             limits = self.owner.config.values.limits
@@ -552,25 +690,6 @@ class InspectionService:
                 ),
                 key=lambda value: value[0],
             )
-            last = ""
-            if request.cursor is not None:
-                try:
-                    raw = urlsafe_b64decode(
-                        request.cursor + "=" * (-len(request.cursor) % 4)
-                    )
-                    cursor = json.loads(raw)
-                    if (
-                        cursor[:3]
-                        != [view.snapshot_id, view.policy_epoch, view.scope_digest]
-                        or len(cursor) != 4
-                        or not isinstance(cursor[3], str)
-                    ):
-                        raise ValueError
-                    last = cursor[3]
-                except (ValueError, UnicodeError, TypeError):
-                    raise TychoraError(
-                        "INVALID_REQUEST", "Invalid relation cursor."
-                    ) from None
             remaining = [(key, item) for key, item in keyed if key > last]
             selected = remaining[: request.max_edges]
             more = len(remaining) > len(selected)
@@ -579,12 +698,7 @@ class InspectionService:
                 next_cursor = (
                     urlsafe_b64encode(
                         json.dumps(
-                            [
-                                view.snapshot_id,
-                                view.policy_epoch,
-                                view.scope_digest,
-                                selected[-1][0],
-                            ],
+                            [*cursor_identity, selected[-1][0]],
                             separators=(",", ":"),
                         ).encode()
                     )

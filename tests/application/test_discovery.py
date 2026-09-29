@@ -1,17 +1,20 @@
 """Scoped discovery over detached definitions and an opened canonical owner."""
 
+import json
 import sys
+from io import BytesIO
 from pathlib import Path
 
 import pytest
 
 from tests.code.conftest import git, make_repo
 from tychora.application.discovery import DiscoveryService, _scoped_resolution_rates
+from tychora.application.inspection import InspectionService
 from tychora.application.owner import WorkspaceOwner
 from tychora.application.sources import SourceService
 from tychora.configuration.registry import Registry
 from tychora.configuration.resolve import resolve_config
-from tychora.contracts import DiscoverRequest, RequestScope, SourceInput
+from tychora.contracts import DiscoverRequest, InspectRequest, RequestScope, SourceInput
 from tychora.contracts.code import Resolution
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import digest
@@ -205,5 +208,71 @@ async def test_code_source_discovery_uses_retained_scoped_resolution_rates(tmp_p
             DiscoverRequest(subject="sources"),
             scope,
         )
-    rates = result.definitions[0].definition["code_resolution"]
+        extraction = result.definitions[0].definition["revisions"][0]["extractions"][0]
+        extraction_id = extraction["extraction_id"]
+
+        def hide_candidate():
+            old_sha = owner.db.execute(
+                "SELECT diagnostics_artifact_sha FROM extractions WHERE extraction_id=?",
+                (extraction_id,),
+            ).fetchone()[0]
+            row = owner.db.execute(
+                "SELECT size_bytes,media_type,storage_key FROM artifacts WHERE artifact_sha=?",
+                (old_sha,),
+            ).fetchone()
+            from tychora.contracts.artifacts import ArtifactRef
+
+            with owner.artifacts.open_verified(
+                ArtifactRef(
+                    sha256=old_sha,
+                    size_bytes=row[0],
+                    media_type=row[1],
+                    storage_key=row[2],
+                )
+            ) as stream:
+                payload = json.load(stream)
+            first = payload["data"]["resolutions"][0].copy()
+            first.update(
+                reference_id="hidden-reference",
+                state="resolved",
+                candidates=["hidden-unit"],
+                selected_target="hidden-unit",
+                total_candidate_count=1,
+                truncated=False,
+            )
+            payload["data"]["resolutions"].append(first)
+            ref = owner.artifacts.put_stream(
+                BytesIO(json.dumps(payload, sort_keys=True).encode()),
+                "application/json",
+            )
+            owner.db.execute(
+                "INSERT INTO artifacts(artifact_sha,size_bytes,media_type,storage_key,created_at) "
+                "VALUES (?,?,?,?,?)",
+                (
+                    ref.sha256,
+                    ref.size_bytes,
+                    ref.media_type,
+                    ref.storage_key,
+                    "2026-01-01T00:00:00Z",
+                ),
+            )
+            owner.db.execute(
+                "UPDATE extractions SET diagnostics_artifact_sha=? WHERE extraction_id=?",
+                (ref.sha256, extraction_id),
+            )
+
+        await owner.run_blocking(hide_candidate, ExecutionContext())
+        diagnostic = await InspectionService(owner).inspect(
+            InspectRequest(subject="diagnostics", id=extraction["extraction_id"]),
+            scope,
+            ExecutionContext(),
+        )
+    rates = extraction["code_resolution"]
     assert sum(item["extracted"] for item in rates["rates"]) >= 1, rates
+    records = [item for item in diagnostic.records if item.record_type == "resolution"]
+    assert records
+    assert all(item.value["source_unit_id"] for item in records)
+    assert sum(item["extracted"] for item in diagnostic.records[0].value["rates"]) >= 1
+    assert diagnostic.records[0].value["scope_limited"] is True
+    assert "hidden-reference" not in diagnostic.model_dump_json()
+    assert "hidden-unit" not in diagnostic.model_dump_json()

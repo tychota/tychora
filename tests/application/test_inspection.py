@@ -1,9 +1,14 @@
 """Exact inspection admits registered, currently readable source ranges."""
 
 import asyncio
+import json
+from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from PIL import Image
 
 from tests.retrieval.graph_fixture import assertion, sealed_graph, unit
 from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
@@ -104,8 +109,12 @@ async def test_exact_range_and_unknown_id(published):
         scope,
         ExecutionContext(),
     )
-    assert result.evidence is not None
-    assert result.evidence.text == ""
+    assert result.evidence is None
+    assert result.partial_evidence is not None
+    assert result.partial_evidence.canonical_text_sha
+    assert result.partial_evidence.canonical_text_length == len(
+        "Exact source evidence."
+    )
     assert [
         (item.char_start, item.char_end, item.text) for item in result.excerpts
     ] == [(0, 5, "Exact")]
@@ -114,6 +123,192 @@ async def test_exact_range_and_unknown_id(published):
             InspectRequest(subject="evidence", id="unknown"), scope, ExecutionContext()
         )
     assert error.value.code in {"NOT_FOUND", "FORBIDDEN_SCOPE"}
+
+
+@pytest.mark.asyncio
+async def test_empty_selected_range_is_invalid_even_for_retained_unit(published):
+    owner, scope, uid = published
+    with pytest.raises(TychoraError) as error:
+        await InspectionService(owner).inspect(
+            InspectRequest(
+                subject="evidence",
+                id=uid,
+                range=CodepointRange(char_start=0, char_end=0),
+            ),
+            scope,
+            ExecutionContext(),
+        )
+    assert error.value.code == "INVALID_REQUEST"
+
+
+@pytest.mark.asyncio
+async def test_native_overlap_denies_child_slice_and_allows_disjoint_parent_ranges(
+    published,
+):
+    owner, scope, uid = published
+
+    def add_rejected_child():
+        owner.db.execute(
+            "INSERT INTO evidence_units SELECT 'rejected-child',extraction_id,unit_id,"
+            "ordinal+100,'paragraph','child',boundary_key,heading_path_json,"
+            "'source',?,text_origin,citable,'unreviewed','{}' "
+            "FROM evidence_units WHERE unit_id=?",
+            (sha256(b"source").hexdigest(), uid),
+        )
+        owner.db.execute(
+            "INSERT INTO locators SELECT 'child-locator','rejected-child',0,"
+            "locator_type,artifact_sha,source_ref,physical_page,page_label,"
+            "line_start,line_end,byte_start,byte_end,geometry_json,"
+            "json_set(details_json,'$.char_start',6,'$.char_end',12) "
+            "FROM locators WHERE unit_id=?",
+            (uid,),
+        )
+        owner.db.execute(
+            "INSERT INTO review_events(unit_id,state,actor_id,created_at) "
+            "VALUES ('rejected-child','rejected','reviewer','2026-01-01T00:00:00Z')"
+        )
+
+    await owner.run_blocking(add_rejected_child, ExecutionContext())
+    service = InspectionService(owner)
+    with pytest.raises(TychoraError) as denied:
+        await service.inspect(
+            InspectRequest(
+                subject="evidence",
+                id=uid,
+                range=CodepointRange(char_start=6, char_end=12),
+            ),
+            scope,
+            ExecutionContext(),
+        )
+    assert denied.value.code == "FORBIDDEN_SCOPE"
+    allowed = await service.inspect(
+        InspectRequest(
+            subject="evidence",
+            id=uid,
+            ranges=(
+                CodepointRange(char_start=0, char_end=6),
+                CodepointRange(char_start=12, char_end=22),
+            ),
+        ),
+        scope,
+        ExecutionContext(),
+    )
+    assert [item.text for item in allowed.excerpts] == ["Exact ", " evidence."]
+
+
+@pytest.mark.asyncio
+async def test_retained_docling_source_parts_denies_rejected_child_overlap(published):
+    owner, scope, uid = published
+
+    def install_parts():
+        extraction, revision, source_key, original_sha = owner.db.execute(
+            "SELECT e.extraction_id,r.revision_id,s.source_key,r.original_sha "
+            "FROM evidence_units u JOIN extractions e USING(extraction_id) "
+            "JOIN revisions r USING(revision_id) JOIN sources s USING(source_id) "
+            "WHERE u.unit_id=?",
+            (uid,),
+        ).fetchone()
+        domain = digest(
+            "document-source-domain-v1",
+            revision,
+            extraction,
+            "#/texts/0",
+            "text",
+            None,
+        )
+        common = {
+            "document_representation": "docling-source-parts@1",
+            "source_refs": ["#/texts/0"],
+            "structural_separators": [],
+            "overlapping_owner_ids": [uid, "doc-child"],
+        }
+
+        def attributes(unit_start, unit_end, source_start, source_end):
+            return json.dumps(
+                {
+                    **common,
+                    "source_parts": [
+                        {
+                            "native_ref": "#/texts/0",
+                            "field": "text",
+                            "cell_index": None,
+                            "unit_start": unit_start,
+                            "unit_end": unit_end,
+                            "source_start": source_start,
+                            "source_end": source_end,
+                            "source_domain": domain,
+                            "provenance": [],
+                        }
+                    ],
+                }
+            )
+
+        def locator(end):
+            return json.dumps(
+                {
+                    "type": "document",
+                    "artifact_ref": original_sha,
+                    "native_ref": source_key,
+                    "char_domain": "unit",
+                    "char_start": 0,
+                    "char_end": end,
+                }
+            )
+
+        owner.db.execute(
+            "UPDATE evidence_units SET attributes_json=? WHERE unit_id=?",
+            (attributes(0, 22, 0, 22), uid),
+        )
+        owner.db.execute(
+            "UPDATE locators SET locator_type='document',details_json=? WHERE unit_id=?",
+            (locator(22), uid),
+        )
+        owner.db.execute(
+            "INSERT INTO evidence_units SELECT 'doc-child',extraction_id,unit_id,"
+            "ordinal+100,'paragraph','doc-child',boundary_key,heading_path_json,"
+            "'source',?,text_origin,citable,'unreviewed',? "
+            "FROM evidence_units WHERE unit_id=?",
+            (sha256(b"source").hexdigest(), attributes(0, 6, 6, 12), uid),
+        )
+        owner.db.execute(
+            "INSERT INTO locators SELECT 'doc-child-locator','doc-child',0,"
+            "'document',artifact_sha,source_ref,physical_page,page_label,"
+            "line_start,line_end,byte_start,byte_end,geometry_json,? "
+            "FROM locators WHERE unit_id=?",
+            (locator(6), uid),
+        )
+        owner.db.execute(
+            "INSERT INTO review_events(unit_id,state,actor_id,created_at) "
+            "VALUES ('doc-child','rejected','reviewer','2026-01-01T00:00:00Z')"
+        )
+
+    await owner.run_blocking(install_parts, ExecutionContext())
+    service = InspectionService(owner)
+    with pytest.raises(TychoraError) as denied:
+        await service.inspect(
+            InspectRequest(
+                subject="evidence",
+                id=uid,
+                range=CodepointRange(char_start=6, char_end=12),
+            ),
+            scope,
+            ExecutionContext(),
+        )
+    assert denied.value.code == "FORBIDDEN_SCOPE"
+    allowed = await service.inspect(
+        InspectRequest(
+            subject="evidence",
+            id=uid,
+            ranges=(
+                CodepointRange(char_start=0, char_end=6),
+                CodepointRange(char_start=12, char_end=22),
+            ),
+        ),
+        scope,
+        ExecutionContext(),
+    )
+    assert [item.text for item in allowed.excerpts] == ["Exact ", " evidence."]
+    assert "doc-child" not in allowed.model_dump_json()
 
 
 @pytest.mark.asyncio
@@ -225,6 +420,93 @@ async def test_explicit_relations_require_authorized_seed_before_graph(published
 
 
 @pytest.mark.asyncio
+async def test_ready_native_relation_cursor_rejects_changed_query(published, tmp_path):
+    owner, scope, _ = published
+    case = sealed_graph(
+        tmp_path,
+        (unit("a", 0), unit("b", 1), unit("c", 2)),
+        (
+            assertion("a", "b", predicate="cites@1"),
+            assertion("a", "c", predicate="cites@1"),
+        ),
+        resolve_graph_traversal_policy(owner.config, owner.store.registry),
+    )
+    service = InspectionService(owner, case.graph)
+    view = case.view(context={"a", "b", "c"}, candidates={"a", "b", "c"})
+    service._attempt = lambda _snapshot, _scope: SimpleNamespace(view=view)
+    service.compiler = SimpleNamespace(revalidate_epoch=lambda *_: None)
+    first = await service.relations(
+        RelationRequest(
+            unit_ids=("a",), predicates=frozenset({"cites@1"}), max_hops=1, max_edges=1
+        ),
+        scope,
+        ExecutionContext(),
+    )
+    assert len(first.paths) == 1
+    assert first.next_cursor
+    with pytest.raises(TychoraError) as changed:
+        await service.relations(
+            RelationRequest(
+                unit_ids=("b",),
+                predicates=frozenset({"cites@1"}),
+                max_hops=1,
+                max_edges=1,
+                cursor=first.next_cursor,
+            ),
+            scope,
+            ExecutionContext(),
+        )
+    assert changed.value.code == "INVALID_REQUEST"
+    service._attempt = lambda _snapshot, _scope: SimpleNamespace(
+        view=view.model_copy(update={"graph_generation_id": "later-generation"})
+    )
+    with pytest.raises(TychoraError) as generation:
+        await service.relations(
+            RelationRequest(
+                unit_ids=("a",),
+                predicates=frozenset({"cites@1"}),
+                max_hops=1,
+                max_edges=1,
+                cursor=first.next_cursor,
+            ),
+            scope,
+            ExecutionContext(),
+        )
+    assert generation.value.code == "INVALID_REQUEST"
+
+
+@pytest.mark.asyncio
+async def test_ready_native_relation_inspection_stops_at_100_edges(published, tmp_path):
+    owner, scope, _ = published
+    targets = tuple(f"target-{i:03d}" for i in range(101))
+    case = sealed_graph(
+        tmp_path,
+        (unit("seed", 0), *(unit(target, i + 1) for i, target in enumerate(targets))),
+        tuple(assertion("seed", target, predicate="cites@1") for target in targets),
+        resolve_graph_traversal_policy(owner.config, owner.store.registry),
+    )
+    service = InspectionService(owner, case.graph)
+    eligible = {"seed", *targets}
+    service._attempt = lambda _snapshot, _scope: SimpleNamespace(
+        view=case.view(context=eligible, candidates=eligible)
+    )
+    service.compiler = SimpleNamespace(revalidate_epoch=lambda *_: None)
+    result = await service.relations(
+        RelationRequest(
+            unit_ids=("seed",),
+            predicates=frozenset({"cites@1"}),
+            max_hops=1,
+            max_edges=100,
+        ),
+        scope,
+        ExecutionContext(),
+    )
+    assert len(result.paths) == 100
+    assert result.truncated is True
+    assert result.next_cursor is None
+
+
+@pytest.mark.asyncio
 async def test_removed_original_binding_blocks_read_even_while_hash_exists(published):
     owner, scope, _ = published
     revision, sha, job = await owner.run_blocking(
@@ -247,6 +529,126 @@ async def test_removed_original_binding_blocks_read_even_while_hash_exists(publi
     )
     with pytest.raises(TychoraError) as removed:
         await service.inspect(request, scope, ExecutionContext())
+    assert removed.value.code == "ORIGINAL_REMOVED"
+
+
+@pytest.mark.asyncio
+async def test_registered_zero_text_asset_and_unregistered_paths(published):
+    owner, scope, uid = published
+
+    def register_image():
+        image = Image.new("RGB", (1, 1), (20, 40, 60))
+        stream = BytesIO()
+        image.save(stream, format="PNG")
+        payload = stream.getvalue()
+        ref = owner.artifacts.put_stream(BytesIO(payload), "image/png")
+        owner.db.execute(
+            "INSERT INTO artifacts(artifact_sha,size_bytes,media_type,storage_key,created_at) "
+            "VALUES (?,?,?,?,?)",
+            (
+                ref.sha256,
+                ref.size_bytes,
+                ref.media_type,
+                ref.storage_key,
+                "2026-01-01T00:00:00Z",
+            ),
+        )
+        extraction, revision = owner.db.execute(
+            "SELECT e.extraction_id,e.revision_id FROM evidence_units u "
+            "JOIN extractions e USING(extraction_id) WHERE u.unit_id=?",
+            (uid,),
+        ).fetchone()
+        locator = json.dumps(
+            {
+                "type": "image",
+                "artifact_ref": ref.sha256,
+                "native_ref": "image.png",
+            }
+        )
+        owner.db.execute(
+            "INSERT INTO evidence_units SELECT 'image-unit',extraction_id,NULL,"
+            "ordinal+100,'image_original','image.png',boundary_key,heading_path_json,"
+            "'',?,text_origin,1,'unreviewed','{}' FROM evidence_units WHERE unit_id=?",
+            (sha256(b"").hexdigest(), uid),
+        )
+        owner.db.execute(
+            "INSERT INTO locators(locator_id,unit_id,fragment_ordinal,locator_type,"
+            "artifact_sha,source_ref,details_json) VALUES (?,?,?,?,?,?,?)",
+            (
+                "image-locator",
+                "image-unit",
+                0,
+                "image",
+                ref.sha256,
+                "image.png",
+                locator,
+            ),
+        )
+        owner.db.execute(
+            "INSERT INTO assets(asset_id,extraction_id,artifact_sha,asset_type,"
+            "native_ref,locator_json,declared_review_state) VALUES (?,?,?,?,?,?,?)",
+            (
+                "image-asset",
+                extraction,
+                ref.sha256,
+                "image",
+                "image.png",
+                locator,
+                "unreviewed",
+            ),
+        )
+        owner.db.execute(
+            "INSERT INTO unit_assets(unit_id,asset_id,role) VALUES (?,?,?)",
+            ("image-unit", "image-asset", "source"),
+        )
+        return payload, revision, ref.sha256
+
+    payload, revision, sha = await owner.run_blocking(
+        register_image, ExecutionContext()
+    )
+    service = InspectionService(owner)
+    unit_result = await service.inspect(
+        InspectRequest(subject="evidence", id="image-unit", view="full"),
+        scope,
+        ExecutionContext(),
+    )
+    assert unit_result.evidence is not None
+    assert unit_result.evidence.text == ""
+    asset_result = await service.inspect(
+        InspectRequest(subject="assets", id="image-asset"), scope, ExecutionContext()
+    )
+    assert asset_result.payload == payload
+    assert asset_result.media_type == "image/png"
+    for forged in ("../image.png", sha):
+        with pytest.raises(TychoraError) as missing:
+            await service.inspect(
+                InspectRequest(subject="assets", id=forged), scope, ExecutionContext()
+            )
+        assert missing.value.code == "NOT_FOUND"
+    original = await service.inspect(
+        InspectRequest(subject="revisions", id=revision, original=True),
+        scope,
+        ExecutionContext(),
+    )
+    assert original.payload == b"Exact source evidence."
+    await owner.run_blocking(
+        lambda: owner.db.execute(
+            "INSERT INTO original_payload_tombstones VALUES (?,?,?,?)",
+            (
+                revision,
+                sha,
+                owner.db.execute("SELECT job_id FROM jobs LIMIT 1").fetchone()[0],
+                "2026-01-01T00:00:00Z",
+            ),
+        ),
+        ExecutionContext(),
+    )
+    with pytest.raises(TychoraError) as removed:
+        await service.inspect(
+            InspectRequest(subject="assets", id="image-asset"),
+            scope,
+            ExecutionContext(),
+        )
     assert removed.value.code == "ORIGINAL_REMOVED"
 
 
@@ -290,7 +692,12 @@ async def test_discovery_counts_only_readable_collection_sources(published):
         scope,
     )
     assert len(sources.definitions) == 1
-    assert sources.definitions[0].definition["stages"]["extraction"] == "retained"
+    assert (
+        sources.definitions[0].definition["revisions"][0]["extractions"][0]["stages"][
+            "extraction"
+        ]
+        == "retained"
+    )
     denied = scope.model_copy(update={"collection_ids": frozenset()})
     hidden = await asyncio.to_thread(
         DiscoveryService(owner.config, owner.store.registry, owner).discover,
@@ -313,6 +720,61 @@ async def test_discovery_counts_only_readable_collection_sources(published):
     assert (
         next(item.count for item in no_read_result.counts if item.name == "manual@1")
         == 0
+    )
+
+
+@pytest.mark.asyncio
+async def test_source_discovery_preserves_unextracted_source_and_revision_stages(
+    published,
+):
+    owner, scope, _ = published
+
+    def stage():
+        owner.db.execute(
+            "INSERT INTO sources SELECT 'awaiting',collection_id,'awaiting.txt',"
+            "source_type,registration_json,access_floor,NULL,created_at "
+            "FROM sources LIMIT 1"
+        )
+        owner.db.execute(
+            "INSERT INTO revisions SELECT 'second-revision',source_id,kind_id,"
+            "original_sha,'second-edition',metadata_sha,title,published_on,"
+            "effective_from,effective_until,access_rank,declared_review_state,"
+            "allowed_uses_json,metadata_json,captured_at FROM revisions LIMIT 1"
+        )
+        owner.db.execute(
+            "INSERT INTO extractions SELECT 'alternate-extraction',revision_id,"
+            "parser_fingerprint || '-alternate',normalizer_fingerprint,"
+            "document_artifact_sha,assertions_artifact_sha,diagnostics_artifact_sha,"
+            "created_at FROM extractions LIMIT 1"
+        )
+
+    await owner.run_blocking(stage, ExecutionContext())
+    result = await asyncio.to_thread(
+        DiscoveryService(owner.config, owner.store.registry, owner).discover,
+        DiscoverRequest(subject="sources"),
+        scope,
+    )
+    definitions = {entry.id: entry.definition for entry in result.definitions}
+    assert definitions["awaiting"]["stages"]["registration"] == "registered"
+    assert definitions["awaiting"]["revisions"] == ()
+    original = next(item for key, item in definitions.items() if key != "awaiting")
+    revisions = original["revisions"]
+    assert len(revisions) == 2
+    assert [item["revision_id"] for item in revisions] == sorted(
+        item["revision_id"] for item in revisions
+    )
+    assert (
+        next(item for item in revisions if item["revision_id"] == "second-revision")[
+            "extractions"
+        ]
+        == ()
+    )
+    original_extractions = next(
+        item for item in revisions if item["revision_id"] != "second-revision"
+    )["extractions"]
+    assert len(original_extractions) == 2
+    assert [item["extraction_id"] for item in original_extractions] == sorted(
+        item["extraction_id"] for item in original_extractions
     )
 
 
@@ -372,6 +834,23 @@ async def test_metadata_only_run_remains_inspectable_without_replay(published):
     assert "hidden" not in result.model_dump_json()
     assert result.payload is None
     assert result.records[0].value["request_retained"] is False
+    listing = await asyncio.to_thread(
+        DiscoveryService(owner.config, owner.store.registry, owner).discover,
+        DiscoverRequest(subject="runs"),
+        scope,
+    )
+    assert [entry.id for entry in listing.definitions] == ["run-inspect"]
+    assert listing.definitions[0].definition["state"] == "partial"
+    assert "999" not in listing.model_dump_json()
+    assert "hidden" not in listing.model_dump_json()
+    denied = scope.model_copy(update={"principal_id": "other"})
+    with pytest.raises(TychoraError) as error:
+        await asyncio.to_thread(
+            DiscoveryService(owner.config, owner.store.registry, owner).discover,
+            DiscoverRequest(subject="runs"),
+            denied,
+        )
+    assert error.value.code == "FORBIDDEN_SCOPE"
 
 
 @pytest.mark.asyncio

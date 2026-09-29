@@ -18,6 +18,8 @@ from tychora.contracts.operations import (
     DiscoverRequest,
     DiscoveryResult,
     NamedCount,
+    SourceExtractionCoverage,
+    SourceRevisionCoverage,
 )
 from tychora.contracts.requests import RequestScope
 from tychora.ports.execution import ExecutionContext
@@ -40,19 +42,20 @@ SUBJECTS = (
 )
 
 
-def _scoped_resolution_rates(
+def _permitted_resolutions(
     records: tuple[Resolution, ...],
     eligible_units: frozenset[str],
     eligible_revisions: frozenset[str],
-) -> FrozenJsonMap:
-    """Use only references whose origin and every disclosed target remain readable."""
-    from tychora.adapters.code.resolve import resolution_rates
-
+    source_id: str | None = None,
+) -> tuple[tuple[Resolution, ...], bool]:
+    """Admit only complete resolution provenance inside the current view."""
     permitted = []
     limited = False
     for item in records:
         if (
-            item.revision_id not in eligible_revisions
+            source_id is not None
+            and item.source_id != source_id
+            or item.revision_id not in eligible_revisions
             or item.source_unit_id not in eligible_units
             or item.truncated
             or not set(item.candidates) <= eligible_units
@@ -62,7 +65,22 @@ def _scoped_resolution_rates(
             limited = True
             continue
         permitted.append(item)
-    rates = resolution_rates(tuple(permitted))
+    return tuple(permitted), limited
+
+
+def _scoped_resolution_rates(
+    records: tuple[Resolution, ...],
+    eligible_units: frozenset[str],
+    eligible_revisions: frozenset[str],
+    source_id: str | None = None,
+) -> FrozenJsonMap:
+    """Use only references whose origin and every disclosed target remain readable."""
+    from tychora.adapters.code.resolve import resolution_rates
+
+    permitted, limited = _permitted_resolutions(
+        records, eligible_units, eligible_revisions, source_id
+    )
+    rates = resolution_rates(permitted)
     return FrozenJsonMap(
         {
             "rates": [item.model_dump(mode="json") for item in rates.values()],
@@ -242,8 +260,6 @@ class DiscoveryService:
             return {}
 
         def read() -> dict[str, int]:
-            if subject == "runs":
-                return {}
             rows = owner.db.execute(
                 "SELECT DISTINCT r.revision_id,r.kind_id,s.source_id,c.collection_id,"
                 "r.access_rank,s.access_floor,c.access_floor,s.withdrawn_at,"
@@ -306,87 +322,143 @@ class DiscoveryService:
 
         def read() -> dict[str, FrozenJsonMap]:
             definitions = {}
-            rows = list(
-                owner.db.execute(
-                    "SELECT s.source_id,s.source_key,s.collection_id,s.access_floor,s.withdrawn_at,"
-                    "c.access_floor,r.revision_id,r.kind_id,r.access_rank,r.allowed_uses_json,"
-                    "k.definition_json,k.definition_hash,e.extraction_id "
-                    "FROM sources s JOIN collections c USING(collection_id) "
-                    "JOIN revisions r USING(source_id) JOIN kinds k USING(kind_id) "
-                    "JOIN extractions e USING(revision_id) "
-                    "WHERE c.workspace_id=? ORDER BY s.source_id,r.revision_id",
-                    (owner.workspace_id,),
-                )
-            )
+            sources = owner.db.execute(
+                "SELECT s.source_id,s.source_key,s.source_type,s.collection_id,"
+                "s.access_floor,s.withdrawn_at,c.access_floor FROM sources s "
+                "JOIN collections c USING(collection_id) WHERE c.workspace_id=? "
+                "ORDER BY s.source_id",
+                (owner.workspace_id,),
+            ).fetchall()
             for (
                 source,
                 source_key,
+                source_type,
                 collection,
                 source_floor,
                 withdrawn,
                 collection_floor,
-                revision,
-                kind,
-                access,
-                uses_raw,
-                definition_raw,
-                definition_hash,
-                extraction,
-            ) in rows:
+            ) in sources:
                 if (
                     collection not in granted.collection_ids
-                    or max(source_floor, collection_floor, access)
-                    > granted.access_ceiling
+                    or max(source_floor, collection_floor) > granted.access_ceiling
                     or withdrawn is not None
                 ):
                     continue
-                try:
-                    envelope = json.loads(definition_raw)
-                    recorded = envelope.pop("envelope_digest")
-                    if (
-                        recorded != definition_hash
-                        or digest("historical-kind-v1", envelope) != recorded
-                    ):
-                        raise ValueError
-                    uses = (
-                        set(envelope["kind"]["allowed_uses"])
-                        & set(json.loads(uses_raw))
-                        & granted.uses
-                    )
-                except (ValueError, KeyError, TypeError):
-                    raise TychoraError(
-                        "INTEGRITY_ERROR", "Retained kind definition is invalid."
-                    ) from None
-                if not uses:
-                    continue
-                channels = {
-                    channel: state
-                    for channel, state in owner.db.execute(
-                        "SELECT f.channel,b.state FROM index_batches b "
-                        "JOIN index_families f USING(family_id) WHERE b.extraction_id=?",
-                        (extraction,),
-                    )
-                }
-                code_resolution = (
-                    self._code_resolution(extraction, granted)
-                    if kind == "code_file@1"
-                    else None
+                revisions = []
+                limited = False
+                rows = owner.db.execute(
+                    "SELECT r.revision_id,r.kind_id,r.access_rank,r.allowed_uses_json,"
+                    "k.definition_json,k.definition_hash FROM revisions r "
+                    "JOIN kinds k USING(kind_id) WHERE r.source_id=? ORDER BY r.revision_id",
+                    (source,),
                 )
+                for (
+                    revision,
+                    kind,
+                    access,
+                    uses_raw,
+                    definition_raw,
+                    definition_hash,
+                ) in rows:
+                    if access > granted.access_ceiling:
+                        limited = True
+                        continue
+                    try:
+                        envelope = json.loads(definition_raw)
+                        recorded = envelope.pop("envelope_digest")
+                        if (
+                            recorded != definition_hash
+                            or digest("historical-kind-v1", envelope) != recorded
+                        ):
+                            raise ValueError
+                        uses = (
+                            set(envelope["kind"]["allowed_uses"])
+                            & set(json.loads(uses_raw))
+                            & granted.uses
+                        )
+                    except (ValueError, KeyError, TypeError):
+                        raise TychoraError(
+                            "INTEGRITY_ERROR", "Retained kind definition is invalid."
+                        ) from None
+                    if not uses:
+                        limited = True
+                        continue
+                    extractions: list[SourceExtractionCoverage] = []
+                    for (extraction,) in owner.db.execute(
+                        "SELECT extraction_id FROM extractions WHERE revision_id=? "
+                        "ORDER BY extraction_id",
+                        (revision,),
+                    ):
+                        channels = {
+                            channel: state
+                            for channel, state in owner.db.execute(
+                                "SELECT f.channel,b.state FROM index_batches b "
+                                "JOIN index_families f USING(family_id) "
+                                "WHERE b.extraction_id=? ORDER BY f.channel",
+                                (extraction,),
+                            )
+                        }
+                        extractions.append(
+                            SourceExtractionCoverage(
+                                extraction_id=extraction,
+                                stages=FrozenJsonMap(
+                                    {"extraction": "retained", **channels}
+                                ),
+                                code_resolution=self._code_resolution(
+                                    extraction, granted
+                                )
+                                if kind == "code_file@1"
+                                else None,
+                            )
+                        )
+                    revisions.append(
+                        SourceRevisionCoverage(
+                            revision_id=revision,
+                            kind_id=kind,
+                            stages=FrozenJsonMap({"capture": "retained"}),
+                            extractions=tuple(extractions),
+                        ).model_dump(mode="json", exclude_none=True)
+                    )
                 definitions[source] = FrozenJsonMap(
                     {
                         "label": source_key,
                         "collection_id": collection,
-                        "kind_id": kind,
-                        "revision_id": revision,
-                        "stages": {"extraction": "retained", **channels},
-                        **(
-                            {"code_resolution": code_resolution}
-                            if code_resolution is not None
-                            else {}
-                        ),
+                        "source_type": source_type,
+                        "stages": {"registration": "registered"},
+                        "revisions": revisions,
+                        "scope_limited": limited,
                     }
                 )
             return definitions
+
+        return owner.run_blocking_sync(read, ExecutionContext())
+
+    def _run_definitions(self, scope: RequestScope) -> dict[str, FrozenJsonMap]:
+        if self.owner is None or self.owner.scope.narrow(scope) != scope:
+            return {}
+        owner = self.owner
+
+        def read() -> dict[str, FrozenJsonMap]:
+            rows = owner.db.execute(
+                "SELECT run_id,state,created_at,snapshot_id,retained_payload_sha "
+                "FROM query_runs WHERE principal_id=? AND scope_digest=? ORDER BY run_id",
+                (
+                    scope.principal_id,
+                    digest("query-run-scope-v1", scope.model_dump(mode="json")),
+                ),
+            )
+            return {
+                run_id: FrozenJsonMap(
+                    {
+                        "state": state,
+                        "created_at": created_at,
+                        "snapshot_id": snapshot_id,
+                        "scope_limited": True,
+                        "request_retained": retained_sha is not None,
+                    }
+                )
+                for run_id, state, created_at, snapshot_id, retained_sha in rows
+            }
 
         return owner.run_blocking_sync(read, ExecutionContext())
 
@@ -440,7 +512,9 @@ class DiscoveryService:
             compiler = EligibilityCompiler(owner.store)
             view = compiler.compile_eligibility(snapshot, scope, request, owner.config)
             row = owner.db.execute(
-                "SELECT revision_id,diagnostics_artifact_sha FROM extractions WHERE extraction_id=?",
+                "SELECT e.revision_id,e.diagnostics_artifact_sha,r.source_id "
+                "FROM extractions e JOIN revisions r USING(revision_id) "
+                "WHERE e.extraction_id=?",
                 (extraction,),
             ).fetchone()
             if row is None or row[0] not in view.revision_ids or row[1] is None:
@@ -478,7 +552,7 @@ class DiscoveryService:
                         "INTEGRITY_ERROR", "Code resolution artifact is invalid."
                     ) from None
             summary = _scoped_resolution_rates(
-                records, view.graph_eligible_unit_ids, view.revision_ids
+                records, view.graph_eligible_unit_ids, view.revision_ids, row[2]
             )
             compiler.revalidate_epoch(view, "delivery")
             return summary
@@ -497,6 +571,8 @@ class DiscoveryService:
         definitions = self._definitions(subject)
         if subject == "sources":
             definitions = self._source_definitions(scope)
+        elif subject == "runs":
+            definitions = self._run_definitions(scope)
         counts = self._counts(subject, scope)
         if subject == "kinds":
             definitions = {
