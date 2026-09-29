@@ -290,7 +290,7 @@ class PurgeOriginalsMaintenance(Contract):
 
 
 class ProviderUploadConsentMaintenance(Contract):
-    """Typed, still-unavailable consent action; no runtime grant is inferred."""
+    """Explicit grant or revoke request for a registered provider and collection."""
 
     operation: Literal["provider-upload-consent"] = "provider-upload-consent"
     collection_id: Identifier
@@ -364,6 +364,16 @@ class OperationReceipt(Contract):
     manifest_sha: Identifier | None = None
 
 
+class ProviderUploadConsentState(Contract):
+    collection_id: Identifier
+    provider: Literal["voyage", "anthropic"]
+    action: Literal["grant", "revoke"]
+    collection_upload_providers: tuple[NonEmptyStr, ...]
+    owner_upload_providers: tuple[NonEmptyStr, ...]
+    policy_epoch: NonNegativeInt
+    default_owner_requires_reopen: bool = True
+
+
 class MaintenanceResult(Contract):
     plan: MaintenancePlan
     job: JobHandle | None = None
@@ -371,6 +381,7 @@ class MaintenanceResult(Contract):
     deleted_payloads: NonNegativeInt = 0
     shared_payloads: NonNegativeInt = 0
     pending_payloads: NonNegativeInt = 0
+    upload_consent: ProviderUploadConsentState | None = None
 
 
 class SettingsActivation(Contract):

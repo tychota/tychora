@@ -268,6 +268,12 @@ class _Management:
                     ws.owner, ws.services.jobs.repository, ws.scope, parsed.root
                 )
             )
+        if parsed.root.operation == "provider-upload-consent":
+            from tychora.application.consent import run_public_upload_consent
+
+            return ws.bridge.call(
+                run_public_upload_consent(ws.owner, ws.scope, parsed.root)
+            )
         raise TychoraError("CAPABILITY_MISSING", "Maintenance service is unavailable.")
 
 

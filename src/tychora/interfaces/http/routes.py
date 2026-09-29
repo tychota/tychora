@@ -453,6 +453,13 @@ def register_routes(app: FastAPI) -> None:
                 parsed.root,
             )
             return _json(result, status_code=202 if result.job else 200)
+        if parsed.root.operation == "provider-upload-consent":
+            from tychora.application.consent import run_public_upload_consent
+
+            result = await run_public_upload_consent(
+                request.app.state.owner, _scope(request), parsed.root
+            )
+            return _json(result)
         raise TychoraError("CAPABILITY_MISSING", "Maintenance service is unavailable.")
 
     @app.post("/v1/jobs/{job_id}/retry")

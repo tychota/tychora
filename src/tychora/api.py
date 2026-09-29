@@ -107,6 +107,7 @@ class LocalWorkspace:
                     )
                 settings.write_text(_DEFAULT_CONFIG)
             config = resolve_config(settings, selected_workspace_profile(settings), {})
+        managed_default_owner = scope is None
         if scope is None:
             scope = RequestScope(
                 principal_id="local-owner",
@@ -130,6 +131,18 @@ class LocalWorkspace:
                 self.bridge.call(
                     self.owner.run_blocking(
                         self._ensure_default_collection, ExecutionContext()
+                    )
+                )
+            self.owner.managed_default_owner = managed_default_owner
+            if managed_default_owner:
+                from tychora.application.consent import (
+                    restore_default_owner_upload_scope,
+                )
+
+                self.scope = self.bridge.call(
+                    self.owner.run_blocking(
+                        lambda: restore_default_owner_upload_scope(self.owner),
+                        ExecutionContext(),
                     )
                 )
             counter = token_counter or _LazyOutputCounter(

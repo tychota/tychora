@@ -19,7 +19,7 @@ class _Counter:
         return len(value)
 
 
-def test_unavailable_upload_consent_never_changes_default_grant_or_policy(tmp_path):
+def test_unconfigured_upload_provider_never_changes_default_grant_or_policy(tmp_path):
     workspace = tmp_path / "knowledge"
     with Tychora.open(workspace, token_counter=_Counter()) as kb:
         assert kb.scope.upload_providers == frozenset()
@@ -37,7 +37,7 @@ def test_unavailable_upload_consent_never_changes_default_grant_or_policy(tmp_pa
                     "action": "grant",
                 }
             )
-        assert error.value.code == "CAPABILITY_MISSING"
+        assert error.value.code == "INVALID_REQUEST"
         assert kb.scope.upload_providers == frozenset()
         with sqlite3.connect(workspace / "corpus.sqlite3") as db:
             after = db.execute(

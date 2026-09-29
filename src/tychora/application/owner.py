@@ -58,6 +58,7 @@ from tychora.ports.vision import (
     pixel_identity,
 )
 
+from .consent import enabled_upload_providers, parse_upload_policy
 from .leases import LeaseSet
 from .runtime import (
     BoundedWorker,
@@ -105,6 +106,7 @@ class WorkspaceOwner:
         self.path = path.resolve()
         self.config = config
         self.scope = scope
+        self.managed_default_owner = False
         self.leases = LeaseSet()
         self._worker = BoundedWorker()
         self._runtime = RuntimeIdentity(self.path)
@@ -461,7 +463,14 @@ class WorkspaceOwner:
         """Run an already-injected provider after fresh queued authorization."""
         ctx.checkpoint()
         granted = self.scope.narrow(scope)
-        if self.config.values.offline or provider not in granted.upload_providers:
+        if (
+            self.config.values.offline
+            or provider not in granted.upload_providers
+            or (
+                self.managed_default_owner
+                and provider not in enabled_upload_providers(self.config)
+            )
+        ):
             _deny()
         with self._admission:
             if self._closing:
@@ -562,7 +571,14 @@ class WorkspaceOwner:
         """Construct/call a provider only after fresh captured-pixel authorization."""
         ctx.checkpoint()
         granted = self.scope.narrow(scope)
-        if self.config.values.offline or provider not in granted.upload_providers:
+        if (
+            self.config.values.offline
+            or provider not in granted.upload_providers
+            or (
+                self.managed_default_owner
+                and provider not in enabled_upload_providers(self.config)
+            )
+        ):
             _deny()
         with self._admission:
             if self._closing:
@@ -600,7 +616,14 @@ class WorkspaceOwner:
         """Run a query upload miss after fresh bounded-lane authorization."""
         ctx.checkpoint()
         granted = self.scope.narrow(scope)
-        if self.config.values.offline or provider not in granted.upload_providers:
+        if (
+            self.config.values.offline
+            or provider not in granted.upload_providers
+            or (
+                self.managed_default_owner
+                and provider not in enabled_upload_providers(self.config)
+            )
+        ):
             _deny()
         with self._admission:
             if self._closing:
@@ -805,6 +828,26 @@ class CanonicalUploadPolicy:
 
     def __init__(self, owner: WorkspaceOwner) -> None:
         self._owner = owner
+
+    def _collection_permits(self, raw: str, provider: str) -> None:
+        try:
+            collection, installation_owner = parse_upload_policy(
+                raw,
+                allow_injected_provider_ids=not self._owner.managed_default_owner,
+            )
+        except TychoraError:
+            _deny()
+        if (
+            provider not in collection
+            or (
+                self._owner.managed_default_owner
+                and provider not in enabled_upload_providers(self._owner.config)
+            )
+            or (
+                self._owner.managed_default_owner and provider not in installation_owner
+            )
+        ):
+            _deny()
 
     def _check_epoch(self, policy_epoch: int) -> None:
         epoch = self._owner.db.execute(
@@ -1179,14 +1222,7 @@ class CanonicalUploadPolicy:
             )
         except TychoraError:
             _deny()
-        policy = json.loads(row[9], object_pairs_hook=_unique_object)
-        if (
-            not isinstance(policy, dict)
-            or set(policy) != {"schema_version", "upload_providers"}
-            or policy.get("schema_version") != 1
-            or provider not in _strings(policy.get("upload_providers"))
-        ):
-            _deny()
+        self._collection_permits(row[9], provider)
         envelope = json.loads(row[10], object_pairs_hook=_unique_object)
         if not isinstance(envelope, dict):
             _deny()
@@ -1293,15 +1329,7 @@ class CanonicalUploadPolicy:
                     or row[1] > granted.access_ceiling
                 ):
                     _deny()
-                policy = json.loads(row[2], object_pairs_hook=_unique_object)
-                if (
-                    not isinstance(policy, dict)
-                    or set(policy) != {"schema_version", "upload_providers"}
-                    or type(policy["schema_version"]) is not int
-                    or policy["schema_version"] != 1
-                    or provider not in _strings(policy["upload_providers"])
-                ):
-                    _deny()
+                self._collection_permits(row[2], provider)
             if authorization.dependency_ids:
                 self._authorize_dependencies(
                     authorization.dependency_ids, provider, granted
@@ -1353,18 +1381,16 @@ class CanonicalUploadPolicy:
             or row[5] is not None
         ):
             _deny()
-        policy = json.loads(row[6], object_pairs_hook=_unique_object)
-        if (
-            not isinstance(policy, dict)
-            or set(policy) != {"schema_version", "upload_providers"}
-            or type(policy["schema_version"]) is not int
-            or policy["schema_version"] != 1
-        ):
-            _deny()
-        if provider is not None and provider not in _strings(
-            policy["upload_providers"]
-        ):
-            _deny()
+        if provider is None:
+            try:
+                parse_upload_policy(
+                    row[6],
+                    allow_injected_provider_ids=not self._owner.managed_default_owner,
+                )
+            except TychoraError:
+                _deny()
+        else:
+            self._collection_permits(row[6], provider)
         envelope = json.loads(row[8], object_pairs_hook=_unique_object)
         if not isinstance(envelope, dict):
             _deny()

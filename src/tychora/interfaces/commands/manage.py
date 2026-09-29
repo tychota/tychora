@@ -117,6 +117,29 @@ def purge_originals(
     )
 
 
+@group.command("provider-upload-consent")
+def provider_upload_consent(
+    ctx: typer.Context,
+    collection_id: str = typer.Argument(
+        ..., help="Registered collection ID or default."
+    ),
+    provider: str = typer.Argument(..., help="Configured provider ID."),
+    action: str = typer.Argument(..., help="Explicit grant or revoke."),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Grant or revoke collection and default-owner upload policy together."""
+    _run(
+        ctx,
+        {
+            "operation": "provider-upload-consent",
+            "collection_id": collection_id,
+            "provider": provider,
+            "action": action,
+        },
+        json_output=json_output,
+    )
+
+
 @group.command("purge-history")
 def purge_history(ctx: typer.Context, before: str) -> None:
     """Purge history before an ISO 8601 timestamp."""
