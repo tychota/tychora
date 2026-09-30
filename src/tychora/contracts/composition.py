@@ -252,6 +252,21 @@ class PlannedProxy(Contract):
         return self
 
 
+class VisionCapabilityGap(Contract):
+    """Sanitized selected intent whose optional observation was unavailable."""
+
+    selection_sha256: Sha256
+    reason: Literal["provider_unavailable", "provider_failure"]
+
+
+class VisionCapabilityDiagnostics(Contract):
+    type: Literal["document_vision_capability"] = "document_vision_capability"
+    schema_version: Literal["1"] = "1"
+    gaps: Annotated[
+        tuple[VisionCapabilityGap, ...], Field(min_length=1, max_length=100)
+    ]
+
+
 class DocumentCompositionPlan(Contract):
     base_normalizer_fingerprint: Sha256
     table_strategy: Literal["table-fragments@1"] = "table-fragments@1"
@@ -259,6 +274,7 @@ class DocumentCompositionPlan(Contract):
     infer_table_continuations: bool = True
     caption_copies: bool = True
     proxies: tuple[PlannedProxy, ...] = ()
+    vision_gaps: Annotated[tuple[VisionCapabilityGap, ...], Field(max_length=100)] = ()
 
     def semantic_data(self) -> JsonValue:
         """Preserve the exact Task13 plan form when no region enrichment exists."""
@@ -268,12 +284,16 @@ class DocumentCompositionPlan(Contract):
                 proxy.pop("region", None)
             if not proxy.get("source_context"):
                 proxy.pop("source_context", None)
+        if not data["vision_gaps"]:
+            data.pop("vision_gaps")
         return data
 
     @model_validator(mode="after")
     def bounded_unique_inputs(self) -> Self:
         if (
             len(self.proxies) > 10_000
+            or len({gap.selection_sha256 for gap in self.vision_gaps})
+            != len(self.vision_gaps)
             or len(canonical_bytes(self.semantic_data())) > 16 * 1024 * 1024
         ):
             raise ValueError("Document composition plan exceeds input capacity")

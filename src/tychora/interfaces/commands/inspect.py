@@ -31,6 +31,9 @@ def register(app: typer.Typer) -> None:
         original: bool = typer.Option(
             False, help="Inspect a retained original, when authorized."
         ),
+        cursor: str | None = typer.Option(None, help="Continue a selection page."),
+        limit: int | None = typer.Option(None, help="Selection page size (1–50)."),
+        page: int | None = typer.Option(None, help="Selection page number (1–100)."),
         json_output: bool = typer.Option(False, "--json"),
     ) -> None:
         """Inspect kinds, source definitions, evidence and original bindings."""
@@ -51,6 +54,17 @@ def register(app: typer.Typer) -> None:
                 raise TychoraError(
                     "INVALID_REQUEST",
                     "Unknown inspect subject or missing ID; run inspect kinds for definitions.",
+                )
+            if subject != "selections" and (
+                cursor is not None or limit is not None or page is not None
+            ):
+                raise TychoraError(
+                    "INVALID_REQUEST",
+                    "Pagination options require selection inspection.",
+                )
+            if page is not None and (not 1 <= page <= 100 or cursor is not None):
+                raise TychoraError(
+                    "INVALID_REQUEST", "Selection page or cursor is invalid."
                 )
             if subject == "config":
                 if id is not None:
@@ -94,7 +108,23 @@ def register(app: typer.Typer) -> None:
                                 "INVALID_REQUEST",
                                 "Selection inspection needs SOURCE_ID:REVISION_ID:EXTRACTION_ID.",
                             )
-                        result = kb.sources.selections(*parts)
+                        position = cursor
+                        for _ in range((page or 1) - 1):
+                            prior = kb.sources.selections(
+                                *parts,
+                                cursor=position,
+                                limit=20 if limit is None else limit,
+                            )
+                            if prior.next_cursor is None:
+                                raise TychoraError(
+                                    "NOT_FOUND", "Selection page is unavailable."
+                                )
+                            position = prior.next_cursor
+                        result = kb.sources.selections(
+                            *parts,
+                            cursor=position,
+                            limit=20 if limit is None else limit,
+                        )
                     else:
                         raise TychoraError(
                             "INVALID_REQUEST",

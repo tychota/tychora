@@ -139,7 +139,7 @@ class VisionSelection(Contract):
     """Caller intent; retained pixels, context and authority are service derived."""
 
     captured_original_sha256: Sha256
-    retained_extraction_sha256: Sha256
+    retained_extraction_sha256: Sha256 | None = None
     source_native_ref: NonEmptyStr
     geometry: VisionCrop
     task: Literal["ocr", "describe", "extract"]

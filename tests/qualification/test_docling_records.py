@@ -55,7 +55,9 @@ def document_record_case(tmp_path_factory):
                 None if scope is None else scope.model_dump_json(),
             )
             if key in cache:
-                return cache[key]
+                return SimpleNamespace(
+                    **(vars(cache[key]) | {"ctx": ExecutionContext()})
+                )
             folder = root / str(len(list(root.iterdir())))
             folder.mkdir()
             pack = folder / "pack"

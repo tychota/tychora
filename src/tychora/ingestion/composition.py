@@ -16,6 +16,7 @@ from tychora.contracts.composition import (
     PlannedProxy,
     PlannedRegion,
     SourceSelector,
+    VisionCapabilityDiagnostics,
     source_context_identity,
 )
 from tychora.contracts.corpus import ExtractionBundle, LocatorRow
@@ -354,6 +355,17 @@ def build_composed_document(
         if assertions
         else None
     )
+    diagnostics_ref = (
+        retain(
+            canonical_bytes(
+                VisionCapabilityDiagnostics(gaps=plan.vision_gaps).model_dump(
+                    mode="json"
+                )
+            )
+        )
+        if plan.vision_gaps
+        else None
+    )
     assets = {asset.native_ref: asset.asset_id for asset in bundle.assets}
     parsed_assets = {asset.native_ref: asset for asset in parsed.assets}
     region_dependencies: dict[bytes, tuple[str, ...]] = {}
@@ -402,9 +414,7 @@ def build_composed_document(
             sorted(
                 {
                     owner_id,
-                    *_verified_region_context_ids(
-                        proxy, parsed, bundle
-                    ),
+                    *_verified_region_context_ids(proxy, parsed, bundle),
                 }
             )
         )
@@ -505,7 +515,10 @@ def build_composed_document(
                 update={
                     "assertions_artifact_sha": assertion_ref.sha256
                     if assertion_ref
-                    else None
+                    else None,
+                    "diagnostics_artifact_sha": diagnostics_ref.sha256
+                    if diagnostics_ref
+                    else None,
                 }
             ),
             "artifacts": (

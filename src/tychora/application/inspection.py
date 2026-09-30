@@ -18,7 +18,7 @@ from tychora.contracts.base import CodepointRange, FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import Excerpt, RelationPath
 from tychora.contracts.graph import GraphBudget
-from tychora.contracts.identity import digest
+from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.operations import (
     InspectionItem,
     InspectionResult,
@@ -426,6 +426,58 @@ class InspectionService:
                 )
                 for kind, schema, value in rows
             )
+            if unit.unit_type == "asset_proxy" and unit.attributes.get(
+                "proxy_kind"
+            ) in {"ocr", "description"}:
+                proxy_row = owner.db.execute(
+                    "SELECT derivation_sha FROM asset_proxies WHERE proxy_unit_id=?",
+                    (request.id,),
+                ).fetchone()
+                if proxy_row is None:
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Derived proxy binding is unavailable."
+                    )
+                payload, media_type = self._artifact(
+                    proxy_row[0], max_bytes=1024 * 1024
+                )
+                try:
+                    root = json.loads(payload)
+                    data = root["data"]
+                    result = data["result"]
+                    if (
+                        media_type != "application/json"
+                        or canonical_bytes(root) != payload
+                        or root.get("type") != "vision_derivation"
+                        or root.get("schema_version") != "1"
+                        or not isinstance(data, dict)
+                        or not isinstance(result, dict)
+                    ):
+                        raise ValueError
+                    details = {
+                        "task": data["task"],
+                        "model": data["model"],
+                        "prompt_identity": data["prompt_identity"],
+                        "image_sha256": data["image_sha256"],
+                        "source_context_sha256": data["source_context_sha256"],
+                        "dependency_ids": data["dependency_ids"],
+                        "target_id": result.get("target_id"),
+                        "literal_transcription": result.get("literal_transcription"),
+                        "interpretation": result.get("interpretation"),
+                        "uncertainties": result.get("uncertainties", []),
+                    }
+                except (ValueError, TypeError, KeyError):
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Derived proxy receipt differs."
+                    ) from None
+                records = (
+                    *records,
+                    InspectionItem(
+                        id=request.id,
+                        record_type="vision_derivation",
+                        schema_id="vision-derivation@1",
+                        value=FrozenJsonMap(details),
+                    ),
+                )
         return InspectionResult(
             subject="evidence",
             id=request.id,

@@ -49,6 +49,10 @@ complete `SourceInput` request file with a `vision` array, then submit with
 exact native text context are part of that durable request. OCR runs locally when
 its provisioned model succeeds; remote vision needs an enabled online profile and
 current provider-upload consent.
+Use `inspect selections SOURCE:REVISION:EXTRACTION --limit 20 --page 2 --json`
+to reach later choices in a one-shot CLI invocation. `--page` follows bounded,
+scope-checked cursors while one owner remains open (pages 1–100); `--cursor`
+continues a selection page only while the same delegated owner session is alive.
 
 ```sh
 tychora --workspace ./knowledge search "Where is the exact term defined?" --json

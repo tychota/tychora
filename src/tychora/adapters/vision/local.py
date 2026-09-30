@@ -220,7 +220,10 @@ class LocalOcrProvider:
                     "prompt_schema_version": self.prompt_schema_version,
                     "task_schema_sha256": task_schema_sha,
                     "prompt_identity": prompt_identity,
-                    "result": result,
+                    "result": {
+                        **result,
+                        "uncertainties": ["OCR model scores are uncalibrated."],
+                    },
                 },
             }
         )

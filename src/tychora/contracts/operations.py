@@ -177,6 +177,8 @@ class SourceCoverageRequest(Contract):
                 raise ValueError(
                     "Extraction coverage needs revision ID and limit <= 20"
                 )
+        elif self.subject == "source_selections" and self.limit > 50:
+            raise ValueError("Selection coverage limit exceeds 50")
         elif self.revision_id is None or self.extraction_id is None:
             raise ValueError("Channel coverage needs revision and extraction IDs")
         return self

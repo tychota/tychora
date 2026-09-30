@@ -24,7 +24,7 @@ from tychora.adapters.docling.parser import DoclingParser
 from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.adapters.sqlite.publication import PublicationReceipts
 from tychora.contracts.code import CapturedSyntax, CodeRegistration
-from tychora.contracts.composition import DocumentCompositionPlan
+from tychora.contracts.composition import DocumentCompositionPlan, VisionCapabilityGap
 from tychora.contracts.corpus import CollectionRow, RevisionRow, SourceRow, WorkspaceRow
 from tychora.contracts.documents import DocumentRegistration
 from tychora.contracts.errors import TychoraError
@@ -1071,10 +1071,15 @@ class SourceService:
             ):
                 raise TychoraError("INTEGRITY_ERROR", "Captured vision intent differs.")
             proxies = []
+            gaps = []
             for selected in source.root.vision:
-                proxies.append(
-                    await self._selected_vision_proxy(parsed, selected, scope, ctx)
+                proxy, gap = await self._selected_vision_proxy(
+                    parsed, selected, scope, ctx
                 )
+                if proxy is not None:
+                    proxies.append(proxy)
+                if gap is not None:
+                    gaps.append(gap)
             return await self.owner.run_blocking(
                 lambda: (
                     compose_document(
@@ -1083,6 +1088,7 @@ class SourceService:
                         DocumentCompositionPlan(
                             base_normalizer_fingerprint=parsed.normalizer_fingerprint,
                             proxies=tuple(proxies),
+                            vision_gaps=tuple(gaps),
                         ),
                         self.owner.artifacts,
                         ctx,
@@ -1133,6 +1139,16 @@ class SourceService:
             CapturedSourceRegistration,
         )
 
+        def gap(
+            reason: Literal["provider_unavailable", "provider_failure"],
+        ) -> VisionCapabilityGap:
+            return VisionCapabilityGap(
+                selection_sha256=digest(
+                    "vision-selection-v1", selected.model_dump(mode="json")
+                ),
+                reason=reason,
+            )
+
         schema = dict(selected.task_schema)
         response_schema(schema, frozenset())
         region, proof = await self.owner.run_blocking(
@@ -1151,14 +1167,14 @@ class SourceService:
                     )
                 )
             except TychoraError as error:
-                if error.code != "CAPABILITY_MISSING":
+                if error.code not in {"CAPABILITY_MISSING", "PROVIDER_FAILURE"}:
                     raise
             if observation is not None and not observation.literal_transcription:
                 observation = None
         if observation is None:
-            if self.vision_credential is None:
+            if "vision" not in self.owner.scope.narrow(scope).capabilities:
                 raise TychoraError(
-                    "CAPABILITY_MISSING", "Configured vision provider is unavailable."
+                    "FORBIDDEN_SCOPE", "Vision is outside the current grant."
                 )
             registration = parsed.registration
             captured = CapturedSourceRegistration(
@@ -1189,16 +1205,31 @@ class SourceService:
                 proof=proof,
                 region=region,
             )
-            observation = await dispatch_captured_vision(
-                self.owner,
-                authorization,
-                schema,
-                ctx,
-                scope=scope,
-                policy_epoch=epoch,
-                model=self.owner.config.values.providers.vision.model or "",
-                api_key=self.vision_credential,
-            )
+            if self.vision_credential is None:
+                await self.owner.run_blocking(
+                    lambda: self.owner.upload_policy.authorize_captured(
+                        scope, "anthropic", authorization, epoch
+                    ),
+                    ctx,
+                )
+                return None, gap("provider_unavailable")
+            try:
+                observation = await dispatch_captured_vision(
+                    self.owner,
+                    authorization,
+                    schema,
+                    ctx,
+                    scope=scope,
+                    policy_epoch=epoch,
+                    model=self.owner.config.values.providers.vision.model or "",
+                    api_key=self.vision_credential,
+                )
+            except TychoraError as error:
+                if error.code == "PROVIDER_FAILURE":
+                    return None, gap("provider_failure")
+                if error.code == "CAPABILITY_MISSING":
+                    return None, gap("provider_unavailable")
+                raise
             observation = await self.owner.run_blocking(
                 lambda: retain_remote_observation(self.owner, region, observation), ctx
             )
@@ -1216,4 +1247,4 @@ class SourceService:
             asset_native_ref = linked[0]
         return planned_vision_proxy(
             region, observation, asset_native_ref=asset_native_ref
-        )
+        ), None

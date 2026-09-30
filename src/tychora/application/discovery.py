@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, cast
 from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
+from tychora.contracts.composition import VisionCapabilityDiagnostics
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.operations import (
@@ -519,6 +520,39 @@ class DiscoveryService:
         self, extraction: str, kind: str, scope: RequestScope
     ) -> SourceExtractionCoverage:
         assert self.owner is not None
+        vision_status = {}
+        if kind != "code_file@1":
+            row = self.owner.db.execute(
+                "SELECT a.artifact_sha,a.size_bytes,a.media_type,a.storage_key "
+                "FROM extractions e JOIN artifacts a "
+                "ON a.artifact_sha=e.diagnostics_artifact_sha "
+                "WHERE e.extraction_id=?",
+                (extraction,),
+            ).fetchone()
+            if row is not None:
+                ref = ArtifactRef(
+                    sha256=row[0],
+                    size_bytes=row[1],
+                    media_type=row[2],
+                    storage_key=row[3],
+                )
+                if ref.size_bytes > 65536 or ref.media_type != "application/json":
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Vision capability diagnostic differs."
+                    )
+                with self.owner.artifacts.open_verified(ref) as stream:
+                    payload = stream.read(ref.size_bytes + 1)
+                try:
+                    diagnostic = VisionCapabilityDiagnostics.model_validate_json(
+                        payload
+                    )
+                    if canonical_bytes(diagnostic.model_dump(mode="json")) != payload:
+                        raise ValueError
+                except (ValueError, TypeError):
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Vision capability diagnostic differs."
+                    ) from None
+                vision_status = {"vision": "incomplete"}
         channel_rows = self.owner.db.execute(
             "SELECT f.channel,b.state FROM index_batches b "
             "JOIN index_families f USING(family_id) "
@@ -527,7 +561,9 @@ class DiscoveryService:
         ).fetchall()
         return SourceExtractionCoverage(
             extraction_id=extraction,
-            stages=FrozenJsonMap({"extraction": "retained", **dict(channel_rows[:16])}),
+            stages=FrozenJsonMap(
+                {"extraction": "retained", **dict(channel_rows[:16]), **vision_status}
+            ),
             code_resolution=self._code_resolution(extraction, scope)
             if kind == "code_file@1"
             else None,

@@ -142,6 +142,15 @@ def derive_selected_region(
     ):
         _invalid()
     if (
+        selected.retained_extraction_sha256 is None
+        and owner.db.execute(
+            "SELECT 1 FROM extractions WHERE revision_id=? LIMIT 1",
+            (registration.revision.revision_id,),
+        ).fetchone()
+        is not None
+    ):
+        _invalid()
+    if (
         selected.retained_extraction_sha256 is not None
         and selected.retained_extraction_sha256 != parsed.raw_document_ref.sha256
         and not _verified_selected_extraction(

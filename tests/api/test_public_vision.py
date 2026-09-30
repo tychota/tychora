@@ -364,6 +364,27 @@ def test_offline_cli_selected_ocr_uses_local_models_without_remote_call(
             )
         )
         assert count == 1
+        proxy_id = kb._workspace.bridge.call(
+            kb._workspace.owner.run_blocking(
+                lambda: kb._workspace.owner.db.execute(
+                    "SELECT proxy_unit_id FROM asset_proxies LIMIT 1"
+                ).fetchone()[0],
+                ExecutionContext(),
+            )
+        )
+        inspected = kb.evidence.get(proxy_id)
+        assert inspected.evidence is not None
+        assert inspected.evidence.text_origin == "ocr"
+        assert inspected.evidence.review_state == "needs_review"
+        assert not inspected.evidence.citable
+        derivation = next(
+            item
+            for item in inspected.records
+            if item.record_type == "vision_derivation"
+        )
+        assert "SOURCE IMAGE 123" in derivation.value["literal_transcription"]
+        assert derivation.value["interpretation"] is None
+        assert derivation.value["uncertainties"]
 
 
 def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_target(
@@ -378,6 +399,9 @@ def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_targ
     page.setFont("Helvetica", 15)
     page.drawString(72, 700, "Native source paragraph remains authoritative.")
     page.showPage()
+    for index in range(21):
+        page.drawString(72, 700, f"Additional native page {index:02d}.")
+        page.showPage()
     pixels = Image.new("RGB", (600, 140), "white")
     ImageDraw.Draw(pixels).rectangle((50, 30, 170, 100), fill="blue")
     encoded = BytesIO()
@@ -525,11 +549,61 @@ def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_targ
                 "action": "grant",
             }
         )
+    (workspace / "workspace.toml").write_text(config_path.read_text())
+    command = [
+        "--workspace",
+        str(workspace),
+        "--profile",
+        "test",
+        "inspect",
+        "selections",
+        f"{sid}:{revision}:{extraction}",
+        "--limit",
+        "20",
+        "--json",
+    ]
+    first_page = CliRunner().invoke(cli_app, command)
+    assert first_page.exit_code == 0, first_page.stdout + first_page.stderr
+    first_candidates = json.loads(first_page.stdout)["candidates"]
+    assert len(first_candidates) == 20 and json.loads(first_page.stdout)["next_cursor"]
+    continued = CliRunner().invoke(cli_app, [*command[:-1], "--page", "2", "--json"])
+    assert continued.exit_code == 0, continued.stdout + continued.stderr
+    page_data = json.loads(continued.stdout)
+    later_image = next(
+        (item for item in page_data["candidates"] if item["kind"] == "image"), None
+    )
+    assert later_image is not None
+    assert later_image["source_native_ref"] not in {
+        item["source_native_ref"] for item in first_candidates
+    }
+    selected["vision"][0]["source_native_ref"] = later_image["source_native_ref"]
     with Tychora.open(workspace, config=config, token_counter=Counter()) as kb:
         accepted = kb.sources.add(selected)
         status = kb.jobs.wait(accepted.id)
         assert status.state == "succeeded", (status, prompts)
         assert len(prompts) == 1
+        proxy_id = kb._workspace.bridge.call(
+            kb._workspace.owner.run_blocking(
+                lambda: kb._workspace.owner.db.execute(
+                    "SELECT proxy_unit_id FROM asset_proxies ORDER BY rowid DESC LIMIT 1"
+                ).fetchone()[0],
+                ExecutionContext(),
+            )
+        )
+        inspected = kb.evidence.get(proxy_id)
+        assert inspected.evidence is not None
+        assert inspected.evidence.text_origin == "derived"
+        assert inspected.evidence.review_state == "needs_review"
+        assert not inspected.evidence.citable
+        derivation = next(
+            item
+            for item in inspected.records
+            if item.record_type == "vision_derivation"
+        )
+        assert derivation.value["literal_transcription"] is None
+        assert dict(derivation.value["interpretation"]) == {"label": "selected"}
+        assert derivation.value["uncertainties"] == ("synthetic",)
+        assert derivation.value["target_id"] == prompts[0][1][0]["target_id"]
         response_mode[0] = "invented"
         altered = {
             **selected,
@@ -548,7 +622,7 @@ def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_targ
             ],
         }
         bad = kb.sources.add(altered)
-        assert kb.jobs.wait(bad.id).state == "failed"
+        assert kb.jobs.wait(bad.id).state == "succeeded"
         assert len(prompts) == 2
         response_mode[0] = "malformed"
         malformed = {
@@ -556,8 +630,15 @@ def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_targ
             "vision": [{**selected["vision"][0], "task": "extract"}],
         }
         bad_json = kb.sources.add(malformed)
-        assert kb.jobs.wait(bad_json.id).state == "failed"
+        assert kb.jobs.wait(bad_json.id).state == "succeeded"
         assert len(prompts) == 3
+        assert (
+            sum(
+                item.stages.get("vision") == "incomplete"
+                for item in kb.sources.extractions(sid, revision).extractions
+            )
+            == 2
+        )
         stale_context = {
             **selected,
             "vision": [
@@ -584,3 +665,145 @@ def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_targ
             )
         )
         assert count == 1
+
+
+def test_first_selected_add_retains_original_and_reports_incomplete_vision(
+    tmp_path, monkeypatch
+):
+    from tychora.adapters.vision import anthropic
+
+    monkeypatch.setenv("TYCHORA_MODEL_CACHE", os.environ["TYCHORA_TEST_MODEL_CACHE"])
+    monkeypatch.setenv("SYNTHETIC_VISION_KEY", "synthetic-key")
+    image_path = tmp_path / "first.png"
+    Image.new("RGB", (8, 6), "blue").save(image_path)
+    config_path = tmp_path / "workspace.toml"
+    config_path.write_text(
+        'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
+        "[configuration]\noffline=false\n"
+        '[configuration.extraction]\nparser="docling"\n'
+        '[configuration.acquisition]\nroots=["' + str(tmp_path) + '"]\n'
+        '[configuration.providers.vision]\nprovider="anthropic"\n'
+        'model="synthetic-qualified-model"\ncredential_ref="env:SYNTHETIC_VISION_KEY"\n'
+    )
+    config = resolve_config(config_path, "test", {})
+    source = {
+        "type": "file",
+        "path": str(image_path),
+        "format": "png",
+        "source_key": "first",
+        "collection_id": "default",
+        "kind": "manual@1",
+        "metadata": {"title": "First", "publisher": "Example Team", "edition": "1"},
+    }
+    selected = {
+        **source,
+        "vision": [
+            {
+                "captured_original_sha256": hashlib.sha256(
+                    image_path.read_bytes()
+                ).hexdigest(),
+                "source_native_ref": "image-original:first",
+                "geometry": {"domain": "pixels", "x0": 1, "y0": 1, "x1": 5, "y1": 4},
+                "task": "describe",
+                "task_schema": {
+                    "type": "object",
+                    "properties": {"label": {"type": "string"}},
+                    "required": ["label"],
+                    "additionalProperties": False,
+                },
+            }
+        ],
+    }
+    sent = []
+    response_mode = ["malformed"]
+
+    class MockMessages:
+        def create(self, **kwargs):
+            sent.append(kwargs)
+            return SimpleNamespace(
+                stop_reason="end_turn",
+                content=[
+                    SimpleNamespace(
+                        type="text",
+                        text="not-json"
+                        if response_mode[0] == "malformed"
+                        else json.dumps(
+                            {
+                                "target_id": None,
+                                "literal_transcription": None,
+                                "interpretation": {"label": "blue"},
+                                "uncertainties": ["synthetic"],
+                            }
+                        ),
+                    )
+                ],
+            )
+
+    class MockClient:
+        messages = MockMessages()
+
+        def close(self):
+            pass
+
+    actual_create = anthropic.create_provider
+    monkeypatch.setattr(
+        anthropic,
+        "create_provider",
+        lambda **kwargs: actual_create(
+            **{**kwargs, "client_factory": lambda **_: MockClient()}
+        ),
+    )
+    workspace = tmp_path / "knowledge"
+    with Tychora.open(workspace, config=config, token_counter=Counter()) as kb:
+        kb.management.run(
+            {
+                "operation": "provider-upload-consent",
+                "collection_id": "default",
+                "provider": "anthropic",
+                "action": "grant",
+            }
+        )
+    with Tychora.open(workspace, config=config, token_counter=Counter()) as kb:
+        accepted = kb.sources.add(selected)
+        assert kb.jobs.wait(accepted.id).state == "succeeded"
+        assert len(sent) == 1
+        sid = canonical_source_id(UUID(str(kb.default_collection_id)), "first")
+        revision = kb.sources.revisions(sid).revisions[0].revision_id
+        extraction = kb.sources.extractions(sid, revision).extractions[0]
+        assert extraction.stages["vision"] == "incomplete"
+        original = kb.inspect(
+            {"subject": "revisions", "id": revision, "original": True}
+        )
+        assert original.payload == image_path.read_bytes()
+        assert kb.sources.selections(sid, revision, extraction.extraction_id).candidates
+        assert (
+            kb._workspace.bridge.call(
+                kb._workspace.owner.run_blocking(
+                    lambda: kb._workspace.owner.db.execute(
+                        "SELECT count(*) FROM asset_proxies"
+                    ).fetchone()[0],
+                    ExecutionContext(),
+                )
+            )
+            == 0
+        )
+        omitted_again = kb.sources.add(selected)
+        assert kb.jobs.wait(omitted_again.id).state == "failed"
+        assert len(sent) == 1
+        inspected = kb.sources.selections(sid, revision, extraction.extraction_id)
+        response_mode[0] = "valid"
+        retry_intent = {
+            **selected,
+            "vision": [
+                {
+                    **selected["vision"][0],
+                    "retained_extraction_sha256": inspected.retained_extraction_sha256,
+                }
+            ],
+        }
+        completed = kb.sources.add(retry_intent)
+        assert kb.jobs.wait(completed.id).state == "succeeded"
+        assert len(sent) == 2
+        outcomes = kb.sources.extractions(sid, revision).extractions
+        assert len(outcomes) == 2
+        assert {item.stages.get("vision") for item in outcomes} == {None, "incomplete"}
