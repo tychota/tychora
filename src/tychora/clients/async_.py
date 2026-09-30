@@ -113,6 +113,27 @@ class _AsyncSources:
             limit=limit,
         )
 
+    @_admitted
+    async def selections(
+        self,
+        source_id: str,
+        revision_id: str,
+        extraction_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 20,
+    ):
+        ws = self.kb._open()
+        return await asyncio.to_thread(
+            ws.services.discovery.source_selections,
+            source_id,
+            revision_id,
+            extraction_id,
+            ws.scope,
+            cursor=cursor,
+            limit=limit,
+        )
+
 
 class _AsyncEvidence:
     def __init__(self, kb: AsyncTychora) -> None:

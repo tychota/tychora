@@ -1026,9 +1026,12 @@ class CanonicalUploadPolicy:
             proof = authorization.proof
             if isinstance(proof, CapturedOriginalRegionProof):
                 original_ref = capture.original_ref
-                expected_original = (
-                    "PNG" if capture.source.get("format") == "png" else "JPEG"
-                )
+                from tychora.ports.vision import captured_image_format
+
+                fmt = captured_image_format(capture)
+                if fmt is None:
+                    _deny()
+                expected_original = "PNG" if fmt == "png" else "JPEG"
             elif isinstance(proof, RetainedDocumentRegionProof):
                 extraction = proof.extraction
                 data = extraction.model_dump(

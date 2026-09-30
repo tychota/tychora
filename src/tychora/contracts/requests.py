@@ -17,6 +17,7 @@ from .base import (
     NonEmptyStr,
     NonNegativeInt,
     PositiveInt,
+    Sha256,
 )
 from .errors import TychoraError
 from .identity import canonical_bytes, normalize_source_key
@@ -102,6 +103,65 @@ AndFilter.model_rebuild()
 OrFilter.model_rebuild()
 
 
+class VisionCrop(Contract):
+    domain: Literal["pixels"] = "pixels"
+    x0: NonNegativeInt
+    y0: NonNegativeInt
+    x1: PositiveInt
+    y1: PositiveInt
+
+    @model_validator(mode="after")
+    def ordered(self) -> Self:
+        if self.x0 >= self.x1 or self.y0 >= self.y1:
+            raise ValueError("Vision crop must have positive dimensions")
+        return self
+
+
+class VisionContextSelector(Contract):
+    native_ref: NonEmptyStr
+    field: Literal["text", "marker", "table_cell"]
+    cell_index: NonNegativeInt | None = None
+    source_start: NonNegativeInt
+    source_end: PositiveInt
+
+    @model_validator(mode="after")
+    def exact_interval(self) -> Self:
+        if (
+            not self.native_ref.startswith("#/")
+            or self.source_start >= self.source_end
+            or (self.field == "table_cell") != (self.cell_index is not None)
+        ):
+            raise ValueError("Vision context requires a retained source interval")
+        return self
+
+
+class VisionSelection(Contract):
+    """Caller intent; retained pixels, context and authority are service derived."""
+
+    captured_original_sha256: Sha256
+    retained_extraction_sha256: Sha256
+    source_native_ref: NonEmptyStr
+    geometry: VisionCrop
+    task: Literal["ocr", "describe", "extract"]
+    task_schema: FrozenJsonMap
+    context: Annotated[tuple[VisionContextSelector, ...], Field(max_length=100)] = ()
+
+    @model_validator(mode="after")
+    def selected_coordinates(self) -> Self:
+        if (
+            not (
+                self.source_native_ref.startswith("#/")
+                or self.source_native_ref.startswith("image-original:")
+            )
+            or self.task == "ocr"
+            and self.task_schema != FrozenJsonMap({"type": "null"})
+        ):
+            raise ValueError(
+                "Vision selection requires retained pixel coordinates and task schema"
+            )
+        return self
+
+
 class SourceBase(Contract):
     source_key: NonEmptyStr
     collection_id: UUID
@@ -112,6 +172,7 @@ class SourceBase(Contract):
     media_type: NonEmptyStr | None = None
     sidecars: Annotated[tuple[NonEmptyStr, ...], Field(max_length=10000)] = ()
     acquisition_limits: AcquisitionLimits | None = None
+    vision: Annotated[tuple[VisionSelection, ...], Field(max_length=100)] = ()
 
     @field_validator("source_key")
     @classmethod
@@ -189,6 +250,15 @@ class SourceInput(RootModel[SourceVariant]):
         from pydantic import TypeAdapter
 
         return cls(TypeAdapter(SourceVariant).validate_json(canonical_bytes(value)))
+
+
+def source_registration_descriptor(source: SourceInput) -> FrozenJsonMap:
+    """Stable sync descriptor; per-job vision selection is retained in capture."""
+    return FrozenJsonMap(
+        source.root.model_dump(
+            mode="json", exclude={"text", "data", "metadata", "vision"}
+        )
+    )
 
 
 class QuestionInput(Contract):

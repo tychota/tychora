@@ -25,6 +25,7 @@ from tychora.contracts.operations import (
     SourceCoverageRequest,
     SourceExtractionPage,
     SourceRevisionPage,
+    SourceSelectionPage,
 )
 from tychora.contracts.requests import (
     FileSource,
@@ -193,7 +194,8 @@ def register_tools(server: MCPServer) -> None:
         InspectionResult
         | SourceRevisionPage
         | SourceExtractionPage
-        | SourceChannelPage,
+        | SourceChannelPage
+        | SourceSelectionPage,
     ]:
         try:
             _require("read")
@@ -202,6 +204,7 @@ def register_tools(server: MCPServer) -> None:
                 "source_revisions",
                 "source_extractions",
                 "source_channels",
+                "source_selections",
             }:
                 coverage = SourceCoverageRequest.model_validate_json(
                     canonical_bytes(request)
@@ -224,11 +227,23 @@ def register_tools(server: MCPServer) -> None:
                         cursor=coverage.cursor,
                         limit=coverage.limit,
                     )
-                else:
+                elif coverage.subject == "source_channels":
                     assert coverage.revision_id is not None
                     assert coverage.extraction_id is not None
                     value = await asyncio.to_thread(
                         services.discovery.source_channels,
+                        coverage.source_id,
+                        coverage.revision_id,
+                        coverage.extraction_id,
+                        scope,
+                        cursor=coverage.cursor,
+                        limit=coverage.limit,
+                    )
+                else:
+                    assert coverage.revision_id is not None
+                    assert coverage.extraction_id is not None
+                    value = await asyncio.to_thread(
+                        services.discovery.source_selections,
                         coverage.source_id,
                         coverage.revision_id,
                         coverage.extraction_id,

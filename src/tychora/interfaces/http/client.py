@@ -36,6 +36,7 @@ from tychora.contracts.operations import (
     SourceChannelPage,
     SourceExtractionPage,
     SourceRevisionPage,
+    SourceSelectionPage,
 )
 from tychora.contracts.requests import QueryRequest, RequestScope, SourceInput
 
@@ -185,6 +186,23 @@ class _SyncSources:
             self.client._request(
                 "GET",
                 f"/v1/sources/{_id(source_id)}/revisions/{_id(revision_id)}/extractions/{_id(extraction_id)}/channels",
+                params=_page_params(cursor, limit),
+            ).content
+        )
+
+    def selections(
+        self,
+        source_id: str,
+        revision_id: str,
+        extraction_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 20,
+    ) -> SourceSelectionPage:
+        return SourceSelectionPage.model_validate_json(
+            self.client._request(
+                "GET",
+                f"/v1/sources/{_id(source_id)}/revisions/{_id(revision_id)}/extractions/{_id(extraction_id)}/selections",
                 params=_page_params(cursor, limit),
             ).content
         )
@@ -518,6 +536,25 @@ class _AsyncSources:
                 await self.client._request(
                     "GET",
                     f"/v1/sources/{_id(source_id)}/revisions/{_id(revision_id)}/extractions/{_id(extraction_id)}/channels",
+                    params=_page_params(cursor, limit),
+                )
+            ).content
+        )
+
+    async def selections(
+        self,
+        source_id: str,
+        revision_id: str,
+        extraction_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 20,
+    ) -> SourceSelectionPage:
+        return SourceSelectionPage.model_validate_json(
+            (
+                await self.client._request(
+                    "GET",
+                    f"/v1/sources/{_id(source_id)}/revisions/{_id(revision_id)}/extractions/{_id(extraction_id)}/selections",
                     params=_page_params(cursor, limit),
                 )
             ).content

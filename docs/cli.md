@@ -41,6 +41,15 @@ bytes, URL, folder, and repository variants. No metadata field is inferred from
 the filename. Source jobs run the configured acquisition, extraction, lexical,
 vector, and graph stages; their status is returned as a job record.
 
+For selected PDF/DOCX/PNG/JPEG vision, first ingest the original and run
+`tychora --workspace ./knowledge inspect selections SOURCE_ID:REVISION_ID:EXTRACTION_ID --json`.
+Use the listed native image reference, dimensions and original/extraction hashes in a
+complete `SourceInput` request file with a `vision` array, then submit with
+`add --request-file`. The selected task, pixel rectangle, JSON schema and optional
+exact native text context are part of that durable request. OCR runs locally when
+its provisioned model succeeds; remote vision needs an enabled online profile and
+current provider-upload consent.
+
 ```sh
 tychora --workspace ./knowledge search "Where is the exact term defined?" --json
 tychora --workspace ./knowledge search --passage "synthetic passage" --json

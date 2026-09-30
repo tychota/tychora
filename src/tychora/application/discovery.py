@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import json
 from base64 import urlsafe_b64decode, urlsafe_b64encode
+from collections.abc import Mapping
 from importlib import metadata
 from typing import TYPE_CHECKING, cast
 
@@ -27,6 +28,8 @@ from tychora.contracts.operations import (
     SourceExtractionPage,
     SourceRevisionCoverage,
     SourceRevisionPage,
+    SourceSelectionCandidate,
+    SourceSelectionPage,
 )
 from tychora.contracts.requests import RequestScope
 from tychora.ports.execution import ExecutionContext
@@ -660,6 +663,172 @@ class DiscoveryService:
                 ),
                 next_cursor=_scoped_cursor(owner, subject, page[-1][0], granted, limit)
                 if len(rows) > limit and page
+                else None,
+            )
+
+        return owner.run_blocking_sync(read, ExecutionContext())
+
+    def source_selections(
+        self,
+        source_id: str,
+        revision_id: str,
+        extraction_id: str,
+        scope: RequestScope,
+        *,
+        cursor: str | None = None,
+        limit: int = 20,
+    ) -> SourceSelectionPage:
+        """Page bounded source refs and text fields from a verified raw parser root."""
+        from tychora.contracts.documents import DocumentUnit
+        from tychora.ingestion.documents import replay_document
+
+        if not 1 <= limit <= 50:
+            raise TychoraError("INVALID_REQUEST", "Selection page limit is invalid.")
+        self._visible_revision(source_id, revision_id, scope)
+        assert self.owner is not None
+        owner = self.owner
+        granted = owner.scope.narrow(scope)
+        subject = f"source-selections:{source_id}:{revision_id}:{extraction_id}"
+        after = _scoped_after(owner, cursor, subject, granted, limit) or ""
+
+        def read() -> SourceSelectionPage:
+            row = owner.db.execute(
+                "SELECT a.artifact_sha,a.size_bytes,a.media_type,a.storage_key "
+                "FROM extractions e JOIN artifacts a ON a.artifact_sha=e.document_artifact_sha "
+                "WHERE e.extraction_id=? AND e.revision_id=?",
+                (extraction_id, revision_id),
+            ).fetchone()
+            original = owner.db.execute(
+                "SELECT a.payload_state FROM revision_artifacts ra "
+                "JOIN artifacts a ON a.artifact_sha=ra.artifact_sha "
+                "WHERE ra.revision_id=? AND ra.role='original' LIMIT 1",
+                (revision_id,),
+            ).fetchone()
+            if row is None or original is None or original[0] != "present":
+                raise TychoraError("NOT_FOUND", "Selectable extraction is unavailable.")
+
+            def read_ref(ref: ArtifactRef) -> bytes:
+                if ref.size_bytes > 16 * 1024 * 1024:
+                    raise TychoraError(
+                        "INVALID_REQUEST", "Selection inspection exceeds its limit."
+                    )
+                with owner.artifacts.open_verified(ref) as stream:
+                    payload = stream.read(ref.size_bytes + 1)
+                if len(payload) != ref.size_bytes:
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Retained selection artifact differs."
+                    )
+                return payload
+
+            root_ref = ArtifactRef(
+                sha256=row[0], size_bytes=row[1], media_type=row[2], storage_key=row[3]
+            )
+            root = json.loads(read_ref(root_ref))
+            if root.get("data", {}).get("representation") != "document-composition@1":
+                raise TychoraError(
+                    "NOT_FOUND", "Selectable document extraction is unavailable."
+                )
+            raw_links = [
+                link
+                for link in root.get("required_manifests", [])
+                if link.get("type") == "extraction"
+            ]
+            if len(raw_links) != 1:
+                raise TychoraError("INTEGRITY_ERROR", "Retained parser root differs.")
+            raw_ref = ArtifactRef.model_validate(raw_links[0]["artifact"])
+            raw = read_ref(raw_ref)
+            raw_data = json.loads(raw)["data"]
+            doc_ref = ArtifactRef.model_validate(raw_data["docling_json_ref"])
+            parsed = replay_document(raw, read_ref(doc_ref), raw_ref)
+            if (
+                parsed.registration.source.source_id != source_id
+                or parsed.registration.revision.revision_id != revision_id
+            ):
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Retained selector lineage differs."
+                )
+            choices: list[SourceSelectionCandidate] = []
+            if parsed.original_image is not None:
+                image = parsed.original_image
+                choices.append(
+                    SourceSelectionCandidate(
+                        kind="image",
+                        source_native_ref=image.native_ref,
+                        width=image.width,
+                        height=image.height,
+                    )
+                )
+            else:
+                choices.extend(
+                    SourceSelectionCandidate(
+                        kind="image",
+                        source_native_ref=asset.native_ref,
+                        width=asset.width,
+                        height=asset.height,
+                    )
+                    for asset in parsed.assets
+                    if asset.asset_type in ("page", "picture")
+                    and asset.artifact_ref.media_type in ("image/png", "image/jpeg")
+                )
+            for unit in parsed.units:
+                if not isinstance(unit, DocumentUnit):
+                    continue
+                for field in ("text", "marker"):
+                    value = unit.raw_item.get(field)
+                    if isinstance(value, str) and value:
+                        choices.append(
+                            SourceSelectionCandidate(
+                                kind="context",
+                                source_native_ref=unit.native_ref,
+                                field=field,
+                                source_text_sha256=hashlib.sha256(
+                                    value.encode()
+                                ).hexdigest(),
+                                source_length=len(value),
+                                preview=value[:256],
+                            )
+                        )
+                data = unit.raw_item.get("data")
+                cells = data.get("table_cells") if isinstance(data, Mapping) else None
+                if isinstance(cells, tuple):
+                    for index, cell in enumerate(cells):
+                        value = cell.get("text") if isinstance(cell, Mapping) else None
+                        if isinstance(value, str) and value:
+                            choices.append(
+                                SourceSelectionCandidate(
+                                    kind="context",
+                                    source_native_ref=unit.native_ref,
+                                    field="table_cell",
+                                    cell_index=index,
+                                    source_text_sha256=hashlib.sha256(
+                                        value.encode()
+                                    ).hexdigest(),
+                                    source_length=len(value),
+                                    preview=value[:256],
+                                )
+                            )
+                if len(choices) > 100_000:
+                    raise TychoraError(
+                        "INVALID_REQUEST", "Selection inspection exceeds its limit."
+                    )
+
+            def key(item: SourceSelectionCandidate) -> str:
+                return f"{item.kind}:{item.source_native_ref}:{item.field or ''}:{item.cell_index if item.cell_index is not None else ''}"
+
+            ordered = sorted(choices, key=key)
+            page = [item for item in ordered if key(item) > after][: limit + 1]
+            selected = page[:limit]
+            return SourceSelectionPage(
+                source_id=source_id,
+                revision_id=revision_id,
+                extraction_id=extraction_id,
+                captured_original_sha256=parsed.original_ref.sha256,
+                retained_extraction_sha256=parsed.raw_document_ref.sha256,
+                candidates=tuple(selected),
+                next_cursor=_scoped_cursor(
+                    owner, subject, key(selected[-1]), granted, limit
+                )
+                if len(page) > limit and selected
                 else None,
             )
 

@@ -57,7 +57,7 @@ Create package `__init__.py` files as needed; they must not construct runtime re
 | Configuration | `configuration/models.py`, `configuration/resolve.py`, `configuration/registry.py`, `configuration/schemas.py`, `configuration/compatibility.py` | Strict data-only packs and historical semantics; 4–5 |
 | Canonical storage | `adapters/sqlite/connection.py`, `migrations.py`, `corpus.py`, `jobs.py`, `publication.py`, `eligibility.py`, `lexical.py`, `history.py`, `evaluations.py` | Explicit prepared SQL and transactions; 6, 9, 26–28, 33, 42 |
 | Files/runtime | `adapters/files/cas.py`, `references.py`; `application/owner.py`, `runtime.py`, `leases.py`, `jobs.py`, `recovery.py`, `maintenance.py` | Durable artifacts, ownership, bounded jobs and recovery; 7–10, 39–41, 43 |
-| Document ingestion | `ingestion/acquire.py`, `native.py`, `normalize.py`, `tables.py`, `assets.py`; `adapters/docling/parser.py`, `mapping.py`; `adapters/vision/anthropic.py` | Original ranges and typed/visual extraction; 10–14 |
+| Document ingestion | `ingestion/acquire.py`, `native.py`, `normalize.py`, `tables.py`, `assets.py`; `adapters/docling/parser.py`, `mapping.py`; `adapters/vision/anthropic.py`; `application/vision_selection.py` | Original ranges, typed/visual extraction and public selected vision; 10–14, 39a |
 | Code ingestion | `adapters/code/capture.py`, `syntax.py`, `python.py`, `typescript.py`, `resolve.py`, `normalize.py` | Captured trees, language forms, context and dependencies; 15–18 |
 | Projections/providers | `indexing/windows.py`, `groups.py`, `representations.py`, `receipts.py`, `coordinator.py`; `adapters/voyage/text.py`, `visual.py`, `rerank.py`, `validation.py`; `adapters/chroma/index.py`; `adapters/ladybug/generation.py`, `traversal.py` | Exact representation/cache identities and dedicated engines; 19–26 |
 | Retrieval | `retrieval/eligibility.py`, `lexical_query.py`, `fusion.py`, `admission.py`, `graph.py`, `rerank.py`, `anchors.py`, `segments.py`, `visuals.py`, `response.py`, `query.py`, `cache.py` | One policy-aware retrieval pipeline; 27–33 |
@@ -80,7 +80,7 @@ Directories in the table are relative to `src/tychora/` except explicitly rooted
 | Indexes | 19–26 | Verified lexical/vector batches and a sealed graph published atomically |
 | Evidence retrieval | 27–33 | Filtered exact/hybrid search with bounded context, records, output and cache isolation |
 | Product interfaces | 34–38 | Equivalent Python, CLI, HTTP and real MCP operations |
-| Operations | 39–41 | Withdrawal, original-removal plans and verified portable canonical backups |
+| Operations | 39–41, including 39a | Withdrawal, source-bound selected vision composition, original-removal plans and verified portable canonical backups |
 | Release | 42–46 | Evaluation, failure/security/performance evidence, docs/skills, installed wheel and qualified binaries |
 
 Dependencies are explicit in each task. Tasks 12–14 and 15–18 may run independently after their prerequisites; graph integration waits for Task 3. Interface implementations can run independently once Task 35 contracts are fixed. Keep one integrator for shared contracts, package metadata, lock and composition root. No dashboard task is hidden in this plan.
@@ -1573,6 +1573,14 @@ VALUES(?,?,?,?);
 
 - [ ] Live shared root restores payload state present; active reader/build/backup defers deletion; unlink registered hash path then fsync directory then state deleted timestamp. Crash pending+absent reconciles deletion, present+absent is corruption. New required binding shares guard and verifies/rematerializes bytes; old tombstone never cleared by identical reingestion. Original serving checks authorized revision binding, not direct hash.
 - [ ] Test crashes before/after tombstone/physical unlink/fsync/final SQL, active lease, new reference race, shared extraction dependency, terminal job-capture provenance-only reference, management-only sharing counters and hidden tombstone nondisclosure. Run two test files; commit with message `feat: withdraw sources and durably release original bindings`.
+
+### Task 39a: Public selective vision and document composition
+
+**Files:** Extend `contracts/{requests,operations}.py`, `configuration/models.py`, `application/{sources,discovery,owner,default_bindings,vision_selection}.py`, the existing protected vision port/adapter, public Python/CLI/HTTP/MCP facades, and `docs/{api,cli,http,mcp}.md`; add focused contract, ingestion, and public API tests. Dependencies: 13–14, 35–39.
+
+**Interfaces:** A disabled-by-default `providers.vision` setting qualifies Anthropic with an explicit model and lazy credential reference. A `SourceInput.vision` selection carries retained original/extraction identities, parser-native image reference, pixel crop, task/schema, and optional exact source-text intervals. Policy-scoped, bounded `sources.selections(source_id, revision_id, extraction_id)` exposes selectable image dimensions and context ranges. The trusted source service derives the crop, proof, context and allowed target IDs from retained parser facts, applies local OCR where selected, and invokes the protected provider dispatcher only after current principal/collection upload checks. Observations enter the existing document composition plan before the first canonical extraction commit; selection stays in captured job intent while stable source registration remains suitable for ordinary sync.
+
+**Coverage:** Synthetic public Python/CLI/HTTP/MCP requests verify canonical parity; configured mocked Anthropic calls, crop/context and malformed target refusal; offline local OCR with zero remote construction; stale original/extraction and exact registration checks; consent/current-scope denial and reopening; retry/idempotence, distinct selection identity, derived provenance and normal sync. Run focused tests, affected suites, scoped Ruff/ty and diff checks; report residual limits in the Task 39a report.
 
 ### Task 40: Canonical backup with a consistent payload closure
 

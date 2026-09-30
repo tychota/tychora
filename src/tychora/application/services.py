@@ -364,6 +364,7 @@ def build_services(
         coordinator,
         auto_visual=bool(owned_runtimes),
         docling_models=cache_root,
+        vision_credential=providers.vision_credential,
     )
     jobs = JobService(owner, repository, owner.scope)
     return Services(

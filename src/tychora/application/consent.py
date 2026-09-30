@@ -24,13 +24,12 @@ if TYPE_CHECKING:
     from tychora.configuration.models import ResolvedConfig
 
 
-# Anthropic is reserved for the separately qualified adapter/configuration task.
-REGISTERED_UPLOAD_PROVIDERS = frozenset({"voyage"})
+REGISTERED_UPLOAD_PROVIDERS = frozenset({"voyage", "anthropic"})
 
 
 def enabled_upload_providers(config: ResolvedConfig) -> frozenset[str]:
     configured = config.values.providers
-    return frozenset(
+    enabled = set(
         {"voyage"}
         if "voyage"
         in {
@@ -40,6 +39,9 @@ def enabled_upload_providers(config: ResolvedConfig) -> frozenset[str]:
         }
         else ()
     )
+    if configured.vision.provider == "anthropic":
+        enabled.add("anthropic")
+    return frozenset(enabled)
 
 
 def _unique(pairs: list[tuple[str, object]]) -> dict[str, object]:

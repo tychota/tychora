@@ -62,6 +62,7 @@ class ProviderBindings:
     graph: GraphStore | None = None
     graph_factory: Callable[[GraphBuildInput], GraphStore] | None = None
     caches: QueryCaches | None = None
+    vision_credential: Callable[[], str] | None = None
 
 
 class _LazyOutputCounter:
@@ -114,7 +115,7 @@ class LocalWorkspace:
                 collection_ids=frozenset({str(DEFAULT_COLLECTION_ID)}),
                 access_ceiling=0,
                 uses=frozenset({"compose", "audit", "lookup"}),
-                capabilities=frozenset({"read", "write", "manage"}),
+                capabilities=frozenset({"read", "write", "manage", "vision"}),
             )
         self.scope = scope
         self.config = config

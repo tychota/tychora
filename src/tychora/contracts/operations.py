@@ -21,6 +21,7 @@ from .base import (
     Identifier,
     NonEmptyStr,
     NonNegativeInt,
+    PositiveInt,
     Sha256,
 )
 from .evidence import EvidenceUnit, Excerpt, RelationPath
@@ -90,6 +91,28 @@ class SourceChannelCoverage(Contract):
     state: NonEmptyStr
 
 
+class SourceSelectionCandidate(Contract):
+    kind: Literal["image", "context"]
+    source_native_ref: NonEmptyStr
+    width: PositiveInt | None = None
+    height: PositiveInt | None = None
+    field: Literal["text", "marker", "table_cell"] | None = None
+    cell_index: NonNegativeInt | None = None
+    source_text_sha256: Sha256 | None = None
+    source_length: NonNegativeInt | None = None
+    preview: str | None = None
+
+
+class SourceSelectionPage(Contract):
+    source_id: Identifier
+    revision_id: Identifier
+    extraction_id: Identifier
+    captured_original_sha256: Sha256
+    retained_extraction_sha256: Sha256
+    candidates: tuple[SourceSelectionCandidate, ...] = ()
+    next_cursor: Cursor | None = None
+
+
 class SourceChannelPage(Contract):
     source_id: Identifier
     revision_id: Identifier
@@ -131,7 +154,9 @@ class InspectRequest(Contract):
 class SourceCoverageRequest(Contract):
     """Bounded continuation over one authorized source lineage."""
 
-    subject: Literal["source_revisions", "source_extractions", "source_channels"]
+    subject: Literal[
+        "source_revisions", "source_extractions", "source_channels", "source_selections"
+    ]
     source_id: Identifier
     revision_id: Identifier | None = None
     extraction_id: Identifier | None = None

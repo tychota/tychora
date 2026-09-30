@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import Callable, Mapping
 from functools import partial
 from io import BytesIO
@@ -31,12 +32,18 @@ from tychora.contracts.extraction import ExtractionArtifact, NativeRegistration
 from tychora.contracts.identity import canonical_bytes, digest, revision_id, source_id
 from tychora.contracts.operations import JobHandle
 from tychora.contracts.publication import PublicationPlan
-from tychora.contracts.requests import RequestScope, SourceInput
+from tychora.contracts.requests import (
+    RequestScope,
+    SourceInput,
+    VisionSelection,
+    source_registration_descriptor,
+)
 from tychora.ingestion.acquire import Acquirer
 from tychora.ingestion.composition import compose_document
 from tychora.ingestion.documents import replay_document
 from tychora.ingestion.native import NativeParser
 from tychora.ingestion.normalize import normalize
+from tychora.ingestion.vision import planned_vision_proxy
 from tychora.ports.acquisition import UrlReader
 from tychora.ports.execution import ExecutionContext
 
@@ -92,6 +99,7 @@ class SourceService:
         url_reader: UrlReader | None = None,
         docling_models: Path | None = None,
         auto_visual: bool = False,
+        vision_credential: Callable[[], str] | None = None,
     ) -> None:
         if (
             coordinator.store is not owner.store
@@ -103,6 +111,7 @@ class SourceService:
         self.url_reader = url_reader
         self.docling_models = docling_models
         self.auto_visual = auto_visual
+        self.vision_credential = vision_credential
         self._jobs: JobRepository | None = None
         self._acquirer: Acquirer | None = None
 
@@ -392,6 +401,25 @@ class SourceService:
         ctx: ExecutionContext,
     ) -> JobHandle:
         granted = self.owner.scope.narrow(scope)
+        if source.root.vision:
+            value = source.root
+            selected_format = (
+                value.format
+                or Path(getattr(value, "path", value.source_key))
+                .suffix.lstrip(".")
+                .lower()
+            )
+            if value.type not in {"file", "bytes", "url"} or selected_format not in {
+                "pdf",
+                "docx",
+                "png",
+                "jpeg",
+                "jpg",
+            }:
+                raise TychoraError(
+                    "INVALID_REQUEST",
+                    "Selected vision requires a supported document source.",
+                )
         if str(source.root.collection_id) not in granted.collection_ids:
             raise TychoraError(
                 "FORBIDDEN_SCOPE", "Source collection is outside the grant"
@@ -494,7 +522,7 @@ class SourceService:
                 except TychoraError as error:
                     if error.code != "WORKSPACE_BUSY":
                         raise
-            if base is not None:
+            if base is not None and not source.root.vision:
                 selected_base = base
                 can_reuse = await self.owner.run_blocking(
                     lambda: self._selected_revision(
@@ -521,11 +549,17 @@ class SourceService:
                     except TychoraError as error:
                         if error.code != "WORKSPACE_BUSY":
                             raise
-            bundle = await self.owner.run_blocking(
-                lambda: self._retained_bundle(registration, ctx), ctx
+            bundle = (
+                None
+                if source.root.vision
+                else await self.owner.run_blocking(
+                    lambda: self._retained_bundle(registration, ctx), ctx
+                )
             )
             if bundle is None:
-                bundle = await self._extract(registration, capture, ctx)
+                bundle = await self._extract(
+                    registration, capture, ctx, source, granted
+                )
             previous_groups = None
             previous_records = None
             for _attempt in range(3):
@@ -924,9 +958,7 @@ class SourceService:
                 created_at=old[6],
             )
         else:
-            registered = value.model_dump(
-                mode="json", exclude={"text", "data", "metadata"}
-            )
+            registered = source_registration_descriptor(source)
             source_row = SourceRow(
                 source_id=sid,
                 collection_id=cid,
@@ -1010,6 +1042,8 @@ class SourceService:
         registration: NativeRegistration | DocumentRegistration | CodeRegistration,
         capture: CaptureManifest,
         ctx: ExecutionContext,
+        source: SourceInput,
+        scope: RequestScope,
     ) -> ExtractionBundle:
         if isinstance(registration, NativeRegistration):
             return await self.owner.run_blocking(
@@ -1030,13 +1064,25 @@ class SourceService:
             parsed = await DoclingParser(
                 self.owner, registration, self.docling_models
             ).aextract(capture.original_ref, self.owner.config, ctx)
+            if source.root.vision and canonical_bytes(
+                capture.source.get("vision")
+            ) != canonical_bytes(
+                [item.model_dump(mode="json") for item in source.root.vision]
+            ):
+                raise TychoraError("INTEGRITY_ERROR", "Captured vision intent differs.")
+            proxies = []
+            for selected in source.root.vision:
+                proxies.append(
+                    await self._selected_vision_proxy(parsed, selected, scope, ctx)
+                )
             return await self.owner.run_blocking(
                 lambda: (
                     compose_document(
                         parsed,
                         self.owner.store.registry,
                         DocumentCompositionPlan(
-                            base_normalizer_fingerprint=parsed.normalizer_fingerprint
+                            base_normalizer_fingerprint=parsed.normalizer_fingerprint,
+                            proxies=tuple(proxies),
                         ),
                         self.owner.artifacts,
                         ctx,
@@ -1064,4 +1110,110 @@ class SourceService:
                 self.owner.store.registry,
             ),
             ctx,
+        )
+
+    async def _selected_vision_proxy(
+        self,
+        parsed: ExtractionArtifact,
+        selected: VisionSelection,
+        scope: RequestScope,
+        ctx: ExecutionContext,
+    ):
+        from tychora.adapters.vision.anthropic import (
+            dispatch_captured_vision,
+            response_schema,
+        )
+        from tychora.adapters.vision.local import LocalOcrProvider
+        from tychora.application.vision_selection import (
+            derive_selected_region,
+            retain_remote_observation,
+        )
+        from tychora.ports.vision import (
+            CapturedRegionAuthorization,
+            CapturedSourceRegistration,
+        )
+
+        schema = dict(selected.task_schema)
+        response_schema(schema, frozenset())
+        region, proof = await self.owner.run_blocking(
+            lambda: derive_selected_region(self.owner, parsed, selected), ctx
+        )
+        observation = None
+        if selected.task == "ocr":
+            model_root = (
+                Path(os.environ.get("TYCHORA_MODEL_CACHE", self.owner.path / "models"))
+                / "rapidocr/3.9.2"
+            )
+            try:
+                observation = await asyncio.to_thread(
+                    lambda: LocalOcrProvider(self.owner, model_root).interpret(
+                        region, schema, ctx
+                    )
+                )
+            except TychoraError as error:
+                if error.code != "CAPABILITY_MISSING":
+                    raise
+            if observation is not None and not observation.literal_transcription:
+                observation = None
+        if observation is None:
+            if self.vision_credential is None:
+                raise TychoraError(
+                    "CAPABILITY_MISSING", "Configured vision provider is unavailable."
+                )
+            registration = parsed.registration
+            captured = CapturedSourceRegistration(
+                source=registration.source, kind_id=registration.revision.kind_id
+            )
+            epoch = await self.owner.run_blocking(
+                lambda: self.owner.db.execute(
+                    "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
+                    (self.owner.workspace_id,),
+                ).fetchone()[0],
+                ctx,
+            )
+
+            def ensure_registration() -> None:
+                row = self.owner.db.execute(
+                    "SELECT 1 FROM sources WHERE source_id=?",
+                    (captured.source.source_id,),
+                ).fetchone()
+                if row is None:
+                    self.owner.upload_policy.register_captured_source(
+                        captured, scope, policy_epoch=epoch
+                    )
+
+            await self.owner.run_blocking(ensure_registration, ctx)
+            authorization = CapturedRegionAuthorization(
+                registration=captured,
+                revision=registration.revision,
+                proof=proof,
+                region=region,
+            )
+            observation = await dispatch_captured_vision(
+                self.owner,
+                authorization,
+                schema,
+                ctx,
+                scope=scope,
+                policy_epoch=epoch,
+                model=self.owner.config.values.providers.vision.model or "",
+                api_key=self.vision_credential,
+            )
+            observation = await self.owner.run_blocking(
+                lambda: retain_remote_observation(self.owner, region, observation), ctx
+            )
+        asset_native_ref = region.source_native_ref
+        if parsed.original_image is not None:
+            linked = [
+                asset.native_ref
+                for asset in parsed.assets
+                if parsed.original_image.native_ref in asset.source_units
+            ]
+            if len(linked) != 1:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Standalone image asset binding differs."
+                )
+            asset_native_ref = linked[0]
+        return planned_vision_proxy(
+            region, observation, asset_native_ref=asset_native_ref
         )

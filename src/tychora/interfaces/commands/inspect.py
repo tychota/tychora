@@ -42,7 +42,10 @@ def register(app: typer.Typer) -> None:
             known = (
                 (subject == "config" and id is None)
                 or (subject in _DISCOVERY | {"capabilities"} and id is None)
-                or (subject in _RECORDS | {"job", "run", "sources"} and id is not None)
+                or (
+                    subject in _RECORDS | {"job", "run", "sources", "selections"}
+                    and id is not None
+                )
             )
             if not known:
                 raise TychoraError(
@@ -84,6 +87,14 @@ def register(app: typer.Typer) -> None:
                         result = kb.inspect({"subject": "runs", "id": id})
                     elif subject == "sources" and id is not None:
                         result = kb.sources.revisions(id)
+                    elif subject == "selections" and id is not None:
+                        parts = id.split(":")
+                        if len(parts) != 3 or any(not part for part in parts):
+                            raise TychoraError(
+                                "INVALID_REQUEST",
+                                "Selection inspection needs SOURCE_ID:REVISION_ID:EXTRACTION_ID.",
+                            )
+                        result = kb.sources.selections(*parts)
                     else:
                         raise TychoraError(
                             "INVALID_REQUEST",

@@ -2,7 +2,9 @@
 
 from collections.abc import Callable, Mapping
 from hashlib import sha256
-from typing import Annotated, Literal, Protocol, Self
+from pathlib import Path
+from typing import Annotated, Literal, Protocol, Self, cast
+from uuid import UUID
 
 from pydantic import Field, model_validator
 
@@ -24,7 +26,8 @@ from tychora.contracts.corpus import RevisionRow, SourceRow
 from tychora.contracts.documents import DocumentRegistration, image_pixel_identity
 from tychora.contracts.evidence import Geometry
 from tychora.contracts.extraction import ExtractionArtifact
-from tychora.contracts.identity import JsonValue, canonical_bytes, digest
+from tychora.contracts.identity import JsonValue, canonical_bytes, digest, source_id
+from tychora.contracts.requests import SourceInput, source_registration_descriptor
 from tychora.ports.execution import ExecutionContext
 
 MAX_VISION_REGION_BYTES = 20 * 1024 * 1024
@@ -165,12 +168,36 @@ class CapturedSourceRegistration(Contract):
 
     @model_validator(mode="after")
     def exact_registration(self) -> Self:
-        if self.source.registration_json != FrozenJsonMap(
+        legacy = FrozenJsonMap(
             {
                 "schema_version": 1,
                 "kind_id": self.kind_id,
             }
-        ):
+        )
+        if self.source.registration_json == legacy:
+            return self
+        descriptor = dict(self.source.registration_json)
+        try:
+            variant = descriptor.get("type")
+            if variant == "text":
+                descriptor["text"] = ""
+            elif variant == "bytes":
+                descriptor["data"] = ""
+            parsed = SourceInput.from_mapping(descriptor)
+            exact = source_registration_descriptor(parsed)
+            valid = (
+                exact == self.source.registration_json
+                and parsed.root.kind == self.kind_id
+                and str(parsed.root.collection_id) == self.source.collection_id
+                and parsed.root.source_key == self.source.source_key
+                and self.source.source_type
+                == ("repository" if variant == "repository" else "document")
+                and self.source.source_id
+                == source_id(UUID(self.source.collection_id), self.source.source_key)
+            )
+        except (ValueError, TypeError, KeyError):
+            valid = False
+        if not valid:
             raise ValueError("Captured source registration metadata differs")
         return self
 
@@ -181,12 +208,46 @@ class CapturedOriginalRegionProof(Contract):
 
     @model_validator(mode="after")
     def standalone_capture(self) -> Self:
-        if self.capture.source.get("type") in (
-            "folder",
-            "repository",
-        ) or self.capture.source.get("format") not in ("png", "jpeg"):
+        fmt = captured_image_format(self.capture)
+        if (
+            self.capture.source.get("type")
+            in (
+                "folder",
+                "repository",
+            )
+            or fmt is None
+        ):
             raise ValueError("Captured original proof requires one PNG/JPEG source")
         return self
+
+
+def captured_image_format(capture: CaptureManifest) -> Literal["png", "jpeg"] | None:
+    """Check declared or source-suffix format against any declared image MIME."""
+    source = capture.source
+    declared = source.get("format")
+    if declared is not None and not isinstance(declared, str):
+        return None
+    suffix_source = (
+        source.get("path", source.get("source_key", ""))
+        if source.get("type") in ("file", "url")
+        else ""
+    )
+    suffix = Path(str(suffix_source)).suffix.lower()
+    inferred = {".png": "png", ".jpg": "jpeg", ".jpeg": "jpeg"}.get(suffix)
+    fmt = {"jpg": "jpeg"}.get(declared, declared) if declared is not None else inferred
+    media = source.get("media_type")
+    expected = "image/png" if fmt == "png" else "image/jpeg" if fmt == "jpeg" else None
+    if (
+        expected is None
+        or declared is not None
+        and inferred is not None
+        and inferred != fmt
+        or media is not None
+        and media != expected
+        or capture.original_ref.media_type not in ("application/octet-stream", expected)
+    ):
+        return None
+    return cast(Literal["png", "jpeg"], fmt)
 
 
 class RetainedDocumentRegionProof(Contract):
@@ -234,6 +295,7 @@ class CapturedRegionAuthorization(Contract):
     revision: RevisionRow
     proof: CapturedRegionProof
     region: RegionInput
+
     @model_validator(mode="after")
     def exact_candidate(self) -> Self:
         source = self.registration.source
@@ -258,7 +320,8 @@ class CapturedRegionAuthorization(Contract):
             and self.proof.extraction.registration.revision != self.revision
             or self.region.original_image_sha256 != original_sha
             or isinstance(self.proof, CapturedOriginalRegionProof)
-            and self.region.source_native_ref != "#/original"
+            and self.region.source_native_ref
+            not in ("#/original", "image-original:" + source.source_key)
             or isinstance(self.proof, RetainedDocumentRegionProof)
             and self.region.source_native_ref != self.proof.asset_native_ref
             or self.region.dependency_ids
@@ -330,8 +393,7 @@ def verify_retained_source_context(
             not isinstance(source_text, str)
             or selector.source_start == selector.source_end
             or selector.source_end > len(source_text)
-            or sha256(source_text.encode()).hexdigest()
-            != selected.source_text_sha256
+            or sha256(source_text.encode()).hexdigest() != selected.source_text_sha256
             or source_text[selector.source_start : selector.source_end]
             != selected.literal_text
         ):
@@ -444,12 +506,23 @@ def verify_region_source(
         or original_ref.size_bytes != len(original)
         or sha256(original).hexdigest() != original_ref.sha256
         or original_ref.media_type not in ("image/png", "image/jpeg")
+        and not (
+            original_ref.media_type == "application/octet-stream"
+            and source_native_ref.startswith("image-original:")
+        )
     )
     try:
         with Image.open(BytesIO(original)) as encoded:
-            expected = "PNG" if original_ref.media_type == "image/png" else "JPEG"
+            expected = (
+                "PNG"
+                if original_ref.media_type == "image/png"
+                else "JPEG"
+                if original_ref.media_type == "image/jpeg"
+                else encoded.format
+            )
             if (
-                encoded.format != expected
+                expected not in ("PNG", "JPEG")
+                or encoded.format != expected
                 or encoded.width * encoded.height > 40_000_000
                 or encoded.size != (region.original_width, region.original_height)
             ):

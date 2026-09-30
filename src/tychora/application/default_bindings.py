@@ -347,6 +347,15 @@ def compose_default_bindings(
                 if graph is not None
                 else None,
                 caches=caches,
+                vision_credential=(
+                    lambda: _credential(
+                        config.values.providers.vision.credential_ref,
+                        credential_resolver,
+                    )
+                )
+                if not config.values.offline
+                and config.values.providers.vision.provider == "anthropic"
+                else None,
             ),
             tuple(runtimes),
         )

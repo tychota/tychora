@@ -420,7 +420,7 @@ def test_schema_v1_policy_extension_rejects_unknown_or_duplicate_grants():
     for raw in (
         '{"schema_version":1,"upload_providers":[],"unknown":[]}',
         '{"schema_version":1,"upload_providers":["voyage","voyage"]}',
-        '{"schema_version":1,"upload_providers":[],"owner_upload_providers":["anthropic"]}',
+        '{"schema_version":1,"upload_providers":[],"owner_upload_providers":["unregistered"]}',
         '{"schema_version":true,"upload_providers":[]}',
         '{"schema_version":1,"upload_providers":[],"upload_providers":[]}',
     ):

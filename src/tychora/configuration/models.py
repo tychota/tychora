@@ -109,10 +109,29 @@ class RerankerSettings(Contract):
         return self
 
 
+class VisionSettings(Contract):
+    """Explicit opt-in for selected ingestion vision only."""
+
+    provider: Literal["disabled", "anthropic"] = "disabled"
+    model: NonEmptyStr | None = None
+    credential_ref: (
+        Annotated[str, Field(pattern=r"^(env|secret):[A-Za-z_][A-Za-z0-9_.-]*$")] | None
+    ) = None
+
+    @model_validator(mode="after")
+    def selected_model(self) -> Self:
+        if self.provider == "anthropic" and (
+            self.model is None or self.credential_ref is None
+        ):
+            raise ValueError("Enabled vision requires a model and credential reference")
+        return self
+
+
 class ProviderSettings(Contract):
     text: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     image: EmbeddingSettings = Field(default_factory=EmbeddingSettings)
     rerank: RerankerSettings = Field(default_factory=RerankerSettings)
+    vision: VisionSettings = Field(default_factory=VisionSettings)
 
 
 class VectorSettings(Contract):

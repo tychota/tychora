@@ -217,18 +217,19 @@ async def dispatch_captured_vision(
     scope: RequestScope,
     policy_epoch: int,
     model: str,
-    api_key: str,
+    api_key: str | Callable[[], str],
     client_factory: Callable[..., Any] | None = None,
 ) -> DerivedObservation:
     """Authorize after queue admission, then construct and close the client."""
     capabilities = owner.scope.narrow(scope).capabilities
 
     def call() -> DerivedObservation:
+        resolved_key = api_key if isinstance(api_key, str) else api_key()
         provider = create_provider(
             offline=owner.config.values.offline,
             capabilities=capabilities,
             model=model,
-            api_key=api_key,
+            api_key=resolved_key,
             client_factory=client_factory,
         )
         try:

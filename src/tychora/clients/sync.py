@@ -110,6 +110,26 @@ class _Sources:
             limit=limit,
         )
 
+    @_admitted
+    def selections(
+        self,
+        source_id: str,
+        revision_id: str,
+        extraction_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 20,
+    ):
+        ws = self.kb._open()
+        return ws.services.discovery.source_selections(
+            source_id,
+            revision_id,
+            extraction_id,
+            ws.scope,
+            cursor=cursor,
+            limit=limit,
+        )
+
 
 class _Evidence:
     def __init__(self, kb: Tychora) -> None:
