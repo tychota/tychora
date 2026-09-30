@@ -27,7 +27,6 @@ def test_selected_crop_comes_from_retained_original(document_record_case):
     assert parsed.original_ref.media_type == "application/octet-stream"
     selected = VisionSelection(
         captured_original_sha256=parsed.original_ref.sha256,
-        retained_extraction_sha256=parsed.raw_document_ref.sha256,
         source_native_ref=parsed.original_image.native_ref,
         geometry={"domain": "pixels", "x0": 1, "y0": 2, "x1": 5, "y1": 4},
         task="describe",
@@ -57,6 +56,85 @@ def test_selected_crop_comes_from_retained_original(document_record_case):
             case.ctx,
         )
     assert stale.value.code == "INVALID_REQUEST"
+
+
+def test_supplied_new_parser_root_requires_retained_revision(document_record_case):
+    import os
+    from pathlib import Path
+
+    from tychora.adapters.docling.parser import DoclingParser
+    from tychora.application.vision_selection import derive_selected_region
+    from tychora.contracts.composition import DocumentCompositionPlan
+    from tychora.ingestion.composition import compose_document
+    from tychora.ports.execution import ExecutionContext
+
+    case = document_record_case(
+        "standard@1", "png", source_builder=_picture, commit=True
+    )
+    parsed_a = case.parsed
+    assert (
+        case.bundle.extraction.document_artifact_sha == parsed_a.raw_document_ref.sha256
+    )
+    config = case.owner.config
+    changed = config.model_copy(
+        update={
+            "values": config.values.model_copy(
+                update={
+                    "extraction": config.values.extraction.model_copy(
+                        update={"representation_version": "2"}
+                    )
+                }
+            )
+        }
+    )
+    parsed_b = DoclingParser(
+        case.owner,
+        parsed_a.registration,
+        Path(os.environ["TYCHORA_TEST_DOCLING_MODELS"]),
+    ).extract(parsed_a.original_ref, changed, ExecutionContext())
+    assert parsed_b.original_ref.sha256 == parsed_a.original_ref.sha256
+    assert parsed_b.raw_document_ref.sha256 != parsed_a.raw_document_ref.sha256
+    selected = VisionSelection(
+        captured_original_sha256=parsed_b.original_ref.sha256,
+        retained_extraction_sha256=parsed_b.raw_document_ref.sha256,
+        source_native_ref=parsed_b.original_image.native_ref,
+        geometry={"domain": "pixels", "x0": 1, "y0": 2, "x1": 5, "y1": 4},
+        task="describe",
+        task_schema={
+            "type": "object",
+            "properties": {"label": {"type": "string"}},
+            "required": ["label"],
+            "additionalProperties": False,
+        },
+    )
+    with pytest.raises(TychoraError) as unretained:
+        case.owner.run_blocking_sync(
+            lambda: derive_selected_region(case.owner, parsed_b, selected),
+            ExecutionContext(),
+        )
+    assert unretained.value.code == "INVALID_REQUEST"
+    compose_ctx = ExecutionContext()
+    composed_b = case.owner.run_blocking_sync(
+        lambda: compose_document(
+            parsed_b,
+            case.registry,
+            DocumentCompositionPlan(
+                base_normalizer_fingerprint=parsed_b.normalizer_fingerprint
+            ),
+            case.owner.artifacts,
+            compose_ctx,
+        ),
+        compose_ctx,
+    )
+    case.owner.run_blocking_sync(
+        lambda: case.owner.store.commit_extraction(composed_b.bundle),
+        ExecutionContext(),
+    )
+    region, _ = case.owner.run_blocking_sync(
+        lambda: derive_selected_region(case.owner, parsed_b, selected),
+        ExecutionContext(),
+    )
+    assert region.original_image_sha256 == parsed_b.original_ref.sha256
 
 
 def test_incomplete_vision_diagnostic_changes_identity_and_replays(

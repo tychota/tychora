@@ -671,6 +671,8 @@ def test_first_selected_add_retains_original_and_reports_incomplete_vision(
     tmp_path, monkeypatch
 ):
     from tychora.adapters.vision import anthropic
+    from tychora.contracts.artifacts import ArtifactRef
+    from tychora.contracts.composition import VisionCapabilityDiagnostics
 
     monkeypatch.setenv("TYCHORA_MODEL_CACHE", os.environ["TYCHORA_TEST_MODEL_CACHE"])
     monkeypatch.setenv("SYNTHETIC_VISION_KEY", "synthetic-key")
@@ -807,3 +809,42 @@ def test_first_selected_add_retains_original_and_reports_incomplete_vision(
         outcomes = kb.sources.extractions(sid, revision).extractions
         assert len(outcomes) == 2
         assert {item.stages.get("vision") for item in outcomes} == {None, "incomplete"}
+    with Tychora.open(workspace, config=config, token_counter=Counter()) as reopened:
+        retained = next(
+            item
+            for item in reopened.sources.extractions(sid, revision).extractions
+            if item.extraction_id == extraction.extraction_id
+        )
+        assert retained.stages["vision"] == "incomplete"
+        assert (
+            reopened.inspect(
+                {"subject": "revisions", "id": revision, "original": True}
+            ).payload
+            == image_path.read_bytes()
+        )
+
+        def diagnostic_bytes():
+            row = reopened._workspace.owner.db.execute(
+                "SELECT a.artifact_sha,a.size_bytes,a.media_type,a.storage_key "
+                "FROM extractions e JOIN artifacts a "
+                "ON a.artifact_sha=e.diagnostics_artifact_sha "
+                "WHERE e.extraction_id=?",
+                (extraction.extraction_id,),
+            ).fetchone()
+            assert row is not None
+            ref = ArtifactRef(
+                sha256=row[0],
+                size_bytes=row[1],
+                media_type=row[2],
+                storage_key=row[3],
+            )
+            with reopened._workspace.owner.artifacts.open_verified(ref) as stream:
+                return stream.read()
+
+        payload = reopened._workspace.bridge.call(
+            reopened._workspace.owner.run_blocking(diagnostic_bytes, ExecutionContext())
+        )
+        diagnostic = VisionCapabilityDiagnostics.model_validate_json(payload)
+        assert len(diagnostic.gaps) == 1
+        assert diagnostic.gaps[0].reason == "provider_failure"
+        assert len(sent) == 2

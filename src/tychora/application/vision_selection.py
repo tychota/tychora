@@ -152,7 +152,6 @@ def derive_selected_region(
         _invalid()
     if (
         selected.retained_extraction_sha256 is not None
-        and selected.retained_extraction_sha256 != parsed.raw_document_ref.sha256
         and not _verified_selected_extraction(
             owner, parsed, selected.retained_extraction_sha256
         )
