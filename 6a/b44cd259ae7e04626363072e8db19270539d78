@@ -1,0 +1,68 @@
+docs/cli.md
+  s_35b641b930a96d::t_6b6cd0951a95ff 52-55
+src/tychora/contracts/requests.py
+  s_35b641b930a96d::t_2f46a290868ce0 142
+src/tychora/contracts/composition.py
+  s_35b641b930a96d::t_2f46a290868ce0 255-267
+  s_35b641b930a96d::t_7247e9220a148a 268-269,277,287-288,295-296
+src/tychora/application/sources.py
+  s_35b641b930a96d::t_0d79c5cd279bff 1208-1210
+  s_35b641b930a96d::t_c567da51124c74 27,1074,1076-1077,1079-1082,1091,1142-1151,1170,1211-1227
+  s_35b641b930a96d::t_87b9dae0da330f 1175,1177,1228-1232,1250
+src/tychora/application/discovery.py
+  s_35b641b930a96d::t_b0de593af0a679 17,523-555
+  s_35b641b930a96d::t_c11aa00876eec6 564-566
+src/tychora/interfaces/commands/inspect.py
+  s_35b641b930a96d::t_fb8662258ad4fc 36,58,60,62-68,111-112,114
+  s_35b641b930a96d::t_a9af3ca778ffae 34-35,59,61,113,115
+  s_35b641b930a96d::t_b5565f1d6f337e 116-127
+src/tychora/application/inspection.py
+  s_35b641b930a96d::t_bcc907b54d211b 21,429-472
+  s_35b641b930a96d::t_908f341d019d05 473-480
+src/tychora/contracts/operations.py
+  s_35b641b930a96d::t_b0de593af0a679 180-181
+src/tychora/adapters/vision/local.py
+  s_35b641b930a96d::t_bcc907b54d211b 223-226
+tests/ingestion/test_public_vision_selection.py
+  s_35b641b930a96d::t_4803d9fdf813df 62-64,72,74,83-85,89-91,93-95,107-111
+  s_35b641b930a96d::t_2849177870f3b9 60-61,65,69-71,75-82,86-88,92,96-101,106,112-113
+  s_35b641b930a96d::t_7b7636a7bf4924 66-68
+  s_35b641b930a96d::t_96938fc56633df 102-105
+  s_35b641b930a96d::t_4a79d4c781a9cb 73
+tests/api/test_public_vision.py
+  s_35b641b930a96d::t_ee33cc98db1e0c 563-564,668-669,704-713,721
+  s_35b641b930a96d::t_20d5943d6bcbae 556-560
+  s_35b641b930a96d::t_ed24e36c8aa601 599
+  s_35b641b930a96d::t_ef1e06b35b989a 404,635-641,670-703
+  s_35b641b930a96d::t_4ac37b65d6d2ec 367-380,566-577,579
+  s_35b641b930a96d::t_4c45b97317bfb9 578
+  s_35b641b930a96d::t_fb8662258ad4fc 552-555
+  s_35b641b930a96d::t_55113088df77f0 381-387,402-403,561-562,565,585-598,600-606,625,633,714-720,722-809
+src/tychora/ingestion/composition.py
+  s_35b641b930a96d::t_2f46a290868ce0 19,358-362
+  s_35b641b930a96d::t_0036d870cb4bd3 363-368,417,518-521
+docs/api.md
+  s_35b641b930a96d::t_6b6cd0951a95ff 42-44
+docs/superpowers/plans/2026-09-11-tychora-engine.md
+  s_35b641b930a96d::t_6b6cd0951a95ff 1583
+tests/qualification/test_docling_records.py
+  s_35b641b930a96d::t_2afbb4f3a904c5 58-60
+src/tychora/application/vision_selection.py
+  s_35b641b930a96d::t_c33870f3e0955e 144-152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "6ab44cd259ae7e04626363072e8db19270539d78",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
