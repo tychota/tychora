@@ -1,0 +1,54 @@
+src/tychora/application/query.py
+  s_35b641b930a96d::t_9f7ec61b7d3e35 145-147,152-153
+  s_35b641b930a96d::t_1a9fee7c5ce928 129-144,148-151,154
+  s_35b641b930a96d::t_f1e5834899dd14 10,741-742
+  s_35b641b930a96d::t_00a2a585df6937 688-700,702-708,714,720-726,729,737-740,743-763
+  s_35b641b930a96d::t_30d925c1054345 701
+  s_35b641b930a96d::t_cecbc138b78be5 155-158,764-765
+tests/api/test_knowledge_adapter.py
+  s_35b641b930a96d::t_eefec1621a2077 1-39
+  s_35b641b930a96d::t_b9a0818b854e87 40-41
+tests/formatting/test_render.py
+  s_35b641b930a96d::t_2bee6a75cb56aa 69-77
+tests/fixtures/results/agent.txt
+  s_35b641b930a96d::t_225d8f2cfc4d5d 2-3
+tests/code/test_capture.py
+  s_35b641b930a96d::t_3de02a25ada1df 3-4,77-100
+  s_35b641b930a96d::t_27e6d16f2264e2 101-102
+tests/security/test_acquisition.py
+  s_35b641b930a96d::t_7a7e6faf45e193 504-528
+examples/knowledge_adapter.py
+  s_35b641b930a96d::t_f1c82f32789439 20
+src/tychora/formatting/render.py
+  s_35b641b930a96d::t_64f1cb677f4479 164
+src/tychora/adapters/docling/mapping.py
+  s_35b641b930a96d::t_df0ea19c80b53c 69,209,226
+src/tychora/contracts/requests.py
+  s_35b641b930a96d::t_f3afdb9e18fde7 206-209,219
+src/tychora/adapters/files/url_acquisition.py
+  s_35b641b930a96d::t_1f399781c594cf 74
+  s_35b641b930a96d::t_cb9c984dc35bbf 66-73,75-78,82,90
+tests/acceptance/test_concurrency.py
+  s_35b641b930a96d::t_f69c21faf60a62 1-3,5-8,10-54,77
+  s_35b641b930a96d::t_b3fd3523179806 4,9,55-76
+tests/ingestion/test_docling_mapping.py
+  s_35b641b930a96d::t_f103b4fb77128c 67-99
+uv.lock
+  s_35b641b930a96d::t_fcc2761aa66599 2264,2266,2268,3326,3328,3330
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a0323d39cc419e54aeefacaa544a0f514bcea300",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
