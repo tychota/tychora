@@ -25,6 +25,7 @@ from tychora.contracts.operations import (
 from tychora.contracts.requests import QueryRequest, RequestScope
 from tychora.evaluation.dataset import GoldCase, load_dataset, load_dataset_bytes
 from tychora.evaluation.metrics import metrics
+from tychora.evaluation.provenance import verify_result_locators
 from tychora.ports.execution import ExecutionContext
 
 _QUERY_CONTROLS = frozenset({"mode", "modalities", "exact_only", "limit", "hints"})
@@ -242,7 +243,10 @@ def _integrity_check(case: GoldCase, scored: MetricSet) -> None:
         if getattr(case, f"expected_{kind}_ids")
     ):
         raise TychoraError("INTEGRITY_ERROR", "Evaluation missed an exact identifier")
-    if values["locator_validity"] not in (1.0, None):
+    locator = next(
+        value for value in scored.metrics if value.name == "locator_validity"
+    )
+    if locator.denominator and locator.value != 1.0:
         raise TychoraError("INTEGRITY_ERROR", "Evaluation returned an invalid locator")
     if case.expected_spans and values["span_completeness"] != 1.0:
         raise TychoraError("INTEGRITY_ERROR", "Evaluation missed an exact span")
@@ -383,7 +387,18 @@ class EvaluationService:
                                 raise TychoraError(
                                     "SCOPE_CHANGED", "Evaluation snapshot changed"
                                 )
-                            scored = metrics(case, delivered.result)
+                            locator_assessment = await self.owner.run_blocking(
+                                lambda result=delivered.result: verify_result_locators(
+                                    self.owner, result
+                                ),
+                                ctx,
+                            )
+                            scored = metrics(
+                                case,
+                                delivered.result,
+                                locators=locator_assessment,
+                                cutoff=query.limit,
+                            )
                             if case.benchmark == "integrity":
                                 _integrity_check(case, scored)
                             observed = await self.owner.run_blocking(self._epochs, ctx)

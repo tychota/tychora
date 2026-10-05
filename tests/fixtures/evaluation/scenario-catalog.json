@@ -1,0 +1,21 @@
+{
+  "format": "tychora-synthetic-scenarios@1",
+  "registerable_gold": false,
+  "qualification": "unqualified",
+  "reason": "These scenario intents require declared matching corpora and, where applicable, prebuilt model or graph families. They are not ID-labelled gold cases.",
+  "scenarios": [
+    {"id": "exact-id", "intent": "Exact identifier retrieves only the bound unit", "requires": "declared identifier-bearing source"},
+    {"id": "historic-cutoff", "intent": "Historic cutoff selects the earlier edition", "requires": "dated related editions"},
+    {"id": "related-edition", "intent": "All-editions query respects related revision identities", "requires": "dated related editions"},
+    {"id": "mode-global", "intent": "Local scope excludes a global source unless requested", "requires": "local and global scoped sources"},
+    {"id": "unknown-review", "intent": "Unknown dates and rejected review state are withheld", "requires": "date and review decisions"},
+    {"id": "proxy-image", "intent": "Text proxy resolves to a native image asset", "requires": "declared image corpus and prebuilt visual family"},
+    {"id": "table-split", "intent": "A target row is cited across a table split", "requires": "declared table parser representation"},
+    {"id": "conflicting-assertion", "intent": "Conflicting graph assertion keeps only eligible support", "requires": "declared graph assertions and generation"},
+    {"id": "long-end-match", "intent": "A late exact span survives long source segmentation", "requires": "declared long source with canonical spans"},
+    {"id": "repeated-symbol", "intent": "Repeated symbol file ranks remain distinct", "requires": "declared code repository and code family"},
+    {"id": "overload", "intent": "Only the selected overload definition ranks", "requires": "declared code repository and code family"},
+    {"id": "exploratory-entry", "intent": "Exploratory code entry point ranks", "requires": "declared code repository and code family"},
+    {"id": "hidden-parent-support", "intent": "Graph context does not expose hidden parent or support units", "requires": "declared graph assertions and access decisions"}
+  ]
+}

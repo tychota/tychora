@@ -10,11 +10,86 @@ from tychora.evaluation.dataset import GoldCase
 from tychora.evaluation.runner import (
     ComparisonAdmission,
     EvaluationService,
+    _integrity_check,
     execution_plan,
     validate_retained_size,
     validate_workload,
     variant_query,
 )
+
+
+def test_integrity_gate_rejects_context_leak_and_invalid_locator():
+    from tychora.contracts.errors import TychoraError
+    from tychora.contracts.evidence import (
+        Citation,
+        Coverage,
+        QueryResult,
+        Segment,
+        TextLocator,
+    )
+    from tychora.contracts.requests import RequestScope
+    from tychora.evaluation.metrics import LocatorAssessment, metrics
+
+    case = GoldCase(
+        case_id="gate",
+        family_key="gate",
+        split="test",
+        query=QueryRequest.from_mapping({"question": "Find evidence"}),
+        forbidden_unit_ids=frozenset({"hidden"}),
+    )
+    result = QueryResult(
+        run_id="run",
+        snapshot_id="snapshot",
+        applied_scope=RequestScope(principal_id="user"),
+        coverage=Coverage(status="complete"),
+        segments=(
+            Segment(
+                segment_id="segment",
+                source_id="source",
+                revision_id="revision",
+                extraction_id="extraction",
+                kind="text",
+                role="match",
+                lane="lexical",
+                text="match",
+                matched_unit_ids=("match",),
+                context_only_unit_ids=("hidden",),
+                excerpts=(),
+            ),
+        ),
+    )
+    with pytest.raises(TychoraError, match="forbidden"):
+        _integrity_check(case, metrics(case, result, locators=LocatorAssessment(0, 0)))
+    clean = result.model_copy(
+        update={
+            "segments": (
+                result.segments[0].model_copy(
+                    update={
+                        "context_only_unit_ids": (),
+                        "citations": (
+                            Citation(
+                                unit_id="match",
+                                source_id="source",
+                                revision_id="revision",
+                                locators=(
+                                    TextLocator(
+                                        artifact_ref="artifact",
+                                        native_ref="source",
+                                        char_start=0,
+                                        char_end=5,
+                                    ),
+                                ),
+                            ),
+                        ),
+                    }
+                ),
+            )
+        }
+    )
+    with pytest.raises(TychoraError, match="invalid locator"):
+        _integrity_check(case, metrics(case, clean, locators=LocatorAssessment(0, 1)))
+    with pytest.raises(TychoraError, match="invalid locator"):
+        _integrity_check(case, metrics(case, clean))
 
 
 @pytest.mark.asyncio

@@ -1,0 +1,46 @@
+{
+  "format": "tychora-synthetic-corpus@1",
+  "sources": [
+    {
+      "source_key": "synthetic-saffron",
+      "title": "Saffron note",
+      "anchor": "saffron",
+      "text": "The saffron marker identifies the first synthetic note."
+    },
+    {
+      "source_key": "synthetic-indigo",
+      "title": "Indigo note",
+      "anchor": "indigo",
+      "text": "The indigo marker identifies the second synthetic note."
+    },
+    {
+      "source_key": "synthetic-umber",
+      "title": "Umber note",
+      "anchor": "umber",
+      "text": "The umber marker identifies the third synthetic note."
+    },
+    {
+      "source_key": "synthetic-exact-rule",
+      "title": "Exact synthetic rule",
+      "kind": "standard@1",
+      "format": "markdown",
+      "anchor": "STD-17",
+      "text": "# STD-17 Exact synthetic rule\nRequirement: Record the declared exact identifier.\n",
+      "query": {"question": "Find STD-17", "modalities": ["lexical"], "exact_identifiers": ["rule:STD-17"], "exact_only": true}
+    },
+    {
+      "source_key": "synthetic-cobalt-allowed",
+      "title": "Allowed cobalt note",
+      "anchor": "cobalt",
+      "text": "The cobalt marker appears in the allowed edition.",
+      "restrict_to_revision": true
+    },
+    {
+      "source_key": "synthetic-cobalt-excluded",
+      "title": "Excluded cobalt note",
+      "anchor": "cobalt",
+      "text": "The cobalt marker also appears in the excluded edition.",
+      "case": false
+    }
+  ]
+}

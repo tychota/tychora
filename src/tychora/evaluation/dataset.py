@@ -44,6 +44,8 @@ class GoldCase(Contract):
     forbidden_file_ids: frozenset[Identifier] = frozenset()
     expected_spans: tuple[GoldSpan, ...] = ()
     graded_relevance: FrozenJsonMap = Field(default_factory=FrozenJsonMap)
+    file_relevance: FrozenJsonMap = Field(default_factory=FrozenJsonMap)
+    asset_relevance: FrozenJsonMap = Field(default_factory=FrozenJsonMap)
     expected_paths: tuple[tuple[Identifier, ...], ...] = ()
     expected_reference_ids: frozenset[Identifier] = frozenset()
     expected_edge_ids: frozenset[Identifier] = frozenset()
@@ -69,11 +71,32 @@ class GoldCase(Contract):
             and self.label_provenance == "synthetic mechanics"
         ):
             raise ValueError("Semantic benchmarks need independent label provenance")
-        if any(
-            type(value) is not int or value < 0 or value > 3
-            for value in self.graded_relevance.values()
+        for grades in (
+            self.graded_relevance,
+            self.file_relevance,
+            self.asset_relevance,
         ):
-            raise ValueError("Relevance grades must be integers from 0 through 3")
+            if any(
+                type(value) is not int or value < 0 or value > 3
+                for value in grades.values()
+            ):
+                raise ValueError("Relevance grades must be integers from 0 through 3")
+        for key in self.graded_relevance:
+            is_file = key in self.expected_file_ids
+            is_asset = key in self.expected_asset_ids
+            if is_file == is_asset:
+                raise ValueError("Flat graded relevance has an ambiguous evidence kind")
+            if key in self.file_relevance or key in self.asset_relevance:
+                raise ValueError("Graded relevance key is repeated across maps")
+        if set(self.file_relevance) & set(self.asset_relevance):
+            raise ValueError("Graded relevance key is repeated across maps")
+        if (
+            set(self.file_relevance) & self.expected_asset_ids
+            or set(self.asset_relevance) & self.expected_file_ids
+        ):
+            raise ValueError(
+                "Graded relevance key conflicts with another evidence kind"
+            )
         return self
 
 

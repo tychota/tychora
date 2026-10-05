@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 
 from tychora.contracts.base import FrozenJsonValue
 from tychora.contracts.evidence import (
@@ -69,10 +70,93 @@ def _grade(value: FrozenJsonValue) -> int:
     return value
 
 
-def metrics(case: GoldCase, result: QueryResult) -> MetricSet:
+@dataclass(frozen=True)
+class LocatorAssessment:
+    """Canonical retained-binding checks made by the owner-side verifier."""
+
+    valid: int
+    total: int
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.valid <= self.total:
+            raise ValueError("Invalid locator assessment counts")
+
+
+def _all_exposed(
+    result: QueryResult,
+) -> tuple[set[str], set[str], set[str], set[str], set[str], set[str]]:
+    sources: set[str] = set()
+    revisions: set[str] = set()
+    units: set[str] = set()
+    assets: set[str] = set()
+    definitions: set[str] = set()
+    files: set[str] = set()
+
+    def citation_ids(citation, source_id: str | None, revision_id: str | None) -> None:
+        if citation.source_id is not None:
+            sources.add(citation.source_id)
+        if citation.revision_id is not None:
+            revisions.add(citation.revision_id)
+        if citation.unit_id is not None:
+            units.add(citation.unit_id)
+        if citation.asset_id is not None:
+            assets.add(citation.asset_id)
+        if source_id is not None and revision_id is not None:
+            files.update(
+                f"{source_id}:{revision_id}:{locator.relative_path}"
+                for locator in citation.locators
+                if isinstance(locator, CodeLocator)
+            )
+
+    for segment in result.segments:
+        sources.add(segment.source_id)
+        revisions.add(segment.revision_id)
+        units.update(segment.matched_unit_ids)
+        units.update(segment.context_only_unit_ids)
+        units.update(item.unit_id for item in segment.excerpts)
+        units.update(item.unit_id for item in segment.context_excerpts)
+        units.update(item.unit_id for item in segment.anchors)
+        for omission in segment.omissions:
+            units.update(omission.unit_ids)
+        for record in segment.structured_records:
+            units.add(record.unit_id)
+            key = record.value.get("definition_key")
+            if record.record_type == "code_symbol" and isinstance(key, str):
+                definitions.add(key)
+        for citation in segment.citations:
+            citation_ids(citation, segment.source_id, segment.revision_id)
+    for visual in result.visuals:
+        sources.add(visual.source_id)
+        revisions.add(visual.revision_id)
+        assets.add(visual.asset_id)
+        for proxy in visual.proxies:
+            units.update(proxy.dependencies)
+        for citation in visual.citations:
+            citation_ids(citation, visual.source_id, visual.revision_id)
+    for citation in result.citations:
+        citation_ids(citation, citation.source_id, citation.revision_id)
+    for path in (*result.relations, *result.checks.assertions):
+        units.update(path.unit_ids)
+        units.update(path.support_unit_ids)
+    for decision in (*result.decision_requirements, *result.checks.decisions):
+        units.update(decision.unit_ids)
+    return sources, revisions, units, assets, definitions, files
+
+
+def metrics(
+    case: GoldCase,
+    result: QueryResult,
+    *,
+    locators: LocatorAssessment | None = None,
+    cutoff: int | None = None,
+) -> MetricSet:
     """Score only actually selected evidence; context excerpts are excluded."""
     if not isinstance(case, GoldCase):
         raise TypeError("Expected a labelled gold case")
+    if cutoff is None:
+        cutoff = case.query.limit
+    if cutoff < 1:
+        raise ValueError("nDCG cutoff must be positive")
     selected = [segment for segment in result.segments if segment.matched_unit_ids]
     source_ids = {segment.source_id for segment in selected} | {
         visual.source_id for visual in result.visuals
@@ -93,25 +177,12 @@ def metrics(case: GoldCase, result: QueryResult) -> MetricSet:
         for excerpt in segment.excerpts
         if excerpt.unit_id in segment.matched_unit_ids
     }
-    valid_locators = 0
-    locator_count = 0
     judged_locators: set[tuple[str, int, int]] = set()
     for segment in selected:
         for citation in segment.citations:
             for locator in citation.locators:
-                locator_count += 1
                 attached = citation.unit_id in (
                     set(segment.matched_unit_ids) | set(segment.context_only_unit_ids)
-                )
-                valid_locators += int(
-                    attached
-                    and (
-                        locator.char_end >= locator.char_start
-                        if isinstance(
-                            locator, (TextLocator, DocumentLocator, CodeLocator)
-                        )
-                        else True
-                    )
                 )
                 if (
                     attached
@@ -143,32 +214,75 @@ def metrics(case: GoldCase, result: QueryResult) -> MetricSet:
     returned_edges = {
         assertion for path in result.relations for assertion in path.assertion_ids
     }
-    forbidden = (
-        len(case.forbidden_source_ids & source_ids)
-        + len(case.forbidden_revision_ids & revision_ids)
-        + len(case.forbidden_unit_ids & unit_ids)
-        + len(case.forbidden_asset_ids & asset_ids)
-        + len(case.forbidden_definition_ids & set(symbol_rank))
-        + len(case.forbidden_file_ids & set(file_rank))
+    exposed = _all_exposed(result)
+    forbidden = sum(
+        len(judged & returned)
+        for judged, returned in zip(
+            (
+                case.forbidden_source_ids,
+                case.forbidden_revision_ids,
+                case.forbidden_unit_ids,
+                case.forbidden_asset_ids,
+                case.forbidden_definition_ids,
+                case.forbidden_file_ids,
+            ),
+            exposed,
+            strict=True,
+        )
     )
     expected_spans = {
         (span.unit_id, span.char_start, span.char_end) for span in case.expected_spans
     }
-    grades = [_grade(case.graded_relevance.get(key, 0)) for key in file_rank]
-    ideal = sorted(
-        (_grade(case.graded_relevance.get(key, 0)) for key in case.expected_file_ids),
-        reverse=True,
+    file_judged = {
+        **{key: _grade(value) for key, value in case.file_relevance.items()},
+        **{
+            key: _grade(value)
+            for key, value in case.graded_relevance.items()
+            if key in case.expected_file_ids
+        },
+    }
+    asset_judged = {
+        **{key: _grade(value) for key, value in case.asset_relevance.items()},
+        **{
+            key: _grade(value)
+            for key, value in case.graded_relevance.items()
+            if key in case.expected_asset_ids
+        },
+    }
+    grades = [file_judged.get(key, 0) for key in file_rank[:cutoff]]
+    ideal = sorted(file_judged.values(), reverse=True)[:cutoff]
+    image_rank = list(dict.fromkeys(visual.asset_id for visual in result.visuals))
+    image_grades = [asset_judged.get(asset_id, 0) for asset_id in image_rank[:cutoff]]
+    image_ideal = sorted(asset_judged.values(), reverse=True)[:cutoff]
+    exposed_count = sum(len(values) for values in exposed)
+    emitted_locator_count = (
+        sum(
+            len(citation.locators)
+            for segment in result.segments
+            for citation in segment.citations
+        )
+        + len(result.visuals)
+        + sum(
+            len(citation.locators)
+            for visual in result.visuals
+            for citation in visual.citations
+        )
+        + sum(len(citation.locators) for citation in result.citations)
     )
-    image_grades = [
-        _grade(case.graded_relevance.get(visual.asset_id, 0))
-        for visual in result.visuals
-    ]
-    image_ideal = sorted(
-        (
-            _grade(case.graded_relevance.get(asset_id, 0))
-            for asset_id in case.expected_asset_ids
-        ),
-        reverse=True,
+    if locators is not None and locators.total != emitted_locator_count:
+        raise ValueError(
+            "Canonical locator assessment does not cover every emitted locator"
+        )
+    locator_metric = (
+        _value("locator_validity", locators.valid, locators.total)
+        if locators is not None
+        else MetricValue(
+            name="locator_validity",
+            value=None,
+            sample_count=0,
+            denominator=emitted_locator_count,
+            not_applicable_reason="canonical binding was not verified",
+        )
     )
     return MetricSet(
         metrics=(
@@ -252,16 +366,11 @@ def metrics(case: GoldCase, result: QueryResult) -> MetricSet:
                 denominator=0,
                 not_applicable_reason="extracted references are not exposed in QueryResult",
             ),
-            _value("locator_validity", valid_locators, locator_count),
+            locator_metric,
             _value(
                 "forbidden_leakage",
                 forbidden,
-                len(source_ids)
-                + len(revision_ids)
-                + len(unit_ids)
-                + len(asset_ids)
-                + len(file_rank)
-                + len(symbol_rank),
+                exposed_count,
             ),
         )
     )
