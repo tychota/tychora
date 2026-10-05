@@ -25,7 +25,7 @@ from tychora.contracts.operations import (
 from tychora.contracts.requests import QueryRequest, RequestScope
 from tychora.evaluation.dataset import GoldCase, load_dataset, load_dataset_bytes
 from tychora.evaluation.metrics import metrics
-from tychora.evaluation.provenance import verify_result_locators
+from tychora.evaluation.provenance import RetainedBindingCache, verify_result_locators
 from tychora.ports.execution import ExecutionContext
 
 _QUERY_CONTROLS = frozenset({"mode", "modalities", "exact_only", "limit", "hints"})
@@ -369,6 +369,9 @@ class EvaluationService:
             evaluations: list[CaseEvaluation] = []
             metric_sets: list[MetricSet] = []
             try:
+                locator_cache = await self.owner.run_blocking(
+                    lambda: RetainedBindingCache(self.owner, request.snapshot_id), ctx
+                )
                 for variant in request.variants:
                     plan = execution_plan(variant)
                     query_service = (
@@ -389,7 +392,7 @@ class EvaluationService:
                                 )
                             locator_assessment = await self.owner.run_blocking(
                                 lambda result=delivered.result: verify_result_locators(
-                                    self.owner, result
+                                    self.owner, result, cache=locator_cache
                                 ),
                                 ctx,
                             )

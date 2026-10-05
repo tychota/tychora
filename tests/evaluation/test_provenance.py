@@ -2,9 +2,13 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from tychora import Tychora
+from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import CodeLocator, ImageLocator, VisualEvidence
 from tychora.evaluation.provenance import (
+    RetainedBindingCache,
     canonical_locator_matches,
     verify_result_locators,
     visual_binding_matches,
@@ -84,6 +88,104 @@ def test_real_retained_text_locator_rejects_wrong_identity_and_binding(tmp_path)
                 }
             )
             assert assess(bad_result).valid < assess(bad_result).total
+
+
+def test_selected_bindings_are_bounded_and_reused_without_snapshot_rehydration(
+    tmp_path,
+    monkeypatch,
+):
+    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+        for key, text in (
+            ("selected", "The saffron marker identifies the selected note."),
+            ("unrelated", "indigo " * 5_000),
+        ):
+            handle = kb.sources.add(
+                {
+                    "type": "text",
+                    "source_key": key,
+                    "collection_id": "default",
+                    "kind": "manual@1",
+                    "format": "text",
+                    "text": text,
+                    "metadata": {"title": key, "publisher": "Example", "edition": "1"},
+                }
+            )
+            assert kb.jobs.wait(handle.id, timeout=10).state == "succeeded"
+        result = kb.search({"question": "saffron", "modalities": ["lexical"]})
+        other_result = kb.search({"question": "indigo", "modalities": ["lexical"]})
+        owner = kb._workspace.owner
+        commands = []
+
+        def assess_twice():
+            owner.db.set_trace_callback(commands.append)
+            try:
+                cache = RetainedBindingCache(owner, result.snapshot_id)
+                first = verify_result_locators(owner, result, cache=cache)
+                after_first = len(commands)
+                second = verify_result_locators(owner, result, cache=cache)
+                monkeypatch.setattr(
+                    "tychora.evaluation.provenance.MAX_BINDING_ROWS", cache.rows_used
+                )
+                with pytest.raises(TychoraError) as error:
+                    verify_result_locators(owner, other_result, cache=cache)
+                assert error.value.code == "LIMIT_EXCEEDED"
+                return first, second, after_first, cache
+            finally:
+                owner.db.set_trace_callback(None)
+
+        first, second, after_first, cache = kb._workspace.bridge.call(
+            owner.run_blocking(assess_twice, ExecutionContext())
+        )
+        assert first.valid == first.total > 0
+        assert second == first
+        assert cache.binding_count == 1
+        assert not any(
+            "FROM evidence_units WHERE extraction_id=" in sql
+            for sql in commands[after_first:]
+        )
+        assert not any(
+            "FROM assets WHERE extraction_id=" in sql for sql in commands[after_first:]
+        )
+        assert not any(
+            "SELECT * FROM evidence_units" in sql for sql in commands[after_first:]
+        )
+
+
+def test_selected_text_budget_rejects_before_materialization(tmp_path, monkeypatch):
+    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+        handle = kb.sources.add(
+            {
+                "type": "text",
+                "source_key": "large-selected",
+                "collection_id": "default",
+                "kind": "manual@1",
+                "format": "text",
+                "text": "saffron " * 1000,
+                "metadata": {
+                    "title": "Large selected",
+                    "publisher": "Example",
+                    "edition": "1",
+                },
+            }
+        )
+        assert kb.jobs.wait(handle.id, timeout=10).state == "succeeded"
+        result = kb.search({"question": "saffron", "modalities": ["lexical"]})
+        owner = kb._workspace.owner
+        monkeypatch.setattr("tychora.evaluation.provenance.MAX_BINDING_BYTES", 5_000)
+        commands = []
+
+        def assess():
+            owner.db.set_trace_callback(commands.append)
+            try:
+                verify_result_locators(owner, result)
+            finally:
+                owner.db.set_trace_callback(None)
+
+        with pytest.raises(TychoraError) as error:
+            kb._workspace.bridge.call(owner.run_blocking(assess, ExecutionContext()))
+        assert error.value.code == "LIMIT_EXCEEDED"
+        assert any("SUM(" in sql and "FROM evidence_units" in sql for sql in commands)
+        assert not any("SELECT * FROM evidence_units" in sql for sql in commands)
 
 
 def test_code_locator_rejects_wrong_path_and_projected_offsets():
