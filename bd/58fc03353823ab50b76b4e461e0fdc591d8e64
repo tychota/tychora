@@ -1,0 +1,54 @@
+src/tychora/evaluation/provenance.py
+  s_35b641b930a96d::t_f4540aa807962c 309-315
+tests/code/test_assertion_projection.py
+  s_35b641b930a96d::t_76f23e65a5e4d0 1-52
+src/tychora/retrieval/segments.py
+  s_35b641b930a96d::t_5d953e77244a14 121-122,124-144
+src/tychora/retrieval/response.py
+  s_35b641b930a96d::t_6a806d7bd77577 671-679
+  s_35b641b930a96d::t_69ca5f5959f0c6 680
+tests/evaluation/test_code_scenarios.py
+  s_35b641b930a96d::t_5eada40b6c6e11 144-145
+  s_35b641b930a96d::t_57963a774785b0 146-152
+  s_35b641b930a96d::t_4875e977c3e5f6 155-156,174-176
+  s_35b641b930a96d::t_08d3266afe11a6 101
+  s_35b641b930a96d::t_a8301927fa1183 14,153-154,157-165,171-173,177-180
+  s_35b641b930a96d::t_f032ec8f55e36b 34,81,84,95,100,126,166-170,199-200,215-219,222-228,241-242,255
+  s_35b641b930a96d::t_6aaeb0a209e53f 186
+  s_35b641b930a96d::t_55966902418f12 1-13,15-33,35-80,82-83,85-94,96-99,102-125,127-143,181-185,187-198,201-214,220-221,229-240,243-254,256
+tests/formatting/test_code_record_binding.py
+  s_35b641b930a96d::t_bb4bacc74fac4f 1-72,76-102
+  s_35b641b930a96d::t_a97d358be11575 73-75
+  s_35b641b930a96d::t_35b258b0393c4b 103-105
+tests/fixtures/evaluation/scenario-catalog.json
+  s_35b641b930a96d::t_e2c13f06cbb320 16-18
+src/tychora/adapters/code/normalize.py
+  s_35b641b930a96d::t_5df1b85f3d4bd6 707,752-753
+  s_35b641b930a96d::t_c7b555fd7499ed 168
+  s_35b641b930a96d::t_663fb24e0b77c9 18
+  s_35b641b930a96d::t_5ee9cc045f7274 53,767-769
+  s_35b641b930a96d::t_57f4c8258bdf12 173-184,234-236,524-528,537-539,623-624,717-718,754-755,762-764,1078
+  s_35b641b930a96d::t_cb72b04e1e4fcf 625-626,636,706,716,721-723,746-747,749-751,772-776,778-786,847,854,1074-1077
+src/tychora/adapters/sqlite/validation.py
+  s_35b641b930a96d::t_c7b555fd7499ed 22,405
+  s_35b641b930a96d::t_64e8c8d6f3938f 406-410
+  s_35b641b930a96d::t_cec11a8d505de6 411,415-416
+src/tychora/contracts/code.py
+  s_35b641b930a96d::t_1bf47e3b675ace 19-20,188-189,197
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bd58fc03353823ab50b76b4e461e0fdc591d8e64",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
