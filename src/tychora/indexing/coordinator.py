@@ -19,9 +19,11 @@ from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.corpus import ChunkRow, ExtractionBundle
 from tychora.contracts.embeddings import (
+    EmbeddingCapabilities,
     EmbeddingRecord,
     VisualInput,
     VisualResizeDerivation,
+    stable_capability_json,
 )
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.graph import (
@@ -156,12 +158,21 @@ class ProjectionCoordinator:
         except (TypeError, ValueError):
             _fail("Retained vector family specification is invalid")
         caps = embedder.capabilities
+        raw_capabilities = slot.family.config_json["capabilities"]
+        try:
+            retained_caps = EmbeddingCapabilities.model_validate_json(
+                canonical_bytes(raw_capabilities)
+            )
+        except (TypeError, ValueError):
+            _fail("Retained vector family capability proof is invalid")
+        if retained_caps != caps:
+            _fail("Retained vector family differs from provider")
         settings = getattr(retained.values.providers, channel)
         expected = digest(
             f"{channel}-family-config-v1",
             origin_sha,
             settings.model_dump(mode="json"),
-            caps.model_dump(mode="json"),
+            raw_capabilities,
         )
         if (
             spec.family_id != slot.family.family_id
@@ -403,7 +414,7 @@ class ProjectionCoordinator:
             "text-family-config-v1",
             config_sha,
             settings.model_dump(mode="json"),
-            capabilities.model_dump(mode="json"),
+            stable_capability_json(capabilities),
         )
         creation_uuid = str(uuid5(UUID(workspace_id), "text:" + family_config))
         spec = FamilySpec(
@@ -435,7 +446,7 @@ class ProjectionCoordinator:
                 {
                     "effective_config_sha": config_sha,
                     "spec": spec.model_dump(mode="json"),
-                    "capabilities": capabilities.model_dump(mode="json"),
+                    "capabilities": stable_capability_json(capabilities),
                     "namespace_hash": handle.namespace_hash,
                 }
             ),
@@ -560,7 +571,7 @@ class ProjectionCoordinator:
             "image-family-config-v1",
             config_sha,
             settings.model_dump(mode="json"),
-            capabilities.model_dump(mode="json"),
+            stable_capability_json(capabilities),
         )
         creation_uuid = str(uuid5(UUID(workspace_id), "image:" + family_config))
         spec = FamilySpec(
@@ -592,7 +603,7 @@ class ProjectionCoordinator:
                 {
                     "effective_config_sha": config_sha,
                     "spec": spec.model_dump(mode="json"),
-                    "capabilities": capabilities.model_dump(mode="json"),
+                    "capabilities": stable_capability_json(capabilities),
                     "namespace_hash": handle.namespace_hash,
                 }
             ),
@@ -766,12 +777,12 @@ class ProjectionCoordinator:
                 "Configured graph projection lacks a native generation factory",
             )
         graph_config = digest(
-            "graph-family-config-v1",
+            "graph-family-config-v2",
             config_sha,
             self.store.registry.registry_digest,
             self.config.values.retrieval.graph.model_dump(mode="json"),
         )
-        family_id = digest("graph-family-v1", workspace_id, graph_config)
+        family_id = digest("graph-family-v2", workspace_id, graph_config)
         family = IndexFamily(
             family_id=family_id,
             channel="graph",
@@ -828,7 +839,7 @@ class ProjectionCoordinator:
         ).fetchone()[0]
         spec = GraphGenerationSpec(
             generation_id=digest(
-                "graph-generation-v1",
+                "graph-generation-v2",
                 family_id,
                 graph_config,
                 [item.model_dump(mode="json") for item in selected],
@@ -840,17 +851,19 @@ class ProjectionCoordinator:
             workspace_id=workspace_id,
             decision_watermark=watermark,
             memberships=tuple(selected),
+            projection_version="stable-v2",
         )
         build = read_graph_build(self.store, spec, ctx)
         manifest = GraphManifest.from_build(build)
         graph = self.graph_factory(build)
         graph.begin_generation(spec)
-        graph.upsert_batch(
-            spec.generation_id,
-            tuple(item.assertion for item in build.assertions),
-            tuple(item.unit for item in build.units),
-            ctx,
-        )
+        if graph.sealed_receipt(spec.generation_id) is None:
+            graph.upsert_batch(
+                spec.generation_id,
+                tuple(item.assertion for item in build.assertions),
+                tuple(item.unit for item in build.units),
+                ctx,
+            )
         receipt = graph.seal_generation(spec.generation_id, manifest, ctx)
         self.store.graph_indexes[spec.generation_id] = graph
         input_ref = _input_manifest(

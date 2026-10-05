@@ -17,6 +17,7 @@ from tychora.contracts.graph import (
     GraphManifest,
     GraphPath,
     GraphTraversalPolicy,
+    graph_manifest_digest,
 )
 from tychora.contracts.identity import digest
 from tychora.ports.execution import ExecutionContext
@@ -280,10 +281,7 @@ class GraphTraversal:
                 "INDEX_INCOMPLETE", "Canonical structural source order is unavailable"
             )
         manifest = GraphManifest.from_build(build)
-        if (
-            digest("graph-manifest-v1", manifest.model_dump(mode="json"))
-            != view.graph_manifest_digest
-        ):
+        if graph_manifest_digest(manifest) != view.graph_manifest_digest:
             raise TychoraError(
                 "INDEX_INCOMPLETE", "Structural order differs from sealed generation"
             )

@@ -25,6 +25,9 @@ from tychora.contracts.graph import (
     GraphManifest,
     GraphTraversalPolicy,
     GraphUnitBinding,
+    graph_assertion_binding_json,
+    graph_manifest_digest,
+    graph_proof_digest,
 )
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.relationships import RelationshipAssertion
@@ -165,6 +168,16 @@ class LadybugGraphStore:
     def _fail(message: str) -> NoReturn:
         raise TychoraError("INTEGRITY_ERROR", message)
 
+    @classmethod
+    def _proof_failure(cls, spec: GraphGenerationSpec, detail: str) -> NoReturn:
+        if spec.projection_version == "legacy-v1":
+            cls._fail(
+                detail + "; legacy-v1 proof cannot be reordered on recovery. "
+                "A new stable-v2 publication from verified retained canonical inputs "
+                "is required; native rebuild does not upgrade this generation"
+            )
+        cls._fail(detail)
+
     def _rows(self, query: str, parameters: dict | None = None) -> list[list[Any]]:
         result = cast(QueryResult, self._connection.execute(query, parameters or {}))
         return cast(list[list[Any]], result.get_all())
@@ -206,6 +219,15 @@ class LadybugGraphStore:
                     spec.generation_id, {"spec": encoded, "receipt": None}
                 )
             return spec.generation_id
+
+    def sealed_receipt(self, generation_id: str) -> GraphBatchReceipt | None:
+        """Inspect immutable native state before choosing retry versus revalidation."""
+        with self._lock:
+            state = self._read_state(generation_id)
+            if state is None or state.get("dropping", False):
+                self._fail("Graph generation is unavailable")
+            receipt = state["receipt"]
+            return GraphBatchReceipt.from_mapping(receipt) if receipt else None
 
     def upsert_batch(
         self,
@@ -276,8 +298,10 @@ class LadybugGraphStore:
             self._validate_assertion(
                 assertion, canonical_units, canonical_assertions[assertion.assertion_id]
             )
-        self._upsert_units(generation_id, units, canonical_units, ctx)
-        self._upsert_assertions(generation_id, assertions, canonical_assertions, ctx)
+        self._upsert_units(generation_id, units, canonical_units, self._build.spec, ctx)
+        self._upsert_assertions(
+            generation_id, assertions, canonical_assertions, self._build.spec, ctx
+        )
 
     def _validate_assertion(
         self,
@@ -375,6 +399,7 @@ class LadybugGraphStore:
         gid: str,
         units: tuple[EvidenceUnit, ...],
         canonical: dict,
+        spec: GraphGenerationSpec,
         ctx: ExecutionContext,
     ) -> None:
         operations = []
@@ -382,7 +407,9 @@ class LadybugGraphStore:
             ctx.checkpoint()
             pk = self._pk(gid, unit.unit_id)
             binding = canonical[unit.unit_id]
-            content_hash = digest("graph-evidence-v1", binding.model_dump(mode="json"))
+            content_hash = graph_proof_digest(
+                "graph-evidence", spec, binding.model_dump(mode="json")
+            )
             row = self._one(
                 "MATCH (e:Evidence) WHERE e.pk=$pk RETURN e.content_hash,e.generation_id",
                 {"pk": pk},
@@ -416,6 +443,7 @@ class LadybugGraphStore:
         gid: str,
         assertions: tuple[RelationshipAssertion, ...],
         canonical: dict,
+        spec: GraphGenerationSpec,
         ctx: ExecutionContext,
     ) -> None:
         nodes: list[tuple[str, dict]] = []
@@ -431,7 +459,7 @@ class LadybugGraphStore:
                 if previous != identity:
                     self._fail("Graph entity has contradictory grounding")
                 pk = self._pk(gid, endpoint.entity_id)
-                content_hash = digest("graph-entity-v1", identity)
+                content_hash = graph_proof_digest("graph-entity", spec, identity)
                 row = self._one(
                     "MATCH (n:Entity) WHERE n.pk=$pk RETURN n.content_hash,n.generation_id",
                     {"pk": pk},
@@ -469,14 +497,16 @@ class LadybugGraphStore:
                     )
             binding = canonical[assertion.assertion_id]
             pk = self._pk(gid, assertion.assertion_id)
-            content_hash = digest("graph-assertion-v1", binding.model_dump(mode="json"))
+            content_hash = graph_proof_digest(
+                "graph-assertion", spec, graph_assertion_binding_json(binding, spec)
+            )
             row = self._one(
                 "MATCH (a:RelationAssertion) WHERE a.pk=$pk RETURN a.content_hash,a.generation_id",
                 {"pk": pk},
             )
             if row is not None:
                 if row != [content_hash, gid]:
-                    self._fail("Graph assertion retry differs")
+                    self._proof_failure(spec, "Graph assertion retry differs")
             else:
                 nodes.append(
                     (
@@ -559,7 +589,10 @@ class LadybugGraphStore:
             if build is None or build.spec.generation_id != generation_id:
                 self._fail("Graph canonical build input is unavailable")
             if expected != GraphManifest.from_build(build):
-                self._fail("Graph manifest differs from complete canonical membership")
+                self._proof_failure(
+                    build.spec,
+                    "Graph manifest differs from complete canonical membership",
+                )
             for table, field, ids in (
                 ("Evidence", "evidence_id", expected.evidence_ids),
                 ("Entity", "entity_id", expected.entity_ids),
@@ -585,7 +618,9 @@ class LadybugGraphStore:
                     canonical_bytes(
                         [loc.model_dump(mode="json") for loc in unit.locators]
                     ).decode(),
-                    digest("graph-evidence-v1", binding.model_dump(mode="json")),
+                    graph_proof_digest(
+                        "graph-evidence", build.spec, binding.model_dump(mode="json")
+                    ),
                 ]
                 if row != expected_row:
                     self._fail("Graph evidence content differs")
@@ -607,9 +642,15 @@ class LadybugGraphStore:
                     sorted(assertion.required_support_ids),
                     binding.artifact.sha256,
                     binding.record_id,
-                    digest("graph-assertion-v1", binding.model_dump(mode="json")),
+                    graph_proof_digest(
+                        "graph-assertion",
+                        build.spec,
+                        graph_assertion_binding_json(binding, build.spec),
+                    ),
                 ]:
-                    self._fail("Graph assertion content or provenance differs")
+                    self._proof_failure(
+                        build.spec, "Graph assertion content or provenance differs"
+                    )
                 for table, endpoint in (
                     ("Subject", assertion.subject),
                     ("Object", assertion.object),
@@ -648,8 +689,9 @@ class LadybugGraphStore:
                     generation_id,
                     endpoint.kind,
                     endpoint.entity_id,
-                    digest(
-                        "graph-entity-v1",
+                    graph_proof_digest(
+                        "graph-entity",
+                        build.spec,
                         (endpoint.kind, endpoint.entity_id, endpoint.unit_id),
                     ),
                 ]:
@@ -665,9 +707,7 @@ class LadybugGraphStore:
                 family_id=expected.spec.family_id,
                 config_sha=expected.spec.config_sha,
                 decision_watermark=expected.spec.decision_watermark,
-                manifest_digest=digest(
-                    "graph-manifest-v1", expected.model_dump(mode="json")
-                ),
+                manifest_digest=graph_manifest_digest(expected),
                 entity_count=len(expected.entity_ids),
                 evidence_count=len(expected.evidence_ids),
                 assertion_count=len(expected.assertion_ids),

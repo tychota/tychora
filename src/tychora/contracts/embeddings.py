@@ -63,6 +63,13 @@ class EmbeddingCapabilities(Contract):
         return self
 
 
+def stable_capability_json(capabilities: EmbeddingCapabilities) -> dict:
+    """Canonicalize unordered input modes for newly published family identity."""
+    projected = capabilities.model_dump(mode="json")
+    projected["input_types"] = sorted(capabilities.input_types)
+    return projected
+
+
 class VisualEmbeddingLimits(Contract):
     """Qualified local accounting and request-resource limits for one visual model."""
 

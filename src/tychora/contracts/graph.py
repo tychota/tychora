@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Literal, Self
 
-from pydantic import model_validator
+from pydantic import SerializerFunctionWrapHandler, model_serializer, model_validator
 
 from .artifacts import ArtifactRef
 from .base import (
@@ -34,6 +34,15 @@ class GraphGenerationSpec(Contract):
     workspace_id: Identifier
     decision_watermark: NonNegativeInt
     memberships: tuple[GraphExtraction, ...] = ()
+    projection_version: Literal["legacy-v1", "stable-v2"] = "legacy-v1"
+
+    @model_serializer(mode="wrap")
+    def retained_shape(self, handler: SerializerFunctionWrapHandler) -> dict:
+        """Keep byte-for-byte v1 spec shape; mark only new stable projections."""
+        value = handler(self)
+        if self.projection_version == "legacy-v1":
+            value.pop("projection_version", None)
+        return value
 
     @model_validator(mode="after")
     def unique_membership(self) -> Self:
@@ -68,6 +77,29 @@ class GraphAssertionBinding(Contract):
         if self.decision_id is not None and self.decision_id < 1:
             raise ValueError("Graph decision identity must be positive")
         return self
+
+
+def graph_assertion_binding_json(
+    binding: GraphAssertionBinding, spec: GraphGenerationSpec
+) -> dict:
+    """Preserve legacy proof input or project v2 support IDs consistently."""
+    projected = binding.model_dump(mode="json")
+    if spec.projection_version == "stable-v2":
+        projected["assertion"]["required_support_ids"] = sorted(
+            binding.assertion.required_support_ids
+        )
+    return projected
+
+
+def graph_proof_digest(base: str, spec: GraphGenerationSpec, *parts) -> str:
+    suffix = "v2" if spec.projection_version == "stable-v2" else "v1"
+    return digest(f"{base}-{suffix}", *parts)
+
+
+def graph_manifest_digest(manifest: "GraphManifest") -> str:
+    return graph_proof_digest(
+        "graph-manifest", manifest.spec, manifest.model_dump(mode="json")
+    )
 
 
 class GraphBuildInput(Contract):
@@ -124,14 +156,18 @@ class GraphManifest(Contract):
             assertion_ids=tuple(
                 sorted(item.assertion.assertion_id for item in build.assertions)
             ),
-            content_digest=digest(
-                "graph-content-v1",
+            content_digest=graph_proof_digest(
+                "graph-content",
+                build.spec,
                 sorted(
                     (item.model_dump(mode="json") for item in build.units),
                     key=lambda value: value["unit"]["unit_id"],
                 ),
                 sorted(
-                    (item.model_dump(mode="json") for item in build.assertions),
+                    (
+                        graph_assertion_binding_json(item, build.spec)
+                        for item in build.assertions
+                    ),
                     key=lambda value: value["assertion"]["assertion_id"],
                 ),
             ),

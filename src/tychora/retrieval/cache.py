@@ -114,6 +114,14 @@ class QueryCaches:
     def put_result(self, key: Hashable, value: object) -> None:
         self._put(1, key, pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL))
 
+    def purge_results(self) -> int:
+        """Bypass final results while retaining authorized query embeddings."""
+        with self._lock:
+            keys = tuple(self._entries[1])
+            for key in keys:
+                self._drop(1, key)
+            return len(keys)
+
     def purge(self) -> int:
         """Discard volatile query data without touching durable history."""
         with self._lock:

@@ -649,12 +649,13 @@ class RecoveryService:
                             raise TychoraError(
                                 "INTEGRITY_ERROR", "Graph generation identity differs"
                             )
-                        graph.upsert_batch(
-                            receipt.generation_id,
-                            tuple(item.assertion for item in build.assertions),
-                            tuple(item.unit for item in build.units),
-                            ctx,
-                        )
+                        if graph.sealed_receipt(receipt.generation_id) is None:
+                            graph.upsert_batch(
+                                receipt.generation_id,
+                                tuple(item.assertion for item in build.assertions),
+                                tuple(item.unit for item in build.units),
+                                ctx,
+                            )
                         if (
                             graph.seal_generation(receipt.generation_id, manifest, ctx)
                             != receipt

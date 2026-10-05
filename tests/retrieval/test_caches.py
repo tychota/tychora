@@ -26,6 +26,15 @@ def test_filter_change_reuses_embedding_but_not_result() -> None:
     assert caches.get_result(alpha) == b"alpha"
 
 
+def test_result_only_purge_preserves_query_embedding_for_uncached_retrieval() -> None:
+    caches = QueryCaches(clock=Clock())
+    caches.put_embedding("query", b"vector")
+    caches.put_result("result", b"evidence")
+    assert caches.purge_results() == 1
+    assert caches.get_result("result") is None
+    assert caches.get_embedding("query") == b"vector"
+
+
 def test_ttl_uses_monotonic_boundary_and_lru_evicts_oldest() -> None:
     clock = Clock()
     caches = QueryCaches(clock=clock, embedding_capacity=2, result_capacity=2)

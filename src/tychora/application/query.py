@@ -28,6 +28,7 @@ from tychora.contracts.candidates import (
 )
 from tychora.contracts.corpus import AssetRow
 from tychora.contracts.embeddings import (
+    EmbeddingCapabilities,
     RegisteredImageQuery,
     TextQuery,
     VisualInput,
@@ -400,6 +401,24 @@ class QueryService:
                     else self.owner.store.retained_config_sha(origin_sha)
                 )
             retained_config = retained_configs[origin_sha]
+            raw_capabilities = slot.family.config_json.get("capabilities")
+            if raw_capabilities is None:
+                raise TychoraError(
+                    "CAPABILITY_MISSING",
+                    "Retained vector capability proof is absent; publish a new family and snapshot.",
+                )
+            try:
+                retained_capabilities = EmbeddingCapabilities.model_validate_json(
+                    canonical_bytes(raw_capabilities)
+                )
+            except (TypeError, ValueError):
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Retained vector capability proof is invalid."
+                ) from None
+            if retained_capabilities != caps:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Query provider differs from pinned vector family."
+                )
             if not pinned_runtime_compatible(retained_config, self.owner.config):
                 raise TychoraError(
                     "INTEGRITY_ERROR",
@@ -419,7 +438,7 @@ class QueryService:
                 f"{channel}-family-config-v1",
                 origin_sha,
                 retained_settings.model_dump(mode="json"),
-                caps.model_dump(mode="json"),
+                raw_capabilities,
             )
             if (
                 spec.config_sha != expected

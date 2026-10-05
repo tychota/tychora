@@ -19,6 +19,8 @@ from tychora.ports.execution import ExecutionContext
 class GraphStore(Protocol):
     def begin_generation(self, spec: GraphGenerationSpec) -> str: ...
 
+    def sealed_receipt(self, generation_id: str) -> GraphBatchReceipt | None: ...
+
     def upsert_batch(
         self,
         generation_id: str,

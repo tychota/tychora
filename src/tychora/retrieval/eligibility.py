@@ -119,7 +119,7 @@ from tychora.configuration.indexed_representation import pinned_runtime_compatib
 from tychora.configuration.registry import Registry, compile_filter
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.graph import GraphBatchReceipt
+from tychora.contracts.graph import GraphBatchReceipt, graph_manifest_digest
 from tychora.contracts.identity import JsonValue, canonical_bytes, digest
 from tychora.contracts.publication import SnapshotView
 from tychora.contracts.requests import (
@@ -626,10 +626,7 @@ class EligibilityCompiler:
                     if (
                         batch.graph_manifest is None
                         or batch.receipt.manifest_digest
-                        != digest(
-                            "graph-manifest-v1",
-                            batch.graph_manifest.model_dump(mode="json"),
-                        )
+                        != graph_manifest_digest(batch.graph_manifest)
                     ):
                         raise TychoraError(
                             "INTEGRITY_ERROR", "Graph manifest binding differs"

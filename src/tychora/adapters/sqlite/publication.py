@@ -14,7 +14,7 @@ from tychora.adapters.files.references import required_closure
 from tychora.configuration.indexed_representation import pinned_runtime_compatible
 from tychora.contracts.artifacts import ArtifactRef, ManifestRef
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.graph import GraphBatchReceipt
+from tychora.contracts.graph import GraphBatchReceipt, graph_manifest_digest
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.jobs import PublicationReceipt
 from tychora.contracts.publication import (
@@ -259,8 +259,7 @@ def _verify_batches(
                     or batch.expected_count != receipt.evidence_count
                     or receipt.family_id != batch.family_id
                     or receipt.config_sha != slot.family.config_sha
-                    or receipt.manifest_digest
-                    != digest("graph-manifest-v1", manifest.model_dump(mode="json"))
+                    or receipt.manifest_digest != graph_manifest_digest(manifest)
                     or manifest.spec.workspace_id != plan.workspace_id
                     or {item.extraction_id for item in manifest.spec.memberships}
                     != selected
