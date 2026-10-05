@@ -26,6 +26,13 @@ def test_scenario_catalog_is_explicitly_unqualified_and_not_gold():
         "mode-global",
         "unknown-review",
         "long-end-match",
+        "proxy-image",
+        "table-split",
+        "conflicting-assertion",
+        "repeated-symbol",
+        "overload",
+        "exploratory-entry",
+        "hidden-parent-support",
     }
     assert not (fixture_dir / "manifest.json").exists()
     assert not (fixture_dir / "cases.jsonl").exists()

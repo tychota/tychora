@@ -20,7 +20,7 @@ def test_register_dataset_retains_each_case_and_rejects_changed_version(
         repo = EvaluationRepository(owner)
         dataset = repo.register(load_dataset(gold), scope)
         assert owner.db.execute("SELECT COUNT(*) FROM evaluation_cases").fetchone() == (
-            5,
+            len(dataset.cases),
         )
         assert (
             repo.load(dataset.dataset_id, scope=scope).version_sha

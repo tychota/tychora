@@ -39,6 +39,7 @@ from tychora.contracts.evidence import (
     Coverage,
     DecisionRequirement,
     RelationChecks,
+    RelationPath,
     StructuredRecord,
     VisualEvidence,
 )
@@ -97,6 +98,7 @@ class _PreparedResult:
     selection: Selection
     records: tuple[StructuredRecord, ...]
     checks: RelationChecks
+    relations: tuple[RelationPath, ...]
     visuals: tuple[VisualEvidence, ...]
     coverage: Coverage
     warnings: tuple[str, ...]
@@ -417,7 +419,8 @@ class QueryService:
                 ) from None
             if retained_capabilities != caps:
                 raise TychoraError(
-                    "INTEGRITY_ERROR", "Query provider differs from pinned vector family."
+                    "INTEGRITY_ERROR",
+                    "Query provider differs from pinned vector family.",
                 )
             if not pinned_runtime_compatible(retained_config, self.owner.config):
                 raise TychoraError(
@@ -896,6 +899,37 @@ class QueryService:
             for item in (*graph_candidates.candidates, *graph_candidates.enrichments)
             for path in item.paths
         )
+        relations = []
+        seen_paths = set()
+        eligible = view.graph_eligible_unit_ids
+        for path in paths:
+            if (
+                not {path.source_unit_id, path.target_unit_id} <= eligible
+                or not path.required_support_ids <= eligible
+                or set(path.assertion_ids) & view.blocked_assertion_ids
+                or path.status not in {"recorded", "confirmed"}
+            ):
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Graph expansion returned an ineligible path"
+                )
+            key = (path.assertion_ids, path.source_unit_id, path.target_unit_id)
+            if key in seen_paths:
+                continue
+            seen_paths.add(key)
+            relations.append(
+                RelationPath(
+                    unit_ids=(path.source_unit_id, path.target_unit_id),
+                    assertion_ids=path.assertion_ids,
+                    predicates=(path.predicate,),
+                    support_unit_ids=path.required_support_ids,
+                    provenance=FrozenJsonMap(
+                        {
+                            "status": path.status,
+                            "confidence": path.confidence,
+                        }
+                    ),
+                )
+            )
         selection = assemble_segments(
             ranked,
             view,
@@ -960,6 +994,7 @@ class QueryService:
                 selection,
                 records,
                 checks,
+                tuple(relations),
                 visuals,
                 coverage,
                 attempt.warnings,
@@ -1264,6 +1299,7 @@ class QueryService:
                 counter=self.counter,
                 profiles=self.profiles,
                 eligible_unit_ids=attempt.view.graph_eligible_unit_ids,
+                relations=prepared.relations,
                 visuals=prepared.visuals,
                 coverage=prepared.coverage,
                 warnings=prepared.warnings,

@@ -54,6 +54,7 @@ class ResponseContext:
     counter: TokenCounter
     profiles: tuple[OutputProfile, ...] = (OutputProfile(),)
     eligible_unit_ids: frozenset[str] = frozenset()
+    relations: tuple[RelationPath, ...] = ()
     visuals: tuple[VisualEvidence, ...] = ()
     coverage: Coverage = field(default_factory=lambda: Coverage(status="complete"))
     warnings: tuple[str, ...] = ()
@@ -180,6 +181,14 @@ class ResponseAssembler:
                 raise TychoraError(
                     "INTEGRITY_ERROR", "Visual proxy dependencies differ."
                 )
+        for path in ctx.relations:
+            if (
+                not set(path.unit_ids) <= ctx.eligible_unit_ids
+                or not path.support_unit_ids <= ctx.eligible_unit_ids
+            ):
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Relation path eligibility differs."
+                )
         for index, segment in enumerate(segments):
             attached = tuple(
                 record
@@ -196,6 +205,9 @@ class ResponseAssembler:
             kept = tuple(segments)
             kept_visuals = tuple(visuals)
             retained_owners = {uid for item in kept for uid in item.matched_unit_ids}
+            kept_relations = tuple(
+                path for path in ctx.relations if set(path.unit_ids) & retained_owners
+            )
             gaps: list[CoverageGap] = []
             for lane in ctx.required_lanes:
                 if not any(item.lane == lane for item in kept):
@@ -319,6 +331,7 @@ class ResponseAssembler:
                 applied_scope=ctx.scope,
                 segments=kept,
                 visuals=kept_visuals,
+                relations=kept_relations,
                 citations=_unique_citations(kept, kept_visuals),
                 coverage=coverage,
                 checks=kept_checks,
