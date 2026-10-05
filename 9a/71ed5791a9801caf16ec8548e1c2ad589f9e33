@@ -1,0 +1,35 @@
+src/tychora/evaluation/provenance.py
+  s_35b641b930a96d::t_2474fe4056dba0 50,129,141-143
+  s_35b641b930a96d::t_62bb4db2d1f5b2 9
+  s_35b641b930a96d::t_7d60b9fa347419 27-36,38-49,144-148,150-157,165-167,173-204,281-282,294-295,335,356-358
+  s_35b641b930a96d::t_adf64db3e29bcd 120
+  s_35b641b930a96d::t_c5a22419349e72 37,51-119,121-128,130-140,149,158-164,168-172,283-284,296
+  s_35b641b930a96d::t_1d5482d69d7bab 292-293,311,354-355
+docs/evaluation.md
+  s_35b641b930a96d::t_9e5329f5b0790c 28
+tests/evaluation/test_provenance.py
+  s_35b641b930a96d::t_7b7aa5bac25852 11,93,95-98,100-113,115-124,131-139,143-154,156-165,167-175,177-178,180-190
+  s_35b641b930a96d::t_8503b89bbdfb50 155,166,179
+  s_35b641b930a96d::t_e7ec564f5c6ca4 140-142
+  s_35b641b930a96d::t_d3a63356bc561b 5-6,8,176
+  s_35b641b930a96d::t_e7b45aab903855 94,99,114,125-130
+src/tychora/evaluation/runner.py
+  s_35b641b930a96d::t_0d8c381eb8059b 372-374
+  s_35b641b930a96d::t_df0bf4fa9a4359 28,395
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9a71ed5791a9801caf16ec8548e1c2ad589f9e33",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
