@@ -335,11 +335,35 @@ def _validate_retained_documents(
                 is not None
             )
             rich_format = {"pdf", "docx", "png", "jpeg"}
+            source_markers = []
+            for (attributes_json,) in db.execute(
+                "SELECT attributes_json FROM evidence_units "
+                "WHERE extraction_id=? AND text_origin='source'",
+                (extraction_id,),
+            ):
+                attributes = json.loads(
+                    attributes_json, object_pairs_hook=_unique_pairs
+                )
+                if not isinstance(attributes, dict):
+                    raise TypeError("Canonical unit attributes are malformed")
+                source_markers.append(attributes.get("document_representation"))
+            document_markers = {
+                "docling-source-parts@1",
+                "docling-image-source@1",
+            }
             requires_document_mapping = (
                 registered_format in rich_format
                 or parsed_format in rich_format
                 or document_locator
+                or any(
+                    isinstance(marker, str) and marker.startswith("docling-")
+                    for marker in source_markers
+                )
             )
+            if requires_document_mapping and any(
+                marker not in document_markers for marker in source_markers
+            ):
+                raise ValueError("Canonical document source marker is absent")
             if registered_format in rich_format and parsed_format != registered_format:
                 raise ValueError("Registered document format differs")
             doc_ref_data = data.get("docling_json_ref")

@@ -113,6 +113,26 @@ class PreparedProjection:
 class ProjectionCoordinator:
     """Use real canonical, provider and native ports; return a verified plan."""
 
+    @staticmethod
+    def _missing_family_proof() -> TychoraError:
+        return TychoraError(
+            "CAPABILITY_MISSING",
+            "Retained vector family predates capability proof; create a new workspace "
+            "and reingest available originals to publish a new family and snapshot",
+        )
+
+    def _require_family_proof(
+        self, family_id: str, channel: str, config_sha: str
+    ) -> None:
+        rows = self.store.db.execute(
+            "SELECT json_type(config_json,'$.capabilities') FROM index_families "
+            "WHERE family_id=? OR (channel=? AND "
+            "json_extract(config_json,'$.effective_config_sha')=?)",
+            (family_id, channel, config_sha),
+        ).fetchall()
+        if any(row[0] != "object" for row in rows):
+            raise self._missing_family_proof()
+
     def _retained_vector_spec(
         self, slot: PublicationSlot | None, channel: str
     ) -> FamilySpec | None:
@@ -122,6 +142,8 @@ class ProjectionCoordinator:
         index = self.text_index if channel == "text" else self.image_index
         if embedder is None or index is None:
             return None
+        if not isinstance(slot.family.config_json.get("capabilities"), FrozenJsonMap):
+            raise self._missing_family_proof()
         origin_sha = slot.family.config_json.get("effective_config_sha")
         raw = slot.family.config_json.get("spec")
         if not isinstance(origin_sha, str) or not isinstance(raw, FrozenJsonMap):
@@ -399,6 +421,7 @@ class ProjectionCoordinator:
             backend_namespace="text",
             backend_space="ip",
         )
+        self._require_family_proof(spec.family_id, "text", config_sha)
         handle = index.create_family(spec)
         family = IndexFamily(
             family_id=spec.family_id,
@@ -555,6 +578,7 @@ class ProjectionCoordinator:
             backend_namespace="image",
             backend_space="ip",
         )
+        self._require_family_proof(spec.family_id, "image", config_sha)
         handle = index.create_family(spec)
         family = IndexFamily(
             family_id=spec.family_id,
@@ -903,13 +927,7 @@ class ProjectionCoordinator:
         text_groups: tuple[ContextGroup, ...] = ()
         if self.config.values.index.text.backend != "disabled":
             old_text = old_slots.get("text")
-            text_spec = (
-                self._retained_vector_spec(old_text, "text")
-                if old_text is not None
-                and old_text.family.config_json.get("effective_config_sha")
-                != config_ref.sha256
-                else None
-            )
+            text_spec = self._retained_vector_spec(old_text, "text")
             if text_spec is not None:
                 assert old_text is not None
                 text_family = old_text.family
@@ -934,13 +952,7 @@ class ProjectionCoordinator:
         visual_inputs: tuple[VisualInput, ...] = ()
         if self.config.values.index.image.backend != "disabled":
             old_image = old_slots.get("image")
-            image_spec = (
-                self._retained_vector_spec(old_image, "image")
-                if old_image is not None
-                and old_image.family.config_json.get("effective_config_sha")
-                != config_ref.sha256
-                else None
-            )
+            image_spec = self._retained_vector_spec(old_image, "image")
             if image_spec is not None:
                 assert old_image is not None
                 image_family = old_image.family

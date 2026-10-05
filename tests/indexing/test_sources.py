@@ -23,6 +23,7 @@ from tychora.application.sources import SourceService
 from tychora.application.visual import create_visual_embedder
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.artifacts import ArtifactRef
+from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.embeddings import EmbeddingCapabilities, VisualEmbeddingLimits
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes, space_id
@@ -144,7 +145,8 @@ async def test_add_and_sync_native_source_reuse_canonical_extraction(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_image_slot_publishes_required_empty_batch(tmp_path):
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_image_slot_publishes_required_empty_batch(tmp_path, monkeypatch, legacy):
     settings = tmp_path / "workspace.toml"
     settings.write_text(
         'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
@@ -168,30 +170,48 @@ async def test_image_slot_publishes_required_empty_batch(tmp_path):
             ),
             ExecutionContext(),
         )
+        image_index = ChromaVectorIndex(tmp_path / "images")
         coordinator = ProjectionCoordinator(
             store=owner.store,
             artifacts=owner.artifacts,
             config=config,
             counter=Counter(),
             visual_embedder=EmptyVisualProvider(),
-            image_index=ChromaVectorIndex(tmp_path / "images"),
+            image_index=image_index,
         )
-        source = SourceInput.from_mapping(
-            {
-                "type": "text",
-                "text": "No images here.",
-                "format": "text",
-                "kind": "manual@1",
-                "metadata": {
-                    "title": "Synthetic Manual",
-                    "publisher": "Example Team",
-                    "edition": "1",
-                },
-                "source_key": "manual.txt",
-                "collection_id": collection,
-            }
-        )
-        await SourceService(owner, coordinator).add(source, scope)
+        if legacy:
+            original_family = coordinator._image_family
+
+            def preproof_family(*args):
+                family, spec = original_family(*args)
+                old_json = {
+                    key: value
+                    for key, value in family.config_json.items()
+                    if key != "capabilities"
+                }
+                return family.model_copy(
+                    update={"config_json": FrozenJsonMap(old_json)}
+                ), spec
+
+            monkeypatch.setattr(coordinator, "_image_family", preproof_family)
+        source_data = {
+            "type": "text",
+            "text": "No images here.",
+            "format": "text",
+            "kind": "manual@1",
+            "metadata": {
+                "title": "Synthetic Manual",
+                "publisher": "Example Team",
+                "edition": "1",
+            },
+            "source_key": "manual.txt",
+            "collection_id": collection,
+        }
+        source = SourceInput.from_mapping(source_data)
+        service = SourceService(owner, coordinator)
+        await service.add(source, scope)
+        if legacy:
+            monkeypatch.setattr(coordinator, "_image_family", original_family)
         view = await owner.run_blocking(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
@@ -199,6 +219,33 @@ async def test_image_slot_publishes_required_empty_batch(tmp_path):
         assert image.required and len(image.batches) == 1
         assert image.batches[0].expected_count == 0
         assert image.batches[0].receipt.count == 0
+        if legacy:
+            assert "capabilities" not in image.family.config_json
+            with pytest.raises(TychoraError) as reuse_error:
+                await owner.run_blocking(
+                    lambda: coordinator._retained_vector_spec(image, "image"),
+                    ExecutionContext(),
+                )
+            assert reuse_error.value.code == "CAPABILITY_MISSING"
+
+            def forbidden_native(*_args, **_kwargs):
+                pytest.fail("Legacy family publication reached native mutation")
+
+            monkeypatch.setattr(image_index, "create_family", forbidden_native)
+            monkeypatch.setattr(image_index, "upsert_batch", forbidden_native)
+            new_source = SourceInput.from_mapping(
+                source_data | {"text": "No images there.", "source_key": "manual-2.txt"}
+            )
+            with pytest.raises(TychoraError) as error:
+                await service.add(new_source, scope)
+            assert error.value.code == "CAPABILITY_MISSING"
+            assert "new workspace" in str(error.value)
+            assert (
+                await owner.run_blocking(
+                    owner.store.active_snapshot_id, ExecutionContext()
+                )
+                == view.snapshot_id
+            )
 
 
 @pytest.mark.asyncio

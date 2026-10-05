@@ -515,6 +515,11 @@ def test_composed_document_archive_replays_canonical_evidence(
         raw_sha = raw_link["artifact"]["sha256"]
         raw = json.loads((stripped / "artifacts" / raw_sha).read_bytes())
         assert raw["data"].pop("docling_json_ref")
+        assert raw["data"]["registration"]["format"] == "docx"
+        raw["data"]["registration"]["format"] = "text"
+        stripped_db.execute(
+            "UPDATE locators SET locator_type='text' WHERE locator_type='document'"
+        )
 
         def replace_artifact(old_sha, value):
             media = stripped_db.execute(
@@ -568,6 +573,30 @@ def test_composed_document_archive_replays_canonical_evidence(
             stripped, tmp_path / "stripped-restored", scope, ExecutionContext()
         )
     assert not (tmp_path / "stripped-restored").exists()
+
+    missing_marker = tmp_path / "missing-marker"
+    shutil.copytree(archive, missing_marker)
+    marker_db = sqlite3.connect(missing_marker / "corpus.sqlite3")
+    try:
+        marker_db.execute(
+            "UPDATE evidence_units SET attributes_json="
+            "json_remove(attributes_json,'$.document_representation') "
+            "WHERE text_origin='source'"
+        )
+        marker_db.commit()
+    finally:
+        marker_db.close()
+    marker_receipt_path = missing_marker / "backup-receipt.json"
+    marker_receipt = json.loads(marker_receipt_path.read_bytes())
+    marker_receipt["sqlite_sha256"] = hashlib.sha256(
+        (missing_marker / "corpus.sqlite3").read_bytes()
+    ).hexdigest()
+    marker_receipt_path.write_bytes(canonical_bytes(marker_receipt))
+    with pytest.raises(TychoraError, match="Retained document source mapping differs"):
+        RestoreService().import_backup(
+            missing_marker, tmp_path / "marker-restored", scope, ExecutionContext()
+        )
+    assert not (tmp_path / "marker-restored").exists()
 
     db = sqlite3.connect(archive / "corpus.sqlite3")
     try:

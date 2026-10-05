@@ -3,6 +3,8 @@
 import struct
 from dataclasses import dataclass
 from io import BytesIO
+from unittest.mock import patch
+from uuid import UUID, uuid5
 
 import pytest
 
@@ -16,7 +18,7 @@ from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.embeddings import EmbeddingCapabilities, EmbeddingRecord
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.identity import canonical_bytes, digest, space_id
+from tychora.contracts.identity import canonical_bytes, digest, family_id, space_id
 from tychora.contracts.publication import (
     IndexFamily,
     LexicalBatchReceipt,
@@ -88,8 +90,10 @@ class RecordingVector:
         self.inner = ChromaVectorIndex(path)
         self.fail_next_batch = False
         self.upserts = 0
+        self.creations = 0
 
     def create_family(self, spec):
+        self.creations += 1
         return self.inner.create_family(spec)
 
     def upsert_batch(self, batch, ctx):
@@ -298,8 +302,7 @@ def test_partial_new_projection_does_not_replace_active(
     assert f.store.resolve_snapshot(None).snapshot_id == old
 
 
-@pytest.fixture
-def projected_corpus(tmp_path, config_factory) -> ProjectedCorpus:
+def make_projected_corpus(tmp_path, config_factory, *, legacy=False) -> ProjectedCorpus:
     config = config_factory(dimensions=2)
     counter = RecordingCounter()
     db = open_corpus(tmp_path / "projected.sqlite3", initialize=True)
@@ -359,9 +362,96 @@ def projected_corpus(tmp_path, config_factory) -> ProjectedCorpus:
     result = ProjectedCorpus(
         store, jobs, config_ref, scope, coordinator, vector, embedder
     )
-    result.add_revision("old source text")
+    if legacy:
+        original_family = coordinator._text_family
+
+        def preproof_family(*args):
+            family, spec = original_family(*args)
+            old_json = {
+                key: value
+                for key, value in family.config_json.items()
+                if key != "capabilities"
+            }
+            return family.model_copy(
+                update={"config_json": FrozenJsonMap(old_json)}
+            ), spec
+
+        with patch.object(coordinator, "_text_family", side_effect=preproof_family):
+            result.add_revision("old source text")
+    else:
+        result.add_revision("old source text")
+    return result
+
+
+@pytest.fixture
+def projected_corpus(tmp_path, config_factory) -> ProjectedCorpus:
+    result = make_projected_corpus(tmp_path, config_factory)
     yield result
-    db.close()
+    result.store.db.close()
+
+
+def test_preproof_text_family_rejects_new_publication_before_native_mutation(
+    tmp_path, config_factory
+):
+    f = make_projected_corpus(tmp_path, config_factory, legacy=True)
+    try:
+        old = f.store.resolve_snapshot(None)
+        slot = next(slot for slot in old.slots if slot.slot == "text")
+        assert "capabilities" not in slot.family.config_json
+        before = (f.vector.creations, f.vector.upserts, f.embedder.calls)
+        with pytest.raises(TychoraError) as reuse_error:
+            f.coordinator._retained_vector_spec(slot, "text")
+        assert reuse_error.value.code == "CAPABILITY_MISSING"
+        with pytest.raises(TychoraError) as error:
+            f.add_revision("new source text", source_key="new.md")
+        assert error.value.code == "CAPABILITY_MISSING"
+        assert "new workspace" in str(error.value)
+        assert (f.vector.creations, f.vector.upserts, f.embedder.calls) == before
+        assert f.store.resolve_snapshot(None).snapshot_id == old.snapshot_id
+    finally:
+        f.store.db.close()
+
+
+def test_semantic_recovery_uses_exact_retained_capability_order(projected_corpus):
+    from tychora.application.recovery import verify_semantic_vector_family
+
+    f = projected_corpus
+    view = f.store.resolve_snapshot(None)
+    family = next(slot.family for slot in view.slots if slot.slot == "text")
+    config = f.store.retained_config_sha(f.config.sha256)
+    origin_sha = family.config_json["effective_config_sha"]
+    for modes in (["document", "query"], ["query", "document"]):
+        capabilities = dict(family.config_json["capabilities"])
+        capabilities["input_types"] = modes
+        semantic_sha = digest(
+            "text-family-config-v1",
+            origin_sha,
+            config.values.providers.text.model_dump(mode="json"),
+            capabilities,
+        )
+        creation_uuid = str(uuid5(UUID(view.workspace_id), "text:" + semantic_sha))
+        identity = family_id(view.workspace_id, semantic_sha, creation_uuid)
+        spec = dict(family.config_json["spec"])
+        spec.update(
+            family_id=identity,
+            config_sha=semantic_sha,
+            creation_uuid=creation_uuid,
+        )
+        family_json = dict(family.config_json)
+        family_json.update(spec=spec, capabilities=capabilities)
+        retained = family.model_copy(
+            update={"family_id": identity, "config_json": FrozenJsonMap(family_json)}
+        )
+        verify_semantic_vector_family(retained, config, view.workspace_id)
+
+        capabilities["input_types"] = ["document", "document", "query"]
+        family_json["capabilities"] = capabilities
+        with pytest.raises(TychoraError, match="semantic proof differs"):
+            verify_semantic_vector_family(
+                retained.model_copy(update={"config_json": FrozenJsonMap(family_json)}),
+                config,
+                view.workspace_id,
+            )
 
 
 def test_failed_vector_batch_preserves_active_snapshot(

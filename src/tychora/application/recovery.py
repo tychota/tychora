@@ -65,6 +65,12 @@ def verify_semantic_vector_family(
         spec = FamilySpec.model_validate_json(
             canonical_bytes(family.config_json["spec"])
         )
+        retained_modes = json.loads(canonical_bytes(raw))["input_types"]
+        if not isinstance(retained_modes, list) or sorted(retained_modes) != [
+            "document",
+            "query",
+        ]:
+            raise ValueError("Retained input modes differ")
     except (ValueError, TypeError, KeyError):
         raise TychoraError(
             "INTEGRITY_ERROR", "Retained vector semantic proof differs"
@@ -75,7 +81,7 @@ def verify_semantic_vector_family(
         f"{channel}-family-config-v1",
         origin_sha,
         settings.model_dump(mode="json"),
-        capabilities.model_dump(mode="json"),
+        raw,
     )
     creation = str(uuid5(UUID(workspace_id), f"{channel}:{expected}"))
     if (
