@@ -1,5 +1,6 @@
 """Evaluation locator claims are checked against retained snapshot bindings."""
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -186,6 +187,73 @@ def test_selected_text_budget_rejects_before_materialization(tmp_path, monkeypat
         assert error.value.code == "LIMIT_EXCEEDED"
         assert any("SUM(" in sql and "FROM evidence_units" in sql for sql in commands)
         assert not any("SELECT * FROM evidence_units" in sql for sql in commands)
+
+
+def test_mismatched_retained_locator_artifact_fails_before_hydration(
+    tmp_path, monkeypatch
+):
+    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+        handle = kb.sources.add(
+            {
+                "type": "text",
+                "source_key": "artifact-mismatch",
+                "collection_id": "default",
+                "kind": "manual@1",
+                "format": "text",
+                "text": "The saffron marker has one canonical artifact.",
+                "metadata": {
+                    "title": "Artifact mismatch",
+                    "publisher": "Example",
+                    "edition": "1",
+                },
+            }
+        )
+        assert kb.jobs.wait(handle.id, timeout=10).state == "succeeded"
+        result = kb.search({"question": "saffron", "modalities": ["lexical"]})
+        unit_id = next(
+            citation.unit_id
+            for segment in result.segments
+            for citation in segment.citations
+            if citation.unit_id is not None
+        )
+        owner = kb._workspace.owner
+
+        def corrupt():
+            locator_id, artifact_sha, raw = owner.db.execute(
+                "SELECT locator_id,artifact_sha,details_json FROM locators WHERE unit_id=?",
+                (unit_id,),
+            ).fetchone()
+            other = owner.db.execute(
+                "SELECT artifact_sha FROM artifacts WHERE artifact_sha<>? LIMIT 1",
+                (artifact_sha,),
+            ).fetchone()[0]
+            details = json.loads(raw)
+            details["artifact_ref"] = other
+            owner.db.execute(
+                "UPDATE locators SET details_json=? WHERE locator_id=?",
+                (json.dumps(details), locator_id),
+            )
+
+        kb._workspace.bridge.call(owner.run_blocking(corrupt, ExecutionContext()))
+        hydrated = []
+
+        def unexpected_hydration(*args):
+            hydrated.append(True)
+            raise AssertionError(
+                "Retained rows were hydrated before artifact validation"
+            )
+
+        monkeypatch.setattr(
+            "tychora.evaluation.provenance._retained_rows", unexpected_hydration
+        )
+        with pytest.raises(TychoraError) as error:
+            kb._workspace.bridge.call(
+                owner.run_blocking(
+                    lambda: verify_result_locators(owner, result), ExecutionContext()
+                )
+            )
+        assert error.value.code == "INTEGRITY_ERROR"
+        assert not hydrated
 
 
 def test_code_locator_rejects_wrong_path_and_projected_offsets():

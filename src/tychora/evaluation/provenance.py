@@ -46,6 +46,16 @@ class RetainedBindingCache:
         db = self.owner.db
         extraction = member.extraction_id
         revision = member.revision_id
+        if db.execute(
+            "SELECT 1 FROM locators l JOIN evidence_units u USING(unit_id) "
+            "WHERE u.extraction_id=? "
+            "AND json_extract(l.details_json,'$.artifact_ref') IS NOT l.artifact_sha "
+            "LIMIT 1",
+            (extraction,),
+        ).fetchone():
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Retained locator artifact binding differs"
+            )
         specs = (
             (
                 "sources",
