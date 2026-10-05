@@ -103,11 +103,11 @@ class LocalWorkspace:
             if not settings.exists():
                 if existed and any(root.iterdir()):
                     from tychora.application.restore import (
-                        RESTORE_SUSPENSION,
+                        RESTORE_ACTIVATION,
                         load_restored_runtime_config,
                     )
 
-                    if not (root / RESTORE_SUSPENSION).exists():
+                    if not (root / RESTORE_ACTIVATION).exists():
                         raise TychoraError(
                             "INVALID_REQUEST",
                             "Existing workspace requires an explicit configuration.",

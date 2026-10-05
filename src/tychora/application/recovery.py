@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import os
 import struct
 from dataclasses import dataclass
 from hashlib import sha256
-from uuid import uuid4
+from uuid import UUID, uuid4, uuid5
 
 from tychora.adapters.files.references import from_backup
 from tychora.adapters.sqlite.graph import read_graph_build
 from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.application.removal import RemovalService
 from tychora.application.restore import RESTORE_SUSPENSION, deletion_suspended
+from tychora.configuration.indexed_representation import pinned_runtime_compatible
+from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.resolve import validate_retained_config
-from tychora.contracts.embeddings import EmbeddingRecord
+from tychora.contracts.embeddings import EmbeddingCapabilities, EmbeddingRecord
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.graph import GraphBatchReceipt, GraphManifest
 from tychora.contracts.identity import canonical_bytes, digest, family_id, space_id
@@ -42,6 +45,195 @@ class NativeGcReport:
     retained_batches: int
     deletion_suspended: bool
     admission_busy: bool
+
+
+def verify_semantic_vector_family(
+    family: IndexFamily, config: ResolvedConfig, workspace_id: str
+) -> None:
+    """Recompute the original family digest from retained typed facts only."""
+    channel = family.channel
+    if channel not in {"text", "image"}:
+        raise TychoraError("INTEGRITY_ERROR", "Vector channel differs")
+    raw = family.config_json.get("capabilities")
+    if raw is None:
+        raise TychoraError(
+            "CAPABILITY_MISSING",
+            "Retained embedding capability proof is absent; create a new family and snapshot",
+        )
+    try:
+        capabilities = EmbeddingCapabilities.model_validate_json(canonical_bytes(raw))
+        spec = FamilySpec.model_validate_json(
+            canonical_bytes(family.config_json["spec"])
+        )
+    except (ValueError, TypeError, KeyError):
+        raise TychoraError(
+            "INTEGRITY_ERROR", "Retained vector semantic proof differs"
+        ) from None
+    origin_sha = family.config_json.get("effective_config_sha")
+    settings = getattr(config.values.providers, channel)
+    expected = digest(
+        f"{channel}-family-config-v1",
+        origin_sha,
+        settings.model_dump(mode="json"),
+        capabilities.model_dump(mode="json"),
+    )
+    creation = str(uuid5(UUID(workspace_id), f"{channel}:{expected}"))
+    if (
+        not isinstance(origin_sha, str)
+        or spec.workspace_id != workspace_id
+        or spec.config_sha != expected
+        or spec.creation_uuid != creation
+        or spec.family_id != family.family_id
+        or spec.modality != ("text" if channel == "text" else "visual")
+        or spec.provider != capabilities.provider
+        or spec.model != capabilities.model
+        or spec.dimensions != capabilities.dimensions
+        or spec.representation_fingerprint != capabilities.representation_fingerprint
+        or spec.metric != capabilities.metric
+        or capabilities.normalization != "l2"
+    ):
+        raise TychoraError("INTEGRITY_ERROR", "Retained vector semantic proof differs")
+
+
+def verify_canonical_native_batch(
+    store, family: IndexFamily, batch: PublicationBatch
+) -> None:
+    """Compare the pinned publication plan to every mutable SQL/native input row."""
+    db = store.db
+    family_row = db.execute(
+        "SELECT family_id,channel,backend,provider,model,dimension,config_sha,"
+        "config_json,backend_namespace,created_at FROM index_families WHERE family_id=?",
+        (family.family_id,),
+    ).fetchone()
+    expected_family = (
+        family.family_id,
+        family.channel,
+        family.backend,
+        family.provider,
+        family.model,
+        family.dimension,
+        family.config_sha,
+        canonical_bytes(family.config_json).decode(),
+        family.backend_namespace,
+        family.created_at,
+    )
+    if family_row != expected_family:
+        raise TychoraError(
+            "INTEGRITY_ERROR", "Native family SQL differs from sealed plan"
+        )
+    entries = (
+        tuple(row.record_id for row in batch.vector_records)
+        if family.channel in {"text", "image"}
+        else tuple(batch.graph_manifest.evidence_ids)
+        if batch.graph_manifest is not None
+        else ()
+    )
+    count = (
+        batch.receipt.count
+        if isinstance(batch.receipt, BatchReceipt)
+        else batch.receipt.evidence_count
+        if isinstance(batch.receipt, GraphBatchReceipt)
+        else -1
+    )
+    batch_row = db.execute(
+        "SELECT family_id,extraction_id,input_manifest_sha,expected_count,actual_count,"
+        "entry_ids_sha,receipt_json FROM index_batches WHERE batch_id=?",
+        (batch.batch_id,),
+    ).fetchone()
+    expected_batch = (
+        family.family_id,
+        batch.extraction_id,
+        batch.input_manifest.sha256,
+        batch.expected_count,
+        count,
+        digest("index-entries-v1", entries),
+        canonical_bytes(batch.receipt.model_dump(mode="json")).decode(),
+    )
+    if (
+        batch.family_id != family.family_id
+        or batch.batch_id
+        != digest(
+            "index-batch-v1",
+            family.family_id,
+            batch.extraction_id,
+            batch.input_manifest.sha256,
+        )
+        or batch_row != expected_batch
+    ):
+        raise TychoraError(
+            "INTEGRITY_ERROR", "Native batch SQL differs from sealed plan"
+        )
+    artifact_row = db.execute(
+        "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
+        (batch.input_manifest.sha256,),
+    ).fetchone()
+    if artifact_row != (
+        batch.input_manifest.size_bytes,
+        batch.input_manifest.media_type,
+        batch.input_manifest.storage_key,
+        "present",
+    ):
+        raise TychoraError("INTEGRITY_ERROR", "Native input artifact SQL differs")
+    with store.artifacts.open_verified(batch.input_manifest) as stream:
+        raw = stream.read(batch.input_manifest.size_bytes + 1)
+    try:
+        document = json.loads(raw)
+    except (ValueError, UnicodeError):
+        raise TychoraError(
+            "INTEGRITY_ERROR", "Native input manifest is malformed"
+        ) from None
+    expected_data = {"entries": list(entries)}
+    if family.channel == "text":
+        expected_data["representations"] = [
+            {
+                "record_id": row.record_id,
+                "group_id": row.group_id,
+                "dependency_ids": sorted(row.dependency_ids),
+            }
+            for row in batch.vector_records
+        ]
+    if (
+        canonical_bytes(document) != raw
+        or document.get("type") != "index_input"
+        or document.get("schema_version") != "1"
+        or document.get("data") != expected_data
+    ):
+        raise TychoraError(
+            "INTEGRITY_ERROR", "Native input manifest differs from sealed plan"
+        )
+    if family.channel in {"text", "image"}:
+        rows = db.execute(
+            "SELECT record_id,batch_id,chunk_id,asset_id,input_sha,embedding_cache_sha "
+            "FROM vector_records WHERE batch_id=? ORDER BY record_id",
+            (batch.batch_id,),
+        ).fetchall()
+        expected_rows = sorted(
+            (
+                row.record_id,
+                batch.batch_id,
+                row.chunk_id,
+                row.asset_id,
+                row.input_sha,
+                row.embedding_cache.sha256,
+            )
+            for row in batch.vector_records
+        )
+        if rows != expected_rows:
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Native vector SQL differs from sealed plan"
+            )
+        for row in batch.vector_records:
+            cache_row = db.execute(
+                "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
+                (row.embedding_cache.sha256,),
+            ).fetchone()
+            if cache_row != (
+                row.embedding_cache.size_bytes,
+                row.embedding_cache.media_type,
+                row.embedding_cache.storage_key,
+                "present",
+            ):
+                raise TychoraError("INTEGRITY_ERROR", "Native vector cache SQL differs")
 
 
 def verified_vector_records(
@@ -178,8 +370,12 @@ class RecoveryService:
     def __init__(self, owner) -> None:
         self.owner = owner
 
-    def reconcile(self, ctx: ExecutionContext) -> RecoveryReport:
-        return self.owner.run_blocking_sync(lambda: self._reconcile_on_owner(ctx), ctx)
+    def reconcile(
+        self, ctx: ExecutionContext, *, verify_payloads: bool = False
+    ) -> RecoveryReport:
+        return self.owner.run_blocking_sync(
+            lambda: self._reconcile_on_owner(ctx, verify_payloads=verify_payloads), ctx
+        )
 
     def prune_native(
         self, scope: RequestScope, ctx: ExecutionContext
@@ -345,19 +541,31 @@ class RecoveryService:
                     "FORBIDDEN_SCOPE",
                     "Native recovery requires snapshot collection grants",
                 )
-            validate_retained_config(store.retained_config(snapshot))
+            snapshot_config = validate_retained_config(store.retained_config(snapshot))
             for slot in snapshot.slots:
                 if slot.slot not in channels:
                     continue
-                if (
-                    slot.slot in {"text", "image"}
-                    and slot.family.config_json.get("effective_config_sha")
-                    != snapshot.config_sha
-                ):
-                    raise TychoraError(
-                        "INTEGRITY_ERROR",
-                        "Retained vector semantic configuration differs",
+                if slot.slot in {"text", "image"}:
+                    origin_sha = slot.family.config_json.get("effective_config_sha")
+                    if not isinstance(origin_sha, str):
+                        raise TychoraError(
+                            "INTEGRITY_ERROR", "Retained vector config binding differs"
+                        )
+                    origin_config = validate_retained_config(
+                        store.retained_config_sha(origin_sha)
                     )
+                    if not pinned_runtime_compatible(origin_config, snapshot_config):
+                        raise TychoraError(
+                            "PROFILE_INCOMPATIBLE", "Retained vector profile differs"
+                        )
+                    verify_semantic_vector_family(
+                        slot.family, origin_config, snapshot.workspace_id
+                    )
+                for batch in slot.batches:
+                    verify_canonical_native_batch(store, slot.family, batch)
+            for slot in snapshot.slots:
+                if slot.slot not in channels:
+                    continue
                 for batch in slot.batches:
                     row = self.owner.db.execute(
                         "SELECT state FROM index_batches WHERE batch_id=? AND family_id=?",
@@ -369,8 +577,6 @@ class RecoveryService:
                         )
                     if row[0] == "ready":
                         continue
-                    with self.owner.artifacts.open_verified(batch.input_manifest):
-                        pass
                     if slot.slot in {"text", "image"}:
                         index = store.vector_indexes.get(slot.family.family_id)
                         if index is None:
@@ -508,7 +714,9 @@ class RecoveryService:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def _reconcile_on_owner(self, ctx: ExecutionContext) -> RecoveryReport:
+    def _reconcile_on_owner(
+        self, ctx: ExecutionContext, *, verify_payloads: bool = False
+    ) -> RecoveryReport:
         ctx.checkpoint()
         db = self.owner.db
         if db.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
@@ -522,6 +730,19 @@ class RecoveryService:
         inventory = from_backup(db, artifacts=self.owner.artifacts)
         if inventory.workspace_id != self.owner.workspace_id:
             raise TychoraError("INTEGRITY_ERROR", "Recovery workspace identity differs")
+        if verify_payloads:
+            total = 0
+            with self.owner.maintenance_barrier():
+                for ref in inventory.artifacts:
+                    ctx.checkpoint()
+                    total += ref.size_bytes
+                    if total > 20 * 1024**3:
+                        raise TychoraError(
+                            "CAPABILITY_MISSING",
+                            "Health payload scan exceeds 20 GiB budget",
+                        )
+                    with self.owner.artifacts.open_verified(ref):
+                        pass
         pending = db.execute(
             "SELECT COUNT(*) FROM index_batches b JOIN index_families f USING(family_id) "
             "WHERE f.channel IN ('text','image','graph') AND b.state='pending'"
@@ -551,14 +772,18 @@ class RecoveryService:
         )
 
     def _resume_on_owner(
-        self, scope: RequestScope, ctx: ExecutionContext
+        self,
+        scope: RequestScope,
+        ctx: ExecutionContext,
+        *,
+        verify_payloads: bool = False,
     ) -> RecoveryReport:
         grant = self.owner.scope.narrow(scope)
         if "manage" not in grant.capabilities:
             raise TychoraError(
                 "FORBIDDEN_SCOPE", "Deletion resume requires management grant"
             )
-        checked = self._reconcile_on_owner(ctx)
+        checked = self._reconcile_on_owner(ctx, verify_payloads=verify_payloads)
         if not checked.deletion_suspended:
             return checked
         marker = self.owner.path / RESTORE_SUSPENSION

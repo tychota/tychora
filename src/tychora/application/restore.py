@@ -20,6 +20,7 @@ from tychora.configuration.indexed_representation import pinned_runtime_compatib
 from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
 from tychora.configuration.resolve import (
+    exportable_resolved_config,
     restored_runtime_config,
     validate_retained_config,
 )
@@ -35,6 +36,7 @@ from tychora.ports.execution import ExecutionContext
 
 RESTORE_SUSPENSION = ".restore-suspended.json"
 RESTORE_RECEIPT = ".restore-receipt.json"
+RESTORE_ACTIVATION = ".restore-activation.json"
 _DEFAULT_CONFIG = (
     'schema_version = 1\n[profiles.local]\nbuiltin = "documents@1"\n'
     '[defaults]\nprofile = "local"\n'
@@ -284,8 +286,17 @@ def _validate_retained_documents(
             )
         )
 
-    for extraction_id, revision_id, manifest_sha, diagnostics_sha in db.execute(
-        "SELECT extraction_id,revision_id,document_artifact_sha,diagnostics_artifact_sha FROM extractions"
+    for (
+        extraction_id,
+        revision_id,
+        manifest_sha,
+        diagnostics_sha,
+        registration_json,
+    ) in db.execute(
+        "SELECT e.extraction_id,e.revision_id,e.document_artifact_sha,"
+        "e.diagnostics_artifact_sha,s.registration_json FROM extractions e "
+        "JOIN revisions r ON r.revision_id=e.revision_id "
+        "JOIN sources s ON s.source_id=r.source_id"
     ):
         ref, raw = payload(manifest_sha)
         try:
@@ -310,9 +321,34 @@ def _validate_retained_documents(
                 ref, raw = payload(raw_sha)
                 root = json.loads(raw, object_pairs_hook=_unique_pairs)
                 data = root["data"]
+            source_registration = json.loads(
+                registration_json, object_pairs_hook=_unique_pairs
+            )
+            registered_format = source_registration.get("format")
+            parsed_format = data.get("registration", {}).get("format")
+            document_locator = (
+                db.execute(
+                    "SELECT 1 FROM locators l JOIN evidence_units u USING(unit_id) "
+                    "WHERE u.extraction_id=? AND l.locator_type='document' LIMIT 1",
+                    (extraction_id,),
+                ).fetchone()
+                is not None
+            )
+            rich_format = {"pdf", "docx", "png", "jpeg"}
+            requires_document_mapping = (
+                registered_format in rich_format
+                or parsed_format in rich_format
+                or document_locator
+            )
+            if registered_format in rich_format and parsed_format != registered_format:
+                raise ValueError("Registered document format differs")
             doc_ref_data = data.get("docling_json_ref")
             if doc_ref_data is None:
+                if requires_document_mapping:
+                    raise ValueError("Retained document source mapping is absent")
                 continue
+            if not requires_document_mapping:
+                raise ValueError("Unregistered document source mapping")
             doc_ref = ArtifactRef.model_validate_json(canonical_bytes(doc_ref_data))
             _, sdk_json = payload(doc_ref.sha256)
             parsed = replay_document(raw, sdk_json, ref)
@@ -397,11 +433,11 @@ def _validate_retained_documents(
 
 
 def load_restored_runtime_config(path: Path) -> ResolvedConfig:
-    """Reopen from an already verified active snapshot without old source paths."""
+    """Reopen from a durable verified activation, independent of deletion state."""
     db = open_verified_import(path / "corpus.sqlite3")
     try:
         workspace = db.execute("SELECT workspace_id FROM workspaces").fetchall()
-        if len(workspace) != 1 or not deletion_suspended(path, workspace[0][0]):
+        if len(workspace) != 1:
             raise TychoraError(
                 "PROFILE_INCOMPATIBLE", "Restore activation marker is unavailable"
             )
@@ -409,22 +445,51 @@ def load_restored_runtime_config(path: Path) -> ResolvedConfig:
             path / "backup-manifest.json", 16 * 1024 * 1024
         )
         restore_receipt, _ = _read_json(path / RESTORE_RECEIPT, 4096)
-        if (
-            restore_receipt.get("backup_manifest_sha256")
-            != sha256(manifest_raw).hexdigest()
-        ):
+        manifest_sha = sha256(manifest_raw).hexdigest()
+        if restore_receipt.get("backup_manifest_sha256") != manifest_sha:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Restore configuration receipt differs"
             )
-        retained = _selected_backup_config(path, manifest) or _active_snapshot_config(
-            db, LocalArtifacts(path / "artifacts")
+        activation, activation_raw = _read_json(
+            path / RESTORE_ACTIVATION, 16 * 1024 * 1024
         )
-        if retained is None:
-            raise TychoraError(
-                "PROFILE_INCOMPATIBLE",
-                "Restore requires an explicit destination configuration",
+        if (
+            sha256(activation_raw).hexdigest()
+            != restore_receipt.get("activation_sha256")
+            or set(activation)
+            != {
+                "type",
+                "schema_version",
+                "workspace_id",
+                "backup_manifest_sha256",
+                "config",
+            }
+            or activation["type"] != "restore-activation"
+            or activation["schema_version"] != 1
+            or activation["workspace_id"] != workspace[0][0]
+            or activation["backup_manifest_sha256"] != manifest_sha
+        ):
+            raise TychoraError("INTEGRITY_ERROR", "Restore activation binding differs")
+        try:
+            activated = validate_retained_config(
+                ResolvedConfig.model_validate_json(
+                    canonical_bytes(activation["config"])
+                )
             )
-        return restored_runtime_config(retained)
+            if exportable_resolved_config(activated) != activation["config"]:
+                raise ValueError
+        except (ValueError, TypeError):
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Restore activation configuration differs"
+            ) from None
+        selected = _selected_backup_config(path, manifest)
+        historical = _active_snapshot_config(db, LocalArtifacts(path / "artifacts"))
+        bound = selected or historical
+        if bound is not None and not pinned_runtime_compatible(bound, activated):
+            raise TychoraError(
+                "PROFILE_INCOMPATIBLE", "Restore activation changed pinned semantics"
+            )
+        return restored_runtime_config(activated)
     finally:
         db.close()
 
@@ -511,6 +576,9 @@ class RestoreService:
                         "PROFILE_INCOMPATIBLE",
                         "Destination configuration differs from pinned snapshot",
                     )
+                activated = self.config or bound
+                assert activated is not None
+                activation_data = exportable_resolved_config(activated)
                 expected = BackupManifest(
                     workspace_id=inventory.workspace_id,
                     artifacts=inventory.artifacts,
@@ -550,6 +618,16 @@ class RestoreService:
             ctx.checkpoint()
             self._set_operational_state(stage.stage / "corpus.sqlite3")
             restored_sha = _file_sha(stage.stage / "corpus.sqlite3")
+            activation_sha = stage.write_json(
+                RESTORE_ACTIVATION,
+                {
+                    "type": "restore-activation",
+                    "schema_version": 1,
+                    "workspace_id": inventory.workspace_id,
+                    "backup_manifest_sha256": manifest_sha,
+                    "config": activation_data,
+                },
+            )
             stage.write_json(
                 RESTORE_SUSPENSION,
                 {
@@ -567,6 +645,7 @@ class RestoreService:
                     "workspace_id": inventory.workspace_id,
                     "backup_manifest_sha256": manifest_sha,
                     "restored_sqlite_sha256": restored_sha,
+                    "activation_sha256": activation_sha,
                     "deletion_suspended": True,
                     "complete": True,
                 },

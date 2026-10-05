@@ -398,11 +398,14 @@ def test_composed_document_archive_replays_canonical_evidence(
     import hashlib
     import io
     import json
+    import shutil
     import sqlite3
     from types import SimpleNamespace
 
     from tychora.adapters.docling.parser import DoclingParser
-    from tychora.application.backup import BackupService
+    from tychora.adapters.files.cas import LocalArtifacts
+    from tychora.adapters.files.references import from_backup
+    from tychora.application.backup import BackupManifest, BackupService
     from tychora.application.restore import RestoreService
     from tychora.configuration.registry import Registry
     from tychora.contracts.base import FrozenJsonMap
@@ -498,6 +501,73 @@ def test_composed_document_archive_replays_canonical_evidence(
     RestoreService().import_backup(
         archive, tmp_path / "restored", scope, ExecutionContext()
     )
+
+    stripped = tmp_path / "stripped-mapping"
+    shutil.copytree(archive, stripped)
+    stripped_artifacts = LocalArtifacts(stripped / "artifacts")
+    stripped_db = sqlite3.connect(stripped / "corpus.sqlite3")
+    try:
+        composed_sha = stripped_db.execute(
+            "SELECT document_artifact_sha FROM extractions"
+        ).fetchone()[0]
+        composed = json.loads((stripped / "artifacts" / composed_sha).read_bytes())
+        raw_link = composed["required_manifests"][0]
+        raw_sha = raw_link["artifact"]["sha256"]
+        raw = json.loads((stripped / "artifacts" / raw_sha).read_bytes())
+        assert raw["data"].pop("docling_json_ref")
+
+        def replace_artifact(old_sha, value):
+            media = stripped_db.execute(
+                "SELECT media_type FROM artifacts WHERE artifact_sha=?", (old_sha,)
+            ).fetchone()[0]
+            ref = stripped_artifacts.put_stream(
+                io.BytesIO(canonical_bytes(value)), media
+            )
+            stripped_db.execute(
+                "INSERT INTO artifacts (artifact_sha,size_bytes,media_type,storage_key,created_at) "
+                "SELECT ?,?,?,?,created_at FROM artifacts WHERE artifact_sha=?",
+                (ref.sha256, ref.size_bytes, ref.media_type, ref.storage_key, old_sha),
+            )
+            return ref
+
+        new_raw = replace_artifact(raw_sha, raw)
+        raw_link["artifact"] = new_raw.model_dump(mode="json")
+        new_composed = replace_artifact(composed_sha, composed)
+        stripped_db.execute(
+            "UPDATE extractions SET document_artifact_sha=?", (new_composed.sha256,)
+        )
+        stripped_db.commit()
+        inventory = from_backup(stripped_db, artifacts=stripped_artifacts)
+    finally:
+        stripped_db.close()
+    old_manifest = json.loads((stripped / "backup-manifest.json").read_bytes())
+    new_manifest = BackupManifest(
+        workspace_id=inventory.workspace_id,
+        artifacts=inventory.artifacts,
+        payload_states=inventory.payload_states,
+        policy_epoch=inventory.policy_epoch,
+        lexical_statistics_epoch=inventory.lexical_statistics_epoch,
+        active_snapshot_id=inventory.active_snapshot_id,
+        snapshot_ids=inventory.snapshot_ids,
+        tombstones=inventory.tombstones,
+        config_shas=inventory.config_shas,
+        resolved_config_sha256=old_manifest["data"]["resolved_config_sha256"],
+    ).as_header()
+    (stripped / "backup-manifest.json").write_bytes(canonical_bytes(new_manifest))
+    stripped_receipt_path = stripped / "backup-receipt.json"
+    stripped_receipt = json.loads(stripped_receipt_path.read_bytes())
+    stripped_receipt["sqlite_sha256"] = hashlib.sha256(
+        (stripped / "corpus.sqlite3").read_bytes()
+    ).hexdigest()
+    stripped_receipt["manifest_sha256"] = hashlib.sha256(
+        (stripped / "backup-manifest.json").read_bytes()
+    ).hexdigest()
+    stripped_receipt_path.write_bytes(canonical_bytes(stripped_receipt))
+    with pytest.raises(TychoraError, match="Retained document source mapping differs"):
+        RestoreService().import_backup(
+            stripped, tmp_path / "stripped-restored", scope, ExecutionContext()
+        )
+    assert not (tmp_path / "stripped-restored").exists()
 
     db = sqlite3.connect(archive / "corpus.sqlite3")
     try:

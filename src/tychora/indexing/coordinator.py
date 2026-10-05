@@ -412,6 +412,7 @@ class ProjectionCoordinator:
                 {
                     "effective_config_sha": config_sha,
                     "spec": spec.model_dump(mode="json"),
+                    "capabilities": capabilities.model_dump(mode="json"),
                     "namespace_hash": handle.namespace_hash,
                 }
             ),
@@ -567,6 +568,7 @@ class ProjectionCoordinator:
                 {
                     "effective_config_sha": config_sha,
                     "spec": spec.model_dump(mode="json"),
+                    "capabilities": capabilities.model_dump(mode="json"),
                     "namespace_hash": handle.namespace_hash,
                 }
             ),

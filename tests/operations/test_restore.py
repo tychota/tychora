@@ -16,6 +16,100 @@ from tychora.contracts.requests import RequestScope
 from tychora.ports.execution import ExecutionContext
 
 
+def _legacy_empty_archive(tmp_path):
+    import json
+    from hashlib import sha256
+
+    settings = tmp_path / "settings.toml"
+    settings.write_text('schema_version=1\n[profiles.custom]\nbuiltin="documents@1"\n')
+    config = resolve_config(settings, "custom", {})
+    scope = RequestScope(principal_id="owner", capabilities=frozenset({"manage"}))
+    source, archive = tmp_path / "source", tmp_path / "archive"
+    with WorkspaceOwner.open(source, config, scope) as owner:
+        BackupService(owner).export(archive, scope, ctx=ExecutionContext())
+    (archive / "resolved-config.json").unlink()
+    manifest_path = archive / "backup-manifest.json"
+    manifest = json.loads(manifest_path.read_bytes())
+    del manifest["data"]["resolved_config_sha256"]
+    manifest_raw = canonical_bytes(manifest)
+    manifest_path.write_bytes(manifest_raw)
+    receipt_path = archive / "backup-receipt.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["manifest_sha256"] = sha256(manifest_raw).hexdigest()
+    receipt_path.write_bytes(canonical_bytes(receipt))
+    settings.unlink()
+    return archive, config
+
+
+def test_legacy_empty_archive_explicit_config_sync_factory_reopens(tmp_path):
+    from tychora import Tychora
+
+    archive, config = _legacy_empty_archive(tmp_path)
+    destination = tmp_path / "restored"
+    with Tychora.restore(archive, destination, config=config) as client:
+        assert client._workspace.config.profile == "custom"
+    with Tychora.open(destination) as reopened:
+        assert reopened._workspace.config.profile == "custom"
+
+
+@pytest.mark.asyncio
+async def test_legacy_empty_archive_explicit_config_async_factory_reopens(tmp_path):
+    import asyncio
+
+    from tychora import AsyncTychora, Tychora
+
+    archive, config = await asyncio.to_thread(_legacy_empty_archive, tmp_path)
+    destination = tmp_path / "restored"
+    async with await AsyncTychora.restore(
+        archive, destination, config=config
+    ) as client:
+        assert client._workspace.config.profile == "custom"
+    with Tychora.open(destination) as reopened:
+        assert reopened._workspace.config.profile == "custom"
+
+
+def test_deep_health_verifies_retained_original_payload_bytes(tmp_path):
+    from tychora import Tychora
+
+    with Tychora.open(tmp_path / "workspace") as client:
+        owner = client._workspace.owner
+
+        def register():
+            ref = owner.artifacts.put_stream(BytesIO(b"original"), "text/plain")
+            owner.db.execute(
+                "INSERT INTO artifacts (artifact_sha,size_bytes,media_type,storage_key,created_at) "
+                "VALUES (?,?,?,?,?)",
+                (
+                    ref.sha256,
+                    ref.size_bytes,
+                    ref.media_type,
+                    ref.storage_key,
+                    "2026-01-01T00:00:00+00:00",
+                ),
+            )
+            owner.db.commit()
+            return ref
+
+        ref = owner.run_blocking_sync(register, ExecutionContext())
+        (owner.path / "artifacts" / ref.sha256).write_bytes(b"tampered")
+        assert (
+            client.management.run(
+                {"operation": "health", "verify_payloads": False}
+            ).recovery.workspace_id
+            == owner.workspace_id
+        )
+        with pytest.raises(TychoraError, match="payload failed verification"):
+            client.management.run({"operation": "health", "verify_payloads": True})
+        with pytest.raises(TychoraError, match="payload failed verification"):
+            client.management.run(
+                {
+                    "operation": "health",
+                    "verify_payloads": True,
+                    "resume_pending_deletions": True,
+                }
+            )
+
+
 def test_restore_preserves_identity_and_marks_native_pending(tmp_path):
     settings = tmp_path / "settings.toml"
     settings.write_text('schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n')
@@ -114,6 +208,7 @@ def test_restore_preserves_identity_and_marks_native_pending(tmp_path):
 
 
 def test_restored_pending_deletion_is_suspended_before_owner_reconciliation(tmp_path):
+    from tychora import Tychora
     from tychora.adapters.sqlite.jobs import JobRepository
     from tychora.application.removal import RemovalService
 
@@ -180,6 +275,13 @@ def test_restored_pending_deletion_is_suspended_before_owner_reconciliation(tmp_
         RecoveryService(owner).resume_pending_deletions(scope, ExecutionContext())
     assert not (destination / "artifacts" / ref.sha256).exists()
     assert not (destination / ".restore-suspended.json").exists()
+    with Tychora.open(destination, scope=scope) as reopened:
+        assert reopened._workspace.config.profile == "test"
+        assert (
+            not RecoveryService(reopened._workspace.owner)
+            .reconcile(ExecutionContext())
+            .deletion_suspended
+        )
 
 
 def test_restore_activates_verified_profile_without_original_settings(tmp_path):

@@ -74,9 +74,13 @@ class MaintenanceService:
             recovery = RecoveryService(self.owner)
             report = await self.owner.run_blocking(
                 lambda: (
-                    recovery._resume_on_owner(grant, ctx)
+                    recovery._resume_on_owner(
+                        grant, ctx, verify_payloads=operation.verify_payloads
+                    )
                     if operation.resume_pending_deletions
-                    else recovery._reconcile_on_owner(ctx)
+                    else recovery._reconcile_on_owner(
+                        ctx, verify_payloads=operation.verify_payloads
+                    )
                 ),
                 ctx,
             )

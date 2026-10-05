@@ -513,6 +513,101 @@ def test_native_recovery_rejects_backend_handle_namespace_corruption(
         )
 
 
+def test_native_recovery_requires_retained_semantic_capabilities(projected_corpus):
+    from tychora.application.recovery import verify_semantic_vector_family
+
+    f = projected_corpus
+    snapshot = f.store.resolve_snapshot(None)
+    family = next(slot.family for slot in snapshot.slots if slot.slot == "text")
+    origin = f.store.retained_config_sha(family.config_json["effective_config_sha"])
+    missing = family.model_copy(
+        update={
+            "config_json": {
+                key: value
+                for key, value in family.config_json.items()
+                if key != "capabilities"
+            },
+        }
+    )
+    with pytest.raises(TychoraError) as absent:
+        verify_semantic_vector_family(missing, origin, snapshot.workspace_id)
+    assert absent.value.code == "CAPABILITY_MISSING"
+    altered_json = dict(family.config_json)
+    altered_json["capabilities"] = dict(altered_json["capabilities"], endpoint="forged")
+    with pytest.raises(TychoraError, match="semantic proof differs"):
+        verify_semantic_vector_family(
+            family.model_copy(update={"config_json": altered_json}),
+            origin,
+            snapshot.workspace_id,
+        )
+
+
+@pytest.mark.parametrize("alteration", ["family", "batch", "entries", "vector"])
+def test_native_recovery_rejects_sql_drift_before_native_write(
+    projected_corpus, tmp_path, alteration
+):
+    from types import SimpleNamespace
+
+    from tychora.application.recovery import RecoveryReport, RecoveryService
+
+    f = projected_corpus
+    snapshot = f.store.resolve_snapshot(None)
+    slot = next(slot for slot in snapshot.slots if slot.slot == "text")
+    batch = slot.batches[0]
+    db = f.store.db
+    db.execute(
+        "UPDATE index_batches SET state='pending' WHERE batch_id=?", (batch.batch_id,)
+    )
+    if alteration == "family":
+        db.execute(
+            "UPDATE index_families SET backend_namespace='forged' WHERE family_id=?",
+            (slot.family.family_id,),
+        )
+    elif alteration == "batch":
+        db.execute(
+            "UPDATE index_batches SET expected_count=expected_count+1 WHERE batch_id=?",
+            (batch.batch_id,),
+        )
+    elif alteration == "entries":
+        db.execute(
+            "UPDATE index_batches SET entry_ids_sha=? WHERE batch_id=?",
+            ("0" * 64, batch.batch_id),
+        )
+    else:
+        db.execute(
+            "UPDATE vector_records SET input_sha=? WHERE batch_id=?",
+            ("0" * 64, batch.batch_id),
+        )
+    db.commit()
+    rebuilt = RecordingVector(tmp_path / "unwritten")
+    f.store.vector_indexes[slot.family.family_id] = rebuilt
+    grant = f.scope.model_copy(update={"capabilities": frozenset({"manage"})})
+    owner = SimpleNamespace(
+        scope=grant,
+        store=f.store,
+        db=db,
+        artifacts=f.store.artifacts,
+        path=tmp_path,
+        workspace_id=snapshot.workspace_id,
+    )
+
+    class IsolatedRecovery(RecoveryService):
+        def _reconcile_on_owner(self, ctx):
+            return RecoveryReport(snapshot.workspace_id, 0, 1, 0, False)
+
+    with pytest.raises(TychoraError, match="SQL differs"):
+        IsolatedRecovery(owner)._rebuild_native_on_owner(
+            grant, ExecutionContext(), ("text",)
+        )
+    assert rebuilt.upserts == 0
+    assert (
+        db.execute(
+            "SELECT state FROM index_batches WHERE batch_id=?", (batch.batch_id,)
+        ).fetchone()[0]
+        == "pending"
+    )
+
+
 def test_native_gc_prunes_only_unprotected_vector_batch_then_rebuilds(
     projected_corpus, tmp_path
 ):
