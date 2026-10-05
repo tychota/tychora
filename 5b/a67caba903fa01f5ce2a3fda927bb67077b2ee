@@ -1,0 +1,22 @@
+src/tychora/evaluation/provenance.py
+  s_35b641b930a96d::t_ac67cd54cce3fe 49-58
+tests/evaluation/test_provenance.py
+  s_35b641b930a96d::t_acd791e7115797 3,192-254
+  s_35b641b930a96d::t_e8490c26db15b1 255-258
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ba67caba903fa01f5ce2a3fda927bb67077b2ee",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
