@@ -1,0 +1,78 @@
+tests/evaluation/test_metrics.py
+  s_35b641b930a96d::t_ffb797090009b3 11,13,16,82-83,146-163,165-184,186-193,195-220,222-234
+  s_35b641b930a96d::t_68af84fe9f0c8d 185,221,248-267
+  s_35b641b930a96d::t_0615cf5e9bbb76 235-239
+  s_35b641b930a96d::t_6dfe73ad3c5eac 268-295
+  s_35b641b930a96d::t_fcc261e8fd8557 164,194
+  s_35b641b930a96d::t_da98fccd2c378b 240-247
+  s_35b641b930a96d::t_c67d1c49bb3f7d 144-145
+  s_35b641b930a96d::t_af600999065eba 296-404
+tests/evaluation/test_runner.py
+  s_35b641b930a96d::t_b13c658d5a8cda 13,21-22,24-45,55-57
+  s_35b641b930a96d::t_5d800303e95772 23,46-54,58-59
+  s_35b641b930a96d::t_4b5290e557af7e 60-94
+tests/evaluation/test_dataset.py
+  s_35b641b930a96d::t_a43878bf74dd53 3,11-19
+  s_35b641b930a96d::t_bb8fb77b9fdde9 22-27,32-34,36,42-43,45-46,48
+  s_35b641b930a96d::t_cbd5ff339c1d30 21
+src/tychora/evaluation/dataset.py
+  s_35b641b930a96d::t_3eed03d868e1b5 47-48,74-77,79-85
+  s_35b641b930a96d::t_436cbd5a79fc2b 86-87
+  s_35b641b930a96d::t_3f4b46c56a2ddd 88-99
+tests/evaluation/test_executable_corpus.py
+  s_35b641b930a96d::t_567160b03f516f 4,9-18
+  s_35b641b930a96d::t_7c14ae9d118b1f 1-3,5-8,19-36
+  s_35b641b930a96d::t_deb0c75076c48b 37-45
+tests/fixtures/evaluation/corpus.json
+  s_35b641b930a96d::t_7c14ae9d118b1f 1-6,8-12,14-18,20,44-46
+  s_35b641b930a96d::t_344ace740614ca 7,13,19
+  s_35b641b930a96d::t_19d66b68fc8192 21-25,27-43
+  s_35b641b930a96d::t_ed7b47b5932c19 26
+tests/evaluation/test_provenance.py
+  s_35b641b930a96d::t_a1adc88f1213d8 1-109,111
+  s_35b641b930a96d::t_b2ea28673f3d1e 110,112-149
+tests/evaluation/test_evaluation_http.py
+  s_35b641b930a96d::t_b6ea27a19f5838 11-37,39-40
+src/tychora/evaluation/provenance.py
+  s_35b641b930a96d::t_c4b84c36013cf3 1-164
+  s_35b641b930a96d::t_978a409117ea60 165-188
+src/tychora/evaluation/runner.py
+  s_35b641b930a96d::t_b8e1200e88c0d8 246-247
+  s_35b641b930a96d::t_edeb04cfc99c3d 28,390-396
+  s_35b641b930a96d::t_2abb3f1df69056 248-249,397-401
+tests/evaluation/test_repository.py
+  s_35b641b930a96d::t_b6ea27a19f5838 11-38
+  s_35b641b930a96d::t_bc2aad4771af73 39-47
+tests/evaluation/conftest.py
+  s_35b641b930a96d::t_ed7b47b5932c19 33-34
+  s_35b641b930a96d::t_53e98e6af7c954 38
+  s_35b641b930a96d::t_7c14ae9d118b1f 1-32,35-37,39-41,43-62,65,71-74,76-93
+  s_35b641b930a96d::t_8e9eb323bd321e 42
+  s_35b641b930a96d::t_19d66b68fc8192 63-64,66-70,75
+  s_35b641b930a96d::t_c928c10f72ed44 94-124
+docs/evaluation.md
+  s_35b641b930a96d::t_65b5827cb7c58e 3,7,32,34
+src/tychora/evaluation/metrics.py
+  s_35b641b930a96d::t_02d135b73b53a1 85-87,119-120,238-242,246-250,259-263,265-269,273-275,280-282
+  s_35b641b930a96d::t_cfdf41f5c9eb0f 6,73-84,88-118,121-152,156-159,217-231,236-237,243-245,251-253,256-257,276-279,285,369,373
+  s_35b641b930a96d::t_b8e1200e88c0d8 258,264,270,272,283-284
+  s_35b641b930a96d::t_436cbd5a79fc2b 254-255
+tests/fixtures/evaluation/scenario-catalog.json
+  s_35b641b930a96d::t_c3a46f4b28e044 1-21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "75d227f0a335b31a1bab588cc90d1008158feff3",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
