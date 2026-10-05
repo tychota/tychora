@@ -250,10 +250,30 @@ class _Evaluations:
     @_admitted
     def run(self, request: EvaluationRequest | Mapping):
         ws = self.kb._open()
-        if "manage" not in ws.scope.capabilities:
-            raise TychoraError("FORBIDDEN_SCOPE", "Evaluation is outside the grant.")
-        _parsed(EvaluationRequest, request)
-        raise TychoraError("CAPABILITY_MISSING", "Evaluation service is unavailable.")
+        return ws.bridge.call(
+            ws.services.evaluations.run(
+                _parsed(EvaluationRequest, request), ws.scope, _context()
+            )
+        )
+
+    @_admitted
+    def register_dataset(self, path: str | Path):
+        ws = self.kb._open()
+        return ws.bridge.call(
+            ws.services.evaluations.register_dataset(Path(path), ws.scope, _context())
+        )
+
+    @_admitted
+    def get(self, evaluation_id: str):
+        ws = self.kb._open()
+        return ws.bridge.call(
+            ws.services.evaluations.get(evaluation_id, ws.scope, _context())
+        )
+
+    @_admitted
+    def list(self):
+        ws = self.kb._open()
+        return ws.bridge.call(ws.services.evaluations.list_runs(ws.scope, _context()))
 
 
 class _Management:

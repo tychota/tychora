@@ -17,6 +17,9 @@ from tychora.application.restore import RestoreService
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.operations import (
+    ConfigurationVariant,
+    EvaluateMaintenance,
+    EvaluationRequest,
     HealthMaintenance,
     ImportMaintenance,
     JobHandle,
@@ -35,9 +38,10 @@ from tychora.ports.execution import ExecutionContext
 
 
 class MaintenanceService:
-    def __init__(self, owner, repository) -> None:
+    def __init__(self, owner, repository, evaluations=None) -> None:
         self.owner = owner
         self.repository = repository
+        self.evaluations = evaluations
 
     async def run(
         self,
@@ -70,6 +74,36 @@ class MaintenanceService:
         )
         if required not in grant.capabilities:
             raise TychoraError("FORBIDDEN_SCOPE", "Maintenance is outside the grant")
+        if isinstance(operation, EvaluateMaintenance):
+            if self.evaluations is None:
+                raise TychoraError(
+                    "CAPABILITY_MISSING", "Evaluation service is unavailable"
+                )
+            snapshot_id = await self.owner.run_blocking(
+                self.owner.store.active_snapshot_id, ctx
+            )
+            if snapshot_id is None:
+                raise TychoraError("NOT_FOUND", "No active snapshot is available")
+            evaluation = EvaluationRequest(
+                dataset_id=operation.dataset_id,
+                split=operation.split,
+                snapshot_id=snapshot_id,
+                variants=(
+                    ConfigurationVariant(
+                        name="configured", profile=self.owner.config.profile
+                    ),
+                ),
+                offline=self.owner.config.values.offline,
+            )
+            handle = await self.evaluations.run(evaluation, grant, ctx)
+            return MaintenanceResult(
+                plan=MaintenancePlan(
+                    operation="evaluate",
+                    target_ids=(operation.dataset_id,),
+                    actions=("score the active snapshot with configured retrieval",),
+                ),
+                job=handle,
+            )
         if isinstance(operation, HealthMaintenance):
             recovery = RecoveryService(self.owner)
             report = await self.owner.run_blocking(
@@ -98,12 +132,13 @@ class MaintenanceService:
                     "CAPABILITY_MISSING", "Selected revision rebuild is unavailable"
                 )
             recovery = RecoveryService(self.owner)
-            report = await self.owner.run_blocking(
-                lambda: recovery._rebuild_native_on_owner(
-                    grant, ctx, operation.channels
-                ),
-                ctx,
-            )
+            async with self.owner.comparison_admission.mutation(ctx):
+                report = await self.owner.run_blocking(
+                    lambda: recovery._rebuild_native_on_owner(
+                        grant, ctx, operation.channels, admitted=True
+                    ),
+                    ctx,
+                )
             return MaintenanceResult(
                 plan=MaintenancePlan(
                     operation="rebuild",

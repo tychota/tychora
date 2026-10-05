@@ -38,6 +38,7 @@ def augment(
     config: ResolvedConfig,
     graph: GraphStore,
     ctx: ExecutionContext,
+    strategies: frozenset[str] | None = None,
 ) -> GraphCandidates:
     """Use one fixed seed list, budget and target set across strategies and replay."""
     settings = config.values.retrieval.graph
@@ -70,7 +71,7 @@ def augment(
             ("structural", settings.structural == "code_context@1"),
             ("semantic", settings.semantic),
         )
-        if active
+        if active and (strategies is None or name in strategies)
     )
     results: dict[str, GraphCandidate] = {}
     strategy_order: dict[str, list[str]] = {name: [] for name in enabled}

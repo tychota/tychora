@@ -392,8 +392,11 @@ class RecoveryService:
         )
 
     def _prune_native_on_owner(
-        self, scope: RequestScope, ctx: ExecutionContext
+        self, scope: RequestScope, ctx: ExecutionContext, *, admitted: bool = False
     ) -> NativeGcReport:
+        if not admitted:
+            with self.owner.comparison_admission.mutation_nowait():
+                return self._prune_native_on_owner(scope, ctx, admitted=True)
         grant = self.owner.scope.narrow(scope)
         if "manage" not in grant.capabilities:
             raise TychoraError("FORBIDDEN_SCOPE", "Native GC requires management grant")
@@ -517,7 +520,14 @@ class RecoveryService:
         ctx: ExecutionContext,
         channels: tuple[str, ...] = ("text", "image", "graph"),
         snapshot_id: str | None = None,
+        *,
+        admitted: bool = False,
     ) -> RecoveryReport:
+        if not admitted:
+            with self.owner.comparison_admission.mutation_nowait():
+                return self._rebuild_native_on_owner(
+                    scope, ctx, channels, snapshot_id, admitted=True
+                )
         if not channels or set(channels) - {"text", "image", "graph"}:
             raise TychoraError(
                 "INVALID_REQUEST",

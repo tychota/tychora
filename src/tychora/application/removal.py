@@ -251,7 +251,17 @@ class RemovalService:
         *,
         confirm_original_removal: bool = False,
         scope: RequestScope,
+        admitted: bool = False,
     ) -> MaintenanceResult:
+        if confirm_original_removal and not admitted:
+            with self.owner.comparison_admission.mutation_nowait():
+                return self.purge_originals(
+                    source_id,
+                    revision_ids,
+                    confirm_original_removal=True,
+                    scope=scope,
+                    admitted=True,
+                )
         collection_id = self._authorized_source(source_id, scope, withdrawn=True)
         bindings = self._bindings(source_id, revision_ids, scope)
         selected = frozenset(sha for shas in bindings.values() for sha in shas)
@@ -587,6 +597,11 @@ async def run_public_removal(
             request.revision_ids,
             confirm_original_removal=request.confirm_original_removal,
             scope=scope,
+            admitted=True,
         )
 
-    return await owner.run_blocking(execute, ExecutionContext())
+    ctx = ExecutionContext()
+    if isinstance(request, PurgeOriginalsMaintenance):
+        async with owner.comparison_admission.mutation(ctx):
+            return await owner.run_blocking(execute, ctx)
+    return await owner.run_blocking(execute, ctx)

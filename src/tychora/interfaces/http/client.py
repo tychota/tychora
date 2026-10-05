@@ -325,7 +325,34 @@ class _SyncEvaluations:
         self.client = client
 
     def run(self, request: EvaluationRequest | Mapping):
-        self.client._request("POST", "/v1/evaluations", json=_payload(request))
+        return JobHandle.model_validate_json(
+            self.client._request(
+                "POST", "/v1/evaluations", json=_payload(request)
+            ).content
+        )
+
+    def register_dataset(self, path: str | Path):
+        directory = Path(path)
+        manifest = (directory / "manifest.json").read_bytes()
+        cases = (directory / "cases.jsonl").read_bytes()
+        if len(manifest) > 1024 * 1024 or len(cases) > 64 * 1024 * 1024:
+            raise TychoraError("INVALID_REQUEST", "Gold dataset exceeds byte limits")
+        return self.client._request(
+            "POST",
+            "/v1/evaluations/datasets",
+            json={
+                "manifest_json": manifest.decode("utf-8"),
+                "cases_jsonl": cases.decode("utf-8"),
+            },
+        ).json()
+
+    def list(self):
+        return self.client._request("GET", "/v1/evaluations").json()
+
+    def get(self, evaluation_id: str):
+        return self.client._request(
+            "GET", f"/v1/evaluations/{_id(evaluation_id)}"
+        ).json()
 
 
 class _SyncManagement:
@@ -686,7 +713,38 @@ class _AsyncEvaluations:
         self.client = client
 
     async def run(self, request: EvaluationRequest | Mapping):
-        await self.client._request("POST", "/v1/evaluations", json=_payload(request))
+        return JobHandle.model_validate_json(
+            (
+                await self.client._request(
+                    "POST", "/v1/evaluations", json=_payload(request)
+                )
+            ).content
+        )
+
+    async def register_dataset(self, path: str | Path):
+        directory = Path(path)
+        manifest = (directory / "manifest.json").read_bytes()
+        cases = (directory / "cases.jsonl").read_bytes()
+        if len(manifest) > 1024 * 1024 or len(cases) > 64 * 1024 * 1024:
+            raise TychoraError("INVALID_REQUEST", "Gold dataset exceeds byte limits")
+        return (
+            await self.client._request(
+                "POST",
+                "/v1/evaluations/datasets",
+                json={
+                    "manifest_json": manifest.decode("utf-8"),
+                    "cases_jsonl": cases.decode("utf-8"),
+                },
+            )
+        ).json()
+
+    async def list(self):
+        return (await self.client._request("GET", "/v1/evaluations")).json()
+
+    async def get(self, evaluation_id: str):
+        return (
+            await self.client._request("GET", f"/v1/evaluations/{_id(evaluation_id)}")
+        ).json()
 
 
 class _AsyncManagement:

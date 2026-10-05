@@ -17,6 +17,7 @@ ERROR_HTTP_STATUS = {
     "PROFILE_INCOMPATIBLE": 409,
     "BUDGET_TOO_SMALL": 400,
     "OUTPUT_BUDGET_EXCEEDED": 400,
+    "LIMIT_EXCEEDED": 413,
     "IDEMPOTENCY_CONFLICT": 409,
     "JOB_INTERRUPTED": 409,
     "ORIGINAL_REMOVED": 410,
@@ -59,6 +60,7 @@ class TychoraError(Exception):
             "INVALID_REQUEST",
             "BUDGET_TOO_SMALL",
             "OUTPUT_BUDGET_EXCEEDED",
+            "LIMIT_EXCEEDED",
         }:
             return 2
         return 1

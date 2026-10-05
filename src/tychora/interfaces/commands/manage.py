@@ -2,6 +2,7 @@
 
 # ruff: noqa: B008 - Typer declares CLI options in function defaults.
 
+import json
 from pathlib import Path
 
 import typer
@@ -119,9 +120,50 @@ def health(
 
 
 @group.command()
-def evaluate(ctx: typer.Context, dataset_id: str, split: str) -> None:
-    """Run a registered evaluation dataset split."""
-    _run(ctx, {"operation": "evaluate", "dataset_id": dataset_id, "split": split})
+def evaluate(
+    ctx: typer.Context,
+    dataset_id: str,
+    split: str,
+    dataset_path: Path | None = typer.Option(
+        None, help="Explicit local gold directory to register."
+    ),
+    request_file: Path | None = typer.Option(
+        None, help="Full EvaluationRequest JSON for controlled variants."
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Evaluate a registered split on the active snapshot or a full request."""
+    from tychora.contracts.errors import TychoraError
+    from tychora.contracts.operations import EvaluationRequest, MaintenanceRequest
+
+    try:
+        output_format = selected_format(state(ctx), json_output)
+        with client(state(ctx)) as kb:
+            if dataset_path is not None:
+                kb.evaluations.register_dataset(dataset_path)
+            if request_file is not None:
+                request = EvaluationRequest.from_mapping(
+                    json.loads(request_file.read_bytes())
+                )
+                if request.dataset_id != dataset_id or request.split != split:
+                    raise TychoraError(
+                        "INVALID_REQUEST",
+                        "Request file dataset and split differ from CLI arguments",
+                    )
+                result = kb.evaluations.run(request)
+            else:
+                result = kb.management.run(
+                    MaintenanceRequest.from_mapping(
+                        {
+                            "operation": "evaluate",
+                            "dataset_id": dataset_id,
+                            "split": split,
+                        }
+                    )
+                )
+            emit(result, format=output_format)
+    except Exception as error:  # noqa: BLE001 - command boundary rethrows unknown exceptions
+        fail(error)
 
 
 @group.command("purge-originals")

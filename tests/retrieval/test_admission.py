@@ -120,6 +120,43 @@ def test_graph_coordinator_reuses_fixed_seeds_budget_and_merges_enrichment():
     assert result.exhausted
 
 
+@pytest.mark.parametrize("strategy", ["structural", "semantic"])
+def test_graph_ablation_calls_only_selected_strategy(strategy):
+    graph = _ResumingGraph()
+    config = SimpleNamespace(
+        values=SimpleNamespace(
+            limits=SimpleNamespace(
+                graph_seed_limit=5, graph_candidate_limit=32, graph_work_limit=2000
+            ),
+            retrieval=SimpleNamespace(
+                graph=SimpleNamespace(structural="code_context@1", semantic=True)
+            ),
+        )
+    )
+    view = SimpleNamespace(source_unit_ids={"a"}, graph_generation_id="generation")
+    first = augment(
+        view,
+        (_candidate("a", 1),),
+        config,
+        graph,
+        ExecutionContext(),
+        frozenset({strategy}),
+    )
+    assert [call[0] for call in graph.calls] == [strategy]
+    replay_graph = _ResumingGraph()
+    second = augment(
+        view,
+        (_candidate("a", 1),),
+        config,
+        replay_graph,
+        ExecutionContext(),
+        frozenset({strategy}),
+    )
+    assert [item.unit_id for item in first.candidates] == [
+        item.unit_id for item in second.candidates
+    ]
+
+
 def test_exact_and_graph_only_total_caps_survive_fused_fill():
     candidates = tuple(_candidate(f"exact-{i:02}", i + 1) for i in range(40)) + tuple(
         _candidate(f"graph-{i:02}", i + 41) for i in range(12)

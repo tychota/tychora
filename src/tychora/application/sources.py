@@ -674,10 +674,11 @@ class SourceService:
             finally:
                 self.owner.store.publication_context = None
 
-        snapshot_id = await self.owner.run_blocking(activate, ctx)
-        await self.owner.run_blocking(
-            lambda: jobs.complete(handle.id, result_snapshot_id=snapshot_id), ctx
-        )
+        async with self.owner.comparison_admission.mutation(ctx):
+            snapshot_id = await self.owner.run_blocking(activate, ctx)
+            await self.owner.run_blocking(
+                lambda: jobs.complete(handle.id, result_snapshot_id=snapshot_id), ctx
+            )
         return snapshot_id
 
     async def _text_records(

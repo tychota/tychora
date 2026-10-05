@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 import math
 import time
 from collections.abc import Mapping
@@ -470,18 +471,62 @@ def register_routes(app: FastAPI) -> None:
     @app.post("/v1/evaluations")
     async def run_evaluation(request: Request):
         _require(request, "manage")
-        EvaluationRequest.from_mapping(await _body_map(request))
-        raise TychoraError("CAPABILITY_MISSING", "Evaluation service is unavailable.")
+        parsed = EvaluationRequest.from_mapping(await _body_map(request))
+        handle = await _services(request).evaluations.run(
+            parsed, _scope(request), ExecutionContext()
+        )
+        return _json(handle, status_code=202)
+
+    @app.post("/v1/evaluations/datasets")
+    async def register_evaluation_dataset(request: Request):
+        _require(request, "manage")
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > 70 * 1024 * 1024:
+                raise TychoraError(
+                    "INVALID_REQUEST", "Gold registration body exceeds byte limit"
+                )
+        try:
+            payload = json.loads(body)
+        except (ValueError, UnicodeError):
+            raise TychoraError(
+                "INVALID_REQUEST", "Gold registration requires JSON"
+            ) from None
+        if (
+            not isinstance(payload, dict)
+            or set(payload) != {"manifest_json", "cases_jsonl"}
+            or not isinstance(payload["manifest_json"], str)
+            or not isinstance(payload["cases_jsonl"], str)
+        ):
+            raise TychoraError(
+                "INVALID_REQUEST", "Gold registration requires manifest and cases bytes"
+            )
+        dataset = await _services(request).evaluations.register_dataset_bytes(
+            payload["manifest_json"].encode("utf-8"),
+            payload["cases_jsonl"].encode("utf-8"),
+            _scope(request),
+            ExecutionContext(),
+        )
+        return _json(dataset, status_code=201)
 
     @app.get("/v1/evaluations")
     async def list_evaluations(request: Request):
         _require(request, "manage")
-        raise TychoraError("CAPABILITY_MISSING", "Evaluation service is unavailable.")
+        return _json(
+            await _services(request).evaluations.list_runs(
+                _scope(request), ExecutionContext()
+            )
+        )
 
     @app.get("/v1/evaluations/{evaluation_id}")
     async def get_evaluation(evaluation_id: str, request: Request):
         _require(request, "manage")
-        raise TychoraError("CAPABILITY_MISSING", "Evaluation service is unavailable.")
+        return _json(
+            await _services(request).evaluations.get(
+                evaluation_id, _scope(request), ExecutionContext()
+            )
+        )
 
     @app.get("/v1/settings")
     async def get_settings(request: Request):

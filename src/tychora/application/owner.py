@@ -44,6 +44,7 @@ from tychora.contracts.identity import (
     source_id,
 )
 from tychora.contracts.requests import RequestScope
+from tychora.evaluation.runner import ComparisonAdmission
 from tychora.ports.embeddings import (
     OwnerBoundVisualEmbedder,
     TextEmbedder,
@@ -108,6 +109,7 @@ class WorkspaceOwner:
         self.scope = scope
         self.managed_default_owner = False
         self.leases = LeaseSet()
+        self.comparison_admission = ComparisonAdmission()
         self._worker = BoundedWorker()
         self._runtime = RuntimeIdentity(self.path)
         self.service_runtime: ServiceRuntime | None = None

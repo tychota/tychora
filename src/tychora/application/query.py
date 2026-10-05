@@ -102,6 +102,29 @@ class _PreparedResult:
     candidate_count: int
 
 
+@dataclass(frozen=True)
+class QueryExecutionPlan:
+    """Internal, immutable ablation controls; public search uses the configured path."""
+
+    lexical: bool
+    text: bool
+    image: bool
+    graph_structural: bool
+    graph_semantic: bool
+    rerank: bool
+
+    @property
+    def graph_strategies(self) -> frozenset[str]:
+        return frozenset(
+            name
+            for name, enabled in (
+                ("structural", self.graph_structural),
+                ("semantic", self.graph_semantic),
+            )
+            if enabled
+        )
+
+
 def query_binding_from_owner(
     owner: WorkspaceOwner, scope: RequestScope, policy_epoch: int
 ) -> QueryOperationBinding:
@@ -173,6 +196,7 @@ class QueryService:
         caches: QueryCaches | None = None,
         history: HistoryRepository | None = None,
         profiles: tuple[OutputProfile, ...] | None = None,
+        execution_plan: QueryExecutionPlan | None = None,
     ) -> None:
         self.owner = owner
         self.registry = owner.store.registry
@@ -193,6 +217,7 @@ class QueryService:
         self.profiles = profiles or (_default_profile(owner.config, self.registry),)
         self.assembler = ResponseAssembler()
         self.delivery_serializer = None
+        self.execution_plan = execution_plan
         self.delivery_serialization = None
 
     def _projection_fingerprint(self) -> str:
@@ -230,6 +255,7 @@ class QueryService:
             self.text_index is not None,
             self.visual_index is not None,
             self.reranker.credential_binding_id if self.reranker else None,
+            self.execution_plan.__dict__ if self.execution_plan else None,
         )
 
     def _validate_provider_families(self, snapshot_id: str) -> None:
@@ -237,6 +263,36 @@ class QueryService:
         from collections.abc import Mapping
 
         snapshot = self.owner.store.resolve_snapshot(snapshot_id)
+        plan = self.execution_plan
+        if plan is not None:
+            if plan.text and (self.text_provider is None or self.text_index is None):
+                raise TychoraError(
+                    "CAPABILITY_MISSING", "Text ablation requires a pinned query family"
+                )
+            if plan.image and (
+                self.visual_provider is None or self.visual_index is None
+            ):
+                raise TychoraError(
+                    "CAPABILITY_MISSING",
+                    "Visual ablation requires a pinned query family",
+                )
+            graph_settings = self.owner.config.values.retrieval.graph
+            if plan.graph_strategies and self.graph is None:
+                raise TychoraError(
+                    "CAPABILITY_MISSING", "Graph ablation requires a pinned graph index"
+                )
+            if plan.graph_structural and graph_settings.structural != "code_context@1":
+                raise TychoraError(
+                    "CAPABILITY_MISSING", "Structural graph strategy is unavailable"
+                )
+            if plan.graph_semantic and not graph_settings.semantic:
+                raise TychoraError(
+                    "CAPABILITY_MISSING", "Semantic graph strategy is unavailable"
+                )
+            if plan.rerank and (self.reranker is None or self.rerank_counter is None):
+                raise TychoraError(
+                    "CAPABILITY_MISSING", "Reranked ablation requires a reranker"
+                )
         retained_configs: dict[str, ResolvedConfig] = {}
         current_artifact_sha = sha256(
             canonical_bytes(
@@ -265,6 +321,8 @@ class QueryService:
         ):
             if provider is None:
                 continue
+            if plan is not None and not getattr(plan, channel):
+                continue
             caps = provider.capabilities
             if (
                 provider.caches is not self.caches
@@ -279,6 +337,10 @@ class QueryService:
                 )
             slot = next((slot for slot in snapshot.slots if slot.slot == channel), None)
             if slot is None:
+                if plan is not None and getattr(plan, channel):
+                    raise TychoraError(
+                        "CAPABILITY_MISSING", "Pinned vector family is unavailable."
+                    )
                 continue
             if index is None:
                 raise TychoraError(
@@ -543,17 +605,30 @@ class QueryService:
         ctx: ExecutionContext,
     ) -> tuple[_PreparedResult, int]:
         view = attempt.view
-        channels = await self.owner.run_blocking(
-            lambda: retrieve_exact_lexical(
-                self.owner.store,
-                self.lexical,
-                view,
-                request,
-                self.registry,
-                80,
+        plan = self.execution_plan
+        if plan is not None and plan.text and not _needs_text(request):
+            raise TychoraError(
+                "INVALID_REQUEST", "Selected text channel cannot run for this query"
+            )
+        if plan is not None and plan.image and not _needs_visual(request):
+            raise TychoraError(
+                "INVALID_REQUEST", "Selected image channel cannot run for this query"
+            )
+        channels = (
+            await self.owner.run_blocking(
+                lambda: retrieve_exact_lexical(
+                    self.owner.store,
+                    self.lexical,
+                    view,
+                    request,
+                    self.registry,
+                    80,
+                    ctx,
+                ),
                 ctx,
-            ),
-            ctx,
+            )
+            if plan is None or plan.lexical
+            else ()
         )
         lexical_epoch = next(
             (
@@ -574,12 +649,14 @@ class QueryService:
         ]
         if incomplete and not self.owner.config.values.retrieval.allow_degraded:
             raise TychoraError("INDEX_INCOMPLETE", "A retrieval channel is incomplete.")
-        votes: dict[str, tuple[ChannelCandidate, ...]] = {
+        lexical_votes: dict[str, tuple[ChannelCandidate, ...]] = {
             channel.channel: (*channel.source_candidates, *channel.asset_candidates)
             for channel in channels
         }
+        votes = lexical_votes.copy() if plan is None or plan.lexical else {}
         if (
-            _needs_text(request)
+            (plan is None or plan.text)
+            and _needs_text(request)
             and self.owner.config.values.index.text.backend != "disabled"
         ):
             try:
@@ -601,7 +678,8 @@ class QueryService:
                     raise
                 incomplete.append("text")
         if (
-            _needs_visual(request)
+            (plan is None or plan.image)
+            and _needs_visual(request)
             and self.owner.config.values.index.image.backend != "disabled"
         ):
             try:
@@ -631,9 +709,23 @@ class QueryService:
                 incomplete.append("visual")
         fused = fuse(votes)
         graph_candidates = GraphCandidates()
-        if not request.exact_only and self.graph is not None:
+        if (
+            not request.exact_only
+            and self.graph is not None
+            and (plan is None or plan.graph_strategies)
+        ):
+            if plan is not None and view.graph_generation_id is None:
+                raise TychoraError(
+                    "CAPABILITY_MISSING", "Pinned graph generation is unavailable"
+                )
             graph_candidates = await asyncio.to_thread(
-                augment, view, fused, self.owner.config, self.graph, ctx
+                augment,
+                view,
+                fused,
+                self.owner.config,
+                self.graph,
+                ctx,
+                plan.graph_strategies if plan is not None else None,
             )
             graph_votes = tuple(
                 ChannelCandidate(key=("unit", item.unit_id), rank=rank)
@@ -662,7 +754,9 @@ class QueryService:
         )
         admission = admit(
             fused,
-            tuple(item.key for item in channels[0].source_candidates),
+            tuple(item.key for item in channels[0].source_candidates)
+            if channels and (plan is None or plan.lexical)
+            else (),
             {
                 strategy: tuple(
                     ("unit", item.unit_id)
@@ -680,7 +774,7 @@ class QueryService:
             lanes=lanes,
         )
         facts = await prepare_rerank_facts(self.owner, attempt, admission, votes, ctx)
-        if request.exact_only:
+        if request.exact_only or plan is not None and not plan.rerank:
             ranked = RankedEvidence(
                 tuple(
                     RankedEvidenceItem(
@@ -744,7 +838,12 @@ class QueryService:
         records = prepare_records(selection, ranked, attempt)
         checks = RelationChecks(status="not_evaluated")
         check_settings = self.owner.config.values.checks.relations
-        if not request.exact_only and check_settings.enabled and self.graph is not None:
+        if (
+            not request.exact_only
+            and check_settings.enabled
+            and self.graph is not None
+            and (plan is None or plan.graph_strategies)
+        ):
             checks = await asyncio.to_thread(
                 inspect_relations,
                 self.graph,

@@ -270,10 +270,37 @@ class _AsyncEvaluations:
     @_admitted
     async def run(self, request: EvaluationRequest | Mapping):
         ws = self.kb._open()
-        if "manage" not in ws.scope.capabilities:
-            raise TychoraError("FORBIDDEN_SCOPE", "Evaluation is outside the grant.")
-        _parsed(EvaluationRequest, request)
-        raise TychoraError("CAPABILITY_MISSING", "Evaluation service is unavailable.")
+        ctx = _context()
+        return await ws.bridge.acall(
+            ws.services.evaluations.run(
+                _parsed(EvaluationRequest, request), ws.scope, ctx
+            ),
+            ctx,
+        )
+
+    @_admitted
+    async def register_dataset(self, path: str | Path):
+        ws = self.kb._open()
+        ctx = _context()
+        return await ws.bridge.acall(
+            ws.services.evaluations.register_dataset(Path(path), ws.scope, ctx), ctx
+        )
+
+    @_admitted
+    async def get(self, evaluation_id: str):
+        ws = self.kb._open()
+        ctx = _context()
+        return await ws.bridge.acall(
+            ws.services.evaluations.get(evaluation_id, ws.scope, ctx), ctx
+        )
+
+    @_admitted
+    async def list(self):
+        ws = self.kb._open()
+        ctx = _context()
+        return await ws.bridge.acall(
+            ws.services.evaluations.list_runs(ws.scope, ctx), ctx
+        )
 
 
 class _AsyncManagement:

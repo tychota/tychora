@@ -22,6 +22,7 @@ from tychora.configuration.registry import Registry
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.operations import JobHandle
 from tychora.contracts.requests import RequestScope, SourceInput
+from tychora.evaluation.runner import EvaluationService
 from tychora.indexing.coordinator import ProjectionCoordinator
 from tychora.ports.execution import ExecutionContext
 from tychora.retrieval.cache import QueryCaches
@@ -39,6 +40,7 @@ class Services:
     inspection: InspectionService
     jobs: JobService
     maintenance: MaintenanceService
+    evaluations: EvaluationService
     query: QueryService
     sources: SourceService
     source_jobs: SourceJobScheduler
@@ -369,24 +371,27 @@ def build_services(
         vision_credential=providers.vision_credential,
     )
     jobs = JobService(owner, repository, owner.scope)
+    query = QueryService(
+        owner,
+        output_counter=counter,
+        text_provider=providers.text_query,
+        text_index=providers.text_index,
+        visual_provider=providers.visual_query,
+        visual_index=providers.visual_index,
+        reranker=providers.reranker,
+        rerank_counter=providers.rerank_counter,
+        caches=caches,
+        graph=providers.graph,
+        auto_rerank=bool(owned_runtimes),
+    )
+    evaluations = EvaluationService(owner, query, repository)
     return Services(
         discovery=DiscoveryService(config, Registry.from_config(config), owner),
         inspection=InspectionService(owner, graph=providers.graph),
         jobs=jobs,
-        maintenance=MaintenanceService(owner, repository),
-        query=QueryService(
-            owner,
-            output_counter=counter,
-            text_provider=providers.text_query,
-            text_index=providers.text_index,
-            visual_provider=providers.visual_query,
-            visual_index=providers.visual_index,
-            reranker=providers.reranker,
-            rerank_counter=providers.rerank_counter,
-            caches=caches,
-            graph=providers.graph,
-            auto_rerank=bool(owned_runtimes),
-        ),
+        maintenance=MaintenanceService(owner, repository, evaluations),
+        evaluations=evaluations,
+        query=query,
         sources=sources,
         source_jobs=SourceJobScheduler(sources, jobs),
         provider_bindings=providers,
