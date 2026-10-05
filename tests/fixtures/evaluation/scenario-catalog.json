@@ -13,9 +13,9 @@
     {"id": "table-split", "intent": "A target row is cited across a table split", "requires": "declared table parser representation"},
     {"id": "conflicting-assertion", "intent": "Conflicting graph assertion keeps only eligible support", "requires": "declared graph assertions and generation"},
     {"id": "long-end-match", "intent": "A late exact span survives long source segmentation", "requires": "declared long source with canonical spans", "mechanical_evidence": "tests/evaluation/test_executable_corpus.py::test_declared_synthetic_corpus_runs_integrity_cases (long-end-match)"},
-    {"id": "repeated-symbol", "intent": "Repeated symbol file ranks remain distinct", "requires": "declared code repository and code family"},
-    {"id": "overload", "intent": "Only the selected overload definition ranks", "requires": "declared code repository and code family"},
-    {"id": "exploratory-entry", "intent": "Exploratory code entry point ranks", "requires": "declared code repository and code family"},
+    {"id": "repeated-symbol", "intent": "Repeated symbol file ranks remain distinct", "requires": "declared code repository and code family", "mechanical_evidence": "tests/evaluation/test_code_scenarios.py::test_declared_code_definitions_and_graph_ablation (repeated-symbol-module, repeated-symbol-twin)"},
+    {"id": "overload", "intent": "Only the selected overload definition ranks", "requires": "declared code repository and code family", "mechanical_evidence": "tests/evaluation/test_code_scenarios.py::test_declared_code_definitions_and_graph_ablation (overload-string)"},
+    {"id": "exploratory-entry", "intent": "Exploratory code entry point ranks", "requires": "declared code repository and code family", "mechanical_evidence": "tests/evaluation/test_code_scenarios.py::test_declared_code_definitions_and_graph_ablation (exploratory-entry, lexical versus structural graph)"},
     {"id": "hidden-parent-support", "intent": "Graph context does not expose hidden parent or support units", "requires": "declared graph assertions and access decisions"}
   ]
 }

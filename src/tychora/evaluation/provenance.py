@@ -306,6 +306,13 @@ def verify_result_locators(
         )
 
     def source_ref_valid(citation: Citation, rows, locator: Locator) -> bool:
+        if isinstance(locator, CodeLocator):
+            return citation.source_ref == locator.relative_path and any(
+                item.role == "source_file"
+                and item.source_ref == locator.relative_path
+                and item.artifact_sha == locator.artifact_ref
+                for item in rows.revision_artifacts
+            )
         expected = next(
             (
                 item.source_ref

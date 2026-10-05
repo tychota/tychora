@@ -15,6 +15,7 @@ from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef, ManifestRef
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.code import (
+    CODE_ASSERTION_PROJECTION,
     CODE_RESOLVER_FINGERPRINT,
     CapturedSyntax,
     CatalogDefinition,
@@ -49,6 +50,7 @@ from tychora.contracts.relationships import (
     AssertionObservation,
     RelationshipAssertion,
     RelationshipEndpoint,
+    SupportSpan,
     assertion_index_document,
     partition_assertions,
 )
@@ -163,8 +165,21 @@ def _fingerprints(
         kind,
         registry.schema_digests,
         CODE_RESOLVER_FINGERPRINT,
+        CODE_ASSERTION_PROJECTION,
     )
     return parser, normalizer
+
+
+def _legacy_normalizer_fingerprint(
+    registration: CodeRegistration, registry: Registry
+) -> str:
+    kind = cast(Mapping[str, Any], registry.kinds[registration.revision.kind_id])
+    return digest(
+        "code-normalizer-v1",
+        kind,
+        registry.schema_digests,
+        CODE_RESOLVER_FINGERPRINT,
+    )
 
 
 def _artifact_ref(payload: bytes, media_type: str) -> ArtifactRef:
@@ -216,6 +231,9 @@ def _build(
     registration = parsed.registration
     rid = registration.revision.revision_id
     eid = extraction_id(rid, parsed.parser_fingerprint, parsed.normalizer_fingerprint)
+    legacy_assertions = parsed.normalizer_fingerprint == _legacy_normalizer_fingerprint(
+        registration, registry
+    )
     units: list[EvidenceUnit] = []
     locators: list[LocatorRow] = []
     records: list[StructuredRecordRow] = []
@@ -503,7 +521,11 @@ def _build(
         if unit.unit_type == "symbol" and unit.parent_id is not None:
             by_parent[unit.parent_id].append(unit)
             parent = unit_by_id[unit.parent_id]
-            assertions.append(_structural_assertion(parsed, parent, unit, "contains@1"))
+            assertions.append(
+                _structural_assertion(
+                    parsed, parent, unit, "contains@1", legacy=legacy_assertions
+                )
+            )
     for siblings in by_parent.values():
         siblings.sort(
             key=lambda unit: (
@@ -512,7 +534,9 @@ def _build(
             )
         )
         assertions.extend(
-            _structural_assertion(parsed, before, after, "precedes@1")
+            _structural_assertion(
+                parsed, before, after, "precedes@1", legacy=legacy_assertions
+            )
             for before, after in pairwise(siblings)
         )
 
@@ -596,6 +620,10 @@ def _build(
             continue
         subject = unit_by_id[resolution.source_unit_id]
         target = unit_by_id[resolution.selected_target]
+        if not legacy_assertions and (
+            subject.unit_type != "symbol" or target.unit_type != "symbol"
+        ):
+            continue
         assertions.append(
             _semantic_assertion(
                 parsed,
@@ -605,6 +633,7 @@ def _build(
                 subject,
                 target,
                 predicate,
+                legacy=legacy_assertions,
             )
         )
 
@@ -674,6 +703,8 @@ def _structural_assertion(
     subject: EvidenceUnit,
     object_: EvidenceUnit,
     predicate: str,
+    *,
+    legacy: bool,
 ) -> RelationshipAssertion:
     assert subject.locators and object_.locators
     observation = AssertionObservation(
@@ -682,10 +713,14 @@ def _structural_assertion(
         extraction_id=subject.extraction_id,
         predicate=predicate,
         subject=RelationshipEndpoint(
-            entity_id=subject.unit_id, unit_id=subject.unit_id, kind=subject.unit_type
+            entity_id=subject.unit_id,
+            unit_id=subject.unit_id,
+            kind=subject.unit_type if legacy else parsed.registration.revision.kind_id,
         ),
         object=RelationshipEndpoint(
-            entity_id=object_.unit_id, unit_id=object_.unit_id, kind=object_.unit_type
+            entity_id=object_.unit_id,
+            unit_id=object_.unit_id,
+            kind=object_.unit_type if legacy else parsed.registration.revision.kind_id,
         ),
         origin_unit_id=subject.unit_id,
         origin_locator=subject.locators[0],
@@ -708,21 +743,47 @@ def _semantic_assertion(
     subject: EvidenceUnit,
     object_: EvidenceUnit,
     predicate: str,
+    *,
+    legacy: bool,
 ) -> RelationshipAssertion:
+    source_locator = cast(CodeLocator, subject.locators[0])
+    source_start = reference.char_start - source_locator.char_start
+    source_end = reference.char_end - source_locator.char_start
+    if not legacy and (source_start < 0 or source_end > len(subject.text)):
+        raise TychoraError(
+            "INTEGRITY_ERROR", "Resolved code reference leaves its source symbol"
+        )
     observation = AssertionObservation(
         observation_key=f"{predicate}:{resolution.reference_id}",
         revision_id=parsed.registration.revision.revision_id,
         extraction_id=subject.extraction_id,
         predicate=predicate,
         subject=RelationshipEndpoint(
-            entity_id=subject.unit_id, unit_id=subject.unit_id, kind=subject.unit_type
+            entity_id=subject.unit_id,
+            unit_id=subject.unit_id,
+            kind=subject.unit_type if legacy else parsed.registration.revision.kind_id,
         ),
         object=RelationshipEndpoint(
-            entity_id=object_.unit_id, unit_id=object_.unit_id, kind=object_.unit_type
+            entity_id=object_.unit_id,
+            unit_id=object_.unit_id,
+            kind=object_.unit_type if legacy else parsed.registration.revision.kind_id,
         ),
         origin_unit_id=subject.unit_id,
-        origin_locator=_locator(item, reference.char_start, reference.char_end),
+        origin_locator=(
+            _locator(item, reference.char_start, reference.char_end)
+            if legacy
+            else source_locator
+        ),
         required_support_ids=frozenset({subject.unit_id, object_.unit_id}),
+        support_spans=()
+        if legacy
+        else (
+            SupportSpan(
+                unit_id=subject.unit_id,
+                char_start=source_start,
+                char_end=source_end,
+            ),
+        ),
         method="parser_inferred",
         status="recorded",
         confidence=1.0,
@@ -783,18 +844,14 @@ def retain_code_extraction(
     elif assertion_parts:
         leaves = tuple(
             ManifestRef(
-                artifact=artifacts.put_stream(
-                    BytesIO(part), "application/x-ndjson"
-                ),
+                artifact=artifacts.put_stream(BytesIO(part), "application/x-ndjson"),
                 type="assertion",
                 schema_version="1",
             )
             for part in assertion_parts
         )
         index = assertion_index_document(
-            extraction_id(
-                registration.revision.revision_id, parser, normalizer
-            ),
+            extraction_id(registration.revision.revision_id, parser, normalizer),
             leaves,
             assertions,
         )
@@ -1014,7 +1071,11 @@ def normalize_code(
     if (
         parsed.registry_digest != registry.registry_digest
         or parsed.parser_fingerprint != parser
-        or parsed.normalizer_fingerprint != normalizer
+        or parsed.normalizer_fingerprint
+        not in (
+            normalizer,
+            _legacy_normalizer_fingerprint(parsed.registration, registry),
+        )
         or parsed.resolver_fingerprint != CODE_RESOLVER_FINGERPRINT
         or parsed.diagnostics_ref is None
     ):

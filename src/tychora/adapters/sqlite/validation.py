@@ -19,7 +19,7 @@ from tychora.configuration.global_facets import (
     binding_bytes as global_facet_binding_bytes,
 )
 from tychora.configuration.registry import Registry, compile_filter
-from tychora.contracts.code import CODE_RESOLVER_FINGERPRINT
+from tychora.contracts.code import CODE_ASSERTION_PROJECTION, CODE_RESOLVER_FINGERPRINT
 from tychora.contracts.corpus import ExtractionBundle
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import CodeLocator, TextLocator
@@ -402,10 +402,18 @@ def validate_bundle(
             kind,
             registry.schema_digests,
             CODE_RESOLVER_FINGERPRINT,
+            CODE_ASSERTION_PROJECTION,
+        )
+        legacy_normalizer = digest(
+            "code-normalizer-v1",
+            kind,
+            registry.schema_digests,
+            CODE_RESOLVER_FINGERPRINT,
         )
         if (
             extraction.parser_fingerprint != parser_fingerprint
-            or extraction.normalizer_fingerprint != normalizer_fingerprint
+            or extraction.normalizer_fingerprint
+            not in (normalizer_fingerprint, legacy_normalizer)
         ):
             fail("Code extraction fingerprints differ from verified inputs")
         for path, descriptor in code_files.items():

@@ -16,9 +16,8 @@ from .code_storage import CodeFileDescriptor
 from .corpus import CollectionRow, RevisionRow, SourceRow, WorkspaceRow
 from .identity import canonical_bytes, digest, normalize_source_key
 
-CODE_RESOLVER_FINGERPRINT = digest(
-    "code-resolver-v1", "qualified-import-scope-cap20"
-)
+CODE_RESOLVER_FINGERPRINT = digest("code-resolver-v1", "qualified-import-scope-cap20")
+CODE_ASSERTION_PROJECTION = "code-graph-assertion-provenance-v2"
 
 
 class CodeRegistration(Contract):
@@ -186,7 +185,8 @@ class CodeExtractionArtifact(Contract):
             and not self.partition_refs
             or len(self.partition_refs) > 10_000
             or len(self.assertion_partition_refs) > 10_000
-            or bool(self.assertion_partition_refs) != (
+            or bool(self.assertion_partition_refs)
+            != (
                 self.assertions_ref is not None
                 and self.assertions_ref.media_type == "application/json"
             )
@@ -194,9 +194,7 @@ class CodeExtractionArtifact(Contract):
                 link.type != "assertion" or link.schema_version != "1"
                 for link in self.assertion_partition_refs
             )
-            or len(
-                {link.artifact.sha256 for link in self.assertion_partition_refs}
-            )
+            or len({link.artifact.sha256 for link in self.assertion_partition_refs})
             != len(self.assertion_partition_refs)
             or len(encoded) > 16 * 1024 * 1024
             or sha256(encoded).hexdigest() != self.raw_document_ref.sha256

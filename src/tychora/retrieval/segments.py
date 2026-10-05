@@ -118,15 +118,30 @@ def _citation(item: RankedEvidenceItem, unit_id: str, start: int, end: int) -> C
                     }
                 )
             )
-    refs = {row.artifact_sha: row.source_ref for row in rows.revision_artifacts}
-    source_ref = next(
-        (
-            refs[locator.artifact_ref]
-            for locator in locators
-            if locator.artifact_ref in refs
-        ),
-        rows.source.source_key,
+    code_locator = next(
+        (locator for locator in locators if isinstance(locator, CodeLocator)), None
     )
+    if code_locator is not None:
+        if not any(
+            row.role == "source_file"
+            and row.artifact_sha == code_locator.artifact_ref
+            and row.source_ref == code_locator.relative_path
+            for row in rows.revision_artifacts
+        ):
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Retained code file citation binding differs."
+            )
+        source_ref = code_locator.relative_path
+    else:
+        refs = {row.artifact_sha: row.source_ref for row in rows.revision_artifacts}
+        source_ref = next(
+            (
+                refs[locator.artifact_ref]
+                for locator in locators
+                if locator.artifact_ref in refs
+            ),
+            rows.source.source_key,
+        )
     return Citation(
         unit_id=unit_id,
         source_id=rows.source.source_id,

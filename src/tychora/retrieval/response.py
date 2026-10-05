@@ -668,7 +668,16 @@ def prepare_records(
                 raise ValueError("Original record binding is absent")
             schema_hash = original["schema_digests"][schema]
             for row in selected_rows:
-                if row.record_type != schema or row.schema_hash != schema_hash:
+                code_record_binding = (
+                    segment.kind == "code_file@1"
+                    and row.record_type == "code_symbol"
+                    and schema == "code-symbol@1"
+                )
+                if (
+                    row.record_type != schema
+                    and not code_record_binding
+                    or row.schema_hash != schema_hash
+                ):
                     raise ValueError("Retained record type or hash differs")
                 owner.prepared.representation(row.unit_id)
                 validate_historical_record(envelope, thaw_json(row.data_json))
