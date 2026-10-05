@@ -7,6 +7,7 @@ import json
 import sqlite3
 import struct
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, cast
@@ -123,6 +124,36 @@ class QueryExecutionPlan:
             )
             if enabled
         )
+
+
+async def _run_independent_channels[T](
+    calls: tuple[Callable[[], Awaitable[T]], ...], ctx: ExecutionContext
+) -> tuple[T, ...]:
+    """Overlap at most two independent waits and drain them on failure/cancel."""
+    if len(calls) > 2:
+        raise ValueError("At most two independent query channels may run")
+    ctx.checkpoint()
+
+    async def checked(call: Callable[[], Awaitable[T]]) -> T:
+        ctx.checkpoint()
+        result = await call()
+        ctx.checkpoint()
+        return result
+
+    tasks = tuple(asyncio.create_task(checked(call)) for call in calls)
+    try:
+        async with asyncio.timeout_at(ctx.deadline):
+            return tuple(await asyncio.gather(*tasks))
+    except BaseException as error:
+        ctx.cancelled.set()
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if isinstance(error, TimeoutError):
+            raise TychoraError(
+                "DEADLINE_EXCEEDED", "Operation deadline exceeded"
+            ) from error
+        raise
 
 
 def query_binding_from_owner(
@@ -654,50 +685,48 @@ class QueryService:
             for channel in channels
         }
         votes = lexical_votes.copy() if plan is None or plan.lexical else {}
+        vector_calls: list[
+            tuple[
+                str,
+                Callable[[], Awaitable[tuple[ChannelCandidate, ...] | TychoraError]],
+            ]
+        ] = []
+
+        async def text_candidates() -> tuple[ChannelCandidate, ...] | TychoraError:
+            try:
+                return await self._text_candidates(request, scope, attempt, ctx)
+            except TychoraError as error:
+                return error
+
+        async def retrieve_visual_channel() -> (
+            tuple[ChannelCandidate, ...] | TychoraError
+        ):
+            try:
+                return await self._visual_candidates(request, scope, attempt, ctx)
+            except TychoraError as error:
+                return error
+
         if (
             (plan is None or plan.text)
             and _needs_text(request)
             and self.owner.config.values.index.text.backend != "disabled"
         ):
-            try:
-                votes["text"] = await self._text_candidates(
-                    request, scope, attempt, ctx
-                )
-                completed.append("text")
-            except TychoraError as error:
-                if (
-                    not self.owner.config.values.retrieval.allow_degraded
-                    or error.code
-                    not in {
-                        "CAPABILITY_MISSING",
-                        "INDEX_INCOMPLETE",
-                        "PROVIDER_FAILURE",
-                        "FORBIDDEN_SCOPE",
-                    }
-                ):
-                    raise
-                incomplete.append("text")
+            vector_calls.append(("text", text_candidates))
         if (
             (plan is None or plan.image)
             and _needs_visual(request)
             and self.owner.config.values.index.image.backend != "disabled"
         ):
-            try:
-                visual_votes = await self._visual_candidates(
-                    request, scope, attempt, ctx
-                )
-                linked = await self.owner.run_blocking(
-                    lambda: linked_visual_context(
-                        self.owner.db, visual_votes, view.source_unit_ids
-                    ),
-                    ctx,
-                )
-                votes["visual"] = (*visual_votes, *linked)
-                completed.append("visual")
-            except TychoraError as error:
+            vector_calls.append(("visual", retrieve_visual_channel))
+
+        vector_results = await _run_independent_channels(
+            tuple(call for _, call in vector_calls), ctx
+        )
+        for (channel, _), result in zip(vector_calls, vector_results, strict=True):
+            if isinstance(result, TychoraError):
                 if (
                     not self.owner.config.values.retrieval.allow_degraded
-                    or error.code
+                    or result.code
                     not in {
                         "CAPABILITY_MISSING",
                         "INDEX_INCOMPLETE",
@@ -705,8 +734,35 @@ class QueryService:
                         "FORBIDDEN_SCOPE",
                     }
                 ):
-                    raise
-                incomplete.append("visual")
+                    raise result
+                incomplete.append(channel)
+                continue
+            if channel == "visual":
+                try:
+                    linked = await self.owner.run_blocking(
+                        lambda selected=result: linked_visual_context(
+                            self.owner.db, selected, view.source_unit_ids
+                        ),
+                        ctx,
+                    )
+                except TychoraError as error:
+                    if (
+                        not self.owner.config.values.retrieval.allow_degraded
+                        or error.code
+                        not in {
+                            "CAPABILITY_MISSING",
+                            "INDEX_INCOMPLETE",
+                            "PROVIDER_FAILURE",
+                            "FORBIDDEN_SCOPE",
+                        }
+                    ):
+                        raise
+                    incomplete.append(channel)
+                    continue
+                votes[channel] = (*result, *linked)
+            else:
+                votes[channel] = result
+            completed.append(channel)
         fused = fuse(votes)
         graph_candidates = GraphCandidates()
         if (

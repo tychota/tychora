@@ -203,6 +203,10 @@ class RepositorySource(SourceBase):
         if any(
             "\\" in item
             or "\x00" in item
+            or "[^" in item
+            or "[[:" in item
+            or "[[." in item
+            or "[[=" in item
             or item.startswith("/")
             or ".." in item.split("/")
             or any(
@@ -212,7 +216,7 @@ class RepositorySource(SourceBase):
             for item in excludes
         ):
             raise ValueError(
-                "Repository excludes must be relative POSIX globs; ** must be a complete segment"
+                "Unsupported repository exclude: use relative POSIX globs; ** must be a complete segment, and Git-only bracket classes are unavailable"
             )
         return excludes
 

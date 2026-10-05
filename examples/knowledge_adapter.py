@@ -13,18 +13,11 @@ def retrieve_segments(kb: Tychora, question: str, *, limit: int = 8) -> list[dic
     for segment in result.segments[:limit]:
         asset_ids = sorted(
             {citation.asset_id for citation in segment.citations if citation.asset_id}
-            | {
-                visual.asset_id
-                for visual in result.visuals
-                if visual.source_id == segment.source_id
-                and visual.revision_id == segment.revision_id
-            }
         )
         derived = sorted(
             proxy.proxy_id
             for visual in result.visuals
-            if visual.source_id == segment.source_id
-            and visual.revision_id == segment.revision_id
+            if visual.asset_id in asset_ids
             for proxy in visual.proxies
             if proxy.origin == "derived"
         )

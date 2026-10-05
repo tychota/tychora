@@ -66,6 +66,7 @@ def map_document(export: JsonValue, original: ArtifactRef) -> MappedDocument:
     if visited != items.keys():
         raise ValueError("Docling items are disconnected from document hierarchy")
     units = []
+    emitted_refs: set[str] = set()
     headings: list[tuple[int, str]] = []
     diagnostics = []
     images = [f"#/pages/{page}" for page, value in pages.items() if value.get("image")]
@@ -205,7 +206,7 @@ def map_document(export: JsonValue, original: ArtifactRef) -> MappedDocument:
         parent = item.get("parent", {}).get("$ref")
         # Structural groups remain in raw JSON; canonical parent chooses closest
         # emitted ancestor, preserving complete raw parent references separately.
-        while parent and parent not in {u.native_ref for u in units}:
+        while parent and parent not in emitted_refs:
             parent = items[parent].get("parent", {}).get("$ref")
         units.append(
             DocumentUnit(
@@ -222,6 +223,7 @@ def map_document(export: JsonValue, original: ArtifactRef) -> MappedDocument:
                 cells=cells,
             )
         )
+        emitted_refs.add(ref)
         if item.get("image"):
             images.append(ref)
     return MappedDocument(

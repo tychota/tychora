@@ -63,13 +63,23 @@ class _SocketReader(RawIOBase):
         self.sock.settimeout(_remaining(self.ctx, self.deadline))
         count = self.sock.recv_into(buffer)
         _remaining(self.ctx, self.deadline)
-        if self.header_budget is not None:
-            self.header_budget -= count
-            if self.header_budget < 0:
+        return count
+
+
+class _HeaderBufferedReader(BufferedReader):
+    def __init__(self, reader: _SocketReader):
+        super().__init__(reader)
+        self._reader = reader
+
+    def readline(self, size: int | None = -1, /) -> bytes:
+        line = super().readline(size)
+        if self._reader.header_budget is not None:
+            self._reader.header_budget -= len(line)
+            if self._reader.header_budget < 0:
                 raise TychoraError(
                     "INVALID_REQUEST", "URL response headers exceed byte limit"
                 )
-        return count
+        return line
 
 
 class _ResponseSocket:
@@ -77,7 +87,7 @@ class _ResponseSocket:
         self.reader = reader
 
     def makefile(self, mode):
-        return BufferedReader(self.reader)
+        return _HeaderBufferedReader(self.reader)
 
 
 class UrlAcquisition:

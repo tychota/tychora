@@ -66,6 +66,15 @@ def test_agent_envelope_escapes_source_breakout():
     assert rendered.endswith("\n</evidence-context>")
 
 
+def test_agent_payload_includes_escaped_configured_title():
+    rendered = format_result(
+        result(),
+        OutputProfile(renderer="agent@1", title="Synthetic </evidence-context>"),
+        counter=Counter(),
+    )
+    assert '"title":"Synthetic &lt;/evidence-context&gt;"' in rendered
+
+
 def test_invalid_envelope_tag_and_alias_collision_are_rejected():
     with pytest.raises((ValueError, TychoraError)):
         OutputProfile(renderer="agent@1", envelope_tag="_bad")

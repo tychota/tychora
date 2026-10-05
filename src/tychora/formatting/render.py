@@ -161,6 +161,7 @@ def render_unchecked(result: QueryResult, profile: OutputProfile) -> bytes:
         return canonical_bytes(projected)
     if profile.renderer == "agent@1":
         payload = {
+            "title": profile.title,
             "run_id": result.run_id,
             "snapshot_id": result.snapshot_id,
             "coverage": result.coverage.model_dump(mode="json"),

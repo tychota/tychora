@@ -501,6 +501,31 @@ def test_headers_have_a_total_byte_bound(tmp_path, monkeypatch):
     assert exc.value.code == "INVALID_REQUEST"
 
 
+def test_header_budget_counts_consumed_bytes_with_fragmented_body_read_ahead(
+    tmp_path, monkeypatch
+):
+    prefix = b"HTTP/1.1 200 OK\r\nX-Filler: "
+    suffix = b"\r\nContent-Length: 10000\r\n\r\n"
+    header = prefix + b"a" * (63951 - len(prefix) - len(suffix)) + suffix
+    assert len(header) == 63951
+    body = b"b" * 10000
+    original = FakeSocket.recv_into
+
+    def fragmented(self, buffer):
+        return original(self, memoryview(buffer)[:6000])
+
+    monkeypatch.setattr(FakeSocket, "recv_into", fragmented)
+    acquirer, adapter, _, _ = network_acquirer(
+        tmp_path, monkeypatch, responses=[header + body]
+    )
+    with adapter:
+        captured = acquirer.capture(
+            item(type="url", url="https://example.com/doc"), ExecutionContext()
+        )
+    with acquirer.artifacts.open_verified(captured.original_ref) as stream:
+        assert stream.read() == body
+
+
 def test_cancelled_capture_returns_no_manifest(tmp_path):
     root, acquirer, _ = local_acquirer(tmp_path)
     (root / "main").write_bytes(b"one")

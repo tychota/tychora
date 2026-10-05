@@ -64,6 +64,39 @@ def test_mapping_preserves_item_domain_and_recorded_geometry_transform():
     assert unit.locators[0].char_end == 18
 
 
+def test_mapping_parent_resolution_reads_emitted_refs_linearly(monkeypatch):
+    from tychora.contracts.documents import DocumentUnit
+
+    export, original = mapping_case()
+    count = 200
+    export["body"]["children"] = [
+        {"$ref": f"#/texts/{index}"} for index in range(count)
+    ]
+    export["texts"] = [
+        {
+            "self_ref": f"#/texts/{index}",
+            "parent": {"$ref": "#/body"},
+            "children": [],
+            "label": "text",
+            "text": f"Synthetic {index}",
+        }
+        for index in range(count)
+    ]
+    reads = 0
+    original_getattribute = DocumentUnit.__getattribute__
+
+    def counted(self, name):
+        nonlocal reads
+        if name == "native_ref":
+            reads += 1
+        return original_getattribute(self, name)
+
+    monkeypatch.setattr(DocumentUnit, "__getattribute__", counted)
+    mapped = map_document(export, original)
+    assert len(mapped.units) == count
+    assert reads < count * 5
+
+
 def test_document_manifest_externalizes_raw_item_json():
     import json
 

@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from tychora.adapters.code.capture import parse_cache_key
 
 
@@ -70,6 +72,32 @@ def test_dirty_scope_ignores_excluded_only_changes(repo, capture):
     assert changed.original_sha == baseline.original_sha
     assert changed.dirty is False
     assert "private/generated.py" not in entries(changed)
+
+
+@pytest.mark.parametrize("pattern", ("[^a].txt", "[[:digit:]].txt"))
+def test_repository_rejects_bracket_patterns_with_different_git_semantics(
+    repo, capture, pattern
+):
+    with pytest.raises(ValueError, match="repository exclude"):
+        capture(repo, excludes=(pattern,))
+
+
+def test_supported_bracket_range_excludes_same_head_and_dirty_paths(repo, capture):
+    from tests.code.conftest import git
+
+    (repo / "a.txt").write_text("a")
+    (repo / "b.txt").write_text("b")
+    (repo / "c.txt").write_text("c")
+    git(repo, "add", "a.txt", "b.txt", "c.txt")
+    git(repo, "commit", "-qm", "add synthetic brackets")
+    baseline = capture(repo, excludes=("[a-b].txt",))
+    (repo / "a.txt").write_text("changed")
+    repeated = capture(repo, excludes=("[a-b].txt",))
+    assert tuple(entries(baseline)) == tuple(entries(repeated))
+    assert "a.txt" not in entries(repeated)
+    assert "b.txt" not in entries(repeated)
+    assert "c.txt" in entries(repeated)
+    assert repeated.dirty is False
 
 
 def test_exclude_star_is_segment_bounded_while_double_star_crosses_directories(
