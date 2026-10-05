@@ -35,7 +35,8 @@ def executable_integrity_corpus(tmp_path):
                     "collection_id": "default",
                     "kind": source.get("kind", "manual@1"),
                     "format": source.get("format", "text"),
-                    "text": source["text"],
+                    "text": "synthetic filler " * source.get("prefix_repeat", 0)
+                    + source["text"],
                     "metadata": {
                         "title": source["title"],
                         "publisher": "Synthetic fixture",

@@ -41,6 +41,12 @@ from tychora.ports.execution import ExecutionContext
 from .server import current_operation
 
 
+class MCPInspectionResult(InspectionResult):
+    """Inspection's binary payload encoded for MCP structured JSON."""
+
+    payload: str | None = None
+
+
 def _require(capability: str) -> None:
     _, scope = current_operation()
     if capability not in scope.capabilities:
@@ -58,7 +64,12 @@ def _wire_order(value):
 
 
 def _result(value, *, text: str | None = None, wrapped: bool = False) -> CallToolResult:
-    data = _wire_order(value.model_dump(mode="python"))
+    data = value.model_dump(mode="python")
+    if isinstance(value, InspectionResult) and value.payload is not None:
+        # The SDK validates Python output against the published schema before
+        # serializing CallToolResult, whose own bytes codec assumes UTF-8.
+        data["payload"] = value.model_dump(mode="json")["payload"]
+    data = _wire_order(data)
     return CallToolResult(
         content=[] if text is None else [TextContent(type="text", text=text)],
         structured_content={"result": data} if wrapped else data,
@@ -191,7 +202,7 @@ def register_tools(server: MCPServer) -> None:
         request: dict[str, Any],
     ) -> Annotated[
         CallToolResult,
-        InspectionResult
+        MCPInspectionResult
         | SourceRevisionPage
         | SourceExtractionPage
         | SourceChannelPage

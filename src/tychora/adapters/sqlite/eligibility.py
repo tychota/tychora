@@ -6,7 +6,17 @@ import json
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
+from tychora.configuration.global_facets import (
+    ROLE as GLOBAL_FACET_ROLE,
+)
+from tychora.configuration.global_facets import (
+    SOURCE_REF as GLOBAL_FACET_SOURCE_REF,
+)
+from tychora.configuration.global_facets import (
+    binding_bytes as global_facet_binding_bytes,
+)
 from tychora.contracts.artifacts import ArtifactRef
+from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.corpus import (
     AssetProxyRow,
     AssetRow,
@@ -229,7 +239,7 @@ def read_eligibility_facts(
             row = db.execute(
                 "SELECT r.kind_id,r.access_rank,r.allowed_uses_json,r.published_on,"
                 "r.effective_from,r.effective_until,c.collection_id,c.access_floor,"
-                "s.access_floor,s.withdrawn_at,c.workspace_id,k.definition_json,k.definition_hash,r.metadata_json "
+                "s.access_floor,s.withdrawn_at,c.workspace_id,k.definition_json,k.definition_hash,r.metadata_json,r.metadata_sha "
                 "FROM revisions r JOIN sources s USING(source_id) "
                 "JOIN collections c USING(collection_id) JOIN kinds k USING(kind_id) "
                 "JOIN extractions e USING(revision_id) "
@@ -250,11 +260,53 @@ def read_eligibility_facts(
                 )
             historical[row[0]] = {**envelope, "envelope_digest": recorded}
             kind_uses = frozenset(envelope["kind"].get("allowed_uses", ()))
-            metadata_scope = json.loads(row[13]).get("scope", {})
-            explicit_global = (
-                isinstance(metadata_scope, dict)
-                and metadata_scope.get("global") is True
+            metadata = FrozenJsonMap(json.loads(row[13]))
+            if digest("metadata-v1", metadata) != row[14]:
+                raise _integrity("Selected metadata differs from immutable digest")
+            global_facets, global_binding = global_facet_binding_bytes(
+                metadata,
+                member.revision_id,
+                row[14],
+                store.registry,
             )
+            marker_rows = db.execute(
+                "SELECT ra.source_ref,a.artifact_sha,a.size_bytes,a.media_type,a.storage_key "
+                "FROM revision_artifacts ra LEFT JOIN artifacts a USING(artifact_sha) "
+                "WHERE ra.revision_id=? AND ra.role=?",
+                (member.revision_id, GLOBAL_FACET_ROLE),
+            ).fetchall()
+            if global_binding is None:
+                if marker_rows:
+                    raise _integrity("Undeclared global facet binding exists")
+            else:
+                if (
+                    len(marker_rows) != 1
+                    or marker_rows[0][0] != GLOBAL_FACET_SOURCE_REF
+                    or marker_rows[0][1] is None
+                    or marker_rows[0][2] > 65536
+                ):
+                    raise TychoraError(
+                        "PROFILE_INCOMPATIBLE",
+                        "Retained global facet lacks a verified binding; publish a new edition",
+                    )
+                marker = marker_rows[0]
+                try:
+                    with store.artifacts.open_verified(
+                        ArtifactRef(
+                            sha256=marker[1],
+                            size_bytes=marker[2],
+                            media_type=marker[3],
+                            storage_key=marker[4],
+                        )
+                    ) as stream:
+                        if stream.read(65537) != global_binding:
+                            raise TychoraError(
+                                "PROFILE_INCOMPATIBLE", "Global facet semantics differ"
+                            )
+                except OSError as error:
+                    raise _integrity(
+                        "Global facet binding payload is unavailable"
+                    ) from error
             revision_facts.append(
                 RevisionFact(
                     source_id=member.source_id,
@@ -275,7 +327,7 @@ def read_eligibility_facts(
                     effective_until=row[5],
                     is_default=member.is_default,
                     kind_allowed_uses=kind_uses,
-                    global_scope=explicit_global,
+                    global_facets=global_facets,
                 )
             )
             for key, text, number, boolean in db.execute(

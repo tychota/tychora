@@ -41,6 +41,13 @@
       "anchor": "cobalt",
       "text": "The cobalt marker also appears in the excluded edition.",
       "case": false
+    },
+    {
+      "source_key": "long-end-match",
+      "title": "Long synthetic tail",
+      "anchor": "lateanchor",
+      "prefix_repeat": 2000,
+      "text": "The declared lateanchor closes this long synthetic note."
     }
   ]
 }

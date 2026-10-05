@@ -20,7 +20,7 @@ from .base import (
     Sha256,
 )
 from .errors import TychoraError
-from .identity import canonical_bytes, normalize_source_key
+from .identity import canonical_bytes, digest, normalize_source_key
 
 
 class RequestScope(Contract):
@@ -42,6 +42,32 @@ class RequestScope(Contract):
             capabilities=self.capabilities & other.capabilities,
             upload_providers=self.upload_providers & other.upload_providers,
         )
+
+
+def canonical_scope_projection(scope: RequestScope) -> dict[str, Any]:
+    """JSON projection with stable order for only the scope's unordered fields."""
+    projection = scope.model_dump(mode="json")
+    for field in ("collection_ids", "uses", "capabilities", "upload_providers"):
+        projection[field] = sorted(getattr(scope, field))
+    return projection
+
+
+def query_run_scope_digest(scope: RequestScope) -> str:
+    """Stable new-run identity for the scope's unordered grant sets."""
+    return digest("query-run-scope-v2", canonical_scope_projection(scope))
+
+
+def query_run_scope_matches(stored: str, scope: RequestScope) -> bool:
+    """Accept v2 or the caller's exact v1 projection, without permutation search."""
+    return stored in query_run_scope_digests(scope)
+
+
+def query_run_scope_digests(scope: RequestScope) -> tuple[str, str]:
+    """New stable proof and one exact historical projection for reads."""
+    return (
+        query_run_scope_digest(scope),
+        digest("query-run-scope-v1", scope.model_dump(mode="json")),
+    )
 
 
 type FilterValue = str | int | float | bool | None

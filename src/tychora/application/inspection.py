@@ -27,7 +27,11 @@ from tychora.contracts.operations import (
     RelationRequest,
     RelationResult,
 )
-from tychora.contracts.requests import QueryRequest, RequestScope
+from tychora.contracts.requests import (
+    QueryRequest,
+    RequestScope,
+    query_run_scope_matches,
+)
 from tychora.indexing.representations import prepare_extraction
 from tychora.ports.execution import ExecutionContext
 from tychora.retrieval.eligibility import EligibilityCompiler
@@ -174,7 +178,7 @@ class InspectionService:
         if (
             self.owner.scope.narrow(scope) != scope
             or row[0] != scope.principal_id
-            or row[1] != digest("query-run-scope-v1", scope.model_dump(mode="json"))
+            or not query_run_scope_matches(row[1], scope)
         ):
             _deny()
         return InspectionResult(

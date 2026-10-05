@@ -514,3 +514,94 @@ def test_cli_management_grant_and_revoke_receipts_are_explicit(tmp_path):
         assert json.loads(result.stdout)["upload_consent"][
             "owner_upload_providers"
         ] == (expected)
+
+
+@pytest.mark.asyncio
+async def test_retained_source_job_public_retry_after_revoke_never_dispatches(tmp_path):
+    import asyncio
+
+    from httpx import ASGITransport, AsyncClient
+
+    from tests.indexing.test_publication import RecordingCounter, RecordingEmbedder
+    from tychora.adapters.chroma.index import ChromaVectorIndex
+    from tychora.interfaces.http.app import create_app
+    from tychora.interfaces.http.auth import LocalAuth
+
+    _config(tmp_path)
+    settings = tmp_path / "workspace.toml"
+    settings.write_text(
+        settings.read_text().replace(
+            'model="voyage-context-4"\n', 'model="voyage-context-4"\ndimensions=2\n'
+        )
+    )
+    config = resolve_config(settings, "local", {})
+    workspace = tmp_path / "knowledge"
+    with Tychora.open(workspace, config=config, providers=ProviderBindings()) as kb:
+        kb.management.run(_request("grant"))
+
+    counter = RecordingCounter()
+    embedder = RecordingEmbedder(counter)
+
+    class FailOnce:
+        capabilities = embedder.capabilities
+
+        def __init__(self):
+            self.calls = 0
+
+        def embed_groups(self, groups, ctx):
+            self.calls += 1
+            if self.calls == 1:
+                raise TychoraError(
+                    "PROVIDER_FAILURE",
+                    "Synthetic transport interrupted",
+                    retryable=True,
+                )
+            return embedder.embed_groups(groups, ctx)
+
+    flaky = FailOnce()
+    bindings = ProviderBindings(
+        text_embedder=flaky,
+        text_counter=counter,
+        text_index=ChromaVectorIndex(tmp_path / "vectors"),
+    )
+    with Tychora.open(
+        workspace, config=config, providers=bindings, token_counter=counter
+    ) as kb:
+        job = kb.sources.add(
+            {
+                "type": "text",
+                "text": "Synthetic consent retry evidence.",
+                "format": "text",
+                "kind": "manual@1",
+                "source_key": "consent-retry",
+                "collection_id": "default",
+                "metadata": {
+                    "title": "Consent retry",
+                    "publisher": "Example Team",
+                    "edition": "1",
+                },
+            },
+            idempotency_key="retained-consent-retry",
+        )
+        failed = kb.jobs.wait(job.id)
+        assert failed.state == "failed" and failed.error_code == "PROVIDER_FAILURE"
+        assert failed.captured_inputs is not None and flaky.calls == 1
+        revoked = kb.management.run(_request("revoke"))
+        assert revoked.upload_consent.collection_upload_providers == ()
+        owner = kb._workspace.owner
+        app = create_app(
+            owner,
+            kb._workspace.services,
+            LocalAuth({"writer": owner.scope}, authority="127.0.0.1:8765"),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://127.0.0.1:8765",
+            headers={"Authorization": "Bearer writer"},
+        ) as client:
+            response = await client.post(f"/v1/jobs/{job.id}/retry")
+        assert response.status_code == 202, response.text
+        retried = await asyncio.to_thread(kb.jobs.wait, job.id)
+        assert retried.state == "failed"
+        assert retried.error_code in {"SCOPE_CHANGED", "FORBIDDEN_SCOPE"}
+        assert flaky.calls == 1

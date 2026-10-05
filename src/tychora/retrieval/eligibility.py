@@ -42,7 +42,7 @@ class RevisionFact:
     effective_until: str | None
     is_default: bool
     kind_allowed_uses: frozenset[str] | None = None
-    global_scope: bool = False
+    global_facets: frozenset[str] = frozenset()
 
 
 def _parsed_date(value: str | None) -> date | None:
@@ -131,6 +131,7 @@ from tychora.contracts.requests import (
     QueryRequest,
     RangeFilter,
     RequestScope,
+    canonical_scope_projection,
 )
 from tychora.ports.execution import ExecutionContext
 
@@ -211,7 +212,7 @@ def _filter_matches(
     child_values: dict[str, object],
     *,
     include_global: bool,
-    explicit_global: bool,
+    global_facets: frozenset[str],
 ) -> bool:
     if isinstance(expr, AndFilter):
         return all(
@@ -221,7 +222,7 @@ def _filter_matches(
                 source_values,
                 child_values,
                 include_global=include_global,
-                explicit_global=explicit_global,
+                global_facets=global_facets,
             )
             for child in expr.children
         )
@@ -233,13 +234,21 @@ def _filter_matches(
                 source_values,
                 child_values,
                 include_global=include_global,
-                explicit_global=explicit_global,
+                global_facets=global_facets,
             )
             for child in expr.children
         )
+    facet = registry.facet(expr.field)
+    facet_key = facet["key"]
+    assert isinstance(facet_key, str)
+    explicit_global = facet_key in global_facets
     source = cast(JsonValue, source_values.get(expr.field))
     child = cast(JsonValue, child_values.get(expr.field))
-    if source is None and child is not None:
+    if (
+        source is None
+        and child is not None
+        and not str(facet["source_binding"]).startswith("metadata.")
+    ):
         source, child = child, None
     if isinstance(expr, EqFilter):
         return registry.facet_matches(
@@ -487,7 +496,7 @@ class EligibilityCompiler:
                     revision_facets.get(item.revision_id, {}),
                     dict(item.facets),
                     include_global=request.include_global,
-                    explicit_global=revisions_by_id[item.revision_id].global_scope,
+                    global_facets=revisions_by_id[item.revision_id].global_facets,
                 )
             )
         )
@@ -537,7 +546,7 @@ class EligibilityCompiler:
                     revision_facets.get(item.revision_id, {}),
                     dict(item.facets),
                     include_global=request.include_global,
-                    explicit_global=revisions_by_id[item.revision_id].global_scope,
+                    global_facets=revisions_by_id[item.revision_id].global_facets,
                 )
             )
 
@@ -657,7 +666,9 @@ class EligibilityCompiler:
         view = EligibilityView(
             snapshot_id=snapshot.snapshot_id,
             policy_epoch=facts.policy_epoch,
-            scope_digest=digest("eligibility-scope-v1", scope.model_dump(mode="json")),
+            scope_digest=digest(
+                "eligibility-scope-v2", canonical_scope_projection(scope)
+            ),
             eligibility_policy_digest=digest(
                 "eligibility-policy-v1",
                 config.eligibility_fingerprint,

@@ -13,8 +13,20 @@ def test_scenario_catalog_is_explicitly_unqualified_and_not_gold():
     catalog = json.loads((fixture_dir / "scenario-catalog.json").read_text())
     assert catalog["format"] == "tychora-synthetic-scenarios@1"
     assert catalog["registerable_gold"] is False
-    assert catalog["qualification"] == "unqualified"
+    assert catalog["qualification"] == "partial"
     assert len(catalog["scenarios"]) == 13
+    assert {
+        scenario["id"]
+        for scenario in catalog["scenarios"]
+        if "mechanical_evidence" in scenario
+    } == {
+        "exact-id",
+        "historic-cutoff",
+        "related-edition",
+        "mode-global",
+        "unknown-review",
+        "long-end-match",
+    }
     assert not (fixture_dir / "manifest.json").exists()
     assert not (fixture_dir / "cases.jsonl").exists()
 
@@ -24,7 +36,7 @@ def test_load_versioned_immutable_dataset(executable_integrity_corpus):
     dataset = load_dataset(gold)
     assert dataset.dataset_id == "synthetic-executable-v1"
     assert {case.split for case in dataset.cases} == {"test"}
-    assert len(dataset.cases) == 5
+    assert len(dataset.cases) == 6
     with pytest.raises((AttributeError, TypeError, ValueError)):
         dataset.cases[0].family_key = "other"
 

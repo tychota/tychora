@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from tychora import Tychora
 from tychora.contracts.identity import canonical_bytes
-from tychora.contracts.operations import InspectRequest
+from tychora.contracts.operations import InspectionResult, InspectRequest
 from tychora.contracts.requests import RequestScope
 from tychora.interfaces.http.app import create_app
 from tychora.interfaces.http.auth import LocalAuth
@@ -87,6 +87,29 @@ class Counter:
 
     def count(self, text: str) -> int:
         return len(text)
+
+
+def test_mcp_inspection_binary_payload_uses_contract_base64_json():
+    payload = b"%PDF-1.7\x00\xff\xfe"
+    result = InspectionResult(
+        subject="revisions",
+        id="synthetic-revision",
+        payload=payload,
+        media_type="application/pdf",
+    )
+    block = _result(result, wrapped=True)
+    wire = block.model_dump_json(by_alias=True, exclude_unset=True)
+    assert (
+        block.structured_content["result"]["payload"]
+        == result.model_dump(mode="json")["payload"]
+    )
+    assert (
+        InspectionResult.model_validate_json(
+            canonical_bytes(block.structured_content["result"])
+        ).payload
+        == payload
+    )
+    assert "payload" in wire
 
 
 @pytest.mark.asyncio
@@ -407,10 +430,9 @@ async def test_mounted_http_reader_auth_and_sdk_client(tmp_path):
                         )
                         assert not original.is_error, original.content
 
-                        def enlarge_original():
-                            payload = b"x" * (4 * 1024 * 1024 + 256)
+                        def replace_original(payload, media_type):
                             ref = owner.artifacts.put_stream(
-                                BytesIO(payload), "text/plain"
+                                BytesIO(payload), media_type
                             )
                             owner.db.execute(
                                 "INSERT INTO artifacts(artifact_sha,size_bytes,media_type,storage_key,created_at) "
@@ -443,7 +465,63 @@ async def test_mounted_http_reader_auth_and_sdk_client(tmp_path):
                                 (ref.sha256, ref.sha256, old_sha),
                             )
 
-                        await owner.run_blocking(enlarge_original, ExecutionContext())
+                        binary = b"%PDF-1.7\x00\xff\xfe synthetic original"
+                        await owner.run_blocking(
+                            lambda: replace_original(binary, "application/pdf"),
+                            ExecutionContext(),
+                        )
+                        public_binary = await asyncio.to_thread(
+                            kb.inspect,
+                            {
+                                "subject": "revisions",
+                                "id": revision_id,
+                                "original": True,
+                            },
+                        )
+                        assert public_binary.payload == binary
+                        http_binary = await writing_http.post(
+                            f"http://{authority}/v1/inspect",
+                            json={
+                                "subject": "revisions",
+                                "id": revision_id,
+                                "original": True,
+                            },
+                        )
+                        assert http_binary.status_code == 200, http_binary.text
+                        assert InspectRequest.model_validate_json(
+                            canonical_bytes(
+                                {
+                                    "subject": "revisions",
+                                    "id": revision_id,
+                                    "original": True,
+                                }
+                            )
+                        ).original
+                        assert (
+                            http_binary.json()["payload"]
+                            == public_binary.model_dump(mode="json")["payload"]
+                        )
+                        mcp_binary = await writer.call_tool(
+                            "inspect",
+                            {
+                                "request": {
+                                    "subject": "revisions",
+                                    "id": revision_id,
+                                    "original": True,
+                                }
+                            },
+                        )
+                        assert not mcp_binary.is_error, mcp_binary.content
+                        assert (
+                            mcp_binary.structured_content["result"]["payload"]
+                            == http_binary.json()["payload"]
+                        )
+                        await owner.run_blocking(
+                            lambda: replace_original(
+                                b"x" * (4 * 1024 * 1024 + 256), "text/plain"
+                            ),
+                            ExecutionContext(),
+                        )
                         direct_original = (
                             await kb._workspace.services.inspection.inspect(
                                 InspectRequest(

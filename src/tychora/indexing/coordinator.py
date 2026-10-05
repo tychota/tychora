@@ -894,24 +894,38 @@ class ProjectionCoordinator:
         current = (
             self.store.resolve_snapshot(base_snapshot_id) if base_snapshot_id else None
         )
-        members = (
-            {
-                member.source_id: member
-                for member in current.members
-                if self.store.db.execute(
+        members: list[SnapshotMember] = []
+        if current is not None:
+            for member in current.members:
+                if not self.store.db.execute(
                     "SELECT 1 FROM sources WHERE source_id=? AND withdrawn_at IS NULL",
                     (member.source_id,),
+                ).fetchone():
+                    continue
+                if member.source_id != bundle.source.source_id:
+                    members.append(member)
+                    continue
+                retained_edition = self.store.db.execute(
+                    "SELECT edition_key FROM revisions WHERE revision_id=?",
+                    (member.revision_id,),
                 ).fetchone()
-            }
-            if current
-            else {}
+                if retained_edition is None:
+                    _fail("Retained edition is missing before publication")
+                if retained_edition[0] != bundle.revision.edition_key:
+                    members.append(member.model_copy(update={"is_default": False}))
+        members.append(
+            SnapshotMember(
+                source_id=bundle.source.source_id,
+                revision_id=bundle.revision.revision_id,
+                extraction_id=bundle.extraction.extraction_id,
+            )
         )
-        members[bundle.source.source_id] = SnapshotMember(
-            source_id=bundle.source.source_id,
-            revision_id=bundle.revision.revision_id,
-            extraction_id=bundle.extraction.extraction_id,
+        selected = tuple(
+            sorted(
+                members,
+                key=lambda item: (item.source_id, item.revision_id, item.extraction_id),
+            )
         )
-        selected = tuple(sorted(members.values(), key=lambda item: item.source_id))
         old_slots = {slot.slot: slot for slot in current.slots} if current else {}
         old_lexical = old_slots.get("lexical")
         old_lexical_sha = (

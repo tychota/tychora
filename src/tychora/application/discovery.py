@@ -32,7 +32,11 @@ from tychora.contracts.operations import (
     SourceSelectionCandidate,
     SourceSelectionPage,
 )
-from tychora.contracts.requests import RequestScope
+from tychora.contracts.requests import (
+    RequestScope,
+    canonical_scope_projection,
+    query_run_scope_digests,
+)
 from tychora.ports.execution import ExecutionContext
 
 if TYPE_CHECKING:
@@ -171,7 +175,7 @@ def _scoped_cursor(
     binding = [
         subject,
         key,
-        digest("source-cursor-scope-v1", scope.model_dump(mode="json")),
+        digest("source-cursor-scope-v2", canonical_scope_projection(scope)),
         limit,
     ]
     mac = hmac.new(
@@ -200,7 +204,7 @@ def _scoped_after(
             or value[0] != subject
             or not isinstance(value[1], str)
             or value[2]
-            != digest("source-cursor-scope-v1", scope.model_dump(mode="json"))
+            != digest("source-cursor-scope-v2", canonical_scope_projection(scope))
             or value[3] != limit
             or not isinstance(value[4], str)
         ):
@@ -923,21 +927,36 @@ class DiscoveryService:
         )
         return definitions, next_cursor
 
-    def _run_definitions(self, scope: RequestScope) -> dict[str, FrozenJsonMap]:
+    def _run_definitions(
+        self,
+        scope: RequestScope,
+        *,
+        after: str = "",
+        limit: int = 100,
+        run_id: str | None = None,
+    ) -> tuple[dict[str, FrozenJsonMap], str | None]:
         if self.owner is None or self.owner.scope.narrow(scope) != scope:
-            return {}
+            return {}, None
         owner = self.owner
+        v2_digest, exact_v1_digest = query_run_scope_digests(scope)
 
-        def read() -> dict[str, FrozenJsonMap]:
+        def read():
+            selection = "run_id=?" if run_id is not None else "run_id>?"
             rows = owner.db.execute(
                 "SELECT run_id,state,created_at,snapshot_id,retained_payload_sha "
-                "FROM query_runs WHERE principal_id=? AND scope_digest=? ORDER BY run_id",
+                "FROM query_runs WHERE principal_id=? AND scope_digest IN (?,?) AND "
+                + selection
+                + " ORDER BY run_id LIMIT ?",
                 (
                     scope.principal_id,
-                    digest("query-run-scope-v1", scope.model_dump(mode="json")),
+                    v2_digest,
+                    exact_v1_digest,
+                    run_id if run_id is not None else after,
+                    1 if run_id is not None else limit + 1,
                 ),
-            )
-            return {
+            ).fetchall()
+            page = rows if run_id is not None else rows[:limit]
+            definitions = {
                 run_id: FrozenJsonMap(
                     {
                         "state": state,
@@ -947,8 +966,14 @@ class DiscoveryService:
                         "request_retained": retained_sha is not None,
                     }
                 )
-                for run_id, state, created_at, snapshot_id, retained_sha in rows
+                for run_id, state, created_at, snapshot_id, retained_sha in page
             }
+            next_cursor = (
+                _cursor("runs", page[-1][0])
+                if run_id is None and len(rows) > limit and page
+                else None
+            )
+            return definitions, next_cursor
 
         return owner.run_blocking_sync(read, ExecutionContext())
 
@@ -1054,7 +1079,7 @@ class DiscoveryService:
         if subject == "sources":
             definitions, _ = self._source_definitions(scope, source_id=item_id, limit=1)
         elif subject == "runs":
-            definitions = self._run_definitions(scope)
+            definitions, _ = self._run_definitions(scope, run_id=item_id, limit=1)
         else:
             definitions = self._definitions(subject)
         value = definitions.get(item_id)
@@ -1110,9 +1135,29 @@ class DiscoveryService:
                 ),
                 next_cursor=next_cursor,
             )
-        definitions = self._definitions(subject)
         if subject == "runs":
-            definitions = self._run_definitions(scope)
+            definitions, next_cursor = self._run_definitions(
+                scope,
+                after=_after(request.cursor, "runs") or "",
+                limit=request.limit,
+            )
+            return DiscoveryResult(
+                subject="runs",
+                definitions=tuple(
+                    DefinitionEntry(
+                        id=key,
+                        version=str(value.get("schema_version", 1)),
+                        label=str(value.get("label", key)),
+                        definition=value,
+                        schema_digest=digest(
+                            "discovery-definition-v1", "runs", key, value
+                        ),
+                    )
+                    for key, value in definitions.items()
+                ),
+                next_cursor=next_cursor,
+            )
+        definitions = self._definitions(subject)
         counts = self._counts(subject, scope)
         if subject == "kinds":
             definitions = {

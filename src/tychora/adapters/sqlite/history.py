@@ -12,8 +12,13 @@ from tychora.adapters.files.references import MAX_MANIFEST_BYTES, required_refs
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import Contract, NonNegativeInt, Sha256
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.identity import canonical_bytes, digest
-from tychora.contracts.requests import QueryRequest, RequestScope
+from tychora.contracts.identity import canonical_bytes
+from tychora.contracts.requests import (
+    QueryRequest,
+    RequestScope,
+    query_run_scope_digest,
+    query_run_scope_matches,
+)
 from tychora.ports.artifacts import Artifacts
 from tychora.retrieval.response import DeliveredResult
 
@@ -77,9 +82,7 @@ class HistoryRepository:
                     "run_id": run_id,
                     "request": request.model_dump(mode="json"),
                     "principal_id": scope.principal_id,
-                    "scope_digest": digest(
-                        "query-run-scope-v1", scope.model_dump(mode="json")
-                    ),
+                    "scope_digest": query_run_scope_digest(scope),
                     "snapshot_id": snapshot_id,
                     "config_sha": config_sha,
                     "projection_fingerprint": projection_fingerprint,
@@ -174,6 +177,8 @@ class HistoryRepository:
                 or data.get("snapshot_id") != query.snapshot_id
                 or data.get("config_sha") != metrics.config_sha
                 or data.get("principal_id") != query.applied_scope.principal_id
+                or data.get("scope_digest")
+                != query_run_scope_digest(query.applied_scope)
             ):
                 raise TychoraError("INTEGRITY_ERROR", "Retained query binding differs.")
         ids = {
@@ -197,9 +202,7 @@ class HistoryRepository:
                 query.run_id,
                 query.snapshot_id,
                 query.applied_scope.principal_id,
-                digest(
-                    "query-run-scope-v1", query.applied_scope.model_dump(mode="json")
-                ),
+                query_run_scope_digest(query.applied_scope),
                 metrics.policy_epoch,
                 metrics.lexical_statistics_epoch,
                 metrics.config_sha,
@@ -240,7 +243,7 @@ class HistoryRepository:
         providers_available: bool | Callable[[QueryRequest], bool] = False,
     ) -> QueryRequest:
         row = self._db.execute(
-            "SELECT retained_payload_sha FROM query_runs "
+            "SELECT retained_payload_sha,scope_digest FROM query_runs "
             "WHERE run_id=? AND expires_at>=? AND state!='superseded'",
             (run_id, self._now().isoformat()),
         ).fetchone()
@@ -273,8 +276,8 @@ class HistoryRepository:
             or provider_fingerprint is None
             or data.get("run_id") != run_id
             or data.get("principal_id") != scope.principal_id
-            or data.get("scope_digest")
-            != digest("query-run-scope-v1", scope.model_dump(mode="json"))
+            or not query_run_scope_matches(row[1], scope)
+            or data.get("scope_digest") != row[1]
             or data.get("snapshot_id") != snapshot_id
             or data.get("config_sha") != config_sha
             or data.get("projection_fingerprint") != projection_fingerprint

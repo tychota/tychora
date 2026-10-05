@@ -131,6 +131,31 @@ def _selected(
     return tuple(selected)
 
 
+class _SelectorResolver:
+    """Memoize validated selector owners for one composition and bundle version."""
+
+    def __init__(self, parsed: ExtractionArtifact) -> None:
+        self.parsed = parsed
+        self._bundle: ExtractionBundle | None = None
+        self._cache: dict[SourceSelector, tuple[str, ...]] = {}
+        self._retained_ids = 0
+
+    def selected(
+        self, selector: SourceSelector, bundle: ExtractionBundle
+    ) -> tuple[str, ...]:
+        if self._bundle is not bundle:
+            self._bundle = bundle
+            self._cache.clear()
+            self._retained_ids = 0
+        cached = self._cache.get(selector)
+        if cached is None:
+            cached = _selected(selector, self.parsed, bundle)
+            if len(self._cache) < 256 and self._retained_ids + len(cached) <= 20_000:
+                self._cache[selector] = cached
+                self._retained_ids += len(cached)
+        return cached
+
+
 def _bundle_projection(bundle: ExtractionBundle) -> dict[str, Any]:
     data = bundle.model_dump(mode="json")
     for proxy in data["proxies"]:
@@ -234,6 +259,7 @@ def _verified_region_context_ids(
     proxy: PlannedProxy,
     parsed: ExtractionArtifact,
     final: ExtractionBundle,
+    resolver: _SelectorResolver,
 ) -> tuple[str, ...]:
     if not proxy.source_context:
         return ()
@@ -245,7 +271,7 @@ def _verified_region_context_ids(
             {
                 unit_id
                 for selected in proxy.source_context
-                for unit_id in _selected(selected.selector, parsed, final)
+                for unit_id in resolver.selected(selected.selector, final)
             }
         )
     )
@@ -292,6 +318,7 @@ def build_composed_document(
             )
         )
         bundle, fragments = source_views(parsed, context, base)
+    resolver = _SelectorResolver(parsed)
     payloads: dict[str, bytes] = {}
     refs: dict[str, ArtifactRef] = {}
     budget = _Budget()
@@ -414,7 +441,7 @@ def build_composed_document(
             sorted(
                 {
                     owner_id,
-                    *_verified_region_context_ids(proxy, parsed, bundle),
+                    *_verified_region_context_ids(proxy, parsed, bundle, resolver),
                 }
             )
         )
@@ -473,7 +500,7 @@ def build_composed_document(
                     {
                         uid
                         for selector in proxy.dependencies
-                        for uid in _selected(selector, parsed, bundle)
+                        for uid in resolver.selected(selector, bundle)
                     }
                 )
             )

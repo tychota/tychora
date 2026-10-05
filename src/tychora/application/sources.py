@@ -6,7 +6,9 @@ import asyncio
 import json
 import os
 from collections.abc import Callable, Mapping
+from datetime import date
 from functools import partial
+from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, cast
@@ -23,9 +25,29 @@ from tychora.adapters.code.typescript import TypeScriptAdapter
 from tychora.adapters.docling.parser import DoclingParser
 from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.adapters.sqlite.publication import PublicationReceipts
+from tychora.configuration.global_facets import (
+    ROLE as GLOBAL_FACET_ROLE,
+)
+from tychora.configuration.global_facets import (
+    SOURCE_REF as GLOBAL_FACET_SOURCE_REF,
+)
+from tychora.configuration.global_facets import (
+    binding_bytes as global_facet_binding_bytes,
+)
+from tychora.configuration.global_facets import (
+    normalized_metadata,
+)
+from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.code import CapturedSyntax, CodeRegistration
 from tychora.contracts.composition import DocumentCompositionPlan, VisionCapabilityGap
-from tychora.contracts.corpus import CollectionRow, RevisionRow, SourceRow, WorkspaceRow
+from tychora.contracts.corpus import (
+    CollectionRow,
+    FacetRow,
+    RevisionArtifactRow,
+    RevisionRow,
+    SourceRow,
+    WorkspaceRow,
+)
 from tychora.contracts.documents import DocumentRegistration
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.extraction import ExtractionArtifact, NativeRegistration
@@ -484,13 +506,18 @@ class SourceService:
         ctx = context
         await self.owner.run_blocking(lambda: jobs.start(handle.id), ctx)
         try:
+            # Keep the accepted request digest in caller form while capture and
+            # registration share the canonical immutable facet binding.
+            captured_source = await self.owner.run_blocking(
+                lambda: self._canonical_source(source), ctx
+            )
             await self.owner.run_blocking(lambda: jobs.stage(handle.id, "acquire"), ctx)
             captured_ref = await self.owner.run_blocking(
                 lambda: jobs.get(handle.id).captured_inputs, ctx
             )
             if captured_ref is None:
                 capture = await self.owner.run_blocking(
-                    lambda: acquirer.capture(source, ctx), ctx
+                    lambda: acquirer.capture(captured_source, ctx), ctx
                 )
                 await self.owner.run_blocking(
                     lambda: jobs.capture(handle.id, capture.manifest_ref), ctx
@@ -501,7 +528,13 @@ class SourceService:
                 )
             await self.owner.run_blocking(lambda: jobs.stage(handle.id, "parse"), ctx)
             registration = await self.owner.run_blocking(
-                lambda: self._registration(source, capture, granted), ctx
+                lambda: self._registration(
+                    captured_source,
+                    capture,
+                    granted,
+                    original_metadata=source.root.metadata,
+                ),
+                ctx,
             )
             base = await self.owner.run_blocking(
                 self.owner.store.active_snapshot_id, ctx
@@ -560,6 +593,9 @@ class SourceService:
                 bundle = await self._extract(
                     registration, capture, ctx, source, granted
                 )
+            bundle = await self.owner.run_blocking(
+                lambda: self._bind_source_metadata(bundle), ctx
+            )
             previous_groups = None
             previous_records = None
             for _attempt in range(3):
@@ -911,8 +947,23 @@ class SourceService:
             return capture
         return None
 
+    def _canonical_source(self, source: SourceInput) -> SourceInput:
+        metadata = source.root.metadata
+        kind = source.root.kind
+        self.owner.store.registry.validate_metadata(kind, metadata)
+        canonical = normalized_metadata(metadata, self.owner.store.registry)
+        self.owner.store.registry.validate_metadata(kind, canonical)
+        if canonical == metadata:
+            return source
+        return SourceInput(source.root.model_copy(update={"metadata": canonical}))
+
     def _registration(
-        self, source: SourceInput, capture: CaptureManifest, scope: RequestScope
+        self,
+        source: SourceInput,
+        capture: CaptureManifest,
+        scope: RequestScope,
+        *,
+        original_metadata: FrozenJsonMap,
     ) -> NativeRegistration | DocumentRegistration | CodeRegistration:
         value = source.root
         cid = str(value.collection_id)
@@ -970,12 +1021,149 @@ class SourceService:
             )
         metadata = value.metadata
         kind = value.kind
-        self.owner.store.registry.validate_metadata(kind, metadata)
+        if capture.source.get("metadata") != metadata:
+            raise TychoraError(
+                "PROFILE_INCOMPATIBLE",
+                "Retained capture lacks a canonical global facet binding; "
+                "publish a new edition",
+            )
+
+        def retained_date(key: str) -> str | None:
+            selected = metadata.get(key)
+            if selected is None:
+                return None
+            if not isinstance(selected, str):
+                raise TychoraError("INVALID_REQUEST", f"{key} must be an ISO date")
+            try:
+                if date.fromisoformat(selected).isoformat() != selected:
+                    raise ValueError("Non-canonical date")
+            except ValueError as error:
+                raise TychoraError(
+                    "INVALID_REQUEST", f"{key} must be a strict ISO date"
+                ) from error
+            return selected
+
+        published_on = retained_date("publication_date")
+        effective_from = retained_date("effective_start")
+        effective_until = retained_date("effective_end")
+        if (
+            effective_from is not None
+            and effective_until is not None
+            and effective_from >= effective_until
+        ):
+            raise TychoraError(
+                "INVALID_REQUEST", "Effective interval must be half-open and nonempty"
+            )
+        edition = metadata.get("edition", "1")
+        approval = metadata.get("approval", "unreviewed")
+        if not isinstance(edition, str) or not edition:
+            raise TychoraError("INVALID_REQUEST", "Edition must be nonempty")
+        if not isinstance(approval, str) or approval not in {
+            "unreviewed",
+            "accepted",
+            "rejected",
+        }:
+            raise TychoraError("INVALID_REQUEST", "Approval state is invalid")
         msha = digest("metadata-v1", metadata)
-        rid = revision_id(sid, capture.original_sha, "1", msha)
+        rid = revision_id(sid, capture.original_sha, edition, msha)
+        if original_metadata != metadata:
+            old_raw_id = revision_id(
+                sid,
+                capture.original_sha,
+                edition,
+                digest("metadata-v1", original_metadata),
+            )
+            if self.owner.db.execute(
+                "SELECT 1 FROM revisions WHERE revision_id=?", (old_raw_id,)
+            ).fetchone():
+                raise TychoraError(
+                    "PROFILE_INCOMPATIBLE",
+                    "Historical global facet alias lacks a verified binding; "
+                    "publish a new edition or changed metadata",
+                )
         old_revision = self.owner.db.execute(
-            "SELECT captured_at FROM revisions WHERE revision_id=?", (rid,)
+            "SELECT captured_at,edition_key,published_on,effective_from,"
+            "effective_until,declared_review_state FROM revisions WHERE revision_id=?",
+            (rid,),
         ).fetchone()
+        if old_revision is not None and old_revision[1:] != (
+            edition,
+            published_on,
+            effective_from,
+            effective_until,
+            approval,
+        ):
+            raise TychoraError(
+                "IDEMPOTENCY_CONFLICT",
+                "Retained revision predates metadata projection; publish a new "
+                "edition or changed metadata instead of rewriting its identity",
+            )
+        projected_facets = self._source_metadata_facets(metadata, rid)
+        if old_revision is not None and projected_facets:
+            retained_facets = {
+                (key, ordinal): (text, number, boolean)
+                for key, ordinal, text, number, boolean in self.owner.db.execute(
+                    "SELECT facet_key,ordinal,text_value,number_value,boolean_value "
+                    "FROM facet_values WHERE revision_id=? AND unit_id IS NULL",
+                    (rid,),
+                )
+            }
+            for facet in projected_facets:
+                definition = self.owner.store.registry.facet(facet.facet_key)
+                value_type = definition["value_type"]
+                expected = (
+                    facet.value
+                    if value_type in ("string", "date", "date-time")
+                    else None,
+                    facet.value if value_type in ("integer", "number") else None,
+                    int(facet.value) if value_type == "boolean" else None,
+                )
+                if retained_facets.get((facet.facet_key, facet.ordinal)) != expected:
+                    raise TychoraError(
+                        "PROFILE_INCOMPATIBLE",
+                        "Retained revision lacks its registered metadata facet; "
+                        "publish a new edition or changed metadata",
+                    )
+        _, global_binding = global_facet_binding_bytes(
+            metadata, rid, msha, self.owner.store.registry
+        )
+        if old_revision is not None and global_binding is not None:
+            markers = self.owner.db.execute(
+                "SELECT ra.source_ref,a.artifact_sha,a.size_bytes,a.media_type,a.storage_key "
+                "FROM revision_artifacts ra LEFT JOIN artifacts a USING(artifact_sha) "
+                "WHERE ra.revision_id=? AND ra.role=?",
+                (rid, GLOBAL_FACET_ROLE),
+            ).fetchall()
+            if (
+                len(markers) != 1
+                or markers[0][0] != GLOBAL_FACET_SOURCE_REF
+                or markers[0][1] != sha256(global_binding).hexdigest()
+                or markers[0][2] > 65536
+            ):
+                raise TychoraError(
+                    "PROFILE_INCOMPATIBLE",
+                    "Retained global facet lacks a verified binding; publish a new edition",
+                )
+            marker = markers[0]
+            from tychora.contracts.artifacts import ArtifactRef
+
+            try:
+                with self.owner.artifacts.open_verified(
+                    ArtifactRef(
+                        sha256=marker[1],
+                        size_bytes=marker[2],
+                        media_type=marker[3],
+                        storage_key=marker[4],
+                    )
+                ) as stream:
+                    if stream.read(65537) != global_binding:
+                        raise TychoraError(
+                            "PROFILE_INCOMPATIBLE", "Global facet semantics differ"
+                        )
+            except OSError as error:
+                raise TychoraError(
+                    "PROFILE_INCOMPATIBLE", "Global facet binding is unavailable"
+                ) from error
         definition = cast(Mapping[str, object], self.owner.store.registry.kinds[kind])
         allowed = tuple(
             sorted(
@@ -989,9 +1177,13 @@ class SourceService:
             source_id=sid,
             kind_id=kind,
             original_sha=capture.original_sha,
-            edition_key="1",
+            edition_key=edition,
             metadata_sha=msha,
             title=str(metadata["title"]),
+            published_on=published_on,
+            effective_from=effective_from,
+            effective_until=effective_until,
+            declared_review_state=approval,
             metadata_json=metadata,
             captured_at=old_revision[0]
             if old_revision
@@ -1036,6 +1228,100 @@ class SourceService:
             )
         raise TychoraError(
             "CAPABILITY_MISSING", "Source format has no qualified parser"
+        )
+
+    def _source_metadata_facets(
+        self, metadata: FrozenJsonMap, revision_id: str
+    ) -> tuple[FacetRow, ...]:
+        """Read only registered scalar metadata paths, retaining their source scope."""
+        projected: list[FacetRow] = []
+        for key in self.owner.store.registry.facets:
+            definition = self.owner.store.registry.facet(key)
+            binding = definition["source_binding"]
+            if not isinstance(binding, str) or not binding.startswith("metadata."):
+                continue
+            value: object = metadata
+            for part in binding.split(".")[1:]:
+                if not isinstance(value, Mapping):
+                    value = None
+                    break
+                value = value.get(part)
+            if value is None:
+                continue
+            if not isinstance(value, (str, int, float, bool)):
+                raise TychoraError(
+                    "INVALID_REQUEST", "Registered metadata facet requires a scalar"
+                )
+            self.owner.store.registry.facet_matches(key, value, value)
+            projected.append(
+                FacetRow(
+                    revision_id=revision_id,
+                    facet_key=key,
+                    value=value,
+                )
+            )
+        return tuple(projected)
+
+    def _bind_source_metadata(self, bundle: ExtractionBundle) -> ExtractionBundle:
+        """Bind registered metadata values and explicit global permission."""
+        projected = self._source_metadata_facets(
+            bundle.revision.metadata_json, bundle.revision.revision_id
+        )
+        existing = {
+            (row.facet_key, row.ordinal): row
+            for row in bundle.facets
+            if row.revision_id == bundle.revision.revision_id
+        }
+        added = []
+        for row in projected:
+            retained = existing.get((row.facet_key, row.ordinal))
+            if retained is not None and retained != row:
+                raise TychoraError(
+                    "PROFILE_INCOMPATIBLE",
+                    "Retained revision facet binding differs; publish a new edition",
+                )
+            if retained is None:
+                added.append(row)
+        if added:
+            bundle = bundle.model_copy(
+                update={
+                    "facets": (*bundle.facets, *added),
+                }
+            )
+        return self._bind_global_facets(bundle)
+
+    def _bind_global_facets(self, bundle: ExtractionBundle) -> ExtractionBundle:
+        _, payload = global_facet_binding_bytes(
+            bundle.revision.metadata_json,
+            bundle.revision.revision_id,
+            bundle.revision.metadata_sha,
+            self.owner.store.registry,
+        )
+        if payload is None:
+            return bundle
+        ref = self.owner.artifacts.put_stream(BytesIO(payload), "application/json")
+        existing = [
+            row for row in bundle.revision_artifacts if row.role == GLOBAL_FACET_ROLE
+        ]
+        if existing:
+            if len(existing) != 1 or existing[0].artifact_sha != ref.sha256:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Retained global facet binding differs"
+                )
+            return bundle
+        return bundle.model_copy(
+            update={
+                "artifacts": (*bundle.artifacts, ref),
+                "revision_artifacts": (
+                    *bundle.revision_artifacts,
+                    RevisionArtifactRow(
+                        revision_id=bundle.revision.revision_id,
+                        role=GLOBAL_FACET_ROLE,
+                        source_ref=GLOBAL_FACET_SOURCE_REF,
+                        artifact_sha=ref.sha256,
+                    ),
+                ),
+            }
         )
 
     async def _extract(

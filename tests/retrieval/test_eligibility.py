@@ -1325,7 +1325,7 @@ def test_only_explicit_global_revision_matches_missing_scoped_facet(config, scop
     global_facts = EligibilityFacts(
         **{
             **_facts().__dict__,
-            "revisions": (_revision(global_scope=True),),
+            "revisions": (_revision(global_facets=frozenset({"scope.project"})),),
         }
     )
     normal = EligibilityCompiler(_Reader(config, _facts())).compile_eligibility(

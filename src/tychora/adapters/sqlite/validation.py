@@ -9,6 +9,15 @@ from typing import Any, NoReturn, cast
 
 from tychora.adapters.files.assertions import verify_assertion_closure
 from tychora.adapters.files.references import MAX_MANIFEST_BYTES
+from tychora.configuration.global_facets import (
+    ROLE as GLOBAL_FACET_ROLE,
+)
+from tychora.configuration.global_facets import (
+    SOURCE_REF as GLOBAL_FACET_SOURCE_REF,
+)
+from tychora.configuration.global_facets import (
+    binding_bytes as global_facet_binding_bytes,
+)
 from tychora.configuration.registry import Registry, compile_filter
 from tychora.contracts.code import CODE_RESOLVER_FINGERPRINT
 from tychora.contracts.corpus import ExtractionBundle
@@ -64,6 +73,12 @@ def verify_artifacts(
     refs = {ref.sha256: ref for ref in bundle.artifacts}
     if len(refs) != len(bundle.artifacts):
         fail("Duplicate artifact identity")
+    for marker in bundle.revision_artifacts:
+        if marker.role == GLOBAL_FACET_ROLE:
+            ref = refs.get(marker.artifact_sha)
+            if ref is None or ref.size_bytes > 65536:
+                fail("Global facet binding is missing or too large")
+            needed.add(ref.sha256)
     payloads = {}
     for ref in refs.values():
         hasher = sha256()
@@ -223,6 +238,24 @@ def validate_bundle(
         fail("Duplicate code file descriptor path")
     if revision.metadata_sha != digest("metadata-v1", revision.metadata_json):
         fail("Metadata digest differs")
+    _, global_binding = global_facet_binding_bytes(
+        revision.metadata_json,
+        revision.revision_id,
+        revision.metadata_sha,
+        registry,
+    )
+    markers = [
+        row for row in bundle.revision_artifacts if row.role == GLOBAL_FACET_ROLE
+    ]
+    if global_binding is None:
+        if markers:
+            fail("Undeclared global facet binding exists")
+    elif (
+        len(markers) != 1
+        or markers[0].source_ref != GLOBAL_FACET_SOURCE_REF
+        or payloads.get(markers[0].artifact_sha) != global_binding
+    ):
+        fail("Global facet binding differs from immutable metadata")
     for value in (
         revision.published_on,
         revision.effective_from,
@@ -332,8 +365,7 @@ def validate_bundle(
             retained.get("type") != "extraction"
             or retained.get("schema_version") != "1"
             or retained_data.get("registry_digest") != registry.registry_digest
-            or retained_data.get("resolver_fingerprint")
-            != CODE_RESOLVER_FINGERPRINT
+            or retained_data.get("resolver_fingerprint") != CODE_RESOLVER_FINGERPRINT
             or retained_data.get("parser_fingerprint") != extraction.parser_fingerprint
             or retained_data.get("normalizer_fingerprint")
             != extraction.normalizer_fingerprint
