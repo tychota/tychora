@@ -391,6 +391,135 @@ def test_composed_tables_commit_once_with_exact_rows_and_captions(
     )
 
 
+@pytest.mark.qualification
+def test_composed_document_archive_replays_canonical_evidence(
+    document_record_case, tmp_path, monkeypatch
+):
+    import hashlib
+    import io
+    import json
+    import sqlite3
+    from types import SimpleNamespace
+
+    from tychora.adapters.docling.parser import DoclingParser
+    from tychora.application.backup import BackupService
+    from tychora.application.restore import RestoreService
+    from tychora.configuration.registry import Registry
+    from tychora.contracts.base import FrozenJsonMap
+    from tychora.contracts.composition import DocumentCompositionPlan
+    from tychora.contracts.errors import TychoraError
+    from tychora.contracts.identity import canonical_bytes
+    from tychora.contracts.requests import RequestScope
+    from tychora.ingestion.composition import compose_document
+    from tychora.ports.execution import ExecutionContext
+
+    scope = RequestScope(
+        principal_id="owner",
+        collection_ids=frozenset({"00000000-0000-4000-8000-000000000010"}),
+        access_ceiling=3,
+        capabilities=frozenset({"manage", "read", "write"}),
+    )
+    document = {
+        "schema_name": "DoclingDocument",
+        "version": "1.10.0",
+        "name": "Synthetic",
+        "body": {
+            "self_ref": "#/body",
+            "children": [
+                {"$ref": "#/texts/0"},
+                {"$ref": "#/texts/1"},
+            ],
+        },
+        "furniture": {"self_ref": "#/furniture", "children": []},
+        "texts": [
+            {
+                "self_ref": "#/texts/0",
+                "parent": {"$ref": "#/body"},
+                "children": [],
+                "label": "section_header",
+                "level": 1,
+                "text": "STD-8 Sample",
+                "orig": "STD-8 Sample",
+                "prov": [],
+            },
+            {
+                "self_ref": "#/texts/1",
+                "parent": {"$ref": "#/body"},
+                "children": [],
+                "label": "text",
+                "text": "Requirement: Keep the sample.",
+                "orig": "Requirement: Keep the sample.",
+                "prov": [],
+            },
+        ],
+        "groups": [],
+        "tables": [],
+        "pictures": [],
+        "pages": {},
+    }
+
+    def extract_synthetic(self, original, config, ctx):
+        registry = Registry.from_config(config)
+        kind = registry.kinds[self.registration.revision.kind_id]
+        return self._retain(
+            (
+                (
+                    SimpleNamespace(name="document.json"),
+                    io.BytesIO(canonical_bytes(document)),
+                ),
+            ),
+            original,
+            config,
+            registry,
+            kind,
+            FrozenJsonMap({}),
+        )
+
+    monkeypatch.setattr(DoclingParser, "extract", extract_synthetic)
+    monkeypatch.setenv("TYCHORA_TEST_DOCLING_MODELS", str(tmp_path))
+    source = document_record_case("standard@1", "docx", commit=False, scope=scope)
+    result = source.owner.run_blocking_sync(
+        lambda: compose_document(
+            source.parsed,
+            source.registry,
+            DocumentCompositionPlan(
+                base_normalizer_fingerprint=source.parsed.normalizer_fingerprint
+            ),
+            source.owner.artifacts,
+            source.ctx,
+        ),
+        source.ctx,
+    )
+    source.owner.run_blocking_sync(
+        lambda: source.store.commit_extraction(result.bundle), source.ctx
+    )
+    archive = tmp_path / "archive"
+    BackupService(source.owner).export(archive, scope, ctx=ExecutionContext())
+    RestoreService().import_backup(
+        archive, tmp_path / "restored", scope, ExecutionContext()
+    )
+
+    db = sqlite3.connect(archive / "corpus.sqlite3")
+    try:
+        db.execute(
+            "UPDATE evidence_units SET text=? WHERE unit_id=?",
+            ("altered canonical evidence", result.bundle.units[0].unit_id),
+        )
+        db.commit()
+    finally:
+        db.close()
+    receipt_path = archive / "backup-receipt.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["sqlite_sha256"] = hashlib.sha256(
+        (archive / "corpus.sqlite3").read_bytes()
+    ).hexdigest()
+    receipt_path.write_bytes(canonical_bytes(receipt))
+    with pytest.raises(TychoraError, match="Retained document source mapping differs"):
+        RestoreService().import_backup(
+            archive, tmp_path / "altered", scope, ExecutionContext()
+        )
+
+
 def composed_inputs(source):
     def read():
         values = {}

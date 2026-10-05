@@ -427,6 +427,7 @@ def test_backup_survives_source_workspace_removal(tmp_path):
         "backup-manifest.json",
         "backup-receipt.json",
         "corpus.sqlite3",
+        "resolved-config.json",
     ]
 
 

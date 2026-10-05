@@ -37,6 +37,65 @@ def test_setup_request_has_explicit_asset_and_bundle_fields():
     assert request.root.local_bundle == "/bundle"
 
 
+def test_manage_import_bootstraps_without_original_or_control_workspace(tmp_path):
+    import shutil
+
+    from tychora.adapters.sqlite.connection import open_corpus
+    from tychora.application.backup import BackupService
+    from tychora.application.owner import WorkspaceOwner
+    from tychora.configuration.resolve import resolve_config
+    from tychora.contracts.requests import RequestScope
+    from tychora.ports.execution import ExecutionContext
+
+    settings = tmp_path / "settings.toml"
+    settings.write_text('schema_version=1\n[profiles.custom]\nbuiltin="documents@1"\n')
+    config = resolve_config(settings, "custom", {})
+    scope = RequestScope(
+        principal_id="owner",
+        collection_ids=frozenset(),
+        access_ceiling=0,
+        capabilities=frozenset({"manage"}),
+    )
+    source = tmp_path / "removed-source"
+    with WorkspaceOwner.open(source, config, scope) as owner:
+        BackupService(owner).export(tmp_path / "backup", scope, ctx=ExecutionContext())
+    shutil.rmtree(source)
+    settings.unlink()
+    restored = tmp_path / "restored"
+    result = CliRunner().invoke(
+        app,
+        [
+            "--workspace",
+            str(source),
+            "manage",
+            "import",
+            str(tmp_path / "backup"),
+            str(restored),
+        ],
+    )
+    assert result.exit_code == 0, result.stderr
+    assert restored.is_dir()
+    assert not source.exists()
+    db = open_corpus(restored / "corpus.sqlite3")
+    try:
+        assert db.execute("SELECT workspace_id FROM workspaces").fetchone()[0]
+    finally:
+        db.close()
+
+
+def test_manage_migrate_uses_packaged_v1_target_and_rejects_unknown_version(tmp_path):
+    workspace = tmp_path / "workspace"
+    valid = CliRunner().invoke(
+        app, ["--workspace", str(workspace), "manage", "migrate", "1"]
+    )
+    assert valid.exit_code == 0, valid.stderr
+    unsupported = CliRunner().invoke(
+        app, ["--workspace", str(workspace), "manage", "migrate", "2"]
+    )
+    assert unsupported.exit_code != 0
+    assert "Unsupported migration target" in unsupported.stderr
+
+
 def test_public_setup_imports_explicit_verified_bundle(tmp_path, monkeypatch):
     from tychora import Tychora
     from tychora.application import setup as setup_module

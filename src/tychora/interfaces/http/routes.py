@@ -451,39 +451,13 @@ def register_routes(app: FastAPI) -> None:
     async def run_maintenance(request: Request):
         parsed = MaintenanceRequest.from_mapping(await _body_map(request))
         _require(request, "read" if parsed.root.operation == "health" else "manage")
-        if parsed.root.operation == "setup":
-            from tychora.application.setup import run_public_setup
-
-            result = await run_public_setup(
-                request.app.state.owner,
-                _services(request).jobs.repository,
-                _scope(request),
-                parsed.root,
-            )
-            return _json(result, status_code=202)
-        from tychora.contracts.operations import (
-            PurgeOriginalsMaintenance,
-            RemoveMaintenance,
+        result = await _services(request).maintenance.run(
+            parsed,
+            _scope(request),
+            request.headers.get("idempotency-key"),
+            ExecutionContext(),
         )
-
-        if isinstance(parsed.root, (RemoveMaintenance, PurgeOriginalsMaintenance)):
-            from tychora.application.removal import run_public_removal
-
-            result = await run_public_removal(
-                request.app.state.owner,
-                _services(request).jobs.repository,
-                _scope(request),
-                parsed.root,
-            )
-            return _json(result, status_code=202 if result.job else 200)
-        if parsed.root.operation == "provider-upload-consent":
-            from tychora.application.consent import run_public_upload_consent
-
-            result = await run_public_upload_consent(
-                request.app.state.owner, _scope(request), parsed.root
-            )
-            return _json(result)
-        raise TychoraError("CAPABILITY_MISSING", "Maintenance service is unavailable.")
+        return _json(result, status_code=202 if result.job else 200)
 
     @app.post("/v1/jobs/{job_id}/retry")
     async def retry_job(job_id: str, request: Request):

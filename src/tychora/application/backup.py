@@ -18,8 +18,10 @@ from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.application.owner import WorkspaceOwner
 from tychora.application.removal import RemovalService
+from tychora.configuration.resolve import exportable_resolved_config
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.errors import TychoraError
+from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.requests import RequestScope
 from tychora.ports.execution import ExecutionContext
 
@@ -35,27 +37,31 @@ class BackupManifest:
     snapshot_ids: tuple[str, ...]
     tombstones: tuple[tuple[str, str], ...]
     config_shas: tuple[str, ...]
+    resolved_config_sha256: str | None = None
     omitted_channels: tuple[str, ...] = ("text", "image", "graph")
     warning: str = "Present tombstoned bytes may be included at the backup cut."
 
     def as_header(self) -> dict:
+        data = {
+            "workspace_id": self.workspace_id,
+            "payload_states": [list(row) for row in self.payload_states],
+            "policy_epoch": self.policy_epoch,
+            "lexical_statistics_epoch": self.lexical_statistics_epoch,
+            "active_snapshot_id": self.active_snapshot_id,
+            "snapshot_ids": list(self.snapshot_ids),
+            "tombstones": [list(row) for row in self.tombstones],
+            "config_shas": list(self.config_shas),
+            "omitted_channels": list(self.omitted_channels),
+            "warning": self.warning,
+            "projection_rebuild_required": list(self.omitted_channels),
+        }
+        if self.resolved_config_sha256 is not None:
+            data["resolved_config_sha256"] = self.resolved_config_sha256
         return {
             "type": "backup",
             "schema_version": 1,
             "required_artifacts": [ref.model_dump() for ref in self.artifacts],
-            "data": {
-                "workspace_id": self.workspace_id,
-                "payload_states": [list(row) for row in self.payload_states],
-                "policy_epoch": self.policy_epoch,
-                "lexical_statistics_epoch": self.lexical_statistics_epoch,
-                "active_snapshot_id": self.active_snapshot_id,
-                "snapshot_ids": list(self.snapshot_ids),
-                "tombstones": [list(row) for row in self.tombstones],
-                "config_shas": list(self.config_shas),
-                "omitted_channels": list(self.omitted_channels),
-                "warning": self.warning,
-                "projection_rebuild_required": list(self.omitted_channels),
-            },
+            "data": data,
         }
 
 
@@ -166,6 +172,16 @@ class BackupService:
         inventory: BackupInventory,
         ctx: ExecutionContext,
     ) -> BackupReceipt:
+        selected_config = {
+            "type": "resolved-config",
+            "schema_version": 1,
+            "data": exportable_resolved_config(self.owner.config),
+        }
+        if len(canonical_bytes(selected_config)) > 16 * 1024 * 1024:
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Selected configuration exceeds backup limit"
+            )
+        config_sha = archive.write_json("resolved-config.json", selected_config)
         for ref in inventory.artifacts:
             ctx.checkpoint()
             archive.copy_artifact(self.owner.artifacts, ref, ctx)
@@ -185,6 +201,7 @@ class BackupService:
             snapshot_ids=inventory.snapshot_ids,
             tombstones=inventory.tombstones,
             config_shas=inventory.config_shas,
+            resolved_config_sha256=config_sha,
         )
         header = manifest.as_header()
         required_refs(header, capture_published=False)

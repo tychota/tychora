@@ -269,37 +269,15 @@ class _Management:
     ):
         ws = self.kb._open()
         parsed = _parsed(MaintenanceRequest, request)
-        required = "read" if parsed.root.operation == "health" else "manage"
-        if required not in ws.scope.capabilities:
-            raise TychoraError("FORBIDDEN_SCOPE", "Maintenance is outside the grant.")
-        if parsed.root.operation == "setup":
-            from tychora.application.setup import run_public_setup
-
-            return ws.bridge.call(
-                run_public_setup(
-                    ws.owner, ws.services.jobs.repository, ws.scope, parsed.root
-                )
-            )
-        if parsed.root.operation in {"remove", "purge-originals"}:
-            from tychora.application.removal import run_public_removal
-
-            return ws.bridge.call(
-                run_public_removal(
-                    ws.owner, ws.services.jobs.repository, ws.scope, parsed.root
-                )
-            )
-        if parsed.root.operation == "provider-upload-consent":
-            from tychora.application.consent import run_public_upload_consent
-
-            return ws.bridge.call(
-                run_public_upload_consent(ws.owner, ws.scope, parsed.root)
-            )
-        raise TychoraError("CAPABILITY_MISSING", "Maintenance service is unavailable.")
+        return ws.bridge.call(
+            ws.services.maintenance.run(parsed, ws.scope, idempotency_key, _context())
+        )
 
 
 class Tychora:
     def __init__(self, workspace: LocalWorkspace) -> None:
         self._workspace = workspace
+        self.restore_receipt = None
         self.sources = _Sources(self)
         self.evidence = _Evidence(self)
         self.assets = _Assets(self)
@@ -329,6 +307,25 @@ class Tychora:
                 credential_resolver=credential_resolver,
             )
         )
+
+    @classmethod
+    def restore(
+        cls,
+        archive: str | Path,
+        destination: str | Path,
+        *,
+        scope: RequestScope | None = None,
+        config: ResolvedConfig | None = None,
+    ) -> Tychora:
+        """Bootstrap an explicitly local archive before opening its clean destination."""
+        from tychora.application.restore import RestoreService
+
+        receipt = RestoreService(config=config).import_backup(
+            Path(archive), Path(destination), scope, _context()
+        )
+        client = cls.open(destination, scope=receipt.opening_scope)
+        client.restore_receipt = receipt
+        return client
 
     @classmethod
     def connect(cls, endpoint: str, credential: str, workspace_id: str):

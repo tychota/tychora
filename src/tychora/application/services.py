@@ -15,6 +15,7 @@ from tychora.application.bridge import ClientBridge
 from tychora.application.discovery import DiscoveryService
 from tychora.application.inspection import InspectionService
 from tychora.application.jobs import JobService
+from tychora.application.maintenance import MaintenanceService
 from tychora.application.query import QueryService
 from tychora.application.sources import SourceService
 from tychora.configuration.registry import Registry
@@ -37,6 +38,7 @@ class Services:
     discovery: DiscoveryService
     inspection: InspectionService
     jobs: JobService
+    maintenance: MaintenanceService
     query: QueryService
     sources: SourceService
     source_jobs: SourceJobScheduler
@@ -371,6 +373,7 @@ def build_services(
         discovery=DiscoveryService(config, Registry.from_config(config), owner),
         inspection=InspectionService(owner, graph=providers.graph),
         jobs=jobs,
+        maintenance=MaintenanceService(owner, repository),
         query=QueryService(
             owner,
             output_counter=counter,

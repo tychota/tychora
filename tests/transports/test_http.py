@@ -19,6 +19,42 @@ class Counter:
 
 
 @pytest.mark.asyncio
+async def test_maintenance_health_and_migration_use_scoped_http_service(tmp_path):
+    with Tychora.open(tmp_path / "knowledge") as kb:
+        reader = kb.scope.model_copy(update={"capabilities": frozenset({"read"})})
+        app = create_app(
+            kb._workspace.owner,
+            kb._workspace.services,
+            LocalAuth(
+                {"reader": reader, "owner": kb.scope}, authority="127.0.0.1:8765"
+            ),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://127.0.0.1:8765",
+        ) as client:
+            health = await client.post(
+                "/v1/jobs",
+                json={"operation": "health", "verify_payloads": True},
+                headers={"Authorization": "Bearer reader"},
+            )
+            assert health.status_code == 200
+            assert health.json()["recovery"]["deletion_suspended"] is False
+            denied = await client.post(
+                "/v1/jobs",
+                json={"operation": "health", "resume_pending_deletions": True},
+                headers={"Authorization": "Bearer reader"},
+            )
+            assert denied.status_code == 403
+            unsupported = await client.post(
+                "/v1/jobs",
+                json={"operation": "migrate", "target_version": "2"},
+                headers={"Authorization": "Bearer owner"},
+            )
+            assert unsupported.json()["code"] == "PROFILE_INCOMPATIBLE"
+
+
+@pytest.mark.asyncio
 async def test_reader_cannot_add_sources(tmp_path):
     with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
         owner = kb._workspace.owner

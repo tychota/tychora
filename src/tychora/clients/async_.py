@@ -289,37 +289,16 @@ class _AsyncManagement:
     ):
         ws = self.kb._open()
         parsed = _parsed(MaintenanceRequest, request)
-        required = "read" if parsed.root.operation == "health" else "manage"
-        if required not in ws.scope.capabilities:
-            raise TychoraError("FORBIDDEN_SCOPE", "Maintenance is outside the grant.")
-        if parsed.root.operation == "setup":
-            from tychora.application.setup import run_public_setup
-
-            return await ws.bridge.acall(
-                run_public_setup(
-                    ws.owner, ws.services.jobs.repository, ws.scope, parsed.root
-                )
-            )
-        if parsed.root.operation in {"remove", "purge-originals"}:
-            from tychora.application.removal import run_public_removal
-
-            return await ws.bridge.acall(
-                run_public_removal(
-                    ws.owner, ws.services.jobs.repository, ws.scope, parsed.root
-                )
-            )
-        if parsed.root.operation == "provider-upload-consent":
-            from tychora.application.consent import run_public_upload_consent
-
-            return await ws.bridge.acall(
-                run_public_upload_consent(ws.owner, ws.scope, parsed.root)
-            )
-        raise TychoraError("CAPABILITY_MISSING", "Maintenance service is unavailable.")
+        ctx = _context()
+        return await ws.bridge.acall(
+            ws.services.maintenance.run(parsed, ws.scope, idempotency_key, ctx), ctx
+        )
 
 
 class AsyncTychora:
     def __init__(self, workspace: LocalWorkspace) -> None:
         self._workspace = workspace
+        self.restore_receipt = None
         self.sources = _AsyncSources(self)
         self.evidence = _AsyncEvidence(self)
         self.assets = _AsyncAssets(self)
@@ -349,6 +328,50 @@ class AsyncTychora:
                 credential_resolver=credential_resolver,
             )
         )
+
+    @classmethod
+    async def restore(
+        cls,
+        archive: str | Path,
+        destination: str | Path,
+        *,
+        scope: RequestScope | None = None,
+        config: ResolvedConfig | None = None,
+    ) -> AsyncTychora:
+        """Drain cancelled local staging before returning cancellation."""
+        from tychora.application.restore import RestoreService
+        from tychora.ports.execution import ExecutionContext
+
+        ctx = ExecutionContext()
+        task = asyncio.create_task(
+            asyncio.to_thread(
+                RestoreService(config=config).import_backup,
+                Path(archive),
+                Path(destination),
+                scope,
+                ctx,
+            )
+        )
+        cancelled = False
+        while True:
+            try:
+                receipt = await asyncio.shield(task)
+                if cancelled:
+                    raise asyncio.CancelledError
+                client = cls.open(destination, scope=receipt.opening_scope)
+                client.restore_receipt = receipt
+                return client
+            except asyncio.CancelledError:
+                if cancelled and task.done():
+                    raise
+                cancelled = True
+                ctx.cancelled.set()
+                if task.done():
+                    raise
+            except BaseException:
+                if cancelled:
+                    raise asyncio.CancelledError from None
+                raise
 
     @classmethod
     def connect(cls, endpoint: str, credential: str, workspace_id: str):

@@ -29,3 +29,9 @@ class LeaseSet:
     def any_pinned(self) -> bool:
         with self._lock:
             return bool(self._counts)
+
+    @contextmanager
+    def exclusive_if_idle(self) -> Iterator[bool]:
+        """Fence new pins while a destructive owner operation checks and acts."""
+        with self._lock:
+            yield not bool(self._counts)

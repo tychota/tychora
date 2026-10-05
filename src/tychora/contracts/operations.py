@@ -286,11 +286,13 @@ class ExportMaintenance(Contract):
 class ImportMaintenance(Contract):
     operation: Literal["import"] = "import"
     archive_path: NonEmptyStr
+    destination: NonEmptyStr | None = None
 
 
 class HealthMaintenance(Contract):
     operation: Literal["health"] = "health"
     verify_payloads: bool = False
+    resume_pending_deletions: bool = False
 
 
 class EvaluateMaintenance(Contract):
@@ -401,6 +403,14 @@ class ProviderUploadConsentState(Contract):
     default_owner_requires_reopen: bool = True
 
 
+class RecoveryStatus(Contract):
+    workspace_id: Identifier
+    verified_payloads: NonNegativeInt
+    native_pending_batches: NonNegativeInt
+    interrupted_jobs: NonNegativeInt
+    deletion_suspended: bool
+
+
 class MaintenanceResult(Contract):
     plan: MaintenancePlan
     job: JobHandle | None = None
@@ -409,6 +419,7 @@ class MaintenanceResult(Contract):
     shared_payloads: NonNegativeInt = 0
     pending_payloads: NonNegativeInt = 0
     upload_consent: ProviderUploadConsentState | None = None
+    recovery: RecoveryStatus | None = None
 
 
 class SettingsActivation(Contract):

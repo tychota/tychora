@@ -6,6 +6,7 @@ import ctypes
 import errno
 import os
 import shutil
+import stat
 import sys
 from collections.abc import Iterator
 from contextlib import AbstractContextManager, contextmanager
@@ -26,6 +27,28 @@ def _sync_directory(path: Path) -> None:
         os.fsync(fd)
     finally:
         os.close(fd)
+
+
+def _open_directory_nofollow(path: Path) -> int:
+    absolute = path.absolute()
+    if not absolute.is_absolute() or any(
+        part in {".", ".."} for part in absolute.parts
+    ):
+        raise TychoraError("INTEGRITY_ERROR", "Unsafe archive directory path")
+    directory = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in absolute.parts[1:]:
+            following = os.open(
+                part,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=directory,
+            )
+            os.close(directory)
+            directory = following
+        return directory
+    except OSError:
+        os.close(directory)
+        raise TychoraError("INTEGRITY_ERROR", "Unsafe archive directory path") from None
 
 
 def _publish_exclusive(source: Path, destination: Path) -> None:
@@ -116,3 +139,120 @@ class ArchiveWriter(AbstractContextManager["ArchiveWriter"]):
         _publish_exclusive(self.stage, self.destination)
         self.published = True
         _sync_directory(self.destination.parent)
+
+
+class ArchiveReader:
+    """Copy a v1 directory archive without following or accepting extra members."""
+
+    def __init__(
+        self,
+        source: Path,
+        *,
+        max_entries: int = 100_000,
+        max_expanded_bytes: int = 20 * 1024**3,
+    ) -> None:
+        self.source = source.absolute()
+        self.max_entries = max_entries
+        self.max_expanded_bytes = max_expanded_bytes
+
+    def copy_to(self, stage: Path, ctx: ExecutionContext) -> frozenset[str]:
+        if self.max_entries < 4 or self.max_expanded_bytes < 1:
+            raise TychoraError("INVALID_REQUEST", "Archive limits are too small")
+        root = _open_directory_nofollow(self.source)
+        copied: set[str] = set()
+        count = 0
+        total = 0
+        try:
+            with os.scandir(root) as entries:
+                root_names = {entry.name for entry in entries}
+            required_root = {
+                "corpus.sqlite3",
+                "backup-manifest.json",
+                "backup-receipt.json",
+                "artifacts",
+            }
+            if root_names not in (
+                required_root,
+                required_root | {"resolved-config.json"},
+            ):
+                raise TychoraError("INTEGRITY_ERROR", "Archive members differ")
+            artifact_dir = os.open(
+                "artifacts", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root
+            )
+            try:
+                with os.scandir(artifact_dir) as entries:
+                    artifacts = [entry.name for entry in entries]
+                if len(artifacts) != len(set(artifacts)):
+                    raise TychoraError("INTEGRITY_ERROR", "Duplicate archive member")
+                for name in artifacts:
+                    if len(name) != 64 or any(
+                        c not in "0123456789abcdef" for c in name
+                    ):
+                        raise TychoraError("INTEGRITY_ERROR", "Unsafe artifact name")
+                members = [
+                    (root, "corpus.sqlite3", stage / "corpus.sqlite3"),
+                    (root, "backup-manifest.json", stage / "backup-manifest.json"),
+                    (root, "backup-receipt.json", stage / "backup-receipt.json"),
+                    *(
+                        (root, "resolved-config.json", stage / "resolved-config.json")
+                        for _ in range("resolved-config.json" in root_names)
+                    ),
+                    *(
+                        (artifact_dir, name, stage / "artifacts" / name)
+                        for name in sorted(artifacts)
+                    ),
+                ]
+                for directory, name, target in members:
+                    ctx.checkpoint()
+                    count += 1
+                    if count > self.max_entries:
+                        raise TychoraError(
+                            "INTEGRITY_ERROR", "Archive entry limit exceeded"
+                        )
+                    try:
+                        incoming_fd = os.open(
+                            name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory
+                        )
+                    except OSError:
+                        raise TychoraError(
+                            "INTEGRITY_ERROR", "Unsafe archive member"
+                        ) from None
+                    try:
+                        info = os.fstat(incoming_fd)
+                        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                            raise TychoraError(
+                                "INTEGRITY_ERROR", "Unsafe archive member"
+                            )
+                        total += info.st_size
+                        if total > self.max_expanded_bytes:
+                            raise TychoraError(
+                                "INTEGRITY_ERROR", "Archive byte limit exceeded"
+                            )
+                        with (
+                            os.fdopen(os.dup(incoming_fd), "rb") as incoming,
+                            _private_file(target) as outgoing,
+                        ):
+                            remaining = info.st_size
+                            while remaining:
+                                block = incoming.read(min(1024 * 1024, remaining))
+                                if not block:
+                                    raise TychoraError(
+                                        "INTEGRITY_ERROR", "Archive member changed"
+                                    )
+                                outgoing.write(block)
+                                remaining -= len(block)
+                                ctx.checkpoint()
+                            if incoming.read(1):
+                                raise TychoraError(
+                                    "INTEGRITY_ERROR", "Archive member changed"
+                                )
+                            outgoing.flush()
+                            os.fsync(outgoing.fileno())
+                        copied.add(name if directory == root else f"artifacts/{name}")
+                    finally:
+                        os.close(incoming_fd)
+            finally:
+                os.close(artifact_dir)
+        finally:
+            os.close(root)
+        return frozenset(copied)

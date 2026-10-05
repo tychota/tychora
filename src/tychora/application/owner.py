@@ -199,6 +199,11 @@ class WorkspaceOwner:
                 ) from None
         else:
             raise TychoraError("INTEGRITY_ERROR", "Workspace identity is ambiguous")
+        from .restore import deletion_suspended
+
+        self.restore_deletion_suspended = deletion_suspended(
+            self.path, self.workspace_id
+        )
         registry = Registry.from_config(self.config)
         retained = {
             kind: json.loads(definition)

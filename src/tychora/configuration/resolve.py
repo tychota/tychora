@@ -8,12 +8,12 @@ from collections.abc import Mapping
 from contextlib import ExitStack
 from copy import deepcopy
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, TypedDict
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
 
-from tychora.contracts.base import FrozenJsonMap
+from tychora.contracts.base import FrozenJsonMap, thaw_json
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import (
     JsonValue,
@@ -23,10 +23,27 @@ from tychora.contracts.identity import (
 )
 
 from .models import (
+    AcquisitionCeilings,
+    AcquisitionSettings,
+    ChecksSettings,
     ConfigurationValues,
+    EmbeddingSettings,
+    ExtractionSettings,
+    GraphSettings,
+    IndexSettings,
+    OutputSettings,
     PackIdentity,
     ProfileDocument,
+    ProviderSettings,
+    RelationChecks,
+    RerankerSettings,
     ResolvedConfig,
+    ResourceLimits,
+    RetrievalSettings,
+    SelectionSettings,
+    UrlAcquisitionSettings,
+    VectorSettings,
+    VisionSettings,
     WorkspaceDocument,
 )
 
@@ -495,19 +512,36 @@ def _resolve_config(
             "INVALID_REQUEST",
             "Code structural context requires the Ladybug graph backend",
         )
-    registry_sha = digest("registry-v1", registry)
     return ResolvedConfig(
         profile=profile,
         values=typed,
         registry=FrozenJsonMap(registry),
         origins=FrozenJsonMap(origins),
         packs=tuple(packs),
-        registry_digest=registry_sha,
-        config_sha=digest("config-v1", registry_sha, values),
-        acquire_fingerprint=digest(
+        **_resolved_hashes(registry, values),
+    )
+
+
+class _ResolvedHashes(TypedDict):
+    registry_digest: str
+    config_sha: str
+    acquire_fingerprint: str
+    extraction_fingerprint: str
+    index_fingerprint: str
+    eligibility_fingerprint: str
+    query_fingerprint: str
+    output_fingerprint: str
+
+
+def _resolved_hashes(registry: dict, values: dict) -> _ResolvedHashes:
+    registry_sha = digest("registry-v1", registry)
+    return {
+        "registry_digest": registry_sha,
+        "config_sha": digest("config-v1", registry_sha, values),
+        "acquire_fingerprint": digest(
             "acquisition-config-v1", values["acquisition"], values["offline"]
         ),
-        extraction_fingerprint=digest(
+        "extraction_fingerprint": digest(
             "extraction-config-v1",
             values["extraction"],
             registry["kinds"],
@@ -516,10 +550,10 @@ def _resolve_config(
             registry["definition_schema_bindings"],
             registry["schema_reference_bindings"],
         ),
-        index_fingerprint=digest(
+        "index_fingerprint": digest(
             "index-config-v1", values["providers"], values["index"]
         ),
-        eligibility_fingerprint=digest(
+        "eligibility_fingerprint": digest(
             "eligibility-config-v1",
             registry["modes"],
             {
@@ -533,13 +567,198 @@ def _resolve_config(
             values["filters"],
             values["retrieval"]["table_continuations"],
         ),
-        query_fingerprint=digest("query-config-v1", registry_sha, values),
-        output_fingerprint=digest(
+        "query_fingerprint": digest("query-config-v1", registry_sha, values),
+        "output_fingerprint": digest(
             "output-config-v1",
             values["output"],
             registry["lanes"],
             registry["renderers"],
         ),
+    }
+
+
+def validate_retained_config(config: ResolvedConfig) -> ResolvedConfig:
+    """Verify every derived digest of a retained, data-only resolved profile."""
+    value = config.model_dump(mode="json")
+    if _resolved_hashes(value["registry"], value["values"]) != {
+        key: value[key] for key in _resolved_hashes(value["registry"], value["values"])
+    }:
+        raise TychoraError(
+            "INTEGRITY_ERROR", "Retained configuration fingerprint differs"
+        )
+    return config
+
+
+_EXPORT_SHAPES = {
+    ResolvedConfig: (
+        "schema_version",
+        "profile",
+        "values",
+        "registry",
+        "origins",
+        "packs",
+        "registry_digest",
+        "config_sha",
+        "acquire_fingerprint",
+        "extraction_fingerprint",
+        "index_fingerprint",
+        "eligibility_fingerprint",
+        "query_fingerprint",
+        "output_fingerprint",
+    ),
+    ConfigurationValues: (
+        "offline",
+        "default_mode",
+        "query",
+        "filters",
+        "mode",
+        "output_profile",
+        "retrieval",
+        "checks",
+        "selection",
+        "output",
+        "limits",
+        "providers",
+        "index",
+        "extraction",
+        "acquisition",
+    ),
+    ProviderSettings: ("text", "image", "rerank", "vision"),
+    EmbeddingSettings: (
+        "representation_version",
+        "provider",
+        "model",
+        "dimensions",
+        "dtype",
+        "credential_ref",
+        "enable_auto_chunking",
+        "truncation",
+        "max_group_tokens",
+        "max_request_tokens",
+        "max_assets",
+        "max_multimodal_tokens",
+    ),
+    RerankerSettings: ("provider", "model", "credential_ref", "truncation"),
+    VisionSettings: ("provider", "model", "credential_ref"),
+    GraphSettings: ("structural", "semantic", "predicates", "directions", "statuses"),
+    RetrievalSettings: (
+        "table_continuations",
+        "graph",
+        "scoped_rrf_bonus",
+        "allow_degraded",
+    ),
+    RelationChecks: ("enabled", "required", "max_assertions"),
+    ChecksSettings: ("relations",),
+    SelectionSettings: ("lane_reservation",),
+    OutputSettings: (
+        "renderer",
+        "lane_order",
+        "include_empty_lanes",
+        "locale",
+        "title",
+        "envelope_tag",
+    ),
+    ResourceLimits: (
+        "limit",
+        "max_tokens",
+        "max_response_bytes",
+        "graph_seed_limit",
+        "graph_candidate_limit",
+        "graph_work_limit",
+        "semantic_hops",
+        "inspection_hops",
+        "inspection_edges",
+    ),
+    VectorSettings: ("backend", "metric", "ef_search"),
+    IndexSettings: ("text", "image", "graph"),
+    ExtractionSettings: ("parser", "representation_version"),
+    AcquisitionCeilings: (
+        "max_file_bytes",
+        "max_files",
+        "max_total_bytes",
+        "max_inline_bytes",
+        "max_redirects",
+        "download_timeout_seconds",
+    ),
+    UrlAcquisitionSettings: ("enabled", "allowed_hosts", "allowed_schemes"),
+    AcquisitionSettings: ("roots", "limits", "url"),
+    PackIdentity: ("id", "version", "digest"),
+}
+
+
+def exportable_resolved_config(config: ResolvedConfig) -> dict:
+    """Project only reviewed profile fields; never resolve credential references."""
+    validate_retained_config(config)
+    for model, fields in _EXPORT_SHAPES.items():
+        if set(model.model_fields) != set(fields):
+            raise TychoraError(
+                "PROFILE_INCOMPATIBLE", "Configuration export schema needs review"
+            )
+    if config.values.query is not None:
+        raise TychoraError("INVALID_REQUEST", "Export a profile without a stored query")
+    origins = thaw_json(config.origins)
+    if not isinstance(origins, dict):
+        raise TychoraError("INVALID_REQUEST", "Configuration origins are malformed")
+    for origin in origins.values():
+        if (
+            not isinstance(origin, dict)
+            or set(origin) != {"layer", "key", "source"}
+            or not all(isinstance(value, str) for value in origin.values())
+        ):
+            raise TychoraError(
+                "INVALID_REQUEST", "Configuration origin is outside export schema"
+            )
+    names = tuple(
+        name
+        for name in _EXPORT_SHAPES[ConfigurationValues]
+        if name not in {"query", "providers"}
+    )
+    values = config.values.model_dump(mode="json", include=set(names))
+    values["query"] = None
+    values["providers"] = {
+        name: getattr(config.values.providers, name).model_dump(
+            mode="json",
+            include=set(_EXPORT_SHAPES[type(getattr(config.values.providers, name))]),
+        )
+        for name in _EXPORT_SHAPES[ProviderSettings]
+    }
+    document = {
+        "schema_version": config.schema_version,
+        "profile": config.profile,
+        "values": values,
+        "registry": thaw_json(config.registry),
+        "origins": origins,
+        "packs": [
+            {field: getattr(pack, field) for field in _EXPORT_SHAPES[PackIdentity]}
+            for pack in config.packs
+        ],
+        **{
+            field: getattr(config, field)
+            for field in _EXPORT_SHAPES[ResolvedConfig]
+            if field.endswith("fingerprint")
+            or field in {"registry_digest", "config_sha"}
+        },
+    }
+    rebuilt = validate_retained_config(
+        ResolvedConfig.model_validate_json(canonical_bytes(document))
+    )
+    if rebuilt != config:
+        raise TychoraError(
+            "INTEGRITY_ERROR", "Selected configuration projection differs"
+        )
+    return document
+
+
+def restored_runtime_config(retained: ResolvedConfig) -> ResolvedConfig:
+    """Disable inherited acquisition paths and remote runtime use for a restore."""
+    validate_retained_config(retained)
+    value = retained.model_dump(mode="json")
+    value["values"]["offline"] = True
+    value["values"]["acquisition"]["roots"] = []
+    value["origins"] = {}
+    value.update(_resolved_hashes(value["registry"], value["values"]))
+    return validate_retained_config(
+        ResolvedConfig.model_validate_json(canonical_bytes(value))
     )
 
 

@@ -79,15 +79,43 @@ def export_data(ctx: typer.Context, destination: str) -> None:
 
 
 @group.command("import")
-def import_data(ctx: typer.Context, archive_path: str) -> None:
-    """Import an explicit local archive."""
-    _run(ctx, {"operation": "import", "archive_path": archive_path})
+def import_data(ctx: typer.Context, archive_path: str, destination: str) -> None:
+    """Bootstrap an explicit local archive without opening the destination first."""
+    from tychora import Tychora
+
+    try:
+        output_format = selected_format(state(ctx), False)
+        with Tychora.restore(archive_path, destination) as restored:
+            receipt = restored.restore_receipt
+            emit(
+                {
+                    "workspace_id": receipt.workspace_id,
+                    "destination": str(receipt.destination),
+                    "backup_manifest_sha256": receipt.backup_manifest_sha256,
+                    "restored_sqlite_sha256": receipt.restored_sqlite_sha256,
+                    "deletion_suspended": receipt.deletion_suspended,
+                },
+                format=output_format,
+            )
+    except Exception as error:  # noqa: BLE001 - command boundary rethrows unknown exceptions
+        fail(error)
 
 
 @group.command()
-def health(ctx: typer.Context, verify_payloads: bool = False) -> None:
+def health(
+    ctx: typer.Context,
+    verify_payloads: bool = False,
+    resume_pending_deletions: bool = False,
+) -> None:
     """Inspect workspace health."""
-    _run(ctx, {"operation": "health", "verify_payloads": verify_payloads})
+    _run(
+        ctx,
+        {
+            "operation": "health",
+            "verify_payloads": verify_payloads,
+            "resume_pending_deletions": resume_pending_deletions,
+        },
+    )
 
 
 @group.command()

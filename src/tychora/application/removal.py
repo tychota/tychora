@@ -497,6 +497,8 @@ class RemovalService:
         self, candidates: frozenset[str] | None = None
     ) -> dict[str, int]:
         """Owner-coordinated resume; Task 40 calls this before its copied DB cut."""
+        if self.owner.restore_deletion_suspended:
+            return {"deleted_payloads": 0, "shared_payloads": 0, "pending_payloads": 0}
         selected = candidates or frozenset(
             sha
             for (sha,) in self.owner.db.execute(

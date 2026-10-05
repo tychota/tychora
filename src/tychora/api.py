@@ -102,12 +102,23 @@ class LocalWorkspace:
         if config is None:
             if not settings.exists():
                 if existed and any(root.iterdir()):
-                    raise TychoraError(
-                        "INVALID_REQUEST",
-                        "Existing workspace requires an explicit configuration.",
+                    from tychora.application.restore import (
+                        RESTORE_SUSPENSION,
+                        load_restored_runtime_config,
                     )
-                settings.write_text(_DEFAULT_CONFIG)
-            config = resolve_config(settings, selected_workspace_profile(settings), {})
+
+                    if not (root / RESTORE_SUSPENSION).exists():
+                        raise TychoraError(
+                            "INVALID_REQUEST",
+                            "Existing workspace requires an explicit configuration.",
+                        )
+                    config = load_restored_runtime_config(root)
+                else:
+                    settings.write_text(_DEFAULT_CONFIG)
+            if config is None:
+                config = resolve_config(
+                    settings, selected_workspace_profile(settings), {}
+                )
         managed_default_owner = scope is None
         if scope is None:
             scope = RequestScope(

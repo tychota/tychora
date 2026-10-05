@@ -106,6 +106,9 @@ class RecordingVector:
     def verify_batch(self, receipt):
         return self.inner.verify_batch(receipt)
 
+    def drop_records(self, record_ids, ctx):
+        return self.inner.drop_records(record_ids, ctx)
+
 
 @dataclass
 class ProjectedCorpus:
@@ -330,7 +333,13 @@ def projected_corpus(tmp_path, config_factory) -> ProjectedCorpus:
     )
     config_ref = reader().put_stream(
         BytesIO(
-            b'{"type":"registry","schema_version":"1","data":{"profile":"synthetic"}}'
+            canonical_bytes(
+                {
+                    "type": "registry",
+                    "schema_version": "1",
+                    "data": config.model_dump(mode="json"),
+                }
+            )
         ),
         "application/json",
     )
@@ -379,6 +388,192 @@ def test_identical_source_reuses_canonical_and_native_batches(
     assert new.members == old.members
     assert new.slots[1].batches == old.slots[1].batches
     assert (f.embedder.calls, f.vector.upserts) == before
+
+
+def test_native_recovery_replays_retained_vector_bytes_and_preserves_seal(
+    projected_corpus, tmp_path
+):
+    from types import SimpleNamespace
+
+    from tychora.application.recovery import RecoveryReport, RecoveryService
+
+    f = projected_corpus
+    view = f.store.resolve_snapshot(None)
+    slot = next(slot for slot in view.slots if slot.slot == "text")
+    batch = slot.batches[0]
+    before_seal = f.store.db.execute(
+        "SELECT receipt_json FROM index_batches WHERE batch_id=?", (batch.batch_id,)
+    ).fetchone()[0]
+    f.store.db.execute(
+        "UPDATE index_batches SET state='pending' WHERE batch_id=?", (batch.batch_id,)
+    )
+    f.store.db.commit()
+    rebuilt = RecordingVector(tmp_path / "rebuilt-vectors")
+    f.store.vector_indexes[slot.family.family_id] = rebuilt
+    owner_scope = f.scope.model_copy(
+        update={"capabilities": frozenset({"manage", "read", "write"})}
+    )
+    owner = SimpleNamespace(
+        scope=owner_scope,
+        store=f.store,
+        db=f.store.db,
+        artifacts=f.store.artifacts,
+        path=tmp_path,
+        workspace_id=view.workspace_id,
+    )
+
+    class IsolatedRecovery(RecoveryService):
+        def _reconcile_on_owner(self, ctx):
+            pending = f.store.db.execute(
+                "SELECT COUNT(*) FROM index_batches WHERE state='pending'"
+            ).fetchone()[0]
+            return RecoveryReport(view.workspace_id, 0, pending, 0, False)
+
+    class InterruptedRecovery(IsolatedRecovery):
+        def _write_physical_proof(self, batch_id, proof):
+            super()._write_physical_proof(batch_id, proof)
+            raise RuntimeError("interrupted after durable physical proof")
+
+    before_provider = f.embedder.calls
+    with pytest.raises(RuntimeError, match="interrupted after durable physical proof"):
+        InterruptedRecovery(owner)._rebuild_native_on_owner(
+            owner_scope, ExecutionContext(), ("text",)
+        )
+    assert (
+        f.store.db.execute(
+            "SELECT state FROM index_batches WHERE batch_id=?", (batch.batch_id,)
+        ).fetchone()[0]
+        == "pending"
+    )
+    assert list((tmp_path / ".physical-verification").glob("*.json"))
+    report = IsolatedRecovery(owner)._rebuild_native_on_owner(
+        owner_scope, ExecutionContext(), ("text",)
+    )
+    assert report.native_pending_batches == 0
+    assert f.embedder.calls == before_provider
+    assert rebuilt.verify_batch(batch.receipt).ready
+    assert f.store.db.execute(
+        "SELECT state,receipt_json FROM index_batches WHERE batch_id=?",
+        (batch.batch_id,),
+    ).fetchone() == ("ready", before_seal)
+    assert list((tmp_path / ".physical-verification").glob("*.json"))
+
+
+@pytest.mark.parametrize(
+    "alteration", ["semantic_family", "semantic_config", "physical_config", "namespace"]
+)
+def test_native_recovery_rejects_independent_family_identity_corruption(
+    projected_corpus, alteration
+):
+    from tychora.application.recovery import verified_vector_records
+
+    f = projected_corpus
+    slot = next(
+        slot for slot in f.store.resolve_snapshot(None).slots if slot.slot == "text"
+    )
+    family, batch = slot.family, slot.batches[0]
+    config_json = dict(family.config_json)
+    if alteration == "semantic_family":
+        config_json["spec"] = dict(config_json["spec"], family_id="0" * 64)
+    elif alteration == "semantic_config":
+        config_json["spec"] = dict(config_json["spec"], config_sha="0" * 64)
+    elif alteration == "physical_config":
+        family = family.model_copy(update={"config_sha": "0" * 64})
+    else:
+        config_json["namespace_hash"] = "0" * 64
+    family = family.model_copy(update={"config_json": config_json})
+    with pytest.raises(
+        TychoraError, match="Vector family (or receipt|specification) differs"
+    ):
+        verified_vector_records(family, batch, f.store.artifacts)
+
+
+def test_native_recovery_rejects_backend_handle_namespace_corruption(
+    projected_corpus, tmp_path
+):
+    from tychora.application.recovery import verify_native_vector
+
+    f = projected_corpus
+    slot = next(
+        slot for slot in f.store.resolve_snapshot(None).slots if slot.slot == "text"
+    )
+
+    class MisboundVector(RecordingVector):
+        def create_family(self, spec):
+            handle = super().create_family(spec)
+            return handle.model_copy(update={"namespace_hash": "0" * 64})
+
+    with pytest.raises(TychoraError, match="Native vector family identity differs"):
+        verify_native_vector(
+            slot.family,
+            slot.batches[0],
+            f.store.artifacts,
+            MisboundVector(tmp_path / "misbound"),
+            ExecutionContext(),
+        )
+
+
+def test_native_gc_prunes_only_unprotected_vector_batch_then_rebuilds(
+    projected_corpus, tmp_path
+):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from tychora.application.leases import LeaseSet
+    from tychora.application.recovery import RecoveryReport, RecoveryService
+
+    f = projected_corpus
+    oldest = f.store.resolve_snapshot(None)
+    old_batch = next(slot.batches[0] for slot in oldest.slots if slot.slot == "text")
+    f.add_revision("second version")
+    previous = f.store.resolve_snapshot(None)
+    f.add_revision("third version")
+    active = f.store.resolve_snapshot(None)
+    for job_id, snapshot_id in f.store.db.execute(
+        "SELECT job_id,result_snapshot_id FROM jobs WHERE state='running'"
+    ).fetchall():
+        f.jobs.complete(job_id, result_snapshot_id=snapshot_id)
+    grant = f.scope.model_copy(
+        update={"capabilities": frozenset({"manage", "read", "write"})}
+    )
+    owner = SimpleNamespace(
+        scope=grant,
+        store=f.store,
+        db=f.store.db,
+        artifacts=f.store.artifacts,
+        path=tmp_path,
+        workspace_id=active.workspace_id,
+        leases=LeaseSet(),
+        restore_deletion_suspended=False,
+        maintenance_barrier=nullcontext,
+    )
+
+    class IsolatedRecovery(RecoveryService):
+        def _reconcile_on_owner(self, ctx):
+            pending = f.store.db.execute(
+                "SELECT COUNT(*) FROM index_batches WHERE state='pending'"
+            ).fetchone()[0]
+            return RecoveryReport(active.workspace_id, 0, pending, 0, False)
+
+    recovery = IsolatedRecovery(owner)
+    pruned = recovery._prune_native_on_owner(grant, ExecutionContext())
+    assert old_batch.batch_id in pruned.pruned_batches
+    for protected in (previous, active):
+        batch = next(slot.batches[0] for slot in protected.slots if slot.slot == "text")
+        assert batch.batch_id not in pruned.pruned_batches
+        assert f.vector.verify_batch(batch.receipt).ready
+    assert not f.vector.verify_batch(old_batch.receipt).ready
+    assert (
+        f.store.db.execute(
+            "SELECT state FROM index_batches WHERE batch_id=?", (old_batch.batch_id,)
+        ).fetchone()[0]
+        == "pending"
+    )
+    assert not recovery._prune_native_on_owner(grant, ExecutionContext()).pruned_batches
+    recovery._rebuild_native_on_owner(
+        grant, ExecutionContext(), ("text",), oldest.snapshot_id
+    )
+    assert f.vector.verify_batch(old_batch.receipt).ready
 
 
 def test_cancelled_job_cannot_publish(projected_corpus: ProjectedCorpus) -> None:

@@ -427,6 +427,120 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
             )
             == 1
         )
+        from tychora.application.recovery import RecoveryService
+
+        active_graph = next(slot for slot in refreshed.slots if slot.slot == "graph")
+        graph_batch = active_graph.batches[0]
+        retained_seal = await owner.run_blocking(
+            lambda: owner.db.execute(
+                "SELECT receipt_json FROM index_batches WHERE batch_id=?",
+                (graph_batch.batch_id,),
+            ).fetchone()[0],
+            ExecutionContext(),
+        )
+        fresh_graph = LadybugGraphStore(tmp_path / "rebuilt-graph")
+        await owner.run_blocking(
+            lambda: owner.register_close(fresh_graph.close), ExecutionContext()
+        )
+
+        def mark_graph_pending():
+            owner.db.execute(
+                "UPDATE index_batches SET state='pending' WHERE batch_id=?",
+                (graph_batch.batch_id,),
+            )
+            owner.db.commit()
+            owner.store.graph_indexes[graph_batch.receipt.generation_id] = fresh_graph
+
+        await owner.run_blocking(mark_graph_pending, ExecutionContext())
+        report = await owner.run_blocking(
+            lambda: RecoveryService(owner)._rebuild_native_on_owner(
+                scope, ExecutionContext(), ("graph",)
+            ),
+            ExecutionContext(),
+        )
+        assert report.native_pending_batches == 0
+        assert await owner.run_blocking(
+            lambda: owner.db.execute(
+                "SELECT state,receipt_json FROM index_batches WHERE batch_id=?",
+                (graph_batch.batch_id,),
+            ).fetchone(),
+            ExecutionContext(),
+        ) == ("ready", retained_seal)
+        assert list((tmp_path / "data" / ".physical-verification").glob("*.json"))
+        recovery = RecoveryService(owner)
+        old_graph_batch = next(
+            slot.batches[0].batch_id for slot in view.slots if slot.slot == "graph"
+        )
+        previous_graph_batch = next(
+            slot.batches[0].batch_id for slot in resumed.slots if slot.slot == "graph"
+        )
+        active_graph_batch = active_graph.batches[0].batch_id
+        with owner.leases.pin(frozenset({view.snapshot_id})):
+            leased = await owner.run_blocking(
+                lambda: recovery._prune_native_on_owner(scope, ExecutionContext()),
+                ExecutionContext(),
+            )
+            assert leased.admission_busy and not leased.pruned_batches
+        from tychora.application.restore import RESTORE_SUSPENSION
+
+        marker = tmp_path / "data" / RESTORE_SUSPENSION
+        marker.write_bytes(
+            canonical_bytes(
+                {
+                    "type": "restore-suspension",
+                    "schema_version": 1,
+                    "workspace_id": owner.workspace_id,
+                    "pending_deletion_suspended": True,
+                }
+            )
+        )
+        owner.restore_deletion_suspended = True
+        suspended = await owner.run_blocking(
+            lambda: recovery._prune_native_on_owner(scope, ExecutionContext()),
+            ExecutionContext(),
+        )
+        assert suspended.deletion_suspended and not suspended.pruned_batches
+        marker.unlink()
+        owner.restore_deletion_suspended = False
+        pruned = await owner.run_blocking(
+            lambda: recovery._prune_native_on_owner(scope, ExecutionContext()),
+            ExecutionContext(),
+        )
+        assert old_graph_batch in pruned.pruned_batches
+        assert previous_graph_batch not in pruned.pruned_batches
+        assert active_graph_batch not in pruned.pruned_batches
+        assert (
+            await owner.run_blocking(
+                lambda: owner.db.execute(
+                    "SELECT state FROM index_batches WHERE batch_id=?",
+                    (old_graph_batch,),
+                ).fetchone()[0],
+                ExecutionContext(),
+            )
+            == "pending"
+        )
+        assert not (
+            await owner.run_blocking(
+                lambda: recovery._prune_native_on_owner(scope, ExecutionContext()),
+                ExecutionContext(),
+            )
+        ).pruned_batches
+        await owner.run_blocking(
+            lambda: recovery._rebuild_native_on_owner(
+                scope, ExecutionContext(), ("graph",), view.snapshot_id
+            ),
+            ExecutionContext(),
+        )
+        assert (
+            await owner.run_blocking(
+                lambda: owner.db.execute(
+                    "SELECT state FROM index_batches WHERE batch_id=?",
+                    (old_graph_batch,),
+                ).fetchone()[0],
+                ExecutionContext(),
+            )
+            == "ready"
+        )
 
 
 @pytest.mark.asyncio
