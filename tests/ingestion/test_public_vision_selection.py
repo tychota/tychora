@@ -6,8 +6,9 @@ import pytest
 from PIL import Image
 
 from tests.qualification import test_docling_records as qualification
+from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.requests import VisionSelection
+from tychora.contracts.requests import VisionCrop, VisionSelection
 
 document_record_case = qualification.document_record_case
 
@@ -25,17 +26,20 @@ def test_selected_crop_comes_from_retained_original(document_record_case):
     )
     parsed = case.parsed
     assert parsed.original_ref.media_type == "application/octet-stream"
+    assert parsed.original_image is not None
     selected = VisionSelection(
         captured_original_sha256=parsed.original_ref.sha256,
         source_native_ref=parsed.original_image.native_ref,
-        geometry={"domain": "pixels", "x0": 1, "y0": 2, "x1": 5, "y1": 4},
+        geometry=VisionCrop(domain="pixels", x0=1, y0=2, x1=5, y1=4),
         task="describe",
-        task_schema={
-            "type": "object",
-            "properties": {"label": {"type": "string"}},
-            "required": ["label"],
-            "additionalProperties": False,
-        },
+        task_schema=FrozenJsonMap(
+            {
+                "type": "object",
+                "properties": {"label": {"type": "string"}},
+                "required": ["label"],
+                "additionalProperties": False,
+            }
+        ),
     )
     region, proof = case.owner.run_blocking_sync(
         lambda: derive_selected_region(case.owner, parsed, selected), case.ctx
@@ -94,18 +98,21 @@ def test_supplied_new_parser_root_requires_retained_revision(document_record_cas
     ).extract(parsed_a.original_ref, changed, ExecutionContext())
     assert parsed_b.original_ref.sha256 == parsed_a.original_ref.sha256
     assert parsed_b.raw_document_ref.sha256 != parsed_a.raw_document_ref.sha256
+    assert parsed_b.original_image is not None
     selected = VisionSelection(
         captured_original_sha256=parsed_b.original_ref.sha256,
         retained_extraction_sha256=parsed_b.raw_document_ref.sha256,
         source_native_ref=parsed_b.original_image.native_ref,
-        geometry={"domain": "pixels", "x0": 1, "y0": 2, "x1": 5, "y1": 4},
+        geometry=VisionCrop(domain="pixels", x0=1, y0=2, x1=5, y1=4),
         task="describe",
-        task_schema={
-            "type": "object",
-            "properties": {"label": {"type": "string"}},
-            "required": ["label"],
-            "additionalProperties": False,
-        },
+        task_schema=FrozenJsonMap(
+            {
+                "type": "object",
+                "properties": {"label": {"type": "string"}},
+                "required": ["label"],
+                "additionalProperties": False,
+            }
+        ),
     )
     with pytest.raises(TychoraError) as unretained:
         case.owner.run_blocking_sync(
@@ -154,7 +161,9 @@ def test_incomplete_vision_diagnostic_changes_identity_and_replays(
     ordinary = DocumentCompositionPlan(
         base_normalizer_fingerprint=parsed.normalizer_fingerprint,
     )
-    assert "vision_gaps" not in ordinary.semantic_data()
+    semantic_data = ordinary.semantic_data()
+    assert isinstance(semantic_data, dict)
+    assert "vision_gaps" not in semantic_data
     gap = VisionCapabilityGap(selection_sha256="a" * 64, reason="provider_failure")
     incomplete = ordinary.model_copy(update={"vision_gaps": (gap,)})
     base = case.owner.run_blocking_sync(
