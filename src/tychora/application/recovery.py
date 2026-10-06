@@ -36,6 +36,10 @@ class RecoveryReport:
     native_pending_batches: int
     interrupted_jobs: int
     deletion_suspended: bool
+    native_verified_snapshot_id: str | None = None
+    native_verified_records: int = 0
+    native_verified_generations: int = 0
+    native_skipped_pending_batches: int = 0
 
 
 @dataclass(frozen=True)
@@ -732,7 +736,11 @@ class RecoveryService:
             temporary.unlink(missing_ok=True)
 
     def _reconcile_on_owner(
-        self, ctx: ExecutionContext, *, verify_payloads: bool = False
+        self,
+        ctx: ExecutionContext,
+        *,
+        verify_payloads: bool = False,
+        verify_native: bool = False,
     ) -> RecoveryReport:
         ctx.checkpoint()
         db = self.owner.db
@@ -760,6 +768,15 @@ class RecoveryService:
                         )
                     with self.owner.artifacts.open_verified(ref):
                         pass
+        native_snapshot_id = None
+        native_records = native_generations = native_skipped = 0
+        if verify_native:
+            (
+                native_snapshot_id,
+                native_records,
+                native_generations,
+                native_skipped,
+            ) = self._verify_native_on_owner(ctx)
         pending = db.execute(
             "SELECT COUNT(*) FROM index_batches b JOIN index_families f USING(family_id) "
             "WHERE f.channel IN ('text','image','graph') AND b.state='pending'"
@@ -779,7 +796,118 @@ class RecoveryService:
             native_pending_batches=pending,
             interrupted_jobs=interrupted,
             deletion_suspended=suspended,
+            native_verified_snapshot_id=native_snapshot_id,
+            native_verified_records=native_records,
+            native_verified_generations=native_generations,
+            native_skipped_pending_batches=native_skipped,
         )
+
+    def _verify_native_on_owner(
+        self, ctx: ExecutionContext
+    ) -> tuple[str | None, int, int, int]:
+        """Read bounded ready projections in the pinned active snapshot only."""
+        store = self.owner.store
+        if store.active_snapshot_id() is None:
+            return None, 0, 0, 0
+        records = generations = skipped = batches = 0
+        with store.pin_snapshot(None) as snapshot:
+            for slot in snapshot.slots:
+                if slot.slot not in {"text", "image", "graph"}:
+                    continue
+                for batch in slot.batches:
+                    ctx.checkpoint()
+                    batches += 1
+                    if batches > 128:
+                        raise TychoraError(
+                            "CAPABILITY_MISSING",
+                            "Native health exceeds 128 batch budget",
+                        )
+                    row = self.owner.db.execute(
+                        "SELECT state FROM index_batches WHERE batch_id=? AND family_id=?",
+                        (batch.batch_id, slot.family.family_id),
+                    ).fetchone()
+                    if row is None or row[0] not in {"pending", "ready"}:
+                        raise TychoraError(
+                            "INTEGRITY_ERROR", "Native batch state differs"
+                        )
+                    if row[0] == "pending":
+                        skipped += 1
+                        continue
+                    unavailable = getattr(self.owner, "_native_unavailable", {})
+                    if slot.slot in unavailable:
+                        raise TychoraError("INTEGRITY_ERROR", unavailable[slot.slot])
+                    verify_canonical_native_batch(store, slot.family, batch)
+                    if slot.slot in {"text", "image"}:
+                        receipt = batch.receipt
+                        if not isinstance(receipt, BatchReceipt):
+                            raise TychoraError(
+                                "INTEGRITY_ERROR", "Vector receipt type differs"
+                            )
+                        records += receipt.count
+                        if records > 8192 or receipt.count > 2048:
+                            raise TychoraError(
+                                "CAPABILITY_MISSING",
+                                "Native health exceeds vector record budget",
+                            )
+                        index = store.vector_indexes.get(slot.family.family_id)
+                        if index is None:
+                            raise TychoraError(
+                                "CAPABILITY_MISSING",
+                                "Native vector index is unavailable",
+                            )
+                        checked = index.verify_batch(receipt)
+                        if (
+                            not checked.ready
+                            or not checked.config_matches
+                            or checked.missing_record_ids
+                            or checked.mismatched_record_ids
+                        ):
+                            raise TychoraError(
+                                "INTEGRITY_ERROR", "Ready native vector bytes differ"
+                            )
+                    else:
+                        receipt = batch.receipt
+                        manifest = batch.graph_manifest
+                        if (
+                            not isinstance(receipt, GraphBatchReceipt)
+                            or manifest is None
+                        ):
+                            raise TychoraError(
+                                "INTEGRITY_ERROR", "Graph receipt type differs"
+                            )
+                        if (
+                            len(manifest.evidence_ids) > 20_000
+                            or len(manifest.assertion_ids) > 20_000
+                        ):
+                            raise TychoraError(
+                                "CAPABILITY_MISSING",
+                                "Native health exceeds graph member budget",
+                            )
+                        graph = store.graph_indexes.get(receipt.generation_id)
+                        if graph is None or not hasattr(graph, "prepare_build"):
+                            raise TychoraError(
+                                "CAPABILITY_MISSING",
+                                "Native graph index is unavailable",
+                            )
+                        if graph.sealed_receipt(receipt.generation_id) != receipt:
+                            raise TychoraError(
+                                "INTEGRITY_ERROR", "Ready graph seal differs"
+                            )
+                        build = read_graph_build(store, manifest.spec, ctx)
+                        if GraphManifest.from_build(build) != manifest:
+                            raise TychoraError(
+                                "INTEGRITY_ERROR", "Graph canonical input differs"
+                            )
+                        graph.prepare_build(build)
+                        if (
+                            graph.seal_generation(receipt.generation_id, manifest, ctx)
+                            != receipt
+                        ):
+                            raise TychoraError(
+                                "INTEGRITY_ERROR", "Ready graph members differ"
+                            )
+                        generations += 1
+        return snapshot.snapshot_id, records, generations, skipped
 
     def resume_pending_deletions(
         self, scope: RequestScope, ctx: ExecutionContext
@@ -794,13 +922,16 @@ class RecoveryService:
         ctx: ExecutionContext,
         *,
         verify_payloads: bool = False,
+        verify_native: bool = False,
     ) -> RecoveryReport:
         grant = self.owner.scope.narrow(scope)
         if "manage" not in grant.capabilities:
             raise TychoraError(
                 "FORBIDDEN_SCOPE", "Deletion resume requires management grant"
             )
-        checked = self._reconcile_on_owner(ctx, verify_payloads=verify_payloads)
+        checked = self._reconcile_on_owner(
+            ctx, verify_payloads=verify_payloads, verify_native=verify_native
+        )
         if not checked.deletion_suspended:
             return checked
         marker = self.owner.path / RESTORE_SUSPENSION
@@ -819,4 +950,4 @@ class RecoveryService:
             workspace_id=self.owner.workspace_id,
         )
         RemovalService(self.owner, repository).reconcile_pending_deletions()
-        return self._reconcile_on_owner(ctx)
+        return self._reconcile_on_owner(ctx, verify_native=verify_native)

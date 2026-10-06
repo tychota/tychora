@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import platform
 import subprocess
 import tempfile
 import time
@@ -131,17 +133,26 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifact", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--target", required=True)
     args = parser.parse_args()
     artifact = args.artifact.resolve()
     assert artifact.is_file() and os.access(artifact, os.X_OK)
+    with artifact.open("rb") as stream:
+        artifact_sha256 = hashlib.file_digest(stream, "sha256").hexdigest()
     with tempfile.TemporaryDirectory(prefix="tychora-onefile-measure-") as raw:
         cwd = Path(raw).resolve()
         temporary = cwd / "onefile temp with spaces"
         temporary.mkdir()
         env = {"TMPDIR": str(temporary)}
         report = {
+            "target": args.target,
+            "host_platform": platform.platform(),
+            "host_system": platform.system(),
+            "host_release": platform.release(),
+            "host_machine": platform.machine(),
             "artifact": artifact.name,
             "artifact_bytes": artifact.stat().st_size,
+            "artifact_sha256": artifact_sha256,
             "measurement": "new process and extraction; filesystem cache not flushed",
             "help_samples": [help_sample(artifact, cwd, env) for _ in range(3)],
             "service": service_sample(artifact, cwd, env),

@@ -1,5 +1,8 @@
 """Explicit v1 schema compatibility and unsupported migration targets."""
 
+from types import SimpleNamespace
+from typing import Any, cast
+
 import pytest
 
 from tychora.adapters.sqlite.migrations import supported_migration_target
@@ -13,6 +16,32 @@ def test_v1_is_the_only_packaged_migration_target():
     assert error.value.code == "PROFILE_INCOMPATIBLE"
 
 
+def test_ready_native_file_guard_precedes_constructor_and_skips_pending(tmp_path):
+    from tychora.application.default_bindings import _missing_ready_native_storage
+
+    class Db:
+        ready = False
+
+        def execute(self, _query, params):
+            return SimpleNamespace(
+                fetchone=lambda: (1,) if self.ready and params[1] == "text" else None
+            )
+
+    db = Db()
+    owner = SimpleNamespace(
+        path=tmp_path,
+        db=db,
+        store=SimpleNamespace(active_snapshot_id=lambda: "snapshot"),
+    )
+    assert _missing_ready_native_storage(cast(Any, owner)) == {}
+    assert not (tmp_path / "indexes").exists()
+    db.ready = True
+    assert _missing_ready_native_storage(cast(Any, owner)) == {
+        "text": "Ready text native storage is missing"
+    }
+    assert not (tmp_path / "indexes").exists()
+
+
 def test_public_maintenance_health_and_unsupported_migration(tmp_path):
     from tychora import Tychora
 
@@ -20,6 +49,11 @@ def test_public_maintenance_health_and_unsupported_migration(tmp_path):
         health = kb.management.run({"operation": "health", "verify_payloads": True})
         assert health.recovery is not None
         assert health.recovery.deletion_suspended is False
+        native = kb.management.run({"operation": "health", "verify_native": True})
+        assert native.recovery is not None
+        assert native.recovery.native_verified_records == 0
+        assert native.recovery.native_verified_generations == 0
+        assert native.recovery.native_verified_snapshot_id is None
         with pytest.raises(TychoraError) as error:
             kb.management.run({"operation": "migrate", "target_version": "2"})
         assert error.value.code == "PROFILE_INCOMPATIBLE"

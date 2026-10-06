@@ -20,6 +20,7 @@ from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.embeddings import EmbeddingCapabilities, EmbeddingRecord
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes, digest, family_id, space_id
+from tychora.contracts.indexing import FamilySpec
 from tychora.contracts.publication import (
     IndexFamily,
     LexicalBatchReceipt,
@@ -30,6 +31,7 @@ from tychora.contracts.publication import (
     SnapshotMember,
 )
 from tychora.contracts.requests import RequestScope
+from tychora.contracts.vectors import BatchReceipt
 from tychora.evaluation.runner import ComparisonAdmission
 from tychora.indexing.coordinator import ProjectionCoordinator
 from tychora.ports.execution import ExecutionContext
@@ -417,6 +419,42 @@ def projected_corpus(tmp_path, config_factory) -> Iterator[ProjectedCorpus]:
     result.store.db.close()
 
 
+def test_native_health_reads_ready_vector_bytes_and_rejects_deleted_entry(
+    projected_corpus,
+):
+    from types import SimpleNamespace
+
+    from tychora.application.recovery import RecoveryService
+
+    f = projected_corpus
+    view = f.store.resolve_snapshot(None)
+    slot = next(slot for slot in view.slots if slot.slot == "text")
+    assert isinstance(slot.batches[0].receipt, BatchReceipt)
+    service = RecoveryService(SimpleNamespace(store=f.store, db=f.store.db))
+    before = service._verify_native_on_owner(ExecutionContext())
+    assert before == (view.snapshot_id, slot.batches[0].receipt.count, 0, 0)
+    record_id = slot.batches[0].receipt.records[0].record_id
+    f.vector.inner._collection.delete(ids=[record_id])
+    with pytest.raises(TychoraError, match="Ready native vector bytes differ"):
+        service._verify_native_on_owner(ExecutionContext())
+
+
+def test_read_only_chroma_family_open_does_not_create_missing_collection(
+    projected_corpus, tmp_path
+):
+    slot = next(
+        slot
+        for slot in projected_corpus.store.resolve_snapshot(None).slots
+        if slot.slot == "text"
+    )
+    spec = FamilySpec.model_validate_json(
+        canonical_bytes(slot.family.config_json["spec"])
+    )
+    unopened = ChromaVectorIndex(tmp_path / "missing-family")
+    assert unopened.open_family(spec) is None
+    assert unopened._client.list_collections() == []
+
+
 def test_preproof_text_family_rejects_new_publication_before_native_mutation(
     tmp_path, config_factory
 ):
@@ -541,7 +579,9 @@ def test_native_recovery_replays_retained_vector_bytes_and_preserves_seal(
     )
 
     class IsolatedRecovery(RecoveryService):
-        def _reconcile_on_owner(self, ctx, *, verify_payloads=False):
+        def _reconcile_on_owner(
+            self, ctx, *, verify_payloads=False, verify_native=False
+        ):
             pending = f.store.db.execute(
                 "SELECT COUNT(*) FROM index_batches WHERE state='pending'"
             ).fetchone()[0]
@@ -711,7 +751,9 @@ def test_native_recovery_rejects_sql_drift_before_native_write(
     )
 
     class IsolatedRecovery(RecoveryService):
-        def _reconcile_on_owner(self, ctx, *, verify_payloads=False):
+        def _reconcile_on_owner(
+            self, ctx, *, verify_payloads=False, verify_native=False
+        ):
             return RecoveryReport(snapshot.workspace_id, 0, 1, 0, False)
 
     with pytest.raises(TychoraError, match="SQL differs"):
@@ -764,7 +806,9 @@ def test_native_gc_prunes_only_unprotected_vector_batch_then_rebuilds(
     )
 
     class IsolatedRecovery(RecoveryService):
-        def _reconcile_on_owner(self, ctx, *, verify_payloads=False):
+        def _reconcile_on_owner(
+            self, ctx, *, verify_payloads=False, verify_native=False
+        ):
             pending = f.store.db.execute(
                 "SELECT COUNT(*) FROM index_batches WHERE state='pending'"
             ).fetchone()[0]

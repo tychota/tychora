@@ -14,6 +14,7 @@ from typing import Any
 import chromadb
 from chromadb.api.collection_configuration import CreateHNSWConfiguration
 from chromadb.config import Settings
+from chromadb.errors import NotFoundError
 
 from tychora.contracts.identity import digest, space_id
 from tychora.contracts.indexing import FamilySpec, IndexRecordDigest
@@ -125,6 +126,25 @@ class ChromaVectorIndex:
             metadata=self._metadata(spec),
             configuration={"hnsw": _QUALIFIED_HNSW},
         )
+        self._check_collection(collection, spec)
+        handle = FamilyHandle(
+            spec=spec,
+            namespace_hash=self._metadata(spec)["namespace_hash"],
+            config_sha=self._config_hash(collection),
+        )
+        self._collection, self._handle = collection, handle
+        return handle
+
+    def open_family(self, spec: FamilySpec) -> FamilyHandle | None:
+        """Bind an existing ready collection without creating a replacement."""
+        if self._handle is not None and self._handle.spec != spec:
+            raise ValueError("Index is bound to another family configuration")
+        try:
+            collection = self._client.get_collection(
+                name=self._name(spec), embedding_function=None
+            )
+        except NotFoundError:
+            return None
         self._check_collection(collection, spec)
         handle = FamilyHandle(
             spec=spec,

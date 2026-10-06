@@ -109,11 +109,16 @@ class MaintenanceService:
             report = await self.owner.run_blocking(
                 lambda: (
                     recovery._resume_on_owner(
-                        grant, ctx, verify_payloads=operation.verify_payloads
+                        grant,
+                        ctx,
+                        verify_payloads=operation.verify_payloads,
+                        verify_native=operation.verify_native,
                     )
                     if operation.resume_pending_deletions
                     else recovery._reconcile_on_owner(
-                        ctx, verify_payloads=operation.verify_payloads
+                        ctx,
+                        verify_payloads=operation.verify_payloads,
+                        verify_native=operation.verify_native,
                     )
                 ),
                 ctx,
@@ -122,7 +127,14 @@ class MaintenanceService:
                 plan=MaintenancePlan(
                     operation="health",
                     target_ids=(report.workspace_id,),
-                    actions=("verify canonical integrity and recovery state",),
+                    actions=(
+                        "verify canonical integrity and recovery state",
+                        *(
+                            ("read ready native projections in the active snapshot",)
+                            if operation.verify_native
+                            else ()
+                        ),
+                    ),
                 ),
                 recovery=RecoveryStatus(**report.__dict__),
             )

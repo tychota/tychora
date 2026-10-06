@@ -546,6 +546,25 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
             owner.store.graph_indexes[graph_receipt.generation_id] = fresh_graph
 
         await owner.run_blocking(mark_graph_pending, ExecutionContext())
+        pending_health = await owner.run_blocking(
+            lambda: RecoveryService(owner)._reconcile_on_owner(
+                ExecutionContext(), verify_native=True
+            ),
+            ExecutionContext(),
+        )
+        assert pending_health.native_skipped_pending_batches == 1
+        assert pending_health.native_verified_generations == 0
+        assert (
+            await owner.run_blocking(
+                lambda: owner.db.execute(
+                    "SELECT state FROM index_batches WHERE batch_id=?",
+                    (graph_batch.batch_id,),
+                ).fetchone()[0],
+                ExecutionContext(),
+            )
+            == "pending"
+        )
+        assert not fresh_graph._state_path(graph_receipt.generation_id).exists()
         report = await owner.run_blocking(
             lambda: RecoveryService(owner)._rebuild_native_on_owner(
                 scope, ExecutionContext(), ("graph",)
@@ -553,6 +572,14 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
             ExecutionContext(),
         )
         assert report.native_pending_batches == 0
+        verified_health = await owner.run_blocking(
+            lambda: RecoveryService(owner)._reconcile_on_owner(
+                ExecutionContext(), verify_native=True
+            ),
+            ExecutionContext(),
+        )
+        assert verified_health.native_verified_snapshot_id == refreshed.snapshot_id
+        assert verified_health.native_verified_generations == 1
         assert await owner.run_blocking(
             lambda: owner.db.execute(
                 "SELECT state,receipt_json FROM index_batches WHERE batch_id=?",
@@ -635,6 +662,21 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
             )
             == "ready"
         )
+        await owner.run_blocking(
+            lambda: fresh_graph._connection.execute(
+                "MATCH (e:Evidence) WHERE e.generation_id=$gid "
+                "SET e.content_hash='tampered'",
+                {"gid": graph_receipt.generation_id},
+            ),
+            ExecutionContext(),
+        )
+        with pytest.raises(TychoraError, match="Graph evidence content differs"):
+            await owner.run_blocking(
+                lambda: recovery._reconcile_on_owner(
+                    ExecutionContext(), verify_native=True
+                ),
+                ExecutionContext(),
+            )
 
 
 @pytest.mark.asyncio

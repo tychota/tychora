@@ -106,6 +106,7 @@ def import_data(ctx: typer.Context, archive_path: str, destination: str) -> None
 def health(
     ctx: typer.Context,
     verify_payloads: bool = False,
+    verify_native: bool = False,
     resume_pending_deletions: bool = False,
 ) -> None:
     """Inspect workspace health."""
@@ -114,6 +115,7 @@ def health(
         {
             "operation": "health",
             "verify_payloads": verify_payloads,
+            "verify_native": verify_native,
             "resume_pending_deletions": resume_pending_deletions,
         },
     )

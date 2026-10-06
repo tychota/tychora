@@ -11,7 +11,7 @@ from functools import partial
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import UUID
 
 from tychora.adapters.code.normalize import (
@@ -842,7 +842,10 @@ class SourceService:
         plan = data.get("plan")
         if not isinstance(plan, dict):
             raise TychoraError("INTEGRITY_ERROR", "Selected document plan differs")
-        kind = self.owner.store.registry.kinds[registration.revision.kind_id]
+        kind = cast(
+            Mapping[str, Any],
+            self.owner.store.registry.kinds[registration.revision.kind_id],
+        )
         return plan.get(
             "base_normalizer_fingerprint"
         ) == document_normalizer_fingerprint(kind, self.owner.store.registry)
@@ -924,7 +927,10 @@ class SourceService:
                     document_normalizer_fingerprint,
                 )
 
-                kind = self.owner.store.registry.kinds[registration.revision.kind_id]
+                kind = cast(
+                    Mapping[str, Any],
+                    self.owner.store.registry.kinds[registration.revision.kind_id],
+                )
                 current_fingerprint = document_normalizer_fingerprint(
                     kind, self.owner.store.registry
                 )

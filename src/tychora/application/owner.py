@@ -120,6 +120,7 @@ class WorkspaceOwner:
         self._closing = False
         self._handles = ExitStack()
         self._configured_graph_store: Any = None
+        self._native_unavailable: dict[str, str] = {}
 
     @classmethod
     @contextmanager

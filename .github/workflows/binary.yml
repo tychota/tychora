@@ -95,3 +95,14 @@ jobs:
           version=$(UV_NO_SYNC=1 uv run --locked python -c 'import importlib.metadata; print(importlib.metadata.version("tychora"))')
           cp dist/tychora "dist/tychora-${version}-${{ matrix.target }}"
           shasum -a 256 "dist/tychora-${version}-${{ matrix.target }}" dist/tychora-notices/manifest.json packaging/release-features.json
+      - name: Measure final target executable
+        shell: bash
+        run: |
+          UV_NO_SYNC=1 uv run --locked python packaging/measure_frozen.py --artifact dist/tychora --target "${{ matrix.target }}" --output "$RUNNER_TEMP/tychora-${{ matrix.target }}-measurements.json"
+          cat "$RUNNER_TEMP/tychora-${{ matrix.target }}-measurements.json"
+          {
+            echo "### ${{ matrix.target }} onefile measurements"
+            echo '```json'
+            cat "$RUNNER_TEMP/tychora-${{ matrix.target }}-measurements.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

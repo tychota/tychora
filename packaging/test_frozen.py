@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import signal
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -62,6 +63,8 @@ def run(
             "(version 1)(allow default)" + "".join(denials),
             *command,
         ]
+    elif network_denied and sys.platform.startswith("linux"):
+        command = linux_network_command(command)
     return subprocess.run(
         command,
         cwd=cwd,
@@ -70,6 +73,51 @@ def run(
         capture_output=True,
         timeout=240,
         check=False,
+    )
+
+
+def linux_network_command(command: list[str]) -> list[str]:
+    """Run inside a private Linux user/network namespace; never silently fall back."""
+    unshare = shutil.which("unshare")
+    assert unshare is not None, "Linux network-denied acceptance requires unshare"
+    return [unshare, "--user", "--map-root-user", "--net", "--", *command]
+
+
+def verify_linux_network_denial(cwd: Path) -> None:
+    """Prove the wrapper changes namespace and cannot reach a host listener."""
+    if not sys.platform.startswith("linux"):
+        return
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        host_namespace = os.readlink("/proc/self/ns/net")
+        code = (
+            "import os,socket,sys; "
+            "print(os.readlink('/proc/self/ns/net'),flush=True); "
+            "s=socket.socket(); s.settimeout(2); "
+            "\ntry: s.connect(('127.0.0.1',int(sys.argv[1])))\n"
+            "except OSError: print('DENIED',flush=True)\n"
+            "else: print('CONNECTED',flush=True); sys.exit(3)"
+        )
+        probe = subprocess.run(
+            linux_network_command(
+                [sys.executable, "-c", code, str(listener.getsockname()[1])]
+            ),
+            cwd=cwd,
+            env=clean_env(cwd, frozen=False),
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    lines = probe.stdout.strip().splitlines()
+    assert (
+        probe.returncode == 0
+        and len(lines) == 2
+        and lines[0] != host_namespace
+        and lines[1] == "DENIED"
+    ), (
+        f"Linux network-denial wrapper unavailable or ineffective: {probe.stderr[-1000:]} {probe.stdout[-500:]}"
     )
 
 
@@ -533,6 +581,8 @@ def native_crash_cut(
             "(version 1)(allow default)(deny network*)",
             *command,
         ]
+    elif sys.platform.startswith("linux"):
+        command = linux_network_command(command)
     process = subprocess.Popen(
         command,
         cwd=cwd,
@@ -611,11 +661,167 @@ def native_crash_cut(
     )
     assert rebuilt["recovery"]["native_pending_batches"] == 0
     assert canonical_root(restored) == root_before
+    assert_native_reopened(
+        artifact, cwd, restored, env, f"binary {slot} postcrash native reopen"
+    )
     print(
         f"PASS: {slot} native-open SIGKILL at {observed[2]:.2f}s "
         f"pid={observed[0]} path={Path(observed[1]).name}; "
         "published root unchanged and native recovery complete"
     )
+
+
+def assert_native_reopened(
+    artifact: Path, cwd: Path, workspace: Path, env: dict[str, str], label: str
+) -> None:
+    """A fresh executable owner rereads native bytes and graph members."""
+    result = json_result(
+        run(
+            artifact,
+            "--workspace",
+            str(workspace),
+            "manage",
+            "health",
+            "--verify-native",
+            cwd=cwd,
+            overrides=env,
+            network_denied=True,
+        ),
+        label,
+    )["recovery"]
+    assert result["native_pending_batches"] == 0
+    assert result["native_verified_snapshot_id"]
+    assert result["native_verified_records"] > 0, result
+    assert result["native_verified_generations"] > 0, result
+    assert result["native_skipped_pending_batches"] == 0, result
+
+
+def assert_missing_ready_native_is_read_only(
+    artifact: Path, cwd: Path, workspace: Path, env: dict[str, str]
+) -> None:
+    """Missing ready files keep canonical access and are never recreated by health."""
+    for slot, relative in (
+        ("text", "indexes/text/chroma.sqlite3"),
+        ("graph", "indexes/graph"),
+    ):
+        damaged = cwd / f"{slot} missing ready storage"
+        shutil.copytree(workspace, damaged)
+        physical = damaged / relative
+        assert physical.is_file(), physical
+        physical.unlink()
+        root_before = canonical_root(damaged)
+        kinds = json_result(
+            run(
+                artifact,
+                "--workspace",
+                str(damaged),
+                "inspect",
+                "kinds",
+                "--json",
+                cwd=cwd,
+                overrides=env,
+                network_denied=True,
+            ),
+            f"binary {slot} missing-native canonical inspection",
+        )
+        assert kinds["subject"] == "kinds"
+        lexical_query = cwd / f"{slot} missing-native lexical query.json"
+        lexical_query.write_text(
+            json.dumps({"question": "Synthetic amber", "modalities": ["lexical"]})
+        )
+        lexical = json_result(
+            run(
+                artifact,
+                "--workspace",
+                str(damaged),
+                "--offline",
+                "search",
+                "--request-file",
+                str(lexical_query),
+                "--json",
+                cwd=cwd,
+                overrides=env,
+                network_denied=True,
+            ),
+            f"binary {slot} missing-native canonical lexical search",
+        )
+        assert lexical["segments"]
+        archive = cwd / f"{slot} missing-native canonical export"
+        json_result(
+            run(
+                artifact,
+                "--workspace",
+                str(damaged),
+                "manage",
+                "export",
+                str(archive),
+                cwd=cwd,
+                overrides=env,
+                network_denied=True,
+            ),
+            f"binary {slot} missing-native canonical export",
+        )
+        assert (archive / "backup-manifest.json").is_file()
+        checked_native = run(
+            artifact,
+            "--workspace",
+            str(damaged),
+            "manage",
+            "health",
+            "--verify-native",
+            cwd=cwd,
+            overrides=env,
+            network_denied=True,
+        )
+        assert checked_native.returncode != 0
+        assert f"Ready {slot} native storage is missing" in (
+            checked_native.stderr + checked_native.stdout
+        )
+        assert not physical.exists(), "Native health recreated a missing ready store"
+        assert canonical_root(damaged) == root_before
+    from chromadb import PersistentClient
+    from chromadb.config import Settings
+
+    damaged = cwd / "text missing ready collection"
+    shutil.copytree(workspace, damaged)
+    client = PersistentClient(
+        path=str(damaged / "indexes/text"),
+        settings=Settings(anonymized_telemetry=False),
+    )
+    collections = client.list_collections()
+    assert len(collections) == 1
+    client.delete_collection(collections[0].name)
+    root_before = canonical_root(damaged)
+    kinds = json_result(
+        run(
+            artifact,
+            "--workspace",
+            str(damaged),
+            "inspect",
+            "kinds",
+            "--json",
+            cwd=cwd,
+            overrides=env,
+            network_denied=True,
+        ),
+        "binary missing collection canonical inspection",
+    )
+    assert kinds["subject"] == "kinds"
+    result = run(
+        artifact,
+        "--workspace",
+        str(damaged),
+        "manage",
+        "health",
+        "--verify-native",
+        cwd=cwd,
+        overrides=env,
+        network_denied=True,
+    )
+    assert result.returncode != 0
+    assert "Ready text native collection is missing" in result.stderr + result.stdout
+    assert client.list_collections() == [], "Native health recreated a ready collection"
+    assert canonical_root(damaged) == root_before
 
 
 def native_recovery(artifact: Path, cwd: Path, model_bundle: str) -> None:
@@ -702,6 +908,10 @@ def native_recovery(artifact: Path, cwd: Path, model_bundle: str) -> None:
     assert reopened["recovery"]["verified_payloads"] >= 10
     assert (restored / "indexes/text").exists()
     assert (restored / "indexes/graph").exists()
+    assert_native_reopened(
+        artifact, cwd, restored, native_env, "binary graph/vector native reopen"
+    )
+    assert_missing_ready_native_is_read_only(artifact, cwd, restored, native_env)
     native_crash_cut(artifact, cwd, fixture / "canonical-backup", native_env, "text")
     native_crash_cut(artifact, cwd, fixture / "canonical-backup", native_env, "graph")
 
@@ -748,24 +958,11 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="tychora-frozen-") as raw:
         clean = Path(raw).resolve() / "working directory with spaces"
         clean.mkdir()
+        verify_linux_network_denial(clean)
         help_text = checked(run(artifact, "--help", cwd=clean), "binary help")
         assert "Usage" in help_text
-        if sys.platform == "darwin":
-            no_network = subprocess.run(
-                [
-                    "/usr/bin/sandbox-exec",
-                    "-p",
-                    "(version 1)(allow default)(deny network*)",
-                    str(artifact),
-                    "--help",
-                ],
-                cwd=clean,
-                env=clean_env(clean),
-                text=True,
-                capture_output=True,
-                timeout=180,
-                check=False,
-            )
+        if sys.platform == "darwin" or sys.platform.startswith("linux"):
+            no_network = run(artifact, "--help", cwd=clean, network_denied=True)
             assert checked(no_network, "network-denied binary help") == help_text
         assert (
             checked(run(wheel_cli, "--help", cwd=clean, frozen=False), "wheel help")

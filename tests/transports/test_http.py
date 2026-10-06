@@ -40,6 +40,17 @@ async def test_maintenance_health_and_migration_use_scoped_http_service(tmp_path
             )
             assert health.status_code == 200
             assert health.json()["recovery"]["deletion_suspended"] is False
+            native = await client.post(
+                "/v1/jobs",
+                json={"operation": "health", "verify_native": True},
+                headers={"Authorization": "Bearer reader"},
+            )
+            assert native.status_code == 200
+            assert native.json()["recovery"]["native_verified_records"] == 0
+            unauthenticated = await client.post(
+                "/v1/jobs", json={"operation": "health", "verify_native": True}
+            )
+            assert unauthenticated.status_code == 403
             denied = await client.post(
                 "/v1/jobs",
                 json={"operation": "health", "resume_pending_deletions": True},

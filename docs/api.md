@@ -59,6 +59,8 @@ The base installation can import and run lexical-only local workflows without Pi
 
 `connect` uses the authenticated loopback transport. `evaluations.run` requires management scope; `management.run` permits read-only health under read scope and requires management scope for mutation or deletion resume. Unsupported optional channels still return typed capability errors; discovery distinguishes installed packages from usable configured channels.
 
+For an explicit physical audit, call `kb.management.run({"operation": "health", "verify_native": True})` or await the same call on `AsyncTychora`. Its `RecoveryStatus` identifies the active snapshot and counts verified native records/generations plus pending batches skipped; absent or corrupt ready storage fails closed. The audit does not call a provider or modify native projections. See [operations](operations.md) for scope and limits.
+
 An asynchronous call uses the same typed request and evidence identity:
 
 ```python

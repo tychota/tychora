@@ -292,6 +292,7 @@ class ImportMaintenance(Contract):
 class HealthMaintenance(Contract):
     operation: Literal["health"] = "health"
     verify_payloads: bool = False
+    verify_native: bool = False
     resume_pending_deletions: bool = False
 
 
@@ -409,6 +410,10 @@ class RecoveryStatus(Contract):
     native_pending_batches: NonNegativeInt
     interrupted_jobs: NonNegativeInt
     deletion_suspended: bool
+    native_verified_snapshot_id: Identifier | None = None
+    native_verified_records: NonNegativeInt = 0
+    native_verified_generations: NonNegativeInt = 0
+    native_skipped_pending_batches: NonNegativeInt = 0
 
 
 class MaintenanceResult(Contract):
