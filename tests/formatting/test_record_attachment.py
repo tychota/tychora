@@ -1,5 +1,6 @@
 """Retained record rows are revalidated against the pinned eligibility view."""
 
+from contextlib import AbstractContextManager
 from dataclasses import replace
 from types import MappingProxyType
 
@@ -7,22 +8,54 @@ import pytest
 
 from tests.formatting.test_response_budget import segment
 from tests.retrieval.test_segments import case, config
+from tests.typed_json import json_object, json_string
+from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.corpus import StructuredRecordRow
-from tychora.retrieval.eligibility import EligibilityAttempt
+from tychora.contracts.publication import SnapshotView
+from tychora.retrieval.eligibility import (
+    EligibilityAttempt,
+    EligibilityCompiler,
+    EligibilityFacts,
+)
 from tychora.retrieval.rerank import RankedEvidence
 from tychora.retrieval.response import prepare_records
 from tychora.retrieval.segments import Selection
+
+
+class RecordOnlyReader:
+    """Fail if record preparation unexpectedly starts querying eligibility state."""
+
+    def __init__(self, registry: Registry):
+        self.registry = registry
+
+    def read_eligibility_facts(self, snapshot: SnapshotView) -> EligibilityFacts:
+        raise AssertionError(
+            "record preparation must use the supplied eligibility view"
+        )
+
+    def retained_config(self, snapshot: SnapshotView) -> ResolvedConfig:
+        raise AssertionError("record preparation must use the supplied envelope")
+
+    def policy_epoch(self, workspace_id: str) -> int:
+        raise AssertionError("record preparation must not read a policy epoch")
+
+    def pin_snapshot(
+        self, selector: str | None
+    ) -> AbstractContextManager[SnapshotView]:
+        raise AssertionError("record preparation must not pin a snapshot")
 
 
 def test_retained_feedback_record_has_complete_eligible_dependencies(tmp_path):
     bundle, _, ranked, view = case("Exact review quote.", (), kind="feedback@1")
     uid = bundle.units[0].unit_id
     registry = Registry.from_config(config(tmp_path))
-    schema = registry.artifact["definition_schema_bindings"]["kinds"]["feedback@1"][
-        "record_schema"
-    ]
+    schema = json_string(
+        json_object(
+            registry.artifact, "definition_schema_bindings", "kinds", "feedback@1"
+        )["record_schema"]
+    )
     value = FrozenJsonMap(
         {
             "comment": "Exact review quote.",
@@ -36,7 +69,7 @@ def test_retained_feedback_record_has_complete_eligible_dependencies(tmp_path):
     record = StructuredRecordRow(
         unit_id=uid,
         record_type=schema,
-        schema_hash=registry.schema_digests[schema],
+        schema_hash=json_string(registry.schema_digests[schema]),
         data_json=value,
     )
     item = ranked.items[0]
@@ -66,9 +99,9 @@ def test_retained_feedback_record_has_complete_eligible_dependencies(tmp_path):
     )
     attempt = EligibilityAttempt(
         view=view,
-        compiler=None,
+        compiler=EligibilityCompiler(RecordOnlyReader(registry)),
         historical_kind_envelopes=MappingProxyType(
-            {"feedback@1": registry.historical_definitions()["feedback@1"]}
+            {"feedback@1": json_object(registry.historical_definitions(), "feedback@1")}
         ),
     )
     prepared = prepare_records(selection, ranked, attempt)
@@ -109,7 +142,13 @@ def test_changed_original_schema_envelope_controls_retained_record(tmp_path):
     uid = bundle.units[0].unit_id
     registry = Registry.from_config(config(tmp_path))
     original = thaw_json(registry.historical_definitions()["feedback@1"])
-    schema = original["schema_bindings"]["record_schema"]
+    assert isinstance(original, dict)
+    schema_bindings = original["schema_bindings"]
+    assert isinstance(schema_bindings, dict)
+    schema = schema_bindings["record_schema"]
+    assert isinstance(schema, str)
+    original_schema_digests = original["schema_digests"]
+    assert isinstance(original_schema_digests, dict)
     value = FrozenJsonMap(
         {
             "comment": "Historical feedback quote.",
@@ -123,7 +162,7 @@ def test_changed_original_schema_envelope_controls_retained_record(tmp_path):
     record = StructuredRecordRow(
         unit_id=uid,
         record_type=schema,
-        schema_hash=original["schema_digests"][schema],
+        schema_hash=json_string(original_schema_digests[schema]),
         data_json=value,
     )
     item = ranked.items[0]
@@ -152,9 +191,19 @@ def test_changed_original_schema_envelope_controls_retained_record(tmp_path):
     )
 
     changed = copy.deepcopy(original)
-    changed["schemas"][schema]["properties"]["new_required"] = {"type": "string"}
-    changed["schemas"][schema]["required"].append("new_required")
-    changed["schema_digests"][schema] = digest("schema-v1", changed["schemas"][schema])
+    schemas = changed["schemas"]
+    assert isinstance(schemas, dict)
+    definition = schemas[schema]
+    assert isinstance(definition, dict)
+    properties = definition["properties"]
+    assert isinstance(properties, dict)
+    properties["new_required"] = {"type": "string"}
+    required = definition["required"]
+    assert isinstance(required, list)
+    required.append("new_required")
+    schema_digests = changed["schema_digests"]
+    assert isinstance(schema_digests, dict)
+    schema_digests[schema] = digest("schema-v1", definition)
     changed["envelope_digest"] = digest(
         "historical-kind-v1",
         {key: val for key, val in changed.items() if key != "envelope_digest"},
@@ -166,7 +215,7 @@ def test_changed_original_schema_envelope_controls_retained_record(tmp_path):
             RankedEvidence((retained,)),
             EligibilityAttempt(
                 view=view,
-                compiler=None,
+                compiler=EligibilityCompiler(RecordOnlyReader(registry)),
                 historical_kind_envelopes=MappingProxyType(
                     {"feedback@1": FrozenJsonMap(original)}
                 ),
@@ -180,7 +229,7 @@ def test_changed_original_schema_envelope_controls_retained_record(tmp_path):
             RankedEvidence((retained,)),
             EligibilityAttempt(
                 view=view,
-                compiler=None,
+                compiler=EligibilityCompiler(RecordOnlyReader(registry)),
                 historical_kind_envelopes=MappingProxyType(
                     {"feedback@1": FrozenJsonMap(changed)}
                 ),
