@@ -1,0 +1,21 @@
+tests/transports/test_mcp_stdio.py
+  s_35b641b930a96d::t_a09d3cac2a30f0 11,30-35,222-224,257,269
+  s_35b641b930a96d::t_d79354353c6e77 273-274
+  s_35b641b930a96d::t_2707552abff74f 151-155,246-253
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fe826ac04cd9f28cbfbf41e28437580d2ec5596b",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
