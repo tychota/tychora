@@ -1,0 +1,22 @@
+tests/release/test_artifact_audit.py
+  s_35b641b930a96d::t_3a53d219827f9a 8,54-69
+packaging/sandbox_build.py
+  s_35b641b930a96d::t_88419231f81911 17-28
+  s_35b641b930a96d::t_9141da2eaffd54 29-36,114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2682e50126e01a1f4eae880cfe34be431dd7a86b",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
