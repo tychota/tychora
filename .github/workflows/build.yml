@@ -1,0 +1,46 @@
+name: Distribution qualification
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  artifacts:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.9.28"
+          enable-cache: true
+      - name: Validate locked inputs
+        run: uv lock --check
+      - name: Install release test tools
+        run: uv sync --locked --all-extras --group dev --group test-fixtures
+      - name: Test inspected artifacts from fresh installations
+        run: uv run --locked pytest tests/release -q
+      - name: Build and inspect deliverable archives
+        shell: bash
+        run: |
+          uv build --out-dir dist
+          python packaging/check_artifact.py dist/*.whl dist/*.tar.gz
+      - name: Prepare minimal installed inventory
+        shell: bash
+        run: |
+          uv venv .release-base --python 3.12
+          uv export --locked --no-default-groups --no-emit-project > .release-base/requirements.txt
+          uv pip install --python .release-base/bin/python --no-build --require-hashes -r .release-base/requirements.txt
+          uv pip install --python .release-base/bin/python --no-deps dist/*.whl
+      - name: Write local release inventory and checksums
+        shell: bash
+        run: |
+          python packaging/build_manifest.py --wheel dist/*.whl --sdist dist/*.tar.gz --lock uv.lock --project pyproject.toml --base-python .release-base/bin/python --full-python .venv/bin/python --commit "$GITHUB_SHA" --output dist/release-manifest.json
+          shasum -a 256 dist/*.whl dist/*.tar.gz dist/release-manifest.json > dist/SHA256SUMS

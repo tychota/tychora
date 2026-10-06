@@ -1,11 +1,13 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.32.4"]
 build-backend = "hatchling.build"
 
 [project]
 name = "tychora"
 version = "0.1.0a1"
 requires-python = ">=3.12,<3.13"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = ["pydantic>=2,<3", "typer", "rich", "markdown-it-py", "jsonschema", "platformdirs", "filelock", "tiktoken", "anyio"]
 
 [project.optional-dependencies]
@@ -40,12 +42,27 @@ tychora = "tychora.interfaces.cli:main"
 
 [dependency-groups]
 dev = ["pytest", "pytest-asyncio", "httpx", "ruff", "ty"]
-build = ["pyinstaller"]
+build = ["hatchling==1.32.4", "pyinstaller"]
 test-fixtures = ["reportlab", "python-docx"]
 audit = ["pip-audit", "pip-licenses"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/tychora"]
+only-include = ["src/tychora"]
+sources = ["src"]
+
+[tool.hatch.build.targets.sdist]
+only-include = [
+  ".gitignore",
+  "src/tychora",
+  "tests",
+  "packaging",
+  "docs",
+  "examples",
+  "README.md",
+  "LICENSE",
+  "pyproject.toml",
+  "uv.lock",
+]
 
 [tool.ruff]
 target-version = "py312"
