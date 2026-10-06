@@ -1,15 +1,21 @@
 """Compiled eligibility from pinned membership and detached current policy."""
 
 import json
+from collections.abc import Callable
+from contextlib import AbstractContextManager
+from dataclasses import replace
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 
 import pytest
 
+from tests.typed_json import json_object, json_string
+from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.artifacts import ArtifactRef
+from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.indexing import IndexRecordDigest
@@ -43,20 +49,20 @@ def test_vector_group_dependency_serialization_is_order_independent():
         media_type="application/octet-stream",
         storage_key="cache",
     )
-    fields = {
-        "record_id": "record",
-        "chunk_id": "chunk",
-        "input_sha": digest("input"),
-        "value_sha": digest("value"),
-        "embedding_cache": artifact,
-        "group_id": "group",
-    }
-    first = VectorRecordBinding(
-        **fields, dependency_ids=frozenset(("unit-a", "unit-b"))
-    )
-    second = VectorRecordBinding(
-        **fields, dependency_ids=frozenset(("unit-b", "unit-a"))
-    )
+
+    def binding(dependencies: frozenset[str]) -> VectorRecordBinding:
+        return VectorRecordBinding(
+            record_id="record",
+            chunk_id="chunk",
+            input_sha=digest("input"),
+            value_sha=digest("value"),
+            embedding_cache=artifact,
+            group_id="group",
+            dependency_ids=dependencies,
+        )
+
+    first = binding(frozenset(("unit-a", "unit-b")))
+    second = binding(frozenset(("unit-b", "unit-a")))
     first_bytes = first.model_dump_json().encode()
     second_bytes = second.model_dump_json().encode()
     assert first_bytes == second_bytes
@@ -117,7 +123,7 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
         channel="lexical",
         backend="sqlite",
         config_sha=digest("family-config"),
-        config_json={},
+        config_json=FrozenJsonMap(),
         backend_namespace="fixture",
         created_at="2025-01-01",
     )
@@ -141,7 +147,7 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
             channel="text",
             backend="chroma",
             config_sha=digest("text-config"),
-            config_json={},
+            config_json=FrozenJsonMap(),
             backend_namespace="text-fixture",
             created_at="2025-01-01",
         )
@@ -188,7 +194,7 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
             channel="image",
             backend="chroma",
             config_sha=digest("image-config"),
-            config_json={},
+            config_json=FrozenJsonMap(),
             backend_namespace="image-fixture",
             created_at="2025-01-01",
         )
@@ -321,20 +327,36 @@ def _facts(
 
 
 class _Reader:
-    def __init__(self, config, facts):
+    def __init__(self, config: ResolvedConfig, facts: EligibilityFacts):
+        self.config = config
         self.registry = Registry.from_config(config)
         self.facts = facts
         self.epoch = facts.policy_epoch
+        self.active_pins = 0
+        self.pin: (
+            Callable[[str | None], AbstractContextManager[SnapshotView]] | None
+        ) = None
 
-    def read_eligibility_facts(self, snapshot):
+    def read_eligibility_facts(self, snapshot: SnapshotView) -> EligibilityFacts:
         return self.facts
 
-    def policy_epoch(self, workspace_id):
+    def retained_config(self, snapshot: SnapshotView) -> ResolvedConfig:
+        raise TychoraError(
+            "INVALID_REQUEST", "Synthetic reader has no retained configuration artifact."
+        )
+
+    def policy_epoch(self, workspace_id: str) -> int:
         return self.epoch
+
+    def pin_snapshot(
+        self, selector: str | None
+    ) -> AbstractContextManager[SnapshotView]:
+        assert self.pin is not None, "this reader has no pinned snapshot fixture"
+        return self.pin(selector)
 
 
 def _request(mode="audit", **updates):
-    return QueryRequest(question="Why?", mode=mode, **updates)
+    return type.__call__(QueryRequest, question="Why?", mode=mode, **updates)
 
 
 def test_reviewed_child_blocks_ancestor_representation_and_proxy(config, scope):
@@ -367,9 +389,7 @@ def test_access_floor_and_withdrawal_remove_every_channel(config, scope):
         snapshot, scope, _request(), config
     )
     assert denied.revision_ids == frozenset()
-    reader.facts = EligibilityFacts(
-        **{**_facts().__dict__, "revisions": (_revision(withdrawn=True),)}
-    )
+    reader.facts = replace(_facts(), revisions=(_revision(withdrawn=True),))
     withdrawn = EligibilityCompiler(reader).compile_eligibility(
         snapshot, scope, _request(), config
     )
@@ -415,10 +435,12 @@ def test_sqlite_reader_detaches_current_floor_and_epoch(tmp_path, config):
     )
     from tychora.contracts.identity import canonical_bytes
 
-    envelope = Registry.from_config(config).historical_definitions()["manual@1"]
+    envelope = json_object(
+        Registry.from_config(config).historical_definitions(), "manual@1"
+    )
     db.execute(
         "INSERT INTO kinds(kind_id,definition_hash,label,description,role,definition_json) VALUES ('manual@1',?,'Manual','Synthetic','standard',?)",
-        (envelope["envelope_digest"], canonical_bytes(envelope).decode()),
+        (json_string(envelope["envelope_digest"]), canonical_bytes(envelope).decode()),
     )
     db.execute(
         "INSERT INTO sources(source_id,collection_id,source_key,source_type,registration_json,access_floor,created_at) VALUES ('source','collection','synthetic','document','{}',0,'2025-01-01')"
@@ -429,7 +451,7 @@ def test_sqlite_reader_detaches_current_floor_and_epoch(tmp_path, config):
     )
     db.execute(
         "INSERT INTO revisions(revision_id,source_id,kind_id,original_sha,edition_key,metadata_sha,title,access_rank,declared_review_state,allowed_uses_json,metadata_json,captured_at) VALUES ('revision','source','manual@1',?,'v1',?,'Synthetic',0,'accepted','[\"audit\",\"compose\"]','{}','2025-01-01')",
-        (artifact_sha, digest("metadata")),
+        (artifact_sha, digest("metadata-v1", FrozenJsonMap())),
     )
     db.execute(
         "INSERT INTO extractions(extraction_id,revision_id,parser_fingerprint,normalizer_fingerprint,document_artifact_sha,created_at) VALUES ('extraction','revision','parser','normalizer',?,'2025-01-01')",
@@ -462,17 +484,15 @@ def test_all_unit_filter_removes_context_and_group_dependent_chunks(config, scop
     from tychora.contracts.requests import EqFilter
 
     original = _facts()
-    facts = EligibilityFacts(
-        **{
-            **original.__dict__,
-            "revision_facets": (("revision", "scope.project", "alpha"),),
-            "units": tuple(
-                UnitFact(**{**unit.__dict__, "facets": (("scope.project", "beta"),)})
-                if unit.unit_id == "child"
-                else unit
-                for unit in original.units
-            ),
-        }
+    facts = replace(
+        original,
+        revision_facets=(("revision", "scope.project", "alpha"),),
+        units=tuple(
+            replace(unit, facets=(("scope.project", "beta"),))
+            if unit.unit_id == "child"
+            else unit
+            for unit in original.units
+        ),
     )
     reader = _Reader(config, facts)
     view = EligibilityCompiler(reader).compile_eligibility(
@@ -509,18 +529,14 @@ def test_candidate_filter_preserves_allowed_context(config, scope):
     from tychora.contracts.requests import EqFilter
 
     original = _facts()
-    facts = EligibilityFacts(
-        **{
-            **original.__dict__,
-            "units": tuple(
-                UnitFact(
-                    **{**unit.__dict__, "facets": (("code.symbol_kind", "function"),)}
-                )
-                if unit.unit_id == "child"
-                else unit
-                for unit in original.units
-            ),
-        }
+    facts = replace(
+        original,
+        units=tuple(
+            replace(unit, facets=(("code.symbol_kind", "function"),))
+            if unit.unit_id == "child"
+            else unit
+            for unit in original.units
+        ),
     )
     view = EligibilityCompiler(_Reader(config, facts)).compile_eligibility(
         _snapshot(config),
@@ -536,26 +552,22 @@ def test_candidate_filter_limits_proxy_lexical_without_removing_context(config, 
     from tychora.contracts.requests import EqFilter
 
     original = _facts()
-    facts = EligibilityFacts(
-        **{
-            **original.__dict__,
-            "units": tuple(
-                UnitFact(
-                    **{**unit.__dict__, "facets": (("code.symbol_kind", "function"),)}
-                )
-                if unit.unit_id == "proxy"
-                else unit
-                for unit in original.units
+    facts = replace(
+        original,
+        units=tuple(
+            replace(unit, facets=(("code.symbol_kind", "function"),))
+            if unit.unit_id == "proxy"
+            else unit
+            for unit in original.units
+        ),
+        chunks=(
+            *original.chunks,
+            ChunkFact(
+                "proxy-chunk",
+                "proxy",
+                frozenset({"revision", "proxy", "child", "asset"}),
             ),
-            "chunks": (
-                *original.chunks,
-                ChunkFact(
-                    "proxy-chunk",
-                    "proxy",
-                    frozenset({"revision", "proxy", "child", "asset"}),
-                ),
-            ),
-        }
+        ),
     )
     compiler = EligibilityCompiler(_Reader(config, facts))
     snapshot = _snapshot(config, chunks=("child-chunk", "proxy-chunk"))
@@ -581,31 +593,27 @@ def test_candidate_filter_limits_image_vector_per_complete_source_owner(config, 
     from tychora.contracts.requests import AndFilter, EqFilter
 
     original = _facts()
-    facts = EligibilityFacts(
-        **{
-            **original.__dict__,
-            "units": tuple(
-                UnitFact(
-                    **{
-                        **unit.__dict__,
-                        "facets": (
-                            ("code.symbol_kind", "function"),
-                            ("code.qualified_name", "example.function"),
-                        ),
-                    }
-                )
-                if unit.unit_id == "child"
-                else unit
-                for unit in original.units
-            ),
-            "vectors": (
-                VectorFact(
-                    "image-vector",
-                    asset_id="asset",
-                    dependency_ids=frozenset({"revision", "asset", "child"}),
+    facts = replace(
+        original,
+        units=tuple(
+            replace(
+                unit,
+                facets=(
+                    ("code.symbol_kind", "function"),
+                    ("code.qualified_name", "example.function"),
                 ),
+            )
+            if unit.unit_id == "child"
+            else unit
+            for unit in original.units
+        ),
+        vectors=(
+            VectorFact(
+                "image-vector",
+                asset_id="asset",
+                dependency_ids=frozenset({"revision", "asset", "child"}),
             ),
-        }
+        ),
     )
     compiler = EligibilityCompiler(_Reader(config, facts))
     snapshot = _snapshot(config, images=(("image-vector", "asset"),))
@@ -736,7 +744,7 @@ async def test_pinned_attempt_discards_stale_result_and_retries_once(config, sco
         finally:
             reader.active_pins -= 1
 
-    reader.pin_snapshot = pin_snapshot
+    reader.pin = pin_snapshot
     calls = []
 
     async def operation(attempt):
@@ -746,9 +754,7 @@ async def test_pinned_attempt_discards_stale_result_and_retries_once(config, sco
             calls.append(attempt.view.policy_epoch)
             if len(calls) == 1:
                 reader.epoch = 2
-                reader.facts = EligibilityFacts(
-                    **{**reader.facts.__dict__, "policy_epoch": 2}
-                )
+                reader.facts = replace(reader.facts, policy_epoch=2)
             return "result-" + str(len(calls))
 
         return await attempt.owner_provider(provider)
@@ -774,14 +780,12 @@ async def test_second_epoch_change_returns_scope_changed(config, scope):
     def pin_snapshot(selector):
         yield snapshot
 
-    reader.pin_snapshot = pin_snapshot
+    reader.pin = pin_snapshot
 
     async def operation(attempt):
         async def provider():
             reader.epoch += 1
-            reader.facts = EligibilityFacts(
-                **{**reader.facts.__dict__, "policy_epoch": reader.epoch}
-            )
+            reader.facts = replace(reader.facts, policy_epoch=reader.epoch)
             return "stale"
 
         return await attempt.owner_provider(provider)
@@ -800,30 +804,28 @@ async def test_second_epoch_change_returns_scope_changed(config, scope):
 
 def test_rejected_overlapping_child_does_not_remove_unrelated_source(config, scope):
     original = _facts(child_review="rejected")
-    facts = EligibilityFacts(
-        **{
-            **original.__dict__,
-            "units": (
-                *original.units,
-                UnitFact(
-                    "independent",
-                    "revision",
-                    "extraction",
-                    "paragraph",
-                    "accepted",
-                    True,
-                    frozenset({"revision", "independent"}),
-                ),
+    facts = replace(
+        original,
+        units=(
+            *original.units,
+            UnitFact(
+                "independent",
+                "revision",
+                "extraction",
+                "paragraph",
+                "accepted",
+                True,
+                frozenset({"revision", "independent"}),
             ),
-            "chunks": (
-                *original.chunks,
-                ChunkFact(
-                    "independent-chunk",
-                    "independent",
-                    frozenset({"revision", "independent"}),
-                ),
+        ),
+        chunks=(
+            *original.chunks,
+            ChunkFact(
+                "independent-chunk",
+                "independent",
+                frozenset({"revision", "independent"}),
             ),
-        }
+        ),
     )
     view = EligibilityCompiler(_Reader(config, facts)).compile_eligibility(
         _snapshot(config, chunks=("parent-chunk", "child-chunk", "independent-chunk")),
@@ -836,11 +838,8 @@ def test_rejected_overlapping_child_does_not_remove_unrelated_source(config, sco
 
 
 def test_original_kind_use_restriction_is_part_of_readability(config, scope):
-    facts = EligibilityFacts(
-        **{
-            **_facts().__dict__,
-            "revisions": (_revision(kind_allowed_uses=frozenset({"lookup"})),),
-        }
+    facts = replace(
+        _facts(), revisions=(_revision(kind_allowed_uses=frozenset({"lookup"})),)
     )
     view = EligibilityCompiler(_Reader(config, facts)).compile_eligibility(
         _snapshot(config),
@@ -853,30 +852,28 @@ def test_original_kind_use_restriction_is_part_of_readability(config, scope):
 
 def test_attempt_dependency_lookup_carries_complete_group_leaves(config, scope):
     original = _facts()
-    facts = EligibilityFacts(
-        **{
-            **original.__dict__,
-            "chunks": (
-                ChunkFact(
-                    "parent-chunk", "parent", frozenset({"revision", "parent"}), "group"
-                ),
-                ChunkFact(
-                    "child-chunk", "child", frozenset({"revision", "child"}), "group"
-                ),
+    facts = replace(
+        original,
+        chunks=(
+            ChunkFact(
+                "parent-chunk", "parent", frozenset({"revision", "parent"}), "group"
             ),
-            "vectors": (
-                VectorFact(
-                    "parent-vector",
-                    chunk_id="parent-chunk",
-                    dependency_ids=frozenset({"revision", "parent", "child"}),
-                ),
-                VectorFact(
-                    "child-vector",
-                    chunk_id="child-chunk",
-                    dependency_ids=frozenset({"revision", "parent", "child"}),
-                ),
+            ChunkFact(
+                "child-chunk", "child", frozenset({"revision", "child"}), "group"
             ),
-        }
+        ),
+        vectors=(
+            VectorFact(
+                "parent-vector",
+                chunk_id="parent-chunk",
+                dependency_ids=frozenset({"revision", "parent", "child"}),
+            ),
+            VectorFact(
+                "child-vector",
+                chunk_id="child-chunk",
+                dependency_ids=frozenset({"revision", "parent", "child"}),
+            ),
+        ),
     )
     attempt = EligibilityCompiler(_Reader(config, facts)).compile_attempt(
         _snapshot(
@@ -1244,17 +1241,15 @@ def test_rejected_group_owner_blocks_only_its_vector_records(config, scope):
 
 def test_vector_fact_outside_selected_receipt_is_not_eligible(config, scope):
     original = _facts()
-    facts = EligibilityFacts(
-        **{
-            **original.__dict__,
-            "vectors": (
-                VectorFact(
-                    "foreign",
-                    chunk_id="child-chunk",
-                    dependency_ids=frozenset({"revision", "child"}),
-                ),
+    facts = replace(
+        original,
+        vectors=(
+            VectorFact(
+                "foreign",
+                chunk_id="child-chunk",
+                dependency_ids=frozenset({"revision", "child"}),
             ),
-        }
+        ),
     )
     view = EligibilityCompiler(_Reader(config, facts)).compile_eligibility(
         _snapshot(config),
@@ -1322,11 +1317,8 @@ def test_only_explicit_global_revision_matches_missing_scoped_facet(config, scop
     request = _request(
         filters=EqFilter(field="scope.project", value="alpha"), include_global=True
     )
-    global_facts = EligibilityFacts(
-        **{
-            **_facts().__dict__,
-            "revisions": (_revision(global_facets=frozenset({"scope.project"})),),
-        }
+    global_facts = replace(
+        _facts(), revisions=(_revision(global_facets=frozenset({"scope.project"})),)
     )
     normal = EligibilityCompiler(_Reader(config, _facts())).compile_eligibility(
         _snapshot(config), scope, request, config
@@ -1353,7 +1345,7 @@ def test_new_decision_blocks_only_selected_graph_assertion(config, scope):
         channel="graph",
         backend="ladybug",
         config_sha=digest("graph-config"),
-        config_json={},
+        config_json=FrozenJsonMap(),
         backend_namespace="graph-fixture",
         created_at="2025-01-01",
     )
@@ -1397,11 +1389,9 @@ def test_new_decision_blocks_only_selected_graph_assertion(config, scope):
             ),
         }
     )
-    facts = EligibilityFacts(
-        **{
-            **_facts().__dict__,
-            "assertion_decisions": ((selected_assertion, 1), (unrelated_assertion, 1)),
-        }
+    facts = replace(
+        _facts(),
+        assertion_decisions=((selected_assertion, 1), (unrelated_assertion, 1)),
     )
     view = EligibilityCompiler(_Reader(config, facts)).compile_eligibility(
         snapshot, scope, _request(), config
