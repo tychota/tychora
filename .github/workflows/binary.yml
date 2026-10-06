@@ -20,8 +20,6 @@ jobs:
           - runner: ubuntu-22.04
             target: linux-x86_64
     runs-on: ${{ matrix.runner }}
-    env:
-      UV_NO_SYNC: "1"
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -65,7 +63,7 @@ jobs:
         run: |
           uv sync --locked --all-extras --group build --no-default-groups --no-install-project
           uv pip install --python .venv/bin/python --no-deps dist/*.whl
-          uv run --locked python -c 'import pathlib, tychora; p=pathlib.Path(tychora.__file__).resolve(); assert "site-packages" in p.parts, p; print(p)'
+          UV_NO_SYNC=1 uv run --locked python -c 'import pathlib, tychora; p=pathlib.Path(tychora.__file__).resolve(); assert "site-packages" in p.parts, p; print(p)'
       - name: Produce feature and license payloads
         shell: bash
         run: |
@@ -75,23 +73,23 @@ jobs:
           uv pip install --python .release-base/bin/python --no-deps dist/*.whl
           source_root="$GITHUB_WORKSPACE"
           if [[ "$RUNNER_OS" == "macOS" ]]; then source_root="$RUNNER_TEMP/tychora-public-stage"; fi
-          uv run --locked python packaging/build_manifest.py --wheel dist/*.whl --sdist dist/*.tar.gz --lock uv.lock --project pyproject.toml --base-python .release-base/bin/python --full-python .venv/bin/python --repository . --source-root "$source_root" --commit "$GITHUB_SHA" --output dist/release-manifest.json
-          uv run --locked python packaging/build_release_features.py --manifest dist/release-manifest.json --output packaging/release-features.json
-          uv run --locked python packaging/build_notices.py --output dist/tychora-notices
+          UV_NO_SYNC=1 uv run --locked python packaging/build_manifest.py --wheel dist/*.whl --sdist dist/*.tar.gz --lock uv.lock --project pyproject.toml --base-python .release-base/bin/python --full-python .venv/bin/python --repository . --source-root "$source_root" --commit "$GITHUB_SHA" --output dist/release-manifest.json
+          UV_NO_SYNC=1 uv run --locked python packaging/build_release_features.py --manifest dist/release-manifest.json --output packaging/release-features.json
+          UV_NO_SYNC=1 uv run --locked python packaging/build_notices.py --output dist/tychora-notices
       - name: Diagnose native dependencies with onedir
         shell: bash
         run: |
-          TYCHORA_BUILD_MODE=onedir uv run --locked pyinstaller packaging/tychora.spec --noconfirm --clean
-          uv run --locked python packaging/test_frozen.py --artifact dist/tychora-onedir/tychora --features packaging/release-features.json
+          TYCHORA_BUILD_MODE=onedir UV_NO_SYNC=1 uv run --locked pyinstaller packaging/tychora.spec --noconfirm --clean
+          UV_NO_SYNC=1 uv run --locked python packaging/test_frozen.py --artifact dist/tychora-onedir/tychora --features packaging/release-features.json
       - name: Build and accept final onefile executable
         shell: bash
         run: |
-          TYCHORA_BUILD_MODE=onefile uv run --locked pyinstaller packaging/tychora.spec --noconfirm --clean
-          uv run --locked python packaging/test_frozen.py --artifact dist/tychora --features packaging/release-features.json
-          uv run --locked python packaging/audit_frozen.py --artifact dist/tychora --notices dist/tychora-notices
+          TYCHORA_BUILD_MODE=onefile UV_NO_SYNC=1 uv run --locked pyinstaller packaging/tychora.spec --noconfirm --clean
+          UV_NO_SYNC=1 uv run --locked python packaging/test_frozen.py --artifact dist/tychora --features packaging/release-features.json
+          UV_NO_SYNC=1 uv run --locked python packaging/audit_frozen.py --artifact dist/tychora --notices dist/tychora-notices
       - name: Record target artifact checksum
         shell: bash
         run: |
-          version=$(uv run --locked python -c 'import importlib.metadata; print(importlib.metadata.version("tychora"))')
+          version=$(UV_NO_SYNC=1 uv run --locked python -c 'import importlib.metadata; print(importlib.metadata.version("tychora"))')
           cp dist/tychora "dist/tychora-${version}-${{ matrix.target }}"
           shasum -a 256 "dist/tychora-${version}-${{ matrix.target }}" dist/tychora-notices/manifest.json packaging/release-features.json
