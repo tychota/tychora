@@ -1,0 +1,56 @@
+src/tychora/ingestion/documents.py
+  s_35b641b930a96d::t_30035212348cf2 60
+  s_35b641b930a96d::t_659f10cce17c21 141-143
+tests/ingestion/test_tables.py
+  s_35b641b930a96d::t_cc0645843593a4 760,762,766,770,775-776,856-862,885
+  s_35b641b930a96d::t_f9df97c952bbd3 757-759,761,763-765,767-769,771-774,778-783,785-787,793-808,814-837,907-911,915-927,931-937
+  s_35b641b930a96d::t_e8750d42b65949 876-882
+  s_35b641b930a96d::t_7e99bbd009cd44 777
+  s_35b641b930a96d::t_3467e289829773 683-684
+  s_35b641b930a96d::t_db4d4c14f3ff5c 679-682,685,688-702,723-731,735-756
+  s_35b641b930a96d::t_891160f1459f75 686-687,703-722
+  s_35b641b930a96d::t_35fdbb1925af81 886-906
+  s_35b641b930a96d::t_ecf5cfff435c82 732-734,788-792,809-813,838-855,863-875,883-884,912-914,928-930
+  s_35b641b930a96d::t_aa77d41e2554e0 784
+src/tychora/interfaces/commands/add.py
+  s_35b641b930a96d::t_3ed9e84b286652 5,17-20,28,33-35,66-70,109
+  s_35b641b930a96d::t_77472666e7e49f 14,21-27,79
+tests/cli/test_commands.py
+  s_35b641b930a96d::t_1d6762a5c5a1f6 195-223
+  s_35b641b930a96d::t_9b10ca26f17ac3 224-236,238,240
+  s_35b641b930a96d::t_c50b5330f1bb5b 237,239,241-242
+src/tychora/ingestion/document_views.py
+  s_35b641b930a96d::t_20f7d96469e5da 53-59
+src/tychora/ingestion/composition.py
+  s_35b641b930a96d::t_a3e92cf0451822 686-694
+  s_35b641b930a96d::t_b491975b2fdf2c 285-286,289-291,452
+src/tychora/ingestion/document_records.py
+  s_35b641b930a96d::t_20f7d96469e5da 317-319,353
+  s_35b641b930a96d::t_30035212348cf2 37-40,42,44
+src/tychora/application/sources.py
+  s_35b641b930a96d::t_0887ce1a0f3cd1 562,814-816,828-832,835-841,843-845
+  s_35b641b930a96d::t_085c4c0ab9a573 793-813,817-824,826-827,833-834,842,848,923-935
+  s_35b641b930a96d::t_1839f1a9112abc 846-847,936-938
+src/tychora/ingestion/document_parts.py
+  s_35b641b930a96d::t_20f7d96469e5da 152-153,187
+src/tychora/ingestion/document_identity.py
+  s_35b641b930a96d::t_e784b978b9a43d 20,28-29,45,66,69
+src/tychora/ingestion/assets.py
+  s_35b641b930a96d::t_b491975b2fdf2c 94,96,139-144,168-169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "286058fae0f26815e25c076cc115604201ffa1e4",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
