@@ -1,0 +1,21 @@
+tests/contracts/test_models.py
+  s_35b641b930a96d::t_1be1a02fb2ea11 42,123-125,269-270,407-408,413
+  s_35b641b930a96d::t_d38911191675a6 8-15,20-22,30-32,37-40,149,450
+  s_35b641b930a96d::t_3b4b5e11a77569 117-121,194-196,296,302-304,405-406,410-411
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "401acb5d034a21de826ae4b1a6559078bcff0a1f",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
