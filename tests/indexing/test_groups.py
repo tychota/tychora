@@ -13,7 +13,7 @@ from tychora.indexing.representations import prepare_extraction
 from tychora.indexing.windows import window_unit
 
 
-@dataclass(frozen=True)
+@dataclass
 class ExactCounter:
     model: str
     tokenizer_id: str = "synthetic-exact-counter@1"
