@@ -260,7 +260,9 @@ def test_file_ndcg_uses_all_judged_relevance_at_query_cutoff():
         item.name: item
         for item in metrics(case, result(("other.py", "one.py"))).metrics
     }
-    assert 0.0 < unjudged["file_ndcg"].value < 1.0
+    unjudged_ndcg = unjudged["file_ndcg"].value
+    assert isinstance(unjudged_ndcg, float)
+    assert 0.0 < unjudged_ndcg < 1.0
     empty = {item.name: item for item in metrics(case, result(())).metrics}
     assert empty["file_ndcg"].value == 0.0
 
@@ -302,7 +304,9 @@ def test_image_ndcg_uses_additional_judged_assets():
         }
     )
     duplicate_score = {item.name: item for item in metrics(case, duplicated).metrics}
-    assert duplicate_score["image_ndcg"].value <= 1.0
+    duplicate_ndcg = duplicate_score["image_ndcg"].value
+    assert isinstance(duplicate_ndcg, float)
+    assert duplicate_ndcg <= 1.0
     only_one_judged = case.model_copy(
         update={"asset_relevance": FrozenJsonMap({"asset-one": 3})}
     )
@@ -400,5 +404,9 @@ def test_graded_relevance_keeps_file_and_asset_universes_separate():
         }
     )
     scored = {item.name: item for item in metrics(typed, result).metrics}
-    assert 0.0 < scored["file_ndcg"].value < 1.0
-    assert 0.0 < scored["image_ndcg"].value < 1.0
+    file_ndcg = scored["file_ndcg"].value
+    image_ndcg = scored["image_ndcg"].value
+    assert isinstance(file_ndcg, float)
+    assert isinstance(image_ndcg, float)
+    assert 0.0 < file_ndcg < 1.0
+    assert 0.0 < image_ndcg < 1.0

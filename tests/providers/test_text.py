@@ -8,6 +8,7 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
+from tychora.adapters.voyage.request_types import VoyageTransport
 from tychora.adapters.voyage.text import (
     HttpxVoyageTransport,
     QueryOperationBinding,
@@ -39,6 +40,11 @@ class CharacterCounter:
 
     def count(self, text: str) -> int:
         return len(text)
+
+
+def _unexpected_transport(created: list[bool]) -> VoyageTransport:
+    created.append(True)
+    raise AssertionError("Rejected request reached transport construction")
 
 
 def _group(
@@ -161,7 +167,7 @@ def test_query_authorization_is_bounded_query_only(change):
     values.update(change)
 
     with pytest.raises(ValidationError):
-        QueryUploadAuthorization(**values)
+        type.__call__(QueryUploadAuthorization, **values)
 
 
 def test_independent_group_is_one_versioned_measured_wire_input():
@@ -940,7 +946,7 @@ def test_runtime_credential_binding_cannot_be_rebound_over_cached_values():
     )
 
     with pytest.raises(AttributeError):
-        runtime.credential_binding_id = "credential-b"
+        runtime.__setattr__("credential_binding_id", "credential-b")
     assert runtime.credential_binding_id == "credential-a"
 
 
@@ -1001,7 +1007,7 @@ def test_actual_capsule_and_window_wire_tokens_are_enforced_before_transport(
     )
     created = []
     runtime = VoyageRuntime(
-        lambda: created.append(True),  # type: ignore[arg-type,func-returns-value]
+        lambda: _unexpected_transport(created),
         workspace_id="workspace-a",
         credential_binding_id="credential-a",
     )
@@ -1115,7 +1121,7 @@ def test_joint_group_capability_mismatch_is_rejected_before_transport(change):
         ),
         counter=CharacterCounter("voyage-context-4"),
         runtime=VoyageRuntime(
-            lambda: created.append(True),  # type: ignore[arg-type,func-returns-value]
+            lambda: _unexpected_transport(created),
             workspace_id="workspace-a",
             credential_binding_id="credential-a",
         ),
@@ -1137,7 +1143,7 @@ def test_counter_mismatch_is_rejected_before_transport(counter_model):
             ),
             counter=CharacterCounter(counter_model),
             runtime=VoyageRuntime(
-                lambda: created.append(True),  # type: ignore[arg-type,func-returns-value]
+                lambda: _unexpected_transport(created),
                 workspace_id="workspace-a",
                 credential_binding_id="credential-a",
             ),
@@ -1160,7 +1166,7 @@ def test_query_count_over_256_is_rejected_before_tokenization_or_transport():
         capabilities=_capabilities(dimensions=2),
         counter=CountingCounter(),
         runtime=VoyageRuntime(
-            lambda: created.append(True),  # type: ignore[arg-type,func-returns-value]
+            lambda: _unexpected_transport(created),
             workspace_id="workspace-a",
             credential_binding_id="credential-a",
         ),
