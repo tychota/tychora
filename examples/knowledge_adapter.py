@@ -32,6 +32,10 @@ def retrieve_segments(kb: Tychora, question: str, *, limit: int = 8) -> list[dic
                     "source_id": segment.source_id,
                     "revision_id": segment.revision_id,
                     "extraction_id": segment.extraction_id,
+                    "citations": [
+                        citation.model_dump(mode="json")
+                        for citation in segment.citations
+                    ],
                     "locators": [
                         locator.model_dump(mode="json")
                         for citation in segment.citations

@@ -2,7 +2,7 @@
 
 A workspace stores its durable selection in `workspace.toml`. `init --config` accepts that workspace document, not a pack's `profile.toml`. A workspace document registers names under `[profiles]`, selects one in `[defaults]`, and can override strict `[configuration]` values. Relative pack paths resolve from the workspace document. On ordinary reopen the durable selected profile is used. Existing workspaces keep the same filename; there is no automatic rename or migration.
 
-The [generic workbench pack](../examples/profiles/workbench/README.md) demonstrates an external data-only profile. It extends the version-qualified bundled `documents@1` pack, which provides regulation, standard, template, and feedback schemas and distinct roles/lanes. It registers `clarifies@1`, an explicit historical lane mapping, a project facet bound to source metadata, and hierarchical output. To use it from this checkout:
+The [generic workbench pack](../examples/profiles/workbench/README.md) demonstrates an external data-only profile. It extends the version-qualified bundled `documents@1` pack, which provides regulation, standard, template, and feedback schemas and distinct roles/lanes. It registers `clarifies@1`, an explicit historical lane mapping, a project facet bound to source metadata, and hierarchical output. To use it from this checkout, provide the same checksum-verifiable local `output-tokenizer` bundle described in the [README](../README.md). Set `TYCHORA_MODEL_BUNDLE` to its directory; a clean offline workspace cannot add/search before this asset is provisioned:
 
 ```bash
 mkdir -p ./knowledge/profiles
@@ -17,6 +17,9 @@ profile = "workbench"
 roots = ["$PWD"]
 EOF_WORKSPACE
 tychora --workspace ./knowledge --offline init --provider configured --config ./knowledge/workspace.toml --json
+: "${TYCHORA_MODEL_BUNDLE:?Set this to a verified local bundle directory}"
+export TYCHORA_MODEL_CACHE="$PWD/model-cache"
+tychora --workspace ./knowledge --offline manage setup --asset output-tokenizer --bundle "$TYCHORA_MODEL_BUNDLE" --json
 tychora --workspace ./knowledge --offline inspect config --json
 tychora --workspace ./knowledge --offline inspect kinds --json
 tychora --workspace ./knowledge --offline inspect facets --json

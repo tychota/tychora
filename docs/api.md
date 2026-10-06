@@ -75,4 +75,4 @@ async def show_evidence() -> None:
 asyncio.run(show_evidence())
 ```
 
-`knowledge_adapter.py` is framework-neutral. It keeps segment, source, revision, extraction, unit, asset, run and snapshot IDs inside metadata as well as top-level segment IDs. Serializers that drop top-level IDs can still preserve provenance. No Agno connector or LLM answer generation is installed.
+`knowledge_adapter.py` is framework-neutral. It keeps segment, source, revision, extraction, unit, asset, run and snapshot IDs inside metadata as well as top-level segment IDs. It also carries each complete citation record, keeping its unit/asset/source/revision binding, source reference, page fields, and locators together. Serializers that drop top-level IDs can still preserve provenance. No Agno connector or LLM answer generation is installed.

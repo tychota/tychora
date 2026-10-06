@@ -1,5 +1,6 @@
 """Exercise the published offline recipe and Python examples."""
 
+import json
 import os
 import re
 import shutil
@@ -15,10 +16,14 @@ ROOT = Path(__file__).resolve().parents[2]
 def _bundle(tmp_path: Path) -> Path:
     supplied = os.environ.get("TYCHORA_TEST_TOKENIZER_ASSETS")
     if not supplied:
-        pytest.skip("requires the explicitly provisioned output tokenizer fixture")
+        pytest.fail(
+            "Set TYCHORA_TEST_TOKENIZER_ASSETS to the provisioned tokenizer fixture directory"
+        )
     source = Path(supplied) / "cl100k_base.tiktoken"
     if not source.is_file():
-        pytest.skip("output tokenizer fixture is absent")
+        pytest.fail(
+            f"TYCHORA_TEST_TOKENIZER_ASSETS has no cl100k_base.tiktoken: {source}"
+        )
     bundle = tmp_path / "model-bundle" / "tiktoken" / "0.14.0"
     bundle.mkdir(parents=True)
     shutil.copyfile(source, bundle / source.name)
@@ -155,3 +160,242 @@ def test_public_relative_markdown_links_resolve() -> None:
                 continue
             relative = target.split("#", 1)[0]
             assert (page.parent / relative).exists(), f"{page}: broken link {target}"
+
+
+@pytest.mark.parametrize("asset_root", [None, "missing"])
+def test_required_tokenizer_fixture_fails_clearly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, asset_root: str | None
+) -> None:
+    if asset_root is None:
+        monkeypatch.delenv("TYCHORA_TEST_TOKENIZER_ASSETS", raising=False)
+    else:
+        monkeypatch.setenv("TYCHORA_TEST_TOKENIZER_ASSETS", str(tmp_path / asset_root))
+    with pytest.raises(pytest.fail.Exception, match="TYCHORA_TEST_TOKENIZER_ASSETS"):
+        _bundle(tmp_path)
+
+
+def test_literal_external_pack_offline_recipe(tmp_path: Path) -> None:
+    pack = tmp_path / "examples" / "profiles" / "workbench"
+    pack.parent.mkdir(parents=True)
+    shutil.copytree(ROOT / "examples" / "profiles" / "workbench", pack)
+    guide = (ROOT / "docs" / "configuration.md").read_text()
+    blocks = re.findall(r"```bash\n(.*?)\n```", guide, re.DOTALL)
+    assert len(blocks) >= 2
+    result = subprocess.run(
+        ["/bin/bash", "-e", "-c", "\n".join(blocks[:2])],
+        cwd=tmp_path,
+        env=_environment(tmp_path),
+        text=True,
+        capture_output=True,
+        timeout=90,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Record verification outcomes." not in result.stderr
+    assert (tmp_path / "knowledge" / "workspace.toml").is_file()
+
+
+def test_framework_adapter_keeps_complete_multiple_citations(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    from examples.knowledge_adapter import retrieve_segments
+    from tychora import Tychora
+
+    class Counter:
+        model = "synthetic"
+        tokenizer_id = "cl100k_base"
+
+        def count(self, value: str) -> int:
+            return len(value)
+
+    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+        job = kb.sources.add(
+            {
+                "type": "text",
+                "source_key": "manual",
+                "collection_id": "default",
+                "kind": "manual@1",
+                "format": "text",
+                "metadata": {
+                    "title": "Verification",
+                    "publisher": "Example Team",
+                    "edition": "1",
+                },
+                "text": "Record verification outcomes.",
+            }
+        )
+        assert kb.jobs.wait(job.id).state == "succeeded"
+        result = kb.search({"question": "verification", "modalities": ["lexical"]})
+        segment = result.segments[0]
+        first = segment.citations[0]
+        second = first.model_copy(
+            update={
+                "unit_id": "second-unit",
+                "source_id": "second-source",
+                "revision_id": "second-revision",
+                "source_ref": "second-ref",
+                "physical_page": 2,
+            }
+        )
+        multi = segment.model_copy(update={"citations": (first, second)})
+        enriched = result.model_copy(update={"segments": (multi,)})
+        adapted = retrieve_segments(
+            SimpleNamespace(search=lambda _: enriched), "verification"
+        )
+    assert adapted[0]["metadata"]["citations"] == [
+        first.model_dump(mode="json"),
+        second.model_dump(mode="json"),
+    ]
+    assert (
+        adapted[0]["metadata"]["citations"][0]["unit_id"]
+        != adapted[0]["metadata"]["citations"][1]["unit_id"]
+    )
+
+
+@pytest.mark.parametrize("mode", ["sync", "async"])
+def test_optimized_quickstart_reports_failed_setup(tmp_path: Path, mode: str) -> None:
+    script = """
+import asyncio
+import os
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+from examples import quickstart
+
+os.environ['TYCHORA_MODEL_BUNDLE'] = 'synthetic-bundle'
+class SyncKB:
+    management = SimpleNamespace(run=lambda request: SimpleNamespace(job=SimpleNamespace(state='failed')))
+    def __enter__(self): return self
+    def __exit__(self, *args): return None
+class AsyncKB:
+    async def run(self, request): return SimpleNamespace(job=SimpleNamespace(state='failed'))
+    def __init__(self): self.management = self
+    async def __aenter__(self): return self
+    async def __aexit__(self, *args): return None
+if sys.argv[1] == 'sync':
+    quickstart.Tychora.open = lambda path: SyncKB()
+    quickstart.main(Path('unused'))
+else:
+    quickstart.AsyncTychora.open = lambda path: AsyncKB()
+    asyncio.run(quickstart.async_main(Path('unused')))
+"""
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT)
+    result = subprocess.run(
+        [sys.executable, "-O", "-c", script, mode],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "Output tokenizer setup did not succeed" in result.stderr
+
+
+def test_shipped_pack_project_global_history_and_hierarchy(tmp_path: Path) -> None:
+    from tychora import OutputProfile, Tychora, format_result
+
+    class Counter:
+        model = "synthetic"
+        tokenizer_id = "cl100k_base"
+
+        def count(self, value: str) -> int:
+            return len(value)
+
+    workspace = tmp_path / "knowledge"
+    shutil.copytree(
+        ROOT / "examples" / "profiles" / "workbench",
+        workspace / "profiles" / "workbench",
+    )
+    (workspace / "workspace.toml").write_text(
+        'schema_version = 1\n[profiles.workbench]\npath = "profiles/workbench"\n'
+        '[defaults]\nprofile = "workbench"\n'
+    )
+    config = subprocess.run(
+        [
+            str(Path(sys.executable).parent / "tychora"),
+            "--workspace",
+            str(workspace),
+            "inspect",
+            "config",
+            "--json",
+        ],
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert config.returncode == 0, config.stderr
+    output = json.loads(config.stdout)["values"]["output"]
+    assert output["renderer"] == "hierarchical-evidence@1"
+    assert output["title"] == "Workbench evidence"
+    with Tychora.open(workspace, token_counter=Counter()) as kb:
+
+        def add(key: str, body: str, kind: str, metadata: dict) -> None:
+            job = kb.sources.add(
+                {
+                    "type": "text",
+                    "source_key": key,
+                    "collection_id": "default",
+                    "kind": kind,
+                    "format": "text",
+                    "text": body,
+                    "metadata": metadata,
+                }
+            )
+            status = kb.jobs.wait(job.id, timeout=10)
+            assert status.state == "succeeded", (key, status.error_code)
+
+        base_metadata = {
+            "title": "Synthetic",
+            "publisher": "Example Team",
+            "edition": "1",
+        }
+        add(
+            "local",
+            "cobalt local project",
+            "manual@1",
+            {**base_metadata, "scope": {"project": "alpha"}},
+        )
+        add(
+            "global",
+            "cobalt global reference",
+            "manual@1",
+            {**base_metadata, "scope": {"global_facets": ["project"]}},
+        )
+        add("unbound", "cobalt unbound reference", "manual@1", base_metadata)
+        add("history", "heritage standard text", "legacy-standard@1", base_metadata)
+        request = {
+            "question": "cobalt",
+            "modalities": ["lexical"],
+            "filters": {"op": "eq", "field": "scope.project", "value": "alpha"},
+        }
+        local = kb.search(request)
+        global_result = kb.search({**request, "include_global": True})
+        assert {segment.text for segment in local.segments} == {"cobalt local project"}
+        assert {segment.text for segment in global_result.segments} == {
+            "cobalt local project",
+            "cobalt global reference",
+        }
+        historical = kb.search({"question": "heritage", "modalities": ["lexical"]})
+        assert any(
+            segment.kind == "legacy-standard@1" and segment.lane == "standard"
+            for segment in historical.segments
+        )
+        profile = OutputProfile(
+            renderer=output["renderer"],
+            lane_order=tuple(output["lane_order"]),
+            include_empty_lanes=output["include_empty_lanes"],
+            title=output["title"],
+            envelope_tag=output["envelope_tag"],
+        )
+        rendered = json.loads(format_result(historical, profile, counter=Counter()))
+        assert rendered["schema_version"] == "hierarchical-evidence@1"
+        standard = next(
+            group for group in rendered["hierarchy"] if group["lane_id"] == "standard"
+        )
+        assert any(
+            segment["kind"] == "legacy-standard@1" for segment in standard["segments"]
+        )

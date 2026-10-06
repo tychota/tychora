@@ -27,7 +27,8 @@ def main(workspace: Path) -> None:
                 "offline": True,
             }
         )
-        assert setup.job is not None and setup.job.state == "succeeded"
+        if setup.job is None or setup.job.state != "succeeded":
+            raise SystemExit("Output tokenizer setup did not succeed")
         kinds = kb.discover({"subject": "kinds"})
         if not any(item.id == "manual@1" for item in kinds.definitions):
             raise SystemExit("This workspace does not register manual@1")
@@ -76,7 +77,8 @@ async def async_main(workspace: Path) -> None:
                 "offline": True,
             }
         )
-        assert setup.job is not None and setup.job.state == "succeeded"
+        if setup.job is None or setup.job.state != "succeeded":
+            raise SystemExit("Output tokenizer setup did not succeed")
         kinds = await kb.discover({"subject": "kinds"})
         if not any(item.id == "manual@1" for item in kinds.definitions):
             raise SystemExit("This workspace does not register manual@1")
