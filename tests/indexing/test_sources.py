@@ -26,11 +26,14 @@ from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.embeddings import EmbeddingCapabilities, VisualEmbeddingLimits
 from tychora.contracts.errors import TychoraError
+from tychora.contracts.graph import GraphBatchReceipt
 from tychora.contracts.identity import canonical_bytes, space_id
 from tychora.contracts.publication import PublicationPlan
 from tychora.contracts.requests import RequestScope, SourceInput
+from tychora.contracts.vectors import BatchReceipt
 from tychora.indexing.coordinator import ProjectionCoordinator
 from tychora.ports.execution import ExecutionContext
+from tychora.ports.jobs import JobRepository
 
 
 class Counter:
@@ -78,6 +81,44 @@ class EmptyVisualProvider:
 
     def embed_assets(self, items, ctx):
         raise AssertionError("Empty image batch must not dispatch a provider")
+
+    def probe_query(self, query, ctx):
+        raise AssertionError("Empty image batch must not probe a query")
+
+    def embed_query(self, query, ctx):
+        raise AssertionError("Empty image batch must not embed a query")
+
+    @property
+    def _access(self) -> "_NoVisualAccess":
+        return _NoVisualAccess()
+
+
+class _NoVisualAccess:
+    @property
+    def scope(self) -> RequestScope:
+        raise AssertionError("Empty image batch must not inspect query scope")
+
+    @property
+    def epoch(self) -> int:
+        raise AssertionError("Empty image batch must not inspect policy epoch")
+
+    def binding(self, owner: object, scope: RequestScope) -> None:
+        raise AssertionError("Empty image batch must not bind query access")
+
+    def operation(self, query_or_items, mode):
+        raise AssertionError("Empty image batch must not prepare visual operation")
+
+    def authorize(self, query_or_items, mode, ctx, *, body_sha=None):
+        raise AssertionError("Empty image batch must not authorize visual operation")
+
+    def admitted(self):
+        raise AssertionError("Empty image batch must not admit visual operation")
+
+
+def _jobs(service: SourceService) -> JobRepository:
+    jobs = service._jobs
+    assert jobs is not None
+    return jobs
 
 
 @pytest.mark.asyncio
@@ -218,7 +259,9 @@ async def test_image_slot_publishes_required_empty_batch(tmp_path, monkeypatch, 
         image = next(slot for slot in view.slots if slot.slot == "image")
         assert image.required and len(image.batches) == 1
         assert image.batches[0].expected_count == 0
-        assert image.batches[0].receipt.count == 0
+        receipt = image.batches[0].receipt
+        assert isinstance(receipt, BatchReceipt)
+        assert receipt.count == 0
         if legacy:
             assert "capabilities" not in image.family.config_json
             with pytest.raises(TychoraError) as reuse_error:
@@ -312,6 +355,7 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
         graph_slot = next(slot for slot in view.slots if slot.slot == "graph")
         graph_batch = graph_slot.batches[0]
         assert graph_slot.required and len(view.members) == 2
+        assert graph_batch.graph_manifest is not None
         assert {
             m.extraction_id for m in graph_batch.graph_manifest.spec.memberships
         } == {m.extraction_id for m in view.members}
@@ -354,7 +398,7 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
             ExecutionContext(),
         )
         await owner.run_blocking(
-            lambda: service._jobs.retry(job_id), ExecutionContext()
+            lambda: _jobs(service).retry(job_id), ExecutionContext()
         )
         await service.add(third, scope, "sealed-third")
         resumed = await owner.run_blocking(
@@ -442,10 +486,10 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
             ExecutionContext(),
         )
         await owner.run_blocking(
-            lambda: service._jobs.retry(job_id), ExecutionContext()
+            lambda: _jobs(service).retry(job_id), ExecutionContext()
         )
         await owner.run_blocking(
-            lambda: service._jobs.start(job_id), ExecutionContext()
+            lambda: _jobs(service).start(job_id), ExecutionContext()
         )
         with pytest.raises(TychoraError) as stale_error:
             await owner.run_blocking(
@@ -457,10 +501,10 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
             == resumed.snapshot_id
         )
         await owner.run_blocking(
-            lambda: service._jobs.fail(job_id, stale_error.value), ExecutionContext()
+            lambda: _jobs(service).fail(job_id, stale_error.value), ExecutionContext()
         )
         await owner.run_blocking(
-            lambda: service._jobs.retry(job_id), ExecutionContext()
+            lambda: _jobs(service).retry(job_id), ExecutionContext()
         )
         await service.add(fourth, scope, "watermark-fourth")
         refreshed = await owner.run_blocking(
@@ -471,6 +515,7 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
                 slot.batches[0].receipt.decision_watermark
                 for slot in refreshed.slots
                 if slot.slot == "graph"
+                and isinstance(slot.batches[0].receipt, GraphBatchReceipt)
             )
             == 1
         )
@@ -478,6 +523,8 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
 
         active_graph = next(slot for slot in refreshed.slots if slot.slot == "graph")
         graph_batch = active_graph.batches[0]
+        graph_receipt = graph_batch.receipt
+        assert isinstance(graph_receipt, GraphBatchReceipt)
         retained_seal = await owner.run_blocking(
             lambda: owner.db.execute(
                 "SELECT receipt_json FROM index_batches WHERE batch_id=?",
@@ -496,7 +543,7 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
                 (graph_batch.batch_id,),
             )
             owner.db.commit()
-            owner.store.graph_indexes[graph_batch.receipt.generation_id] = fresh_graph
+            owner.store.graph_indexes[graph_receipt.generation_id] = fresh_graph
 
         await owner.run_blocking(mark_graph_pending, ExecutionContext())
         report = await owner.run_blocking(
@@ -934,7 +981,7 @@ async def test_cancellation_drains_active_provider_before_publication(
                 ExecutionContext(),
             )
             await owner.run_blocking(
-                lambda: service._jobs.cancel(job_id), ExecutionContext()
+                lambda: _jobs(service).cancel(job_id), ExecutionContext()
             )
         finally:
             release.set()
@@ -947,7 +994,7 @@ async def test_cancellation_drains_active_provider_before_publication(
         )
         assert (
             await owner.run_blocking(
-                lambda: service._jobs.get(job_id).state, ExecutionContext()
+                lambda: _jobs(service).get(job_id).state, ExecutionContext()
             )
             == "cancelled"
         )
