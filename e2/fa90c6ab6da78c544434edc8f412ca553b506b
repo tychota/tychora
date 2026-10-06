@@ -1,0 +1,87 @@
+docs/security.md
+  s_35b641b930a96d::t_4a7448c95d1c96 9-11
+  s_c37b0508beebe6::t_f1662430094753 12
+tests/qualification/test_pdf_masks.py
+  s_35b641b930a96d::t_422f2828b3cb08 23-25,119-129
+  s_35b641b930a96d::t_6946b686efa969 1-22,26-107
+  s_35b641b930a96d::t_d52151a54071e7 130-168
+  s_35b641b930a96d::t_8d03e67fe4a12b 108-118
+pyproject.toml
+  s_35b641b930a96d::t_3d0812e670def8 12,22
+tests/api/test_public_vision.py
+  s_35b641b930a96d::t_4023a812e7990a 67,75-76,161-163,168-175,177,249-250,309-310,313,322,325-334,372-373
+  s_35b641b930a96d::t_c8629af6c5df5e 164
+  s_35b641b930a96d::t_698a2e19cea9db 166-167,176,307,374-378
+  s_35b641b930a96d::t_c3ac216941fd2c 291,302,304,335-371
+  s_35b641b930a96d::t_28ebed6a0abbe7 165
+  s_35b641b930a96d::t_b31dfbade1fce8 39,186,274-290,292-301,303,305
+  s_35b641b930a96d::t_241981a6a22f24 12,178-179,184,306,308,311,379-382,386,512-515
+tests/api/test_public_async.py
+  s_35b641b930a96d::t_de3711be271040 214
+  s_35b641b930a96d::t_7a53c70617901a 264,271,278-279,281-282,291-293,295-303,310
+  s_35b641b930a96d::t_d29fae5568f241 4,9,12-13,139-145,148-169,172-174,176-182,186-205,207-213,215-219
+  s_35b641b930a96d::t_2a35a341f38617 5,14-15,220-263,265-270,272-277,280,283-290,294,304-309,311
+  s_35b641b930a96d::t_6165dd04c40cad 146,170-171,175,185
+  s_35b641b930a96d::t_8ee105da86ea04 26-50,147,184,206
+  s_35b641b930a96d::t_02a8bf1e3022d8 183
+docs/performance.md
+  s_35b641b930a96d::t_534900ca40596a 23
+tests/cli/test_commands.py
+  s_35b641b930a96d::t_e384a3b4535cf3 530,537-538,545-559
+  s_35b641b930a96d::t_44095e14e763a5 529
+  s_35b641b930a96d::t_84ad2619f9495a 493,499
+  s_35b641b930a96d::t_60de64a9a50f16 527-528
+  s_35b641b930a96d::t_00b8be2e77926d 531-536
+  s_35b641b930a96d::t_02f3bea6825321 539-544
+  s_35b641b930a96d::t_c0815068eabb8b 573
+  s_35b641b930a96d::t_401377d949bc05 514-526,560-572
+tests/transports/test_mcp_stdio.py
+  s_35b641b930a96d::t_d83cb66fae3cf0 4,7,11,14,29-36,40-41,44-65,83,85-94,96-97,100-103,105-106,108-110,116-121,124,131-132,136-137
+  s_35b641b930a96d::t_7735b87a6b1ecf 66
+  s_35b641b930a96d::t_d71391bb63e633 111-113,115,125-126
+  s_35b641b930a96d::t_5d32c3876139e3 37-39,134
+  s_35b641b930a96d::t_b9af37af110cdc 18
+  s_35b641b930a96d::t_8ad98fb1f1e088 67
+  s_35b641b930a96d::t_91908d0c95dff3 15,68-82,84,123
+  s_35b641b930a96d::t_d2c43823602805 95,98-99,104,107,114,127-128
+  s_35b641b930a96d::t_295b8d8e084f5c 43
+  s_35b641b930a96d::t_2237c1292ea1b5 122
+  s_35b641b930a96d::t_1947e15c3c823d 42
+  s_35b641b930a96d::t_cf2498460f7548 129-130,133,135,138-139
+tests/api/test_configured_runtime.py
+  s_35b641b930a96d::t_b9ffba6623df48 727,747-748,750-763,819-856,859-862
+  s_35b641b930a96d::t_baa3462cf9ebd9 456-607
+  s_35b641b930a96d::t_8984469ac2d112 725
+src/tychora/adapters/docling/parser.py
+  s_35b641b930a96d::t_b9fbbccf79f893 178,254,261,277-285
+  s_35b641b930a96d::t_7189feee0de6db 121,123,141,174-177,179-253,255-260,262-276,286-288
+  s_35b641b930a96d::t_9360dbc9f7354c 289-299
+tests/retrieval/test_graph_pagination.py
+  s_35b641b930a96d::t_9d364322e2b70b 179-226
+uv.lock
+  s_35b641b930a96d::t_66d8a68cb3ba14 2294-2302,3167,3179,3254-3255
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e2fa90c6ab6da78c544434edc8f412ca553b506b",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    },
+    "s_c37b0508beebe6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7650dd0-4c82-4a0e-a414-a7a38c2d9a3f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
