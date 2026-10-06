@@ -237,6 +237,8 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
                 "2": {"page_no": 2, "size": {"width": 100.0, "height": 100.0}},
             },
         }
+        kind = registry.kinds["manual@1"]
+        assert isinstance(kind, FrozenJsonMap)
         parser = DoclingParser(owner, registration, tmp_path)
         encoded = canonical_bytes(export)
         parsed = await owner.run_blocking(
@@ -250,7 +252,7 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
                 captured.original_ref,
                 config,
                 registry,
-                registry.kinds["manual@1"],
+                kind,
                 FrozenJsonMap(),
             ),
             context,

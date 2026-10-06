@@ -33,6 +33,7 @@ from tychora.contracts.evidence import Geometry, ImageLocator
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.operations import ConfigurationVariant, EvaluationRequest
 from tychora.contracts.requests import QueryRequest, RequestScope
+from tychora.contracts.vectors import BatchReceipt
 from tychora.evaluation.runner import EvaluationService
 from tychora.indexing.coordinator import ProjectionCoordinator
 from tychora.ingestion.assets import ProxyFactory
@@ -253,7 +254,9 @@ async def test_declared_png_proxy_enters_visual_query_and_evaluation(tmp_path):
         )
         image_slot = next(slot for slot in snapshot.slots if slot.slot == "image")
         assert image_slot.batches[0].expected_count == 1
-        assert image_slot.batches[0].receipt.count == 1
+        image_receipt = image_slot.batches[0].receipt
+        assert isinstance(image_receipt, BatchReceipt)
+        assert image_receipt.count == 1
         assert len(transport.calls) == 1
         retained_proxy = await owner.run_blocking(
             lambda: owner.db.execute(

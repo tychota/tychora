@@ -17,8 +17,8 @@ class SyntheticCounter:
     model = "synthetic-output"
     tokenizer_id = "cl100k_base"
 
-    def count(self, value):
-        return len(value)
+    def count(self, text: str) -> int:
+        return len(text)
 
 
 @pytest.fixture

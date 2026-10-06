@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import (
     Coverage,
@@ -69,7 +70,7 @@ def test_checks_disabled_graph_path_survives_rendering_and_budget(renderer):
         assertion_ids=("assertion-marker",),
         predicates=("supports@1",),
         support_unit_ids=frozenset({"unit-a", "unit-b"}),
-        provenance={"status": "recorded", "confidence": 1.0},
+        provenance=FrozenJsonMap({"status": "recorded", "confidence": 1.0}),
     )
     selected = result().model_copy(update={"relations": (path,)})
     profile = OutputProfile(renderer=renderer)
@@ -114,7 +115,8 @@ def test_invalid_envelope_tag_and_alias_collision_are_rejected():
         OutputProfile(renderer="agent@1", envelope_tag="_bad")
     with pytest.raises((ValueError, TychoraError)):
         OutputProfile(
-            renderer="hierarchical-evidence@1", aliases={"request": "hierarchy"}
+            renderer="hierarchical-evidence@1",
+            aliases=FrozenJsonMap({"request": "hierarchy"}),
         )
 
 
@@ -178,10 +180,12 @@ def test_localized_markdown_labels_are_counted_on_reformat():
     profile = OutputProfile(
         renderer="markdown@1",
         title="Recorded evidence",
-        labels={
-            "coverage": "Couverture très détaillée",
-            "checks": "Vérifications détaillées",
-        },
+        labels=FrozenJsonMap(
+            {
+                "coverage": "Couverture très détaillée",
+                "checks": "Vérifications détaillées",
+            }
+        ),
     )
     rendered = format_result(result(), profile, counter=Counter())
     assert "Couverture très détaillée: complete" in rendered
