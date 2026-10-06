@@ -1,0 +1,20 @@
+tests/ingestion/test_assets.py
+  s_35b641b930a96d::t_6629451033f2e1 161-181,183-187
+  s_35b641b930a96d::t_e2889de99f368d 159-160,246
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fa87cd2ab16fe836f4f561bafe53b87317f04dae",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
