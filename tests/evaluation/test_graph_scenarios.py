@@ -150,6 +150,7 @@ async def test_published_decisions_and_hidden_parent_support_are_excluded(tmp_pa
     settings.write_text(
         'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
         '[configuration.index]\ngraph="ladybug"\n'
+        "[configuration.limits]\nmax_tokens=30000\n"
         "[configuration.retrieval.graph]\nsemantic=true\n"
         'predicates=["supports@1","contradicts@1"]\n'
     )
@@ -252,6 +253,7 @@ async def test_published_decisions_and_hidden_parent_support_are_excluded(tmp_pa
                 "question": "SeedAlpha",
                 "modalities": ["lexical"],
                 "mode": "lookup",
+                "budgets": {"max_tokens": 30000},
             }
         )
         control = (await query.search(request, scope, ctx)).result
@@ -276,7 +278,7 @@ async def test_published_decisions_and_hidden_parent_support_are_excluded(tmp_pa
                         "question": "SeedAlpha",
                         "modalities": ["lexical"],
                         "mode": "lookup",
-                        "budgets": {"max_tokens": 4000},
+                        "budgets": {"max_tokens": 5500},
                     }
                 ),
                 scope,
@@ -300,6 +302,7 @@ async def test_published_decisions_and_hidden_parent_support_are_excluded(tmp_pa
                 "question": "SeedAlpha",
                 "modalities": ["lexical"],
                 "mode": "lookup",
+                "budgets": {"max_tokens": 30000},
                 "exact_only": True,
             }
         )
@@ -339,6 +342,7 @@ async def test_published_decisions_and_hidden_parent_support_are_excluded(tmp_pa
                     "question": "SeedAlpha",
                     "modalities": ["lexical"],
                     "mode": "lookup",
+                    "budgets": {"max_tokens": 30000},
                 },
                 "expected_source_ids": [bundle.source.source_id],
                 "expected_revision_ids": [bundle.revision.revision_id],

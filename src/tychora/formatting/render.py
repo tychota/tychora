@@ -24,6 +24,7 @@ _KEYS = frozenset(
         "answerability",
         "conflicts",
         "citations",
+        "relations",
         "visual_evidence",
         "retrieval_trace",
         "budget_contract",
@@ -137,6 +138,7 @@ def _project(result: QueryResult, profile: OutputProfile) -> dict:
             if "conflict" in decision["reason"].lower()
         ],
         "citations": rows["citations"],
+        "relations": rows["relations"],
         "visual_evidence": rows["visuals"],
         "retrieval_trace": rows["trace"],
         "budget_contract": rows["budget_contract"],
@@ -216,6 +218,9 @@ def render_unchecked(result: QueryResult, profile: OutputProfile) -> bytes:
             ),
             "citations": tuple(
                 item.model_dump(mode="json") for item in result.citations
+            ),
+            "relations": tuple(
+                path.model_dump(mode="json") for path in result.relations
             ),
             "decisions": tuple(
                 item.model_dump(mode="json") for item in result.decision_requirements

@@ -12,6 +12,7 @@ from tychora.contracts.evidence import (
     Coverage,
     Excerpt,
     RelationChecks,
+    RelationPath,
     Segment,
     StructuredRecord,
 )
@@ -56,6 +57,7 @@ def case(
     coverage=None,
     run_id="run-1",
     max_response_bytes=1048576,
+    relations=(),
 ):
     profiles = profiles or (
         OutputProfile(renderer="canonical-json@1"),
@@ -83,6 +85,7 @@ def case(
         counter=counter(),
         profiles=profiles,
         eligible_unit_ids=frozenset({"unit-1"}),
+        relations=relations,
         coverage=coverage or Coverage(status="complete"),
         warnings=warnings,
         required_lanes=required_lanes,
@@ -101,6 +104,36 @@ def test_mcp_canonical_and_envelope_are_counted_together():
         counter().count(b.decode()) for b in delivered.payloads
     )
     assert len(delivered.payloads) == 2
+
+
+def test_graph_paths_count_across_all_rendered_profiles():
+    profiles = tuple(
+        OutputProfile(renderer=name)
+        for name in (
+            "canonical-json@1",
+            "hierarchical-evidence@1",
+            "markdown@1",
+            "agent@1",
+        )
+    )
+    path = RelationPath(
+        unit_ids=("unit-1",),
+        assertion_ids=("assertion-marker",),
+        predicates=("supports@1",),
+        support_unit_ids=frozenset({"unit-1"}),
+        provenance=FrozenJsonMap({"status": "recorded"}),
+    )
+    baseline = case(tokens=3000, profiles=profiles)
+    delivered = case(tokens=3000, profiles=profiles, relations=(path,))
+    assert delivered.byte_count > baseline.byte_count
+    assert all(b"assertion-marker" in payload for payload in delivered.payloads)
+    assert delivered.token_count == sum(
+        counter().count(payload.decode()) for payload in delivered.payloads
+    )
+    cap = baseline.token_count + (delivered.token_count - baseline.token_count) // 2
+    with pytest.raises(TychoraError) as error:
+        case(tokens=cap, profiles=profiles, relations=(path,))
+    assert error.value.code == "BUDGET_TOO_SMALL"
 
 
 def test_long_optional_record_becomes_stub_without_changing_source_quote():

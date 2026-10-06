@@ -5,7 +5,12 @@ import json
 import pytest
 
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.evidence import Coverage, QueryResult, RelationChecks
+from tychora.contracts.evidence import (
+    Coverage,
+    QueryResult,
+    RelationChecks,
+    RelationPath,
+)
 from tychora.contracts.requests import BudgetContract, RequestScope
 from tychora.formatting.render import OutputProfile, format_result
 
@@ -50,6 +55,35 @@ def test_canonical_and_hierarchical_preserve_invariant_status():
     assert hierarchy["checks"]["status"] == "not_evaluated"
     assert hierarchy["answerability"]["status"] == "insufficient"
     assert hierarchy["hierarchy"][0]["lane_id"] == "standard"
+
+
+@pytest.mark.parametrize(
+    "renderer",
+    ("canonical-json@1", "hierarchical-evidence@1", "markdown@1", "agent@1"),
+)
+def test_checks_disabled_graph_path_survives_rendering_and_budget(renderer):
+    from tychora.formatting.render import render_unchecked
+
+    path = RelationPath(
+        unit_ids=("unit-a", "unit-b"),
+        assertion_ids=("assertion-marker",),
+        predicates=("supports@1",),
+        support_unit_ids=frozenset({"unit-a", "unit-b"}),
+        provenance={"status": "recorded", "confidence": 1.0},
+    )
+    selected = result().model_copy(update={"relations": (path,)})
+    profile = OutputProfile(renderer=renderer)
+    payload = render_unchecked(selected, profile)
+    assert b"assertion-marker" in payload
+    assert b"supports@1" in payload
+    assert b"not_evaluated" in payload
+    assert format_result(selected, profile, counter=Counter()) == payload.decode()
+    constrained = selected.model_copy(
+        update={"budget_contract": BudgetContract(max_tokens=1)}
+    )
+    with pytest.raises(TychoraError, match="Requested rendering exceeds") as error:
+        format_result(constrained, profile, counter=Counter())
+    assert error.value.code == "OUTPUT_BUDGET_EXCEEDED"
 
 
 def test_agent_envelope_escapes_source_breakout():

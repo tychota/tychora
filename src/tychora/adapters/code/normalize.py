@@ -182,6 +182,16 @@ def _legacy_normalizer_fingerprint(
     )
 
 
+def has_current_code_projection(
+    parsed: CodeExtractionArtifact, registry: Registry
+) -> bool:
+    """Whether a verified retained extraction can be reused for new ingestion."""
+    return (
+        parsed.normalizer_fingerprint
+        == _fingerprints(parsed.registration, parsed.files, registry)[1]
+    )
+
+
 def _artifact_ref(payload: bytes, media_type: str) -> ArtifactRef:
     identity = sha256(payload).hexdigest()
     return ArtifactRef(

@@ -1203,7 +1203,12 @@ class ProjectionCoordinator:
         """Fresh capture of an active immutable revision reuses retained artifacts."""
         ctx.checkpoint()
         current = self.store.resolve_snapshot(base_snapshot_id)
-        selected = tuple(current.members)
+        selected = tuple(
+            member.model_copy(update={"is_default": member.revision_id == revision_id})
+            if member.source_id == source_id
+            else member
+            for member in current.members
+        )
         if not any(
             m.source_id == source_id and m.revision_id == revision_id for m in selected
         ):

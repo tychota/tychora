@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Literal, cast
 from uuid import UUID
 
 from tychora.adapters.code.normalize import (
+    has_current_code_projection,
     normalize_code,
     replay_code_extraction,
     retain_code_extraction,
@@ -841,12 +842,10 @@ class SourceService:
                         update={"capture": old_capture}
                     ).model_dump()
                 )
-                bundle = normalize_code(
-                    replay_code_extraction(
-                        ref, replay_registration, self.owner.artifacts
-                    ),
-                    self.owner.store.registry,
+                retained_code = replay_code_extraction(
+                    ref, replay_registration, self.owner.artifacts
                 )
+                bundle = normalize_code(retained_code, self.owner.store.registry)
             elif data.get("representation") == "document-composition@1":
                 if not isinstance(registration, DocumentRegistration):
                     raise TychoraError(
@@ -913,6 +912,12 @@ class SourceService:
                 raise TychoraError(
                     "INTEGRITY_ERROR", "Retained extraction identity differs"
                 )
+            if isinstance(
+                registration, CodeRegistration
+            ) and not has_current_code_projection(
+                retained_code, self.owner.store.registry
+            ):
+                continue
             return bundle
         return None
 

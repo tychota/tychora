@@ -36,6 +36,66 @@ def _add(kb, value):
     assert status.state == "succeeded", (status.error_code, status.message)
 
 
+def test_republishing_identical_older_edition_makes_it_default(tmp_path):
+    with Tychora.open(tmp_path / "workspace", token_counter=SyntheticCounter()) as kb:
+        first = _source("cobalt edition 1", edition="1", approval="accepted")
+        second = _source("cobalt edition 2", edition="2", approval="accepted")
+        _add(kb, first)
+        owner = kb._workspace.owner
+        original_snapshot = kb._workspace.bridge.call(
+            owner.run_blocking(
+                lambda: owner.store.resolve_snapshot(None), ExecutionContext()
+            )
+        )
+        first_revision = original_snapshot.members[0].revision_id
+        _add(kb, second)
+        second_snapshot = kb._workspace.bridge.call(
+            owner.run_blocking(
+                lambda: owner.store.resolve_snapshot(None), ExecutionContext()
+            )
+        )
+        second_revision = next(
+            member.revision_id
+            for member in second_snapshot.members
+            if member.is_default
+        )
+        _add(kb, first)
+        current, retained_first, retained_second = kb._workspace.bridge.call(
+            owner.run_blocking(
+                lambda: (
+                    owner.store.resolve_snapshot(None),
+                    owner.store.resolve_snapshot(original_snapshot.snapshot_id),
+                    owner.store.resolve_snapshot(second_snapshot.snapshot_id),
+                ),
+                ExecutionContext(),
+            )
+        )
+        assert {member.revision_id for member in current.members} == {
+            first_revision,
+            second_revision,
+        }
+        assert {
+            member.revision_id for member in current.members if member.is_default
+        } == {first_revision}
+        assert {
+            member.revision_id for member in retained_first.members if member.is_default
+        } == {first_revision}
+        assert {
+            member.revision_id
+            for member in retained_second.members
+            if member.is_default
+        } == {second_revision}
+        assert current.slots == second_snapshot.slots
+        query = {"question": "cobalt", "modalities": ["lexical"]}
+        assert {segment.revision_id for segment in kb.search(query).segments} == {
+            first_revision
+        }
+        assert {
+            segment.revision_id
+            for segment in kb.search({**query, "revision_selector": "all"}).segments
+        } == {first_revision, second_revision}
+
+
 def test_public_source_dates_editions_and_review_filter(tmp_path):
     with Tychora.open(tmp_path / "workspace", token_counter=SyntheticCounter()) as kb:
         _add(
