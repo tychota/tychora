@@ -1,5 +1,7 @@
 """Measure real repository parse, embedding, and projection work by delta state."""
 
+from typing import TypedDict
+
 import pytest
 
 from tests.code.conftest import git, make_repo
@@ -11,6 +13,13 @@ from tychora.configuration.resolve import resolve_config
 from tychora.contracts.requests import RequestScope, SourceInput
 from tychora.indexing.coordinator import ProjectionCoordinator
 from tychora.ports.execution import ExecutionContext
+
+
+class _Observed(TypedDict):
+    parsed_files: int
+    embedded_windows: int
+    projected_units: int
+    capture_dirty: bool | None
 
 
 @pytest.mark.asyncio
@@ -74,7 +83,7 @@ async def test_repository_ingestion_delta_matrix_uses_actual_pipeline(
                 "collection_id": collection,
             }
         )
-        observed = {
+        observed: _Observed = {
             "parsed_files": 0,
             "embedded_windows": 0,
             "projected_units": 0,

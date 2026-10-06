@@ -28,7 +28,7 @@ from tychora.application.backup import BackupService
 from tychora.application.owner import WorkspaceOwner
 from tychora.application.removal import RemovalService
 from tychora.configuration.resolve import resolve_config
-from tychora.contracts.graph import GraphManifest
+from tychora.contracts.graph import GraphBatchReceipt, GraphManifest
 from tychora.contracts.requests import RequestScope
 from tychora.ports.execution import ExecutionContext
 
@@ -313,9 +313,11 @@ def test_graph_seal_death_before_publication_reopens_native_receipt(tmp_path):
         )
         assert receipt.assertion_count == 1
         assert receipt.evidence_count == 2
-        assert graph._connection.execute(
+        result = graph._connection.execute(
             "MATCH (a:RelationAssertion) RETURN count(a)"
-        ).get_all() == [[1]]
+        )
+        assert not isinstance(result, list)
+        assert result.get_all() == [[1]]
     finally:
         graph.close()
 
@@ -383,10 +385,11 @@ def test_canonical_graph_seal_death_preserves_prior_snapshot_then_retries(tmp_pa
         )
         assert snapshot.snapshot_id != before
         graph_slot = next(slot for slot in snapshot.slots if slot.slot == "graph")
-        assert graph_slot.batches[0].receipt.generation_id in staged
-        assert (
-            graph_slot.batches[0].graph_manifest.spec.projection_version == "stable-v2"
-        )
+        graph_batch = graph_slot.batches[0]
+        assert isinstance(graph_batch.receipt, GraphBatchReceipt)
+        assert graph_batch.receipt.generation_id in staged
+        assert graph_batch.graph_manifest is not None
+        assert graph_batch.graph_manifest.spec.projection_version == "stable-v2"
 
 
 def test_graph_v2_reopens_across_hash_seeds_and_v1_preserves_legacy_proof(tmp_path):

@@ -15,6 +15,7 @@ from tychora.application.query import QueryService
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.corpus import LocatorRow, ReviewTarget
 from tychora.contracts.evidence import EvidenceUnit, TextLocator
+from tychora.contracts.graph import GraphBatchReceipt
 from tychora.contracts.identity import canonical_bytes, digest, unit_id
 from tychora.contracts.operations import ConfigurationVariant, EvaluationRequest
 from tychora.contracts.relationships import (
@@ -245,8 +246,11 @@ async def test_published_decisions_and_hidden_parent_support_are_excluded(tmp_pa
             lambda: owner.store.resolve_snapshot(None), ctx
         )
         slot = next(slot for slot in snapshot.slots if slot.slot == "graph")
-        assert slot.batches[0].receipt.assertion_count == 3
-        graph = graphs[slot.batches[0].graph_manifest.spec.generation_id]
+        graph_batch = slot.batches[0]
+        assert isinstance(graph_batch.receipt, GraphBatchReceipt)
+        assert graph_batch.receipt.assertion_count == 3
+        assert graph_batch.graph_manifest is not None
+        graph = graphs[graph_batch.graph_manifest.spec.generation_id]
         query = QueryService(owner, output_counter=SyntheticCounter(), graph=graph)
         request = QueryRequest.from_mapping(
             {
