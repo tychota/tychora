@@ -8,6 +8,7 @@ from io import BytesIO
 
 import pytest
 from mcp import Client, StdioServerParameters
+from mcp.types import CallToolResult, TextContent, TextResourceContents
 from PIL import Image
 
 from tychora import Tychora
@@ -24,6 +25,12 @@ class Counter:
 
     def count(self, text: str) -> int:
         return len(text)
+
+
+def _text_content(result: CallToolResult) -> str:
+    block = result.content[0]
+    assert isinstance(block, TextContent)
+    return block.text
 
 
 @pytest.mark.asyncio
@@ -141,6 +148,11 @@ asyncio.run(main())
 @pytest.mark.qualification(loopback=True)
 async def test_stdio_reader_lists_scoped_tools_and_discovery_resource(tmp_path):
     workspace = tmp_path / "knowledge"
+    workspace.mkdir()
+    (workspace / "workspace.toml").write_text(
+        'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
+        '[defaults]\nprofile="test"\n[configuration.limits]\nmax_tokens=12000\n'
+    )
     with Tychora.open(workspace, token_counter=Counter()) as kb:
         accepted = kb.sources.add(
             {
@@ -207,7 +219,9 @@ asyncio.run(main())
             assert result.structured_content["subject"] == "kinds"
             assert not result.content
             resource = await client.read_resource("tychora://kinds/manual@1")
-            assert "manual@1" in resource.contents[0].text
+            resource_content = resource.contents[0]
+            assert isinstance(resource_content, TextResourceContents)
+            assert "manual@1" in resource_content.text
             query = {"request": {"question": "Café", "modalities": ["lexical"]}}
             found = await client.call_tool("search", query)
             assert not found.is_error, found.content
@@ -229,11 +243,18 @@ asyncio.run(main())
                 <= found.structured_content["budget_contract"]["max_tokens"]
             )
             rendered = await client.call_tool(
-                "search", {**query, "render": "markdown@1"}
+                "search",
+                {
+                    "request": {
+                        **query["request"],
+                        "budgets": {"max_tokens": 12000},
+                    },
+                    "render": "markdown@1",
+                },
             )
             assert not rendered.is_error, rendered.content
             assert len(rendered.content) == 1
-            text = rendered.content[0].text
+            text = _text_content(rendered)
             assert (
                 len(_serialized_structured(rendered)) + len(text.encode())
                 <= rendered.structured_content["budget_contract"]["max_response_bytes"]
@@ -245,13 +266,12 @@ asyncio.run(main())
             denied = await client.call_tool(
                 "manage_job", {"action": "cancel", "job_id": accepted.id}
             )
-            assert denied.is_error and "FORBIDDEN_SCOPE" in denied.content[0].text
+            assert denied.is_error and "FORBIDDEN_SCOPE" in _text_content(denied)
             missing_replay = await client.call_tool(
                 "search", {"replay_run_id": "missing"}
             )
-            assert (
-                missing_replay.is_error
-                and "REPLAY_UNAVAILABLE" in missing_replay.content[0].text
+            assert missing_replay.is_error and "REPLAY_UNAVAILABLE" in _text_content(
+                missing_replay
             )
             templates = await client.list_resource_templates()
             assert {
