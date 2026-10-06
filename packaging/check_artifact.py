@@ -246,7 +246,7 @@ def main() -> None:
         checked = audit_outgoing_history(Path.cwd(), args.history_base)
         print(
             json.dumps(
-                {"history_base": args.history_base, "checked_blobs": len(checked)},
+                {"history_base": args.history_base, "checked_paths": len(checked)},
                 sort_keys=True,
             )
         )
