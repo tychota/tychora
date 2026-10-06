@@ -1,0 +1,27 @@
+docs/api.md
+  s_35b641b930a96d::t_43a0481b25ce93 78
+docs/configuration.md
+  s_35b641b930a96d::t_a265e260b718fb 5,20-22
+examples/knowledge_adapter.py
+  s_35b641b930a96d::t_9abfc78f3beaf4 35-38
+examples/quickstart.py
+  s_35b641b930a96d::t_1516fad6068ca5 30-31,80-81
+tests/docs/test_examples.py
+  s_35b641b930a96d::t_6a1c12c9f5b81a 3,19-21,24-26,163-401
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "34fa5e27c96e0547a41fd3b684451fe56904d4ae",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
