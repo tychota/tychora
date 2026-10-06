@@ -295,12 +295,13 @@ def test_actual_factory_space_and_locality_change_result_identity(tmp_path):
         caches=cache,
     )
     service = QueryService.__new__(QueryService)
-    service.owner = SimpleNamespace(config=config)
-    service.text_provider = provider
+    vars(service)["owner"] = SimpleNamespace(config=config)
+    vars(service)["text_provider"] = provider
     service.text_index = None
     service.visual_provider = None
     service.visual_index = None
     service.reranker = None
+    service.execution_plan = None
     first = service._provider_fingerprint()
     provider.capabilities = capabilities.model_copy(
         update={

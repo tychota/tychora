@@ -1,5 +1,6 @@
 """Query identity and orchestration guards."""
 
+import json
 import os
 import sqlite3
 import struct
@@ -13,8 +14,10 @@ import pytest
 from PIL import Image
 
 from tests.helpers.corpus import artifact, reader, registry, seed_bundle
+from tests.helpers.eligibility import eligibility_view
 from tests.indexing.test_publication import RecordingCounter, RecordingEmbedder
 from tests.providers.test_visual import CharacterCounter, RecordingRawTransport, _limits
+from tests.retrieval.test_segments import config as base_config
 from tychora.adapters.chroma.index import ChromaVectorIndex
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
@@ -46,6 +49,7 @@ from tychora.contracts.requests import QueryRequest, RequestScope, SourceInput
 from tychora.indexing.coordinator import ProjectionCoordinator
 from tychora.ports.execution import ExecutionContext
 from tychora.retrieval.cache import QueryCaches
+from tychora.retrieval.eligibility import EligibilityAttempt, EligibilityCompiler
 from tychora.retrieval.query import result_cache_key, validate_query_text
 from tychora.retrieval.segments import OutputTokenCounter
 
@@ -56,6 +60,20 @@ class Counter:
 
     def count(self, text: str) -> int:
         return len(text.split())
+
+
+def _assert_project_facets(owner: WorkspaceOwner) -> None:
+    assert owner.db.execute(
+        "SELECT value_type FROM facet_definitions WHERE facet_key='scope.project'"
+    ).fetchone() == ("text",)
+    rows = owner.db.execute(
+        "SELECT r.metadata_json, f.text_value FROM revisions r "
+        "JOIN facet_values f ON f.revision_id=r.revision_id "
+        "WHERE f.facet_key='scope.project' AND f.ordinal=0"
+    ).fetchall()
+    assert sorted(
+        (json.loads(metadata)["scope"]["project"], value) for metadata, value in rows
+    ) == [("alpha", "alpha"), ("beta", "beta")]
 
 
 class LocalTextQueryProvider:
@@ -70,9 +88,9 @@ class LocalTextQueryProvider:
         self.counter = counter
         self.caches = caches
 
-    def bind(self, bound_owner, bound_scope, policy_epoch):
-        assert bound_owner is self.owner
-        assert bound_scope == self.scope
+    def bind(self, owner, scope, policy_epoch):
+        assert owner is self.owner
+        assert scope == self.scope
         assert policy_epoch >= 0
         capabilities = self.capabilities
         owner = self.owner
@@ -167,10 +185,10 @@ def test_local_text_replay_gate_degrades_reranker_but_strict_and_remote_still_fa
         == "hit"
     )
     service = QueryService.__new__(QueryService)
-    service.owner = owner
+    vars(service)["owner"] = owner
     service.caches = caches
     service.text_provider = provider
-    service.text_index = object()
+    vars(service)["text_index"] = object()
     service.visual_provider = None
     service.visual_index = None
     service.reranker = None
@@ -185,7 +203,7 @@ def test_local_text_replay_gate_degrades_reranker_but_strict_and_remote_still_fa
     assert not service._replay_ready(request)
 
 
-def test_query_upload_binding_uses_actual_owner_scope_and_epoch() -> None:
+def test_query_upload_binding_uses_actual_owner_scope_and_epoch(tmp_path) -> None:
     owner_scope = RequestScope(
         principal_id="reader",
         collection_ids=frozenset({"alpha", "beta"}),
@@ -193,21 +211,23 @@ def test_query_upload_binding_uses_actual_owner_scope_and_epoch() -> None:
         uses=frozenset({"lookup"}),
         upload_providers=frozenset({"voyage"}),
     )
-    owner = SimpleNamespace(scope=owner_scope, workspace_id="workspace")
     requested = owner_scope.model_copy(update={"collection_ids": frozenset({"alpha"})})
-    bound = query_binding_from_owner(owner, requested, 7)
-    assert bound.collection_ids == frozenset({"alpha"})
-    assert bound.policy_epoch == 7
-    assert (
-        bound.principal_upload_scope_sha
-        != query_binding_from_owner(owner, requested, 8).principal_upload_scope_sha
-    )
-    with pytest.raises(TychoraError):
-        query_binding_from_owner(
-            owner,
-            requested.model_copy(update={"principal_id": "other"}),
-            7,
+    with WorkspaceOwner.open(
+        tmp_path / "data", base_config(tmp_path), owner_scope
+    ) as owner:
+        bound = query_binding_from_owner(owner, requested, 7)
+        assert bound.collection_ids == frozenset({"alpha"})
+        assert bound.policy_epoch == 7
+        assert (
+            bound.principal_upload_scope_sha
+            != query_binding_from_owner(owner, requested, 8).principal_upload_scope_sha
         )
+        with pytest.raises(TychoraError):
+            query_binding_from_owner(
+                owner,
+                requested.model_copy(update={"principal_id": "other"}),
+                7,
+            )
 
 
 def test_image_match_links_only_pinned_canonical_source_units() -> None:
@@ -241,16 +261,21 @@ def test_text_vector_proxy_maps_to_eligible_canonical_asset() -> None:
     db.execute("INSERT INTO chunks VALUES ('chunk', 'proxy')")
     db.execute("INSERT INTO asset_proxies VALUES ('proxy', 'asset')")
     service = QueryService.__new__(QueryService)
-    service.owner = SimpleNamespace(db=db)
-    view = SimpleNamespace(
-        vector_record_ids=frozenset({"record"}),
-        source_unit_ids=frozenset(),
-        proxy_unit_ids=frozenset({"proxy"}),
-        asset_ids=frozenset({"asset"}),
+    vars(service)["owner"] = SimpleNamespace(db=db)
+    view = eligibility_view().model_copy(
+        update={
+            "vector_record_ids": frozenset({"record"}),
+            "proxy_unit_ids": frozenset({"proxy"}),
+            "asset_ids": frozenset({"asset"}),
+        }
     )
-    assert service._vector_owners(SimpleNamespace(view=view), "unit") == {
-        "record": ("asset", "asset")
-    }
+    attempt = EligibilityAttempt(
+        view=view,
+        compiler=EligibilityCompiler(
+            CorpusStore(db, registry=registry(), artifacts=reader())
+        ),
+    )
+    assert service._vector_owners(attempt, "unit") == {"record": ("asset", "asset")}
     db.close()
 
 
@@ -297,17 +322,19 @@ def test_image_query_descriptor_uses_registered_pixels_and_source_links(tmp_path
     db = open_corpus(tmp_path / "corpus.sqlite3", initialize=True)
     CorpusStore(db, registry=registry(), artifacts=reader()).commit_extraction(bundle)
     service = QueryService.__new__(QueryService)
-    service.owner = SimpleNamespace(db=db, artifacts=reader())
-    view = SimpleNamespace(
-        asset_ids=frozenset({asset_id}),
+    vars(service)["owner"] = SimpleNamespace(db=db, artifacts=reader())
+    view = eligibility_view(
         revision_ids=frozenset({bundle.revision.revision_id}),
-        graph_eligible_unit_ids=frozenset({unit.unit_id}),
-    )
-    attempt = SimpleNamespace(
+        context_unit_ids=frozenset({unit.unit_id}),
+    ).model_copy(update={"asset_ids": frozenset({asset_id})})
+    attempt = EligibilityAttempt(
         view=view,
-        dependencies_for=lambda identifier: frozenset(
-            {identifier, unit.unit_id, bundle.revision.revision_id}
+        compiler=EligibilityCompiler(
+            CorpusStore(db, registry=registry(), artifacts=reader())
         ),
+        dependencies={
+            asset_id: frozenset({asset_id, unit.unit_id, bundle.revision.revision_id})
+        },
     )
     query = service._registered_image_query(asset_id, attempt)
     assert query.image.dependency_ids == frozenset({asset_id, unit.unit_id})
@@ -368,24 +395,9 @@ async def test_filter_change_retrieves_again_from_real_fts(tmp_path: Path) -> No
                 scope,
             )
 
-        def bind_facets() -> None:
-            owner.db.execute(
-                "INSERT OR IGNORE INTO facet_definitions(facet_key,value_type,operators_json,filter_scope,definition_hash) VALUES (?,?,?,?,?)",
-                ("scope.project", "text", '["eq","in"]', "all_units", "synthetic"),
-            )
-            for revision_id, metadata_json in owner.db.execute(
-                "SELECT revision_id,metadata_json FROM revisions"
-            ).fetchall():
-                import json
-
-                project = json.loads(metadata_json)["scope"]["project"]
-                owner.db.execute(
-                    "INSERT INTO facet_values(revision_id,facet_key,text_value) VALUES (?,?,?)",
-                    (revision_id, "scope.project", project),
-                )
-            owner.db.commit()
-
-        await owner.run_blocking(bind_facets, ExecutionContext())
+        await owner.run_blocking(
+            lambda: _assert_project_facets(owner), ExecutionContext()
+        )
         service = QueryService(
             owner,
             output_counter=OutputTokenCounter(
@@ -644,27 +656,9 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
                 scope,
             )
 
-        def bind_facets() -> None:
-            import json
-
-            owner.db.execute(
-                "INSERT OR IGNORE INTO facet_definitions(facet_key,value_type,operators_json,filter_scope,definition_hash) VALUES (?,?,?,?,?)",
-                ("scope.project", "text", '["eq","in"]', "all_units", "synthetic"),
-            )
-            for revision_id, metadata_json in owner.db.execute(
-                "SELECT revision_id,metadata_json FROM revisions"
-            ).fetchall():
-                owner.db.execute(
-                    "INSERT INTO facet_values(revision_id,facet_key,text_value) VALUES (?,?,?)",
-                    (
-                        revision_id,
-                        "scope.project",
-                        json.loads(metadata_json)["scope"]["project"],
-                    ),
-                )
-            owner.db.commit()
-
-        await owner.run_blocking(bind_facets, ExecutionContext())
+        await owner.run_blocking(
+            lambda: _assert_project_facets(owner), ExecutionContext()
+        )
 
         class Transport:
             def __init__(self) -> None:
@@ -680,14 +674,14 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
             def close(self):
                 pass
 
-        class CountingLexical:
+        class CountingLexical(LexicalIndex):
             def __init__(self):
-                self.inner = LexicalIndex(owner.db)
+                super().__init__(owner.db)
                 self.calls = 0
 
             def search(self, view, query, candidate_limit, ctx):
                 self.calls += 1
-                return self.inner.search(view, query, candidate_limit, ctx)
+                return super().search(view, query, candidate_limit, ctx)
 
         transport = Transport()
         caches = QueryCaches()
@@ -914,10 +908,12 @@ async def test_image_only_query_uses_registered_original_and_visual_channel(
         )
         before = len(transport.calls)
         result = await service.search(
-            QueryRequest(
-                input={"type": "image", "asset_ref": asset_id},
-                mode="lookup",
-                modalities=frozenset({"image"}),
+            QueryRequest.from_mapping(
+                {
+                    "input": {"type": "image", "asset_ref": asset_id},
+                    "mode": "lookup",
+                    "modalities": ["image"],
+                }
             ),
             scope,
             ExecutionContext(),

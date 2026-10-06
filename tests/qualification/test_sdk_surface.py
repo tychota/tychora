@@ -82,7 +82,8 @@ def test_tree_sitter_grammar_wheel_parses_supported_language(
     from tree_sitter import Language, Parser
 
     grammar_module = importlib.import_module(module_name)
-    language = Language(getattr(grammar_module, factory_name)())
+    grammar: object = getattr(grammar_module, factory_name)()
+    language = Language(grammar)
     tree = Parser(language).parse(source)
 
     assert tree.root_node.type == root_type
