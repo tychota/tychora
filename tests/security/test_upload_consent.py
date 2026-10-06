@@ -558,6 +558,12 @@ async def test_retained_source_job_public_retry_after_revoke_never_dispatches(tm
                 )
             return embedder.embed_groups(groups, ctx)
 
+        def embed_queries(self, queries, ctx):
+            return embedder.embed_queries(queries, ctx)
+
+        def probe_queries(self, queries, ctx):
+            return embedder.probe_queries(queries, ctx)
+
     flaky = FailOnce()
     bindings = ProviderBindings(
         text_embedder=flaky,

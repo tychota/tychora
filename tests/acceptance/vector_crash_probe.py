@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 from tests.acceptance.faults import FaultInjector
@@ -43,7 +44,11 @@ def run(root: Path, point: str) -> None:
     rows = [("r1", "u1", (1.0, 0.0))]
     if point == "half_embeddings":
         rows.append(("r2", "u2", (0.0, 1.0)))
-        index._chunks = lambda items: [[item] for item in items]
+
+        def single_chunks[T](items: Sequence[T], size: int = 5000) -> list[list[T]]:
+            return [[item] for item in items]
+
+        vars(index)["_chunks"] = single_chunks
     collection_type = type(index._collection)
     native_add = collection_type.add
     writes = 0

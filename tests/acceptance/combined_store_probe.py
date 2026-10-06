@@ -18,6 +18,7 @@ from tychora.adapters.sqlite.publication import PublicationReceipts
 from tychora.application.owner import WorkspaceOwner
 from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.indexing import FamilySpec
+from tychora.contracts.vectors import BatchReceipt
 from tychora.ports.execution import ExecutionContext
 
 
@@ -63,9 +64,9 @@ def run(root: Path, *, isolated_setup: bool = True) -> dict:
             )
         )
         try:
-            findings["prior_vector_ready"] = index.verify_batch(
-                slot.batches[0].receipt
-            ).ready
+            receipt = slot.batches[0].receipt
+            assert isinstance(receipt, BatchReceipt)
+            findings["prior_vector_ready"] = index.verify_batch(receipt).ready
         except Exception as error:  # noqa: BLE001 - diagnostic records native failure
             findings["prior_vector_error"] = type(error).__name__ + ": " + str(error)
         job_id = owner.run_blocking_sync(
