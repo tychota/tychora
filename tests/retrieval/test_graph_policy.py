@@ -142,6 +142,10 @@ def graph_fixture(tmp_path):
     class Fixture:
         ctx = ExecutionContext()
 
+        def __init__(self, graph, assertion):
+            self.graph = graph
+            self.assertion = assertion
+
         @staticmethod
         def budget():
             return GraphBudget()
@@ -171,9 +175,7 @@ def graph_fixture(tmp_path):
                 graph_manifest_digest=receipt.manifest_digest,
             )
 
-    fixture = Fixture()
-    fixture.graph = graph
-    fixture.assertion = assertion
+    fixture = Fixture(graph, assertion)
     yield fixture
     graph.close()
 
@@ -228,7 +230,7 @@ def test_graph_budget_rejects_values_above_hard_caps(limit):
         "max_inspection_hops": 2,
     }
     with pytest.raises(ValueError):
-        GraphBudget(**{limit: caps[limit] + 1})
+        type.__call__(GraphBudget, **{limit: caps[limit] + 1})
 
 
 def test_disabled_semantic_still_rejects_unknown_configured_predicate(tmp_path):

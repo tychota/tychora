@@ -6,6 +6,7 @@ from pathlib import Path
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.configuration.registry import Registry
 from tychora.configuration.resolve import resolve_config
+from tychora.contracts.candidates import ChannelCandidates
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.graph import EligibilityView
 from tychora.contracts.identity import digest
@@ -53,6 +54,17 @@ def _store():
     store = object.__new__(CorpusStore)
     store.db = db
     return store
+
+
+class ForbiddenLexical:
+    def search(
+        self,
+        view: EligibilityView,
+        query: str,
+        candidate_limit: int,
+        ctx: ExecutionContext,
+    ) -> ChannelCandidates:
+        raise AssertionError("exact-only or invalid request reached lexical search")
 
 
 def test_exact_punctuation_uses_namespace_equality_and_candidate_set():
@@ -129,15 +141,11 @@ def test_exact_only_absence_never_calls_lexical(tmp_path: Path):
     registry = Registry.from_config(resolve_config(config_path, "test", {}))
     store = _store()
 
-    class ForbiddenLexical:
-        def search(self, *args):
-            raise AssertionError("exact_only must not invoke lexical search")
-
     channels = retrieve_exact_lexical(
         store,
         ForbiddenLexical(),
         _view(("allowed",)),
-        QueryRequest(question="Find STD-9", exact_only=True),
+        QueryRequest.from_mapping({"question": "Find STD-9", "exact_only": True}),
         registry,
         32,
         ExecutionContext(),
@@ -155,14 +163,22 @@ def test_explicit_identifiers_over_limit_are_rejected(tmp_path: Path):
     )
     registry = Registry.from_config(resolve_config(config_path, "test", {}))
     store = _store()
-    request = QueryRequest(
-        question="Find exact identifiers",
-        exact_identifiers=tuple(f"rule:STD-{number}" for number in range(17)),
-        exact_only=True,
+    request = QueryRequest.from_mapping(
+        {
+            "question": "Find exact identifiers",
+            "exact_identifiers": tuple(f"rule:STD-{number}" for number in range(17)),
+            "exact_only": True,
+        }
     )
     try:
         retrieve_exact_lexical(
-            store, None, _view(("allowed",)), request, registry, 32, ExecutionContext()
+            store,
+            ForbiddenLexical(),
+            _view(("allowed",)),
+            request,
+            registry,
+            32,
+            ExecutionContext(),
         )
     except TychoraError as error:
         assert error.code == "INVALID_REQUEST"
