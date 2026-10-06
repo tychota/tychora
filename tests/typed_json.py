@@ -22,6 +22,11 @@ def json_integer(value: object) -> int:
     return value
 
 
+def json_number(value: object) -> int | float:
+    assert isinstance(value, (int, float)) and not isinstance(value, bool)
+    return value
+
+
 def json_string(value: object) -> str:
     assert isinstance(value, str)
     return value

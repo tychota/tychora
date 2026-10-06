@@ -2,6 +2,7 @@
 
 import pytest
 
+from tests.typed_json import json_array, json_number, json_object, json_string
 from tychora.configuration.schemas import LocalSchemas, import_inclusive_end
 from tychora.contracts.errors import TychoraError
 
@@ -134,7 +135,7 @@ def test_installed_packs_discover_complete_zero_count_definitions(builtin_config
             assert row["count"] == 0
             assert row["description"] and row["examples"] and row["metadata_schema"]
             with pytest.raises(TychoraError):
-                registry.validate_metadata(row["id"], {})
+                registry.validate_metadata(json_string(row["id"]), {})
         assert set(registry.lanes) == {
             "authority",
             "standard",
@@ -173,10 +174,17 @@ def test_installed_packs_discover_complete_zero_count_definitions(builtin_config
         expected_states = (
             ("accepted",) if profile == "verified" else ("unreviewed", "accepted")
         )
-        assert registry.modes["compose"]["original_review_states"] == expected_states
-        assert "maintenance" not in registry.modes["compose"]["allowed_lanes"]
-        assert "maintenance" in registry.modes["audit"]["allowed_lanes"]
-        assert registry.modes["lookup"]["allowed_uses"] == ("lookup",)
+        assert (
+            json_object(registry.modes, "compose")["original_review_states"]
+            == expected_states
+        )
+        assert "maintenance" not in json_array(
+            json_object(registry.modes, "compose")["allowed_lanes"]
+        )
+        assert "maintenance" in json_array(
+            json_object(registry.modes, "audit")["allowed_lanes"]
+        )
+        assert json_object(registry.modes, "lookup")["allowed_uses"] == ("lookup",)
 
 
 def test_builtin_record_schemas_retain_literal_requirements(builtin_config):
@@ -335,7 +343,7 @@ search_directions=["outgoing"]
     assert registry.validate_metadata("observation@1", {"observer": "Survey team"}) == {
         "observer": "Survey team"
     }
-    assert registry.relations["substantiates@1"]["methods"] == ("human",)
+    assert json_object(registry.relations, "substantiates@1")["methods"] == ("human",)
     with pytest.raises(TychoraError):
         registry.validate_metadata("observation@1", {"unregistered": "value"})
 
@@ -345,7 +353,9 @@ def test_custom_predicate_may_explicitly_permit_proposed_model_method(builtin_co
         builtin_config(),
         lambda data: data["relations"]["supports@1"].update(methods=["human", "model"]),
     )
-    assert Registry.from_config(config).relations["supports@1"]["methods"] == (
+    assert json_object(Registry.from_config(config).relations, "supports@1")[
+        "methods"
+    ] == (
         "human",
         "model",
     )
@@ -408,7 +418,9 @@ def test_hint_contributions_are_exact_non_policy_and_capped(builtin_config):
     }
     assert registry.hint_contributions(hints, values) == FrozenJsonMap()
     contributions = registry.hint_contributions(hints, values, bonus=0.008)
-    assert sum(contributions.values()) == pytest.approx(0.01)
+    assert sum(json_number(value) for value in contributions.values()) == pytest.approx(
+        0.01
+    )
     assert (
         registry.hint_contributions({"project": "blue"}, values, bonus=0.008)
         == FrozenJsonMap()
@@ -424,7 +436,10 @@ def test_historical_exports_and_owner_activation_require_known_bindings(builtin_
 
     registry = Registry.from_config(builtin_config())
     envelopes = registry.historical_definitions()
-    require_kind_coverage(frozenset(registry.kinds), registry.lane_bindings, envelopes)
+    lane_bindings = {
+        key: json_string(value) for key, value in registry.lane_bindings.items()
+    }
+    require_kind_coverage(frozenset(registry.kinds), lane_bindings, envelopes)
     registry.validate_activation(frozenset(registry.kinds), envelopes)
     config = changed_config(
         builtin_config(),
@@ -434,7 +449,10 @@ def test_historical_exports_and_owner_activation_require_known_bindings(builtin_
     )
     upgraded = Registry.from_config(config)
     # Unrelated invisible/retained history is not disclosed during a scoped query.
-    require_kind_coverage(frozenset({"standard@1"}), upgraded.lane_bindings, envelopes)
+    upgraded_lanes = {
+        key: json_string(value) for key, value in upgraded.lane_bindings.items()
+    }
+    require_kind_coverage(frozenset({"standard@1"}), upgraded_lanes, envelopes)
     with pytest.raises(TychoraError) as err:
         upgraded.validate_activation(frozenset({"standard@1"}), envelopes)
     assert err.value.code == "PROFILE_INCOMPATIBLE"
@@ -574,13 +592,13 @@ def test_kind_discovery_materializes_bound_original_schemas(builtin_config):
         if row["id"] == "standard@1"
     )
     assert row["count"] == 2
-    assert row["schema_ids"]["metadata_schema"] == "standard-metadata@1"
-    assert row["metadata_schema_definition"]["required"] == (
+    assert json_object(row, "schema_ids")["metadata_schema"] == "standard-metadata@1"
+    assert json_object(row, "metadata_schema_definition")["required"] == (
         "title",
         "issuer",
         "edition",
     )
-    assert row["record_schema_definition"]["required"] == (
+    assert json_object(row, "record_schema_definition")["required"] == (
         "requirement",
         "target",
         "provenance",
@@ -631,7 +649,9 @@ def test_bounded_array_forms_enforce_the_4096_item_boundary(explicit_type):
     if explicit_type is not None:
         schema["type"] = explicit_type
     local = LocalSchemas({"bounded@1": schema}, {"bounded@1": {}})
-    assert len(local.validate("bounded@1", [1] * 4096)) == 4096
+    validated = local.validate("bounded@1", [1] * 4096)
+    assert isinstance(validated, list)
+    assert len(validated) == 4096
     with pytest.raises(TychoraError) as err:
         local.validate("bounded@1", [1] * 4097)
     assert err.value.code == "INVALID_REQUEST"
@@ -717,7 +737,7 @@ def test_optional_relation_and_mode_fields_preserve_supported_values(
         builtin_config(), lambda data: data[category][key].update({field: value})
     )
     registry = Registry.from_config(config)
-    assert registry.artifact[category][key][field] == (
+    assert json_object(registry.artifact, category, key)[field] == (
         tuple(value) if isinstance(value, list) else value
     )
 
