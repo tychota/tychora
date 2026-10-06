@@ -71,6 +71,7 @@ def test_full_installed_wheel_native_sdk_document_http_mcp_and_restore(
     source_tests = artifacts.source / "tests"
     target_tests = root / "tests"
     (target_tests / "qualification").mkdir(parents=True)
+    (target_tests / "helpers").mkdir(parents=True)
     (target_tests / "cli").mkdir(parents=True)
     (target_tests / "fixtures").mkdir(parents=True)
     (target_tests / "configuration").mkdir(parents=True)
@@ -83,6 +84,9 @@ def test_full_installed_wheel_native_sdk_document_http_mcp_and_restore(
         shutil.copy2(
             source_tests / "qualification" / name, target_tests / "qualification" / name
         )
+    shutil.copy2(source_tests / "__init__.py", target_tests / "__init__.py")
+    for name in ("__init__.py", "ladybug.py"):
+        shutil.copy2(source_tests / "helpers" / name, target_tests / "helpers" / name)
     shutil.copy2(
         source_tests / "cli/test_commands.py", target_tests / "cli/test_commands.py"
     )

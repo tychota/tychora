@@ -105,7 +105,8 @@ def _run_graph_probe(
     return subprocess.run(
         [
             sys.executable,
-            str(Path(__file__).with_name("graph_probe.py")),
+            "-m",
+            "tests.qualification.graph_probe",
             mode,
             str(database_path),
         ],
@@ -130,7 +131,8 @@ def test_ladybug_recovers_after_writer_is_forced_to_terminate(tmp_path):
     writer = subprocess.Popen(
         [
             sys.executable,
-            str(Path(__file__).with_name("graph_probe.py")),
+            "-m",
+            "tests.qualification.graph_probe",
             "uncommitted-writer",
             str(database_path),
         ],
