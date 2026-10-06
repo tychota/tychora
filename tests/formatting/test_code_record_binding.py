@@ -6,7 +6,10 @@ from types import MappingProxyType
 import pytest
 
 from tests.code.test_structure import _registration
+from tests.formatting.test_record_attachment import RecordOnlyReader
 from tests.formatting.test_response_budget import segment
+from tests.helpers.eligibility import eligibility_view
+from tests.typed_json import json_object
 from tychora.adapters.code.normalize import normalize_code, retain_code_extraction
 from tychora.configuration.registry import Registry
 from tychora.configuration.resolve import resolve_config
@@ -14,7 +17,7 @@ from tychora.contracts.base import FrozenJsonMap, thaw_json
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import digest
 from tychora.indexing.representations import prepare_extraction
-from tychora.retrieval.eligibility import EligibilityAttempt
+from tychora.retrieval.eligibility import EligibilityAttempt, EligibilityCompiler
 from tychora.retrieval.fusion import FusedCandidate
 from tychora.retrieval.rerank import RankedEvidence, RankedEvidenceItem, RerankFacts
 from tychora.retrieval.response import prepare_records
@@ -31,15 +34,10 @@ def test_code_symbol_alias_requires_exact_builtin_kind_schema_and_hash(tmp_path)
     prepared = prepare_extraction(bundle)
     record = next(row for row in bundle.records if row.data_json["name"] == "first")
     unit_ids = frozenset(unit.unit_id for unit in bundle.units)
-    view = type(
-        "View",
-        (),
-        {
-            "revision_ids": frozenset({bundle.revision.revision_id}),
-            "context_unit_ids": unit_ids,
-            "structural_unit_ids": unit_ids,
-        },
-    )()
+    view = eligibility_view(
+        revision_ids=frozenset({bundle.revision.revision_id}),
+        context_unit_ids=unit_ids,
+    )
     selected = Selection(
         segments=(
             segment("def first(): return 1").model_copy(
@@ -63,10 +61,11 @@ def test_code_symbol_alias_requires_exact_builtin_kind_schema_and_hash(tmp_path)
         RerankFacts(bundle, prepared, ()),
         "disabled",
     )
-    envelope = registry.historical_definitions()["code_file@1"]
+    envelope = json_object(registry.historical_definitions(), "code_file@1")
 
     def check(row=record, *, kind="code_file@1", historical=envelope):
         rows = bundle.model_copy(update={"records": (row,)})
+        assert item.facts is not None
         ranked = RankedEvidence((replace(item, facts=replace(item.facts, rows=rows)),))
         selection = replace(
             selected,
@@ -74,7 +73,7 @@ def test_code_symbol_alias_requires_exact_builtin_kind_schema_and_hash(tmp_path)
         )
         attempt = EligibilityAttempt(
             view=view,
-            compiler=None,
+            compiler=EligibilityCompiler(RecordOnlyReader(registry)),
             historical_kind_envelopes=MappingProxyType({kind: historical}),
         )
         return prepare_records(selection, ranked, attempt)
@@ -86,16 +85,17 @@ def test_code_symbol_alias_requires_exact_builtin_kind_schema_and_hash(tmp_path)
     with pytest.raises(TychoraError) as wrong_kind:
         check(
             kind="feedback@1",
-            historical=registry.historical_definitions()["feedback@1"],
+            historical=json_object(registry.historical_definitions(), "feedback@1"),
         )
     assert wrong_kind.value.code == "INTEGRITY_ERROR"
     with pytest.raises(TychoraError) as wrong_hash:
         check(record.model_copy(update={"schema_hash": "0" * 64}))
     assert wrong_hash.value.code == "INTEGRITY_ERROR"
     changed = thaw_json(envelope)
-    changed["schema_bindings"]["record_schema"] = changed["schema_bindings"][
-        "metadata_schema"
-    ]
+    assert isinstance(changed, dict)
+    bindings = changed["schema_bindings"]
+    assert isinstance(bindings, dict)
+    bindings["record_schema"] = bindings["metadata_schema"]
     changed["envelope_digest"] = digest(
         "historical-kind-v1",
         {key: value for key, value in changed.items() if key != "envelope_digest"},

@@ -8,6 +8,7 @@ def eligibility_view(
     *,
     revision_ids: frozenset[str] = frozenset(),
     context_unit_ids: frozenset[str] = frozenset(),
+    structural_unit_ids: frozenset[str] = frozenset(),
     chunk_ids: frozenset[str] = frozenset(),
     graph_generation_id: str | None = None,
 ) -> EligibilityView:
@@ -22,7 +23,7 @@ def eligibility_view(
         revision_ids=revision_ids,
         source_unit_ids=frozenset(),
         context_unit_ids=context_unit_ids,
-        structural_unit_ids=frozenset(),
+        structural_unit_ids=structural_unit_ids,
         proxy_unit_ids=frozenset(),
         chunk_ids=chunk_ids,
         asset_ids=frozenset(),
