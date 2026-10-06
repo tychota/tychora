@@ -1,0 +1,91 @@
+tests/indexing/test_sources.py
+  s_35b641b930a96d::t_751c031c3dc014 665-676
+  s_35b641b930a96d::t_ddb07e5a9c9dcc 557-564,580-581
+  s_35b641b930a96d::t_d6dfa531e07f9e 549-556,575-579
+  s_35b641b930a96d::t_232f9329826e4e 565-567,582,677-679
+src/tychora/application/owner.py
+  s_35b641b930a96d::t_bee7a08a8d33d2 123
+src/tychora/application/maintenance.py
+  s_35b641b930a96d::t_3b0f7a479e53c1 112-113
+  s_35b641b930a96d::t_a7725cf9a8da39 114-115,119-121,130-137
+src/tychora/application/recovery.py
+  s_35b641b930a96d::t_3b0f7a479e53c1 39-42,739-743,771-779,799-802,805-821,824-829,833-835,841-844,848-850,853-855,860-866,870-872,884,887-888,894,898-899,903,911,925,932-934
+  s_35b641b930a96d::t_21cc5cb2009052 822-823,830-832,836-840,845-847,851-852,856-859,867-869,873-883,885-886,890-893,895-897,900-902,904-910
+  s_35b641b930a96d::t_456542d8bfca0c 889
+  s_35b641b930a96d::t_69f3eb9f0ab219 953
+src/tychora/application/sources.py
+  s_35b641b930a96d::t_2c63c2a8e585ae 14,845-848,930-933
+tests/release/test_frozen_harness.py
+  s_35b641b930a96d::t_414682691c3626 1-36
+src/tychora/application/default_bindings.py
+  s_35b641b930a96d::t_ac1f5eb4e57821 189-190,193-204,207-208
+  s_35b641b930a96d::t_1e263fbf7e4967 273-282
+  s_35b641b930a96d::t_fddb976ea41d9d 245-254,291
+  s_35b641b930a96d::t_21cc5cb2009052 187-188,191-192,205-206,217-218,228,234,267-272,283-290,292-293
+  s_35b641b930a96d::t_799746dac237e3 239,244
+docs/operations.md
+  s_35b641b930a96d::t_8478f5564463d1 20-21,24
+  s_35b641b930a96d::t_ecaf93ce518880 25
+packaging/test_frozen.py
+  s_35b641b930a96d::t_c0a17c88fe43d0 664-666,674-696,911-913
+  s_35b641b930a96d::t_709bf30d73f5b8 11,66-67,79-102,106-118,122-123,584-585,961,964-965
+  s_35b641b930a96d::t_1ef86b291f89cc 728-748
+  s_35b641b930a96d::t_cbd6d54d5ac33f 782-824
+  s_35b641b930a96d::t_c0cffa86fb1a4b 103-105,119-121,697-727,749-781,914
+  s_35b641b930a96d::t_5dafcb1b7af991 825-826
+src/tychora/interfaces/commands/manage.py
+  s_35b641b930a96d::t_3b0f7a479e53c1 109,118
+docs/http.md
+  s_35b641b930a96d::t_8478f5564463d1 21
+tests/release/test_measure_frozen.py
+  s_35b641b930a96d::t_49b37e4f45506e 1-29
+  s_35b641b930a96d::t_30f570d53831ba 30-39
+.github/workflows/binary.yml
+  s_35b641b930a96d::t_014d1fc37eb742 98-108
+tests/indexing/test_publication.py
+  s_35b641b930a96d::t_40fb3951b5bcbd 23,423,442-457,582-584,754-756,809-811
+  s_35b641b930a96d::t_0d232292b7f51e 34
+  s_35b641b930a96d::t_2b40ae25004d7c 422,424-441
+tests/operations/test_migrations.py
+  s_35b641b930a96d::t_bee7a08a8d33d2 4-5,36,39
+  s_35b641b930a96d::t_21cc5cb2009052 20,40-41
+  s_35b641b930a96d::t_b2f9d4f13e5c0f 3,19,21-35,37-38,42
+  s_35b641b930a96d::t_e646f233e93e9e 52-56
+  s_c37b0508beebe6::t_e7712a44bc301f 43-44
+src/tychora/contracts/operations.py
+  s_35b641b930a96d::t_3b0f7a479e53c1 295,413-416
+tests/transports/test_http.py
+  s_35b641b930a96d::t_e646f233e93e9e 43-53
+src/tychora/adapters/chroma/index.py
+  s_35b641b930a96d::t_21cc5cb2009052 17,138-147
+  s_c37b0508beebe6::t_34e66b181e7b18 148-156
+packaging/measure_frozen.py
+  s_35b641b930a96d::t_965ab2a90aa2c7 140-141,155
+  s_35b641b930a96d::t_014d1fc37eb742 6,9,136,148-152
+docs/api.md
+  s_35b641b930a96d::t_8478f5564463d1 62-63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d9deac7b768c9aaaeefcfe548b8394f51692180c",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    },
+    "s_c37b0508beebe6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7650dd0-4c82-4a0e-a414-a7a38c2d9a3f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
