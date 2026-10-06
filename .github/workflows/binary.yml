@@ -44,6 +44,8 @@ jobs:
       - name: Bootstrap asset provisioning runtime
         run: uv sync --locked --all-extras --no-default-groups
       - name: Provision pinned public parser assets
+        env:
+          UV_NO_SYNC: "1"
         run: python packaging/provision_ci_assets.py --cache "$RUNNER_TEMP/tychora-public-models" --workspace "$RUNNER_TEMP/tychora-asset-setup" --github-env "$GITHUB_ENV"
       - name: Build and inspect staged release wheel on macOS
         if: runner.os == 'macOS'
