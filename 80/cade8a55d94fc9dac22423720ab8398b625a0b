@@ -1,0 +1,24 @@
+tests/performance/test_ingestion_delta.py
+  s_35b641b930a96d::t_937db767d46352 3-4,18-24,86
+tests/evaluation/test_graph_scenarios.py
+  s_35b641b930a96d::t_1fa0428e0de3e5 18,249-253
+tests/acceptance/test_crash_matrix.py
+  s_35b641b930a96d::t_1fa0428e0de3e5 31,316,318-320,388-391
+  s_35b641b930a96d::t_04a03dba30a486 392
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "80cade8a55d94fc9dac22423720ab8398b625a0b",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
