@@ -1,0 +1,20 @@
+tests/retrieval/test_temporal.py
+  s_35b641b930a96d::t_07d9ada5777302 158-159,169,174
+  s_35b641b930a96d::t_e4045c4f908221 3,170-173,175,184-186
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "23824039b16186a4585ae0f2955d31be87472e38",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
