@@ -14,7 +14,7 @@ import pytest
 import uvicorn
 from mcp import Client
 from mcp.client.streamable_http import streamable_http_client
-from mcp.types import CallToolResult
+from mcp.types import CallToolResult, TextContent
 from pydantic import BaseModel
 
 from tychora import Tychora
@@ -55,6 +55,12 @@ class RecordingTransport(httpx2.AsyncBaseTransport):
 
     async def aclose(self):
         await self.source.aclose()
+
+
+def _text_content(result: CallToolResult) -> str:
+    block = result.content[0]
+    assert isinstance(block, TextContent)
+    return block.text
 
 
 def _wire_structured(records, expected):
@@ -191,10 +197,10 @@ async def test_mounted_http_reader_auth_and_sdk_client(tmp_path):
                         )
                         assert malformed.is_error
                         assert (
-                            json.loads(malformed.content[0].text)["code"]
+                            json.loads(_text_content(malformed))["code"]
                             == "INVALID_REQUEST"
                         )
-                        assert "secret-example" not in malformed.content[0].text
+                        assert "secret-example" not in _text_content(malformed)
                         result = await client.call_tool(
                             "discover", {"request": {"subject": "kinds"}}
                         )
@@ -203,7 +209,7 @@ async def test_mounted_http_reader_auth_and_sdk_client(tmp_path):
                             "add_sources", {"action": "add", "source": {}}
                         )
                         assert denied_write.is_error
-                        assert "FORBIDDEN_SCOPE" in denied_write.content[0].text
+                        assert "FORBIDDEN_SCOPE" in _text_content(denied_write)
                         async with httpx2.AsyncClient(
                             headers={"Authorization": "Bearer writer"}, timeout=5
                         ) as manager:
@@ -255,10 +261,10 @@ async def test_mounted_http_reader_auth_and_sdk_client(tmp_path):
                         )
                         assert malformed_action.is_error
                         assert (
-                            json.loads(malformed_action.content[0].text)["code"]
+                            json.loads(_text_content(malformed_action))["code"]
                             == "INVALID_REQUEST"
                         )
-                        assert "secret-example" not in malformed_action.content[0].text
+                        assert "secret-example" not in _text_content(malformed_action)
                         accepted = await writer.call_tool(
                             "add_sources",
                             {
@@ -374,7 +380,7 @@ async def test_mounted_http_reader_auth_and_sdk_client(tmp_path):
                             },
                         )
                         assert tiny.is_error
-                        assert "BUDGET_TOO_SMALL" in tiny.content[0].text
+                        assert "BUDGET_TOO_SMALL" in _text_content(tiny)
                         http_query = await writing_http.post(
                             f"http://{authority}/v1/queries",
                             json={"question": "Café", "modalities": ["lexical"]},
@@ -392,9 +398,8 @@ async def test_mounted_http_reader_auth_and_sdk_client(tmp_path):
                             busy = await writer.call_tool(
                                 "discover", {"request": {"subject": "kinds"}}
                             )
-                            assert (
-                                busy.is_error
-                                and "WORKSPACE_BUSY" in busy.content[0].text
+                            assert busy.is_error and "WORKSPACE_BUSY" in _text_content(
+                                busy
                             )
                         finally:
                             app.state.runtime.release(activation=True)
@@ -552,9 +557,9 @@ async def test_mounted_http_reader_auth_and_sdk_client(tmp_path):
                         )
                         assert oversized_original.is_error
                         assert (
-                            json.loads(oversized_original.content[0].text)["code"]
+                            json.loads(_text_content(oversized_original))["code"]
                             == "OUTPUT_BUDGET_EXCEEDED"
-                        ), oversized_original.content[0].text
+                        ), _text_content(oversized_original)
                     async with Client(
                         streamable_http_client(url, http_client=http), mode="legacy"
                     ) as reconnected:
@@ -581,7 +586,7 @@ async def test_mounted_http_reader_auth_and_sdk_client(tmp_path):
                                 }
                             },
                         )
-                        assert hidden.is_error and "NOT_FOUND" in hidden.content[0].text
+                        assert hidden.is_error and "NOT_FOUND" in _text_content(hidden)
                 async with httpx2.AsyncClient(timeout=5) as anonymous:
                     denied = await anonymous.post(
                         url, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
