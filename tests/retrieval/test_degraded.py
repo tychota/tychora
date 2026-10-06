@@ -24,7 +24,9 @@ from tychora.application.reranking import (
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.candidates import ChannelCandidate
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.requests import QueryRequest
+from tychora.contracts.graph import EligibilityView
+from tychora.contracts.identity import digest
+from tychora.contracts.requests import QueryRequest, QuestionInput
 from tychora.indexing.representations import prepare_extraction
 from tychora.ports.execution import ExecutionContext
 from tychora.retrieval.admission import Admission
@@ -97,9 +99,10 @@ def _case(*, offline: bool, degraded: bool, disabled: bool = False):
             )
         )
     )
+    # These branch-isolating doubles expose only the state read before any owner/provider call.
     context = RerankContext(
-        owner=owner,
-        attempt=attempt,
+        owner=owner,  # ty: ignore[invalid-argument-type]
+        attempt=attempt,  # ty: ignore[invalid-argument-type]
         reranker=None,
         counter=CharacterCounter(),
         facts={candidate.key: facts},
@@ -114,12 +117,13 @@ async def test_offline_never_constructs_or_calls_remote_reranker():
     admission, context = _case(offline=True, degraded=True)
     context = replace(context, counter=None)
     result = await rerank_candidates(
-        QueryRequest(input={"type": "question", "text": "query"}),
+        QueryRequest(input=QuestionInput(text="query")),
         admission,
         context,
     )
     assert result.items[0].candidate is admission.selected[0]
     assert result.items[0].status == "unavailable"
+    assert result.failure is not None
     assert result.failure.code == "CAPABILITY_MISSING"
     assert result.items[0].window_ids == admission.selected[0].matching_window_ids
     assert result.items[0].representation is None
@@ -140,16 +144,17 @@ async def test_preview_unavailable_degrades_or_fails_by_policy():
         counter=None,
     )
     result = await rerank_candidates(
-        QueryRequest(input={"type": "question", "text": "query"}),
+        QueryRequest(input=QuestionInput(text="query")),
         admission,
         context,
     )
+    assert result.failure is not None
     assert result.failure.code == "CAPABILITY_MISSING"
     assert result.items[0].representation is None
     assert result.items[0].anchors[0].char_start == 0
     with pytest.raises(TychoraError) as error:
         await rerank_candidates(
-            QueryRequest(input={"type": "question", "text": "query"}),
+            QueryRequest(input=QuestionInput(text="query")),
             admission,
             replace(context, allow_degraded=False),
         )
@@ -160,7 +165,7 @@ async def test_preview_unavailable_degrades_or_fails_by_policy():
 async def test_declared_disabled_reranker_keeps_canonical_facts_without_counter():
     admission, context = _case(offline=True, degraded=False, disabled=True)
     result = await rerank_candidates(
-        QueryRequest(input={"type": "question", "text": "query"}),
+        QueryRequest(input=QuestionInput(text="query")),
         admission,
         replace(context, counter=None),
     )
@@ -191,10 +196,11 @@ async def test_missing_verified_factory_asset_degrades_without_transport(tmp_pat
             )
         assert missing.value.code == "CAPABILITY_MISSING"
         result = await rerank_candidates(
-            QueryRequest(input={"type": "question", "text": "query"}),
+            QueryRequest(input=QuestionInput(text="query")),
             admission,
             replace(context, reranker=None, counter=None, unavailable=missing.value),
         )
+        assert result.failure is not None
         assert result.failure.code == "CAPABILITY_MISSING"
         assert all(item.representation is None for item in result.items)
         assert transport.calls == []
@@ -207,9 +213,14 @@ async def test_offline_factory_does_not_construct_transport(tmp_path):
         context.owner.config = config.model_copy(
             update={"values": config.values.model_copy(update={"offline": True})}
         )
-        constructed = []
+        constructed: list[str] = []
+
+        def forbidden_transport(recorded: list[str] = constructed):
+            recorded.append("constructed")
+            raise AssertionError("offline mode must not construct a transport")
+
         runtime = VoyageRuntime(
-            lambda constructed=constructed: constructed.append("constructed"),
+            forbidden_transport,
             workspace_id=context.owner.workspace_id,
             credential_binding_id="synthetic-credential",
         )
@@ -223,12 +234,13 @@ async def test_offline_factory_does_not_construct_transport(tmp_path):
             )
         assert unavailable.value.code == "CAPABILITY_MISSING"
         result = await rerank_candidates(
-            QueryRequest(input={"type": "question", "text": "query"}),
+            QueryRequest(input=QuestionInput(text="query")),
             admission,
             replace(
                 context, reranker=None, counter=None, unavailable=unavailable.value
             ),
         )
+        assert result.failure is not None
         assert result.failure.code == "CAPABILITY_MISSING"
         assert constructed == []
 
@@ -241,7 +253,7 @@ async def test_attempt_dependency_lookup_denial_blocks_before_provider():
     )
     with pytest.raises(TychoraError) as error:
         await rerank_candidates(
-            QueryRequest(input={"type": "question", "text": "query"}),
+            QueryRequest(input=QuestionInput(text="query")),
             admission,
             context,
         )
@@ -263,7 +275,7 @@ async def test_attempt_unit_dependency_denial_blocks_before_provider():
     context.attempt.dependencies_for = dependencies_for
     with pytest.raises(TychoraError) as error:
         await rerank_candidates(
-            QueryRequest(input={"type": "question", "text": "query"}),
+            QueryRequest(input=QuestionInput(text="query")),
             admission,
             context,
         )
@@ -331,15 +343,22 @@ async def _owner_case(tmp_path: Path, *, upload: bool = True):
             for rank, bundle in enumerate(bundles, 1)
         )
         admission = Admission(candidates, (), {}, {}, (), {}, 62)
-        view = SimpleNamespace(
+        view = EligibilityView(
             snapshot_id="synthetic-snapshot",
             policy_epoch=epoch,
+            scope_digest=digest("synthetic-scope"),
+            eligibility_policy_digest=digest("synthetic-policy"),
+            eligibility_request_digest=digest("synthetic-request"),
+            selected_batch_ids=(),
             revision_ids=frozenset(bundle.revision.revision_id for bundle in bundles),
             source_unit_ids=frozenset(bundle.units[0].unit_id for bundle in bundles),
             context_unit_ids=frozenset(bundle.units[0].unit_id for bundle in bundles),
             structural_unit_ids=frozenset(),
+            proxy_unit_ids=frozenset(),
             asset_ids=frozenset(),
             chunk_ids=frozenset(bundle.chunks[0].chunk_id for bundle in bundles),
+            vector_record_ids=frozenset(),
+            blocked_assertion_ids=frozenset(),
         )
         compiler = EligibilityCompiler(owner.store)
         compiler._workspace_ids[view.snapshot_id] = owner.workspace_id
@@ -369,7 +388,7 @@ async def _owner_case(tmp_path: Path, *, upload: bool = True):
         reranker = await _create_injected_reranker(
             owner, runtime=runtime, scope=scope, counter=LengthCounter(), ctx=execution
         )
-        facts = {
+        facts: dict[tuple[str, str], RerankFacts] = {
             candidate.key: RerankFacts(
                 bundle,
                 prepare_extraction(bundle),
@@ -408,10 +427,11 @@ async def test_owner_adapter_mapping_failure_degrades_without_fabricated_ranks(
             )
         ]
         result = await rerank_candidates(
-            QueryRequest(input={"type": "question", "text": "query"}),
+            QueryRequest(input=QuestionInput(text="query")),
             admission,
             context,
         )
+        assert result.failure is not None
         assert result.failure.code == "PROVIDER_FAILURE"
         assert [item.candidate.key for item in result.items] == [
             candidate.key for candidate in admission.selected
@@ -426,7 +446,7 @@ async def test_strict_required_provider_failure_propagates(tmp_path):
         transport.responses = [RawVoyageResponse(200, b'{"data":[]}')]
         with pytest.raises(TychoraError) as error:
             await rerank_candidates(
-                QueryRequest(input={"type": "question", "text": "query"}),
+                QueryRequest(input=QuestionInput(text="query")),
                 admission,
                 replace(context, allow_degraded=False),
             )
@@ -440,7 +460,7 @@ async def test_native_asset_stays_independent_of_text_reranker():
     asset = FusedCandidate(("asset", "asset-synthetic"), 1, 1.0, {"visual": 1})
     admission = replace(admission, selected=(asset,))
     result = await rerank_candidates(
-        QueryRequest(input={"type": "question", "text": "query"}),
+        QueryRequest(input=QuestionInput(text="query")),
         admission,
         context,
     )
@@ -454,10 +474,11 @@ async def test_native_asset_stays_independent_of_text_reranker():
 async def test_owner_adapter_upload_denial_never_sends_subset(tmp_path):
     async for admission, context, transport in _owner_case(tmp_path, upload=False):
         result = await rerank_candidates(
-            QueryRequest(input={"type": "question", "text": "query"}),
+            QueryRequest(input=QuestionInput(text="query")),
             admission,
             context,
         )
+        assert result.failure is not None
         assert result.failure.code == "FORBIDDEN_SCOPE"
         assert len(result.items) == 2
         assert transport.calls == []
@@ -474,7 +495,7 @@ async def test_successful_owner_mapping_orders_text_and_keeps_source_facts(tmp_p
             )
         ]
         result = await rerank_candidates(
-            QueryRequest(input={"type": "question", "text": "query"}),
+            QueryRequest(input=QuestionInput(text="query")),
             admission,
             context,
         )
@@ -500,10 +521,11 @@ async def test_owner_transport_timeout_degrades_without_fallback(tmp_path):
 
         transport.post_json = timeout
         result = await rerank_candidates(
-            QueryRequest(input={"type": "question", "text": "query"}),
+            QueryRequest(input=QuestionInput(text="query")),
             admission,
             context,
         )
+        assert result.failure is not None
         assert result.failure.code == "PROVIDER_FAILURE"
         assert len(transport.calls) == 3
         assert all(item.status == "unavailable" for item in result.items)
@@ -543,15 +565,21 @@ async def test_owner_rejects_forged_index_window_before_transport(tmp_path):
             facts[candidate.key],
             matches=(replace(facts[candidate.key].matches[0], window_id=forged_id),),
         )
-        context.attempt.view.chunk_ids |= {forged_id}
-        context.attempt.dependencies[forged_id] = context.attempt.dependencies[
-            candidate.matching_window_ids[0]
-        ]
+        forged_view = context.attempt.view.model_copy(
+            update={"chunk_ids": context.attempt.view.chunk_ids | {forged_id}}
+        )
+        forged_dependencies = {
+            **context.attempt.dependencies,
+            forged_id: context.attempt.dependencies[candidate.matching_window_ids[0]],
+        }
+        forged_attempt = replace(
+            context.attempt, view=forged_view, dependencies=forged_dependencies
+        )
         with pytest.raises(TychoraError) as error:
             await rerank_candidates(
-                QueryRequest(input={"type": "question", "text": "query"}),
+                QueryRequest(input=QuestionInput(text="query")),
                 admission,
-                replace(context, facts=facts),
+                replace(context, attempt=forged_attempt, facts=facts),
             )
         assert error.value.code == "FORBIDDEN_SCOPE"
         assert transport.calls == []
