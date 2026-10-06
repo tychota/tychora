@@ -61,10 +61,11 @@ def test_repository_manifest_order_and_family_nonce():
     assert repository_manifest(files, commit=None, dirty=True) == repository_manifest(
         files[::-1], commit=None, dirty=True
     )
-    assert (
-        repository_manifest(files, commit=None, dirty=True)["files"][0]["relative_path"]
-        == "a"
-    )
+    manifest_files = repository_manifest(files, commit=None, dirty=True)["files"]
+    assert isinstance(manifest_files, list)
+    first_file = manifest_files[0]
+    assert isinstance(first_file, dict)
+    assert first_file["relative_path"] == "a"
     with pytest.raises(ValueError):
         repository_manifest(files + [files[0]], commit=None, dirty=True)
     assert new_family_nonce() != new_family_nonce()

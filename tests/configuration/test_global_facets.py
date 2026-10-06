@@ -4,6 +4,7 @@ from copy import deepcopy
 
 import pytest
 
+from tests.typed_json import json_object
 from tychora.configuration.global_facets import binding_bytes, normalized_metadata
 from tychora.configuration.registry import Registry
 from tychora.configuration.resolve import resolve_config
@@ -99,14 +100,15 @@ def test_alias_remap_cannot_reinterpret_retained_canonical_binding(tmp_path):
     original = binding_bytes(metadata, "revision", msha, first)
     remapped = _registry(tmp_path, remap_alias=True)
     assert binding_bytes(metadata, "revision", msha, remapped) == original
-    assert normalized_metadata(
+    remapped_metadata = normalized_metadata(
         FrozenJsonMap(
             {
                 "scope": {"global_facets": ["project"]},
             }
         ),
         remapped,
-    )["scope"]["global_facets"] == ("scope.region",)
+    )
+    assert json_object(remapped_metadata, "scope")["global_facets"] == ("scope.region",)
     with pytest.raises(TychoraError, match="overlap"):
         normalized_metadata(
             FrozenJsonMap(
