@@ -95,9 +95,7 @@ async def test_retry_uses_exact_committed_capture_and_verified_plan(
         jobs = service._jobs
         assert jobs is not None
         status = await owner.run_blocking(
-            lambda: jobs.get(
-                owner.db.execute("SELECT job_id FROM jobs").fetchone()[0]
-            ),
+            lambda: jobs.get(owner.db.execute("SELECT job_id FROM jobs").fetchone()[0]),
             ExecutionContext(),
         )
         assert status.state == "interrupted" and status.captured_inputs is not None

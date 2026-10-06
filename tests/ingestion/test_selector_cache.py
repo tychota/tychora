@@ -29,6 +29,8 @@ def _unit(unit_id, native_ref, start, end, *, citable=True):
 
 
 def test_repeated_and_distinct_selectors_preserve_all_overlap_owners(monkeypatch):
+    # These minimal shapes isolate private selector memoization; corpus model
+    # validation is covered separately by composition integration tests.
     ref = "#/items/target"
     other = "#/items/other"
     parsed = SimpleNamespace(
@@ -64,14 +66,14 @@ def test_repeated_and_distinct_selectors_preserve_all_overlap_owners(monkeypatch
         return original(*args)
 
     monkeypatch.setattr(composition, "_selected", counted)
-    resolver = composition._SelectorResolver(parsed)
-    assert resolver.selected(repeated, bundle) == ("left", "right")
+    resolver = composition._SelectorResolver(parsed)  # ty: ignore[invalid-argument-type]
+    assert resolver.selected(repeated, bundle) == ("left", "right")  # ty: ignore[invalid-argument-type]
     for _ in range(100):
-        assert resolver.selected(repeated, bundle) == ("left", "right")
-    assert resolver.selected(distinct, bundle) == ("other",)
+        assert resolver.selected(repeated, bundle) == ("left", "right")  # ty: ignore[invalid-argument-type]
+    assert resolver.selected(distinct, bundle) == ("other",)  # ty: ignore[invalid-argument-type]
     assert calls == 2
     changed = SimpleNamespace(units=bundle.units[:-1])
-    assert resolver.selected(repeated, changed) == ("left", "right")
+    assert resolver.selected(repeated, changed) == ("left", "right")  # ty: ignore[invalid-argument-type]
     assert calls == 3
     with pytest.raises(ValueError, match="original field interval"):
         resolver.selected(
@@ -81,18 +83,20 @@ def test_repeated_and_distinct_selectors_preserve_all_overlap_owners(monkeypatch
 
 
 def test_selector_memo_retains_at_most_256_entries():
+    # This shape-only fixture stresses the cache cap without constructing 260
+    # independently validated extraction bundles.
     ref = "#/items/target"
     parsed = SimpleNamespace(
         units=(SimpleNamespace(native_ref=ref, raw_item={"text": "x" * 300}),)
     )
     bundle = SimpleNamespace(units=(_unit("all", ref, 0, 300),))
-    resolver = composition._SelectorResolver(parsed)
+    resolver = composition._SelectorResolver(parsed)  # ty: ignore[invalid-argument-type]
     for start in range(260):
         assert resolver.selected(
             SourceSelector(
                 native_ref=ref, field="text", source_start=start, source_end=start + 1
             ),
-            bundle,
+            bundle,  # ty: ignore[invalid-argument-type]
         ) == ("all",)
     assert len(resolver._cache) == 256
     assert resolver._retained_ids == 256

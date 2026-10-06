@@ -342,7 +342,8 @@ class _Reader:
 
     def retained_config(self, snapshot: SnapshotView) -> ResolvedConfig:
         raise TychoraError(
-            "INVALID_REQUEST", "Synthetic reader has no retained configuration artifact."
+            "INVALID_REQUEST",
+            "Synthetic reader has no retained configuration artifact.",
         )
 
     def policy_epoch(self, workspace_id: str) -> int:

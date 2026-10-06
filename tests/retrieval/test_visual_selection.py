@@ -1,16 +1,16 @@
 """Visuals remain original pixel evidence independent of text reranking."""
 
-from types import SimpleNamespace
-
 import pytest
 
 from tests.helpers.corpus import artifact, reader, registry, seed_bundle
+from tests.helpers.eligibility import eligibility_view
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.contracts.corpus import AssetRow, RevisionArtifactRow, UnitAssetRow
 from tychora.contracts.evidence import ImageLocator, Segment
 from tychora.contracts.identity import digest
 from tychora.ports.execution import ExecutionContext
+from tychora.retrieval.eligibility import EligibilityAttempt, EligibilityCompiler
 from tychora.retrieval.fusion import FusedCandidate
 from tychora.retrieval.rerank import RankedEvidence, RankedEvidenceItem
 from tychora.retrieval.visuals import (
@@ -60,17 +60,10 @@ def visual_case(source_key="image.png", rank=1, score=0.01, *, visual=True):
             ),
         }
     )
-    view = type(
-        "View",
-        (),
-        {
-            "asset_ids": frozenset({asset_id}),
-            "revision_ids": frozenset({bundle.revision.revision_id}),
-            "context_unit_ids": frozenset({source_unit.unit_id}),
-            "structural_unit_ids": frozenset(),
-            "proxy_unit_ids": frozenset(),
-        },
-    )()
+    view = eligibility_view(
+        revision_ids=frozenset({bundle.revision.revision_id}),
+        context_unit_ids=frozenset({source_unit.unit_id}),
+    ).model_copy(update={"asset_ids": frozenset({asset_id})})
     candidate = FusedCandidate(
         ("asset", asset_id),
         rank,
@@ -162,18 +155,29 @@ async def test_visual_producer_reads_retained_zero_text_original(tmp_path):
             return call()
 
     owner = Owner()
-    attempt = SimpleNamespace(
-        owner=owner,
+    asset_id = fixture.candidate.key[1]
+    attempt = EligibilityAttempt(
+        owner=owner,  # ty: ignore[invalid-argument-type] - isolated owner shim uses the same DB and blocking call
         view=fixture.view,
-        dependencies_for=lambda asset_id: frozenset(
-            {asset_id, fixture.rows.revision.revision_id, fixture.rows.units[0].unit_id}
-        ),
+        compiler=EligibilityCompiler(store),
+        dependencies={
+            asset_id: frozenset(
+                {
+                    asset_id,
+                    fixture.rows.revision.revision_id,
+                    fixture.rows.units[0].unit_id,
+                }
+            )
+        },
     )
     ranked = RankedEvidence(
         (RankedEvidenceItem(fixture.candidate, None, None, "independent"),)
     )
     candidates = await prepare_visual_candidates(
-        owner, attempt, ranked, ExecutionContext()
+        owner,  # ty: ignore[invalid-argument-type] - local owner shim isolates retained visual loading
+        attempt,
+        ranked,
+        ExecutionContext(),
     )
     assert len(candidates) == 1
     assert candidates[0].rows.assets[0].asset_id == fixture.candidate.key[1]
