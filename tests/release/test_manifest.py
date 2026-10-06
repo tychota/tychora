@@ -60,3 +60,9 @@ def test_manifest_records_artifacts_features_and_resolved_licenses(
     assert any(row["name"] == "pydantic" for row in manifest["resolved"]["base"])
     assert any(row["name"] == "docling" for row in manifest["resolved"]["full"])
     assert all("license" in row for row in manifest["resolved"]["full"])
+    chromadb = next(
+        row for row in manifest["resolved"]["full"] if row["name"] == "chromadb"
+    )
+    assert chromadb["license_files"], (
+        "installed third-party notices must be inventoried"
+    )

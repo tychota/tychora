@@ -19,15 +19,23 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _installed(python: Path) -> list[dict[str, str]]:
-    code = """import importlib.metadata as metadata, json
+def _installed(python: Path) -> list[dict]:
+    code = """import hashlib, importlib.metadata as metadata, json
 rows = []
 for dist in metadata.distributions():
     info = dist.metadata
     name = info.get("Name", "")
     if not name: continue
     license_name = info.get("License-Expression") or info.get("License") or "UNKNOWN"
-    rows.append({"name": name.lower().replace("_", "-"), "version": dist.version, "license": license_name.strip() or "UNKNOWN"})
+    notices = []
+    for file in dist.files or ():
+        path = str(file)
+        if "license" not in path.lower() and "notice" not in path.lower() and "copying" not in path.lower():
+            continue
+        actual = dist.locate_file(file)
+        if actual.is_file():
+            notices.append({"path": path, "sha256": hashlib.sha256(actual.read_bytes()).hexdigest()})
+    rows.append({"name": name.lower().replace("_", "-"), "version": dist.version, "license": license_name.strip() or "UNKNOWN", "license_files": sorted(notices, key=lambda row: row["path"])})
 print(json.dumps(sorted(rows, key=lambda row: row["name"])))
 """
     return json.loads(subprocess.check_output([str(python), "-c", code], text=True))
