@@ -1,5 +1,6 @@
 """Conservative table continuation decisions preserve original fragments."""
 
+from tests.typed_json import json_array, json_object
 from tychora.ingestion.tables import continuation_score
 
 
@@ -25,28 +26,28 @@ def fragments():
     from tychora.contracts.evidence import DocumentLocator, Geometry
     from tychora.contracts.tables import TableFragment
 
-    def make(fragment_id, page, *, bbox, **updates):
-        values = {
-            "fragment_id": fragment_id,
-            "revision_id": "revision",
-            "extraction_id": "extraction",
-            "unit_id": fragment_id + "-unit",
-            "native_ref": "#/tables/" + fragment_id,
-            "page": page,
-            "column_count": 2,
-            "grid": (("Sample", "Value"), ("A", "1")),
-            "header_rows": (0,),
-            "caption": "Table 1: Samples",
-            "table_number": "1",
-            "heading_path": ("Observations",),
-            "heading_level": 1,
-            "bbox": Geometry(
+    def make(fragment_id, page, *, bbox):
+        return TableFragment(
+            fragment_id=fragment_id,
+            revision_id="revision",
+            extraction_id="extraction",
+            unit_id=fragment_id + "-unit",
+            native_ref="#/tables/" + fragment_id,
+            page=page,
+            column_count=2,
+            grid=(("Sample", "Value"), ("A", "1")),
+            header_rows=(0,),
+            caption="Table 1: Samples",
+            table_number="1",
+            heading_path=("Observations",),
+            heading_level=1,
+            bbox=Geometry(
                 domain="points", x0=bbox[0], y0=bbox[1], x1=bbox[2], y1=bbox[3]
             ),
-            "page_width": 100.0,
-            "page_height": 100.0,
-            "required_unit_ids": frozenset({fragment_id + "-unit"}),
-            "locators": (
+            page_width=100.0,
+            page_height=100.0,
+            required_unit_ids=frozenset({fragment_id + "-unit"}),
+            locators=(
                 DocumentLocator(
                     artifact_ref="0" * 64,
                     native_ref="source.pdf",
@@ -55,9 +56,7 @@ def fragments():
                     physical_page=page,
                 ),
             ),
-        }
-        values.update(updates)
-        return TableFragment(**values)
+        )
 
     return make("a", 1, bbox=(10, 80, 90, 99)), make("b", 2, bbox=(10, 1, 90, 20))
 
@@ -134,7 +133,10 @@ def test_resolved_continuation_policy_is_explicit(tmp_path, profile, expected):
     path.write_text(f'schema_version=1\n[profiles.test]\nbuiltin="{profile}@1"\n')
     resolved = resolve_config(path, "test", {})
     assert resolved.values.retrieval.table_continuations == expected
-    assert resolved.inspect()["values"]["retrieval"]["table_continuations"] == expected
+    assert (
+        json_object(resolved.inspect(), "values", "retrieval")["table_continuations"]
+        == expected
+    )
 
 
 def test_custom_continuation_policy_changes_query_not_extraction_identity(tmp_path):
@@ -230,24 +232,27 @@ def test_continuation_assertion_has_complete_support_and_typed_jsonl(fragments):
 def test_continuation_policy_only_narrows_eligible_relations(policy, status, allowed):
     from tychora.ingestion.tables import continuation_context_allowed
 
-    inputs = {
-        "policy": policy,
-        "status": status,
-        "predicate": "continues_table@1",
-        "permitted_predicates": frozenset({"continues_table@1"}),
-        "permitted_statuses": frozenset({"recorded", "confirmed"}),
-        "required_support_ids": frozenset({"a", "b"}),
-        "eligible_original_ids": frozenset({"a", "b"}),
-        "blocked": False,
-    }
-    assert continuation_context_allowed(**inputs) is allowed
-    assert not continuation_context_allowed(**{**inputs, "blocked": True})
-    assert not continuation_context_allowed(
-        **{**inputs, "eligible_original_ids": frozenset({"a"})}
-    )
-    assert not continuation_context_allowed(
-        **{**inputs, "permitted_predicates": frozenset()}
-    )
+    def permitted(
+        *,
+        blocked: bool = False,
+        eligible_original_ids: frozenset[str] = frozenset({"a", "b"}),
+        permitted_predicates: frozenset[str] = frozenset({"continues_table@1"}),
+    ) -> bool:
+        return continuation_context_allowed(
+            policy=policy,
+            status=status,
+            predicate="continues_table@1",
+            permitted_predicates=permitted_predicates,
+            permitted_statuses=frozenset({"recorded", "confirmed"}),
+            required_support_ids=frozenset({"a", "b"}),
+            eligible_original_ids=eligible_original_ids,
+            blocked=blocked,
+        )
+
+    assert permitted() is allowed
+    assert not permitted(blocked=True)
+    assert not permitted(eligible_original_ids=frozenset({"a"}))
+    assert not permitted(permitted_predicates=frozenset())
 
 
 from tests.qualification import test_docling_records as qualification
@@ -1142,6 +1147,7 @@ def test_assertion_observations_remain_distinct_and_duplicates_fail(fragments):
     first = continuation_assertion(
         a, b, continuation(a, b), artifact(b"receipt", "text/plain")
     )
+    assert first is not None
     data = first.model_dump(exclude={"assertion_id"})
     data["observation_key"] = "independent-observation"
     second = RelationshipAssertion.from_observation(
@@ -1155,6 +1161,10 @@ def test_assertion_observations_remain_distinct_and_duplicates_fail(fragments):
 
 @pytest.mark.qualification
 def test_invalid_composition_plan_fails_before_artifact_reads(document_record_case):
+    from contextlib import AbstractContextManager
+    from typing import BinaryIO
+
+    from tychora.contracts.artifacts import ArtifactRef, ArtifactStat
     from tychora.contracts.composition import DocumentCompositionPlan
     from tychora.ingestion.composition import compose_document
 
@@ -1163,8 +1173,23 @@ def test_invalid_composition_plan_fails_before_artifact_reads(document_record_ca
     )
 
     class ForbiddenArtifacts:
-        def open_verified(self, ref):
+        def open_verified(self, ref: ArtifactRef) -> AbstractContextManager[BinaryIO]:
             pytest.fail("Invalid composition opened retained payloads before binding")
+
+        def put_stream(self, stream: BinaryIO, media_type: str) -> ArtifactRef:
+            pytest.fail("Invalid composition wrote an artifact before binding")
+
+        def stat(self, ref: ArtifactRef) -> ArtifactStat:
+            pytest.fail("Invalid composition inspected an artifact before binding")
+
+        def pin_payloads(self, shas: frozenset[str]) -> AbstractContextManager[None]:
+            pytest.fail("Invalid composition pinned payloads before binding")
+
+        def payload_guard(self, sha: str) -> AbstractContextManager[None]:
+            pytest.fail("Invalid composition guarded an artifact before binding")
+
+        def payload_is_pinned(self, sha: str) -> bool:
+            pytest.fail("Invalid composition queried pin state before binding")
 
     with pytest.raises(ValueError, match="base normalizer"):
         compose_document(
@@ -1195,8 +1220,13 @@ def test_composed_replay_rejects_malformed_envelopes(root):
 
     manifest = canonical_bytes(root)
     with pytest.raises(ValueError):
+        # Malformed bytes must be rejected before the deliberately absent source context.
         replay_composed_document(
-            manifest, artifact(manifest, "application/json"), None, None, {}
+            manifest,
+            artifact(manifest, "application/json"),
+            None,  # ty: ignore[invalid-argument-type]
+            None,  # ty: ignore[invalid-argument-type]
+            {},
         )
 
 
@@ -1227,8 +1257,8 @@ def test_source_view_expansion_accounts_existing_original_parts(
     )
     required = sum(
         1
-        + len(unit.attributes["source_parts"])
-        + len(unit.attributes["structural_separators"])
+        + len(json_array(unit.attributes["source_parts"]))
+        + len(json_array(unit.attributes["structural_separators"]))
         for unit in base.units
     )
     monkeypatch.setattr(document_parts, "MAX_SEMANTIC_WORK", required - 1)
