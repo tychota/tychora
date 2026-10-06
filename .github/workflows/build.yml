@@ -25,12 +25,18 @@ jobs:
         run: uv lock --check
       - name: Install release test tools
         run: uv sync --locked --all-extras --group dev --group test-fixtures
+      - name: Provision pinned public test assets
+        run: python packaging/provision_ci_assets.py --cache "$RUNNER_TEMP/tychora-public-models" --workspace "$RUNNER_TEMP/tychora-asset-setup" --github-env "$GITHUB_ENV"
+      - name: Require macOS build isolation
+        run: test -x /usr/bin/sandbox-exec
       - name: Test inspected artifacts from fresh installations
         run: uv run --locked pytest tests/release -q
       - name: Build and inspect deliverable archives
         shell: bash
         run: |
-          uv build --out-dir dist
+          python packaging/build_public_stage.py --repository . --source "$RUNNER_TEMP/tychora-public-stage" --dist "$RUNNER_TEMP/tychora-built" --proof "$RUNNER_TEMP/tychora-build-proof.json" --private "$RUNNER_TEMP/tychora-private-fixture" --uv "$(command -v uv)"
+          mkdir -p dist
+          cp "$RUNNER_TEMP/tychora-built"/*.whl "$RUNNER_TEMP/tychora-built"/*.tar.gz dist/
           python packaging/check_artifact.py dist/*.whl dist/*.tar.gz
       - name: Prepare minimal installed inventory
         shell: bash
@@ -42,5 +48,5 @@ jobs:
       - name: Write local release inventory and checksums
         shell: bash
         run: |
-          python packaging/build_manifest.py --wheel dist/*.whl --sdist dist/*.tar.gz --lock uv.lock --project pyproject.toml --base-python .release-base/bin/python --full-python .venv/bin/python --commit "$GITHUB_SHA" --output dist/release-manifest.json
+          python packaging/build_manifest.py --wheel dist/*.whl --sdist dist/*.tar.gz --lock uv.lock --project pyproject.toml --base-python .release-base/bin/python --full-python .venv/bin/python --repository . --source-root "$RUNNER_TEMP/tychora-public-stage" --commit "$GITHUB_SHA" --output dist/release-manifest.json
           shasum -a 256 dist/*.whl dist/*.tar.gz dist/release-manifest.json > dist/SHA256SUMS

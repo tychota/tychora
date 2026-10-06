@@ -160,36 +160,67 @@ def check_artifact(path: Path) -> ArtifactAudit:
 
 
 def audit_outgoing_history(repo: Path, base: str) -> tuple[str, ...]:
-    """Check all objects introduced after base, including later-deleted files."""
+    """Check every changed path and blob in commits after a local base."""
     repo = Path(repo)
-    output = subprocess.check_output(
-        ["git", "rev-list", "--objects", f"{base}..HEAD"], cwd=repo, text=True
+    subprocess.run(
+        ["git", "merge-base", "--is-ancestor", base, "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
     )
+    commits = subprocess.check_output(
+        ["git", "rev-list", "--reverse", "--topo-order", f"{base}..HEAD"],
+        cwd=repo,
+        text=True,
+    ).splitlines()
     checked: list[str] = []
-    for line in output.splitlines():
-        oid, sep, name = line.partition(" ")
-        if not sep:
-            continue
-        if (
-            subprocess.check_output(
-                ["git", "cat-file", "-t", oid], cwd=repo, text=True
-            ).strip()
-            != "blob"
-        ):
-            continue
-        member = PurePosixPath(name)
-        if (
-            member.is_absolute()
-            or ".." in member.parts
-            or any(part in _DENIED_PARTS for part in member.parts)
-            or member.name.lower().endswith(_DENIED_SUFFIXES)
-            or member.name == ".env"
-        ):
-            raise ValueError(f"Unexpected outgoing history member: {name}")
-        data = subprocess.check_output(["git", "cat-file", "blob", oid], cwd=repo)
-        if _SENSITIVE.search(data):
-            raise ValueError(f"Sensitive content in outgoing history member: {name}")
-        checked.append(name)
+    scanned_blobs: set[str] = set()
+    for commit in commits:
+        parents = subprocess.check_output(
+            ["git", "rev-list", "--parents", "-n", "1", commit],
+            cwd=repo,
+            text=True,
+        ).split()[1:]
+        for parent in parents:
+            changes = subprocess.check_output(
+                [
+                    "git",
+                    "diff-tree",
+                    "-r",
+                    "--no-renames",
+                    "--raw",
+                    "-z",
+                    parent,
+                    commit,
+                ],
+                cwd=repo,
+            ).split(b"\0")
+            for index in range(0, len(changes) - 1, 2):
+                metadata, raw_name = changes[index : index + 2]
+                if not metadata:
+                    continue
+                name = raw_name.decode("utf-8", "surrogateescape")
+                member = PurePosixPath(name)
+                if (
+                    member.is_absolute()
+                    or ".." in member.parts
+                    or any(part in _DENIED_PARTS for part in member.parts)
+                    or member.name.lower().endswith(_DENIED_SUFFIXES)
+                    or member.name == ".env"
+                ):
+                    raise ValueError(f"Unexpected outgoing history member: {name}")
+                checked.append(name)
+                new_oid = metadata.split()[3].decode("ascii")
+                if new_oid == "0" * len(new_oid) or new_oid in scanned_blobs:
+                    continue
+                data = subprocess.check_output(
+                    ["git", "cat-file", "blob", new_oid], cwd=repo
+                )
+                if _SENSITIVE.search(data):
+                    raise ValueError(
+                        f"Sensitive content in outgoing history member: {name}"
+                    )
+                scanned_blobs.add(new_oid)
     return tuple(sorted(set(checked)))
 
 

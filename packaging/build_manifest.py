@@ -41,6 +41,64 @@ print(json.dumps(sorted(rows, key=lambda row: row["name"])))
     return json.loads(subprocess.check_output([str(python), "-c", code], text=True))
 
 
+def source_provenance(
+    repository: Path, source_root: Path, commit: str, sdist_audit
+) -> dict:
+    """Bind audited sdist inputs to their build tree and local Git HEAD."""
+    repository = Path(repository).resolve()
+    source_root = Path(source_root).resolve()
+    head = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=repository, text=True
+    ).strip()
+    if commit != head:
+        raise ValueError("Manifest commit does not match source repository HEAD")
+    object_format = subprocess.check_output(
+        ["git", "rev-parse", "--show-object-format=storage"],
+        cwd=repository,
+        text=True,
+    ).strip()
+    tracked: dict[str, str] = {}
+    entries = subprocess.check_output(
+        ["git", "ls-tree", "-r", "-z", "HEAD"], cwd=repository
+    )
+    for entry in entries.split(b"\0"):
+        if not entry:
+            continue
+        metadata, raw_name = entry.split(b"\t", 1)
+        mode, kind, oid = metadata.decode("ascii").split()
+        if kind == "blob" and mode != "120000":
+            tracked[raw_name.decode("utf-8", "surrogateescape")] = oid
+    dirty = False
+    aggregate = hashlib.sha256()
+    count = 0
+    for name in sdist_audit.members:
+        relative = Path(*Path(name).parts[1:])
+        if relative.as_posix() == "PKG-INFO":
+            continue
+        actual = source_root / relative
+        if not actual.is_file() or actual.is_symlink():
+            raise ValueError(f"Source input missing or linked: {relative}")
+        data = actual.read_bytes()
+        digest = hashlib.sha256(data).hexdigest()
+        if digest != sdist_audit.member_sha256[name]:
+            raise ValueError(f"Source input differs from archived member: {relative}")
+        aggregate.update(
+            relative.as_posix().encode("utf-8") + b"\0" + digest.encode("ascii") + b"\n"
+        )
+        oid = hashlib.new(
+            object_format, b"blob " + str(len(data)).encode("ascii") + b"\0" + data
+        ).hexdigest()
+        if tracked.get(relative.as_posix()) != oid:
+            dirty = True
+        count += 1
+    return {
+        "commit": commit,
+        "dirty": dirty,
+        "tree_sha256": aggregate.hexdigest(),
+        "source_files": count,
+    }
+
+
 def build_manifest(
     *,
     wheel: Path,
@@ -50,11 +108,14 @@ def build_manifest(
     base_python: Path,
     full_python: Path,
     commit: str,
+    repository: Path,
+    source_root: Path,
 ) -> dict:
     if len(commit) != 40 or any(char not in "0123456789abcdef" for char in commit):
         raise ValueError("Expected a full lowercase Git commit ID")
     wheel_audit = check_artifact(wheel)
     sdist_audit = check_artifact(sdist)
+    source = source_provenance(repository, source_root, commit, sdist_audit)
     config = tomllib.loads(project.read_text())
     locked = tomllib.loads(lock.read_text())
     with ZipFile(wheel) as archive:
@@ -74,6 +135,7 @@ def build_manifest(
             "license": metadata.get("License-Expression") or metadata.get("License"),
         },
         "commit": commit,
+        "source": source,
         "lock": {
             "sha256": _sha256(lock),
             "packages": len(locked["package"]),
@@ -115,6 +177,8 @@ def main() -> None:
         "project",
         "base-python",
         "full-python",
+        "repository",
+        "source-root",
         "output",
     ):
         parser.add_argument("--" + name, required=True, type=Path)
@@ -128,6 +192,8 @@ def main() -> None:
         base_python=args.base_python,
         full_python=args.full_python,
         commit=args.commit,
+        repository=args.repository,
+        source_root=args.source_root,
     )
     args.output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     print(

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -13,14 +14,13 @@ import pytest
 
 ROOT = Path(__file__).parents[2]
 UV = Path(shutil.which("uv") or Path.home() / ".local/bin/uv")
-_SOURCE_DIRS = ("src/tychora/", "tests/", "packaging/", "docs/", "examples/")
-_SOURCE_FILES = {".gitignore", "README.md", "LICENSE", "pyproject.toml", "uv.lock"}
 
 
 class Artifacts(NamedTuple):
     wheel: Path
     sdist: Path
     source: Path
+    isolation_proof: Path
 
 
 class Installation(NamedTuple):
@@ -71,25 +71,36 @@ def _clean_env() -> dict[str, str]:
 def artifacts(tmp_path_factory) -> Artifacts:
     root = tmp_path_factory.mktemp("artifact")
     source = root / "public-source"
-    source.mkdir()
-    paths = subprocess.check_output(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
-        cwd=ROOT,
-        text=True,
-    ).splitlines()
-    for name in paths:
-        if name not in _SOURCE_FILES and not name.startswith(_SOURCE_DIRS):
-            continue
-        original = ROOT / name
-        if not original.is_file() or original.is_symlink():
-            continue
-        target = source / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(original, target)
-    assert not (source / ".superpowers").exists()
-    assert not (source / "reports").exists()
     dist = root / "dist"
-    _run([UV, "build", "--out-dir", dist], cwd=source, env=_clean_env())
+    private = root / "private-fixture"
+    proof = root / "build-isolation.json"
+    _run(
+        [
+            sys.executable,
+            ROOT / "packaging/build_public_stage.py",
+            "--repository",
+            ROOT,
+            "--source",
+            source,
+            "--dist",
+            dist,
+            "--proof",
+            proof,
+            "--private",
+            private,
+            "--uv",
+            UV,
+        ],
+        cwd=root,
+        env=_clean_env(),
+    )
+    assert json.loads(proof.read_text()) == {
+        "checkout_denied": True,
+        "git_common_dir_denied": True,
+        "private_fixture_denied": True,
+        "public_stage_readable": True,
+        "build_under_same_profile": True,
+    }
     wheel = next(dist.glob("*.whl"))
     sdist = next(dist.glob("*.tar.gz"))
     # Inspect both complete archives before any installation.
@@ -98,7 +109,7 @@ def artifacts(tmp_path_factory) -> Artifacts:
         cwd=root,
         env=_clean_env(),
     )
-    return Artifacts(wheel, sdist, source)
+    return Artifacts(wheel, sdist, source, proof)
 
 
 def _install(artifacts: Artifacts, root: Path, *, full: bool) -> Installation:
