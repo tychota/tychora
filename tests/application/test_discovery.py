@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from tests.code.conftest import git, make_repo
+from tests.typed_json import json_array, json_integer, json_object, json_string
 from tychora.application.discovery import DiscoveryService, _scoped_resolution_rates
 from tychora.application.inspection import InspectionService
 from tychora.application.owner import WorkspaceOwner
@@ -67,7 +68,7 @@ def test_settings_disclose_separate_parser_and_acquisition_ceilings(configured):
     result = DiscoveryService(config, registry).discover(
         DiscoverRequest(subject="settings"), RequestScope(principal_id="reader")
     )
-    limits = result.definitions[0].definition["parser_limits"]
+    limits = json_object(result.definitions[0].definition, "parser_limits")
     assert limits["native_source_bytes"] == min(
         4 * 1024 * 1024, config.values.acquisition.limits.max_file_bytes
     )
@@ -76,7 +77,9 @@ def test_settings_disclose_separate_parser_and_acquisition_ceilings(configured):
     assert limits["docling_conversion_bytes"] == 256 * 1024 * 1024
     assert limits["document_semantic_units_parts_separators"] == 100000
     assert (
-        result.definitions[0].definition["retrieval"]["table_continuations"]
+        json_object(result.definitions[0].definition, "retrieval")[
+            "table_continuations"
+        ]
         == "derived"
     )
 
@@ -136,7 +139,8 @@ def test_resolution_rates_omit_excluded_candidate_without_hidden_count():
         frozenset({"source-unit", "allowed"}),
         frozenset({"revision"}),
     )
-    assert summary["rates"][0]["resolved"] == 1
+    rates = json_array(summary["rates"])
+    assert json_object(rates[0])["resolved"] == 1
     assert summary["unsupported_references"] == 1
     assert summary["scope_limited"] is True
     assert "hidden" not in str(summary)
@@ -208,8 +212,10 @@ async def test_code_source_discovery_uses_retained_scoped_resolution_rates(tmp_p
             DiscoverRequest(subject="sources"),
             scope,
         )
-        extraction = result.definitions[0].definition["revisions"][0]["extractions"][0]
-        extraction_id = extraction["extraction_id"]
+        revisions = json_array(result.definitions[0].definition["revisions"])
+        extractions = json_array(json_object(revisions[0])["extractions"])
+        extraction = json_object(extractions[0])
+        extraction_id = json_string(extraction["extraction_id"])
 
         def hide_candidate():
             old_sha = owner.db.execute(
@@ -263,16 +269,28 @@ async def test_code_source_discovery_uses_retained_scoped_resolution_rates(tmp_p
 
         await owner.run_blocking(hide_candidate, ExecutionContext())
         diagnostic = await InspectionService(owner).inspect(
-            InspectRequest(subject="diagnostics", id=extraction["extraction_id"]),
+            InspectRequest(subject="diagnostics", id=extraction_id),
             scope,
             ExecutionContext(),
         )
-    rates = extraction["code_resolution"]
-    assert sum(item["extracted"] for item in rates["rates"]) >= 1, rates
+    rates = json_object(extraction, "code_resolution")
+    assert (
+        sum(
+            json_integer(json_object(item)["extracted"])
+            for item in json_array(rates["rates"])
+        )
+        >= 1
+    ), rates
     records = [item for item in diagnostic.records if item.record_type == "resolution"]
     assert records
     assert all(item.value["source_unit_id"] for item in records)
-    assert sum(item["extracted"] for item in diagnostic.records[0].value["rates"]) >= 1
+    assert (
+        sum(
+            json_integer(json_object(item)["extracted"])
+            for item in json_array(diagnostic.records[0].value["rates"])
+        )
+        >= 1
+    )
     assert diagnostic.records[0].value["scope_limited"] is True
     assert "hidden-reference" not in diagnostic.model_dump_json()
     assert "hidden-unit" not in diagnostic.model_dump_json()

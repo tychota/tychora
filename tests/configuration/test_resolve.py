@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.typed_json import json_object
 from tychora.configuration.resolve import merge_values
 from tychora.contracts.errors import TychoraError
 
@@ -63,19 +64,30 @@ def test_resolution_order_origins_and_complete_immutable_artifact(workspace):
     assert config.values.output.title == "Workspace evidence"
     assert config.values.output.include_empty_lanes is False
     assert config.values.limits.max_tokens == 2000
-    assert config.registry["lanes"]["reference"]["label"] == "Selected references"
     assert (
-        config.registry["kinds"]["note@1"]["description"]
+        json_object(config.registry, "lanes", "reference")["label"]
+        == "Selected references"
+    )
+    assert (
+        json_object(config.registry, "kinds", "note@1")["description"]
         == "An attributed reference note."
     )
-    assert config.registry["schemas"]["note-metadata@1"]["required"] == ("author",)
+    assert json_object(config.registry, "schemas", "note-metadata@1")["required"] == (
+        "author",
+    )
     assert [pack.id for pack in config.packs] == ["fixture-base", "fixture-child"]
-    assert config.origins["limits.max_tokens"]["layer"] == "request"
-    assert config.origins["output.title"]["layer"] == "workspace"
-    assert config.origins["lanes.reference.label"]["layer"] == "pack:fixture-child@1"
+    assert json_object(config.origins, "limits.max_tokens")["layer"] == "request"
+    assert json_object(config.origins, "output.title")["layer"] == "workspace"
+    assert (
+        json_object(config.origins, "lanes.reference.label")["layer"]
+        == "pack:fixture-child@1"
+    )
     assert len(config.config_sha) == len(config.registry_digest) == 64
     with pytest.raises(TypeError):
-        config.registry["kinds"]["note@1"]["label"] = "changed"
+        from operator import setitem
+
+        # Deliberately attempt an invalid write to verify the immutable contract.
+        setitem(json_object(config.registry, "kinds", "note@1"), "label", "changed")  # ty: ignore[no-matching-overload]
     assert config == resolve_config(
         workspace, "child", {"limits": {"max_tokens": 2000}}
     )
@@ -154,6 +166,7 @@ value = "demo"
         "child",
         {"filters": {"op": "eq", "field": "metadata.archived", "value": False}},
     )
+    assert config.values.filters is not None
     assert config.values.filters.model_dump(mode="json") == {
         "op": "and",
         "children": [
@@ -376,7 +389,10 @@ def test_builtin_preset_precedes_dependencies_and_uses_bundled_digest(
     assert [pack.id for pack in config.packs] == expected
     assert config.packs[0].digest == sha
     if selection != "binding":
-        assert config.origins["limits.max_tokens"]["layer"] == "pack:fixture-child@1"
+        assert (
+            json_object(config.origins, "limits.max_tokens")["layer"]
+            == "pack:fixture-child@1"
+        )
     assert config.values.output.title == "Workspace evidence"
 
 
@@ -393,8 +409,10 @@ def test_inspection_redacts_private_paths_and_secret_references(workspace):
     public_json = json.dumps(dict(public), default=dict)
     assert str(workspace.parent) not in public_json
     assert "PRIVATE_PROVIDER_KEY" not in public_json
-    assert private["origins"]["output.title"]["source"] == str(workspace.resolve())
-    assert public["values"]["output"]["title"] == "Workspace evidence"
+    assert json_object(private, "origins", "output.title")["source"] == str(
+        workspace.resolve()
+    )
+    assert json_object(public, "values", "output")["title"] == "Workspace evidence"
     assert public["config_sha"] == config.config_sha
 
 
@@ -485,7 +503,9 @@ def test_schema_file_bindings_survive_registry_replay(workspace):
     config = resolve_config(workspace, "child", {})
     replay = ResolvedConfig.model_validate_json(config.model_dump_json())
     assert (
-        replay.registry["schema_bindings"]["fixture-base@1"]["schemas/note.json"]
+        json_object(replay.registry, "schema_bindings", "fixture-base@1")[
+            "schemas/note.json"
+        ]
         == "note-metadata@1"
     )
     assert replay == config
@@ -499,9 +519,13 @@ def test_kind_schema_paths_are_explicit_contained_includes(workspace):
         file.read_text().replace('schema_definitions = ["schemas/note.json"]\n', "")
     )
     config = resolve_config(workspace, "base", {})
-    assert config.registry["schemas"]["note-metadata@1"]["type"] == "object"
     assert (
-        config.registry["schema_bindings"]["fixture-base@1"]["schemas/note.json"]
+        json_object(config.registry, "schemas", "note-metadata@1")["type"] == "object"
+    )
+    assert (
+        json_object(config.registry, "schema_bindings", "fixture-base@1")[
+            "schemas/note.json"
+        ]
         == "note-metadata@1"
     )
 
@@ -550,7 +574,7 @@ def test_definition_schema_bindings_are_explicit_and_immutable(workspace):
 
     config = resolve_config(workspace, "child", {})
     assert (
-        config.registry["definition_schema_bindings"]["kinds"]["note@1"][
+        json_object(config.registry, "definition_schema_bindings", "kinds", "note@1")[
             "metadata_schema"
         ]
         == "note-metadata@1"
@@ -787,19 +811,31 @@ def test_resolved_schema_reference_targets_bind_extraction_identity(
     assert before.extraction_fingerprint != after.extraction_fingerprint
     if transitive:
         assert dict(
-            before.registry["schema_reference_bindings"]["root@1"]["/$ref"]
+            json_object(before.registry, "schema_reference_bindings", "root@1", "/$ref")
         ) == {"schema_id": "middle@1", "fragment": "/$defs/item"}
         assert dict(
-            before.registry["schema_reference_bindings"]["middle@1"]["/$defs/item/$ref"]
+            json_object(
+                before.registry,
+                "schema_reference_bindings",
+                "middle@1",
+                "/$defs/item/$ref",
+            )
         ) == {"schema_id": "a@1", "fragment": "/$defs/value"}
         assert dict(
-            after.registry["schema_reference_bindings"]["middle@1"]["/$defs/item/$ref"]
+            json_object(
+                after.registry,
+                "schema_reference_bindings",
+                "middle@1",
+                "/$defs/item/$ref",
+            )
         ) == {"schema_id": "b@1", "fragment": "/$defs/value"}
     else:
         assert dict(
-            before.registry["schema_reference_bindings"]["root@1"]["/$ref"]
+            json_object(before.registry, "schema_reference_bindings", "root@1", "/$ref")
         ) == {"schema_id": "a@1", "fragment": ""}
-        assert dict(after.registry["schema_reference_bindings"]["root@1"]["/$ref"]) == {
+        assert dict(
+            json_object(after.registry, "schema_reference_bindings", "root@1", "/$ref")
+        ) == {
             "schema_id": "b@1",
             "fragment": "",
         }
