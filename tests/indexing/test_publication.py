@@ -1,6 +1,7 @@
 """Atomic snapshot publication against the real canonical SQLite schema."""
 
 import struct
+from collections.abc import Iterator
 from dataclasses import dataclass
 from io import BytesIO
 from unittest.mock import patch
@@ -22,12 +23,14 @@ from tychora.contracts.identity import canonical_bytes, digest, family_id, space
 from tychora.contracts.publication import (
     IndexFamily,
     LexicalBatchReceipt,
+    LexicalRecord,
     PublicationBatch,
     PublicationPlan,
     PublicationSlot,
     SnapshotMember,
 )
 from tychora.contracts.requests import RequestScope
+from tychora.evaluation.runner import ComparisonAdmission
 from tychora.indexing.coordinator import ProjectionCoordinator
 from tychora.ports.execution import ExecutionContext
 
@@ -76,6 +79,14 @@ class RecordingEmbedder:
             for window_id in group.window_ids
         )
 
+    def embed_queries(
+        self, queries: tuple[str, ...], ctx: ExecutionContext
+    ) -> tuple[EmbeddingRecord, ...]:
+        raise AssertionError("document recording embedder received query embedding")
+
+    def probe_queries(self, queries: tuple[str, ...], ctx: ExecutionContext):
+        raise AssertionError("document recording embedder received query probe")
+
 
 class RecordingCounter:
     model = "voyage-context-4"
@@ -109,6 +120,22 @@ class RecordingVector:
 
     def verify_batch(self, receipt):
         return self.inner.verify_batch(receipt)
+
+    def search(
+        self,
+        query_vector,
+        eligible_records_and_owners,
+        candidate_limit,
+        work_limits,
+        ctx,
+    ):
+        return self.inner.search(
+            query_vector,
+            eligible_records_and_owners,
+            candidate_limit,
+            work_limits,
+            ctx,
+        )
 
     def drop_records(self, record_ids, ctx):
         return self.inner.drop_records(record_ids, ctx)
@@ -208,7 +235,7 @@ class PublishedCorpus:
                 count=1,
                 entry_ids_sha=digest("index-entries-v1", entries),
             ),
-            lexical_records=({"chunk_id": entries[0], "body": text},),
+            lexical_records=(LexicalRecord(chunk_id=entries[0], body=text),),
         )
         slot = PublicationSlot(slot="lexical", family=family, batches=(batch,))
         snapshot_id = digest(
@@ -246,7 +273,7 @@ class PublishedCorpus:
 
 
 @pytest.fixture
-def published_corpus(tmp_path) -> PublishedCorpus:
+def published_corpus(tmp_path) -> Iterator[PublishedCorpus]:
     db = open_corpus(tmp_path / "corpus.sqlite3", initialize=True)
     store = CorpusStore(db, registry=registry(), artifacts=reader())
     initial = seed_bundle("old source text")
@@ -384,7 +411,7 @@ def make_projected_corpus(tmp_path, config_factory, *, legacy=False) -> Projecte
 
 
 @pytest.fixture
-def projected_corpus(tmp_path, config_factory) -> ProjectedCorpus:
+def projected_corpus(tmp_path, config_factory) -> Iterator[ProjectedCorpus]:
     result = make_projected_corpus(tmp_path, config_factory)
     yield result
     result.store.db.close()
@@ -504,6 +531,7 @@ def test_native_recovery_replays_retained_vector_bytes_and_preserves_seal(
         update={"capabilities": frozenset({"manage", "read", "write"})}
     )
     owner = SimpleNamespace(
+        comparison_admission=ComparisonAdmission(),
         scope=owner_scope,
         store=f.store,
         db=f.store.db,
@@ -513,7 +541,7 @@ def test_native_recovery_replays_retained_vector_bytes_and_preserves_seal(
     )
 
     class IsolatedRecovery(RecoveryService):
-        def _reconcile_on_owner(self, ctx):
+        def _reconcile_on_owner(self, ctx, *, verify_payloads=False):
             pending = f.store.db.execute(
                 "SELECT COUNT(*) FROM index_batches WHERE state='pending'"
             ).fetchone()[0]
@@ -673,6 +701,7 @@ def test_native_recovery_rejects_sql_drift_before_native_write(
     f.store.vector_indexes[slot.family.family_id] = rebuilt
     grant = f.scope.model_copy(update={"capabilities": frozenset({"manage"})})
     owner = SimpleNamespace(
+        comparison_admission=ComparisonAdmission(),
         scope=grant,
         store=f.store,
         db=db,
@@ -682,7 +711,7 @@ def test_native_recovery_rejects_sql_drift_before_native_write(
     )
 
     class IsolatedRecovery(RecoveryService):
-        def _reconcile_on_owner(self, ctx):
+        def _reconcile_on_owner(self, ctx, *, verify_payloads=False):
             return RecoveryReport(snapshot.workspace_id, 0, 1, 0, False)
 
     with pytest.raises(TychoraError, match="SQL differs"):
@@ -722,6 +751,7 @@ def test_native_gc_prunes_only_unprotected_vector_batch_then_rebuilds(
         update={"capabilities": frozenset({"manage", "read", "write"})}
     )
     owner = SimpleNamespace(
+        comparison_admission=ComparisonAdmission(),
         scope=grant,
         store=f.store,
         db=f.store.db,
@@ -734,7 +764,7 @@ def test_native_gc_prunes_only_unprotected_vector_batch_then_rebuilds(
     )
 
     class IsolatedRecovery(RecoveryService):
-        def _reconcile_on_owner(self, ctx):
+        def _reconcile_on_owner(self, ctx, *, verify_payloads=False):
             pending = f.store.db.execute(
                 "SELECT COUNT(*) FROM index_batches WHERE state='pending'"
             ).fetchone()[0]
