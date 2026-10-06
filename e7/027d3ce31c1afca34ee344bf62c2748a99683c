@@ -1,0 +1,23 @@
+tests/typed_json.py
+  s_35b641b930a96d::t_645283163b321e 25-29
+tests/configuration/test_registry.py
+  s_35b641b930a96d::t_645283163b321e 5,178-179
+  s_35b641b930a96d::t_4da24ab07ed512 138,177,180
+  s_35b641b930a96d::t_71d85846890afa 181-187,346,356-358,421-423,439-442,452-455,595-596,601,652-654,740
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e7027d3ce31c1afca34ee344bf62c2748a99683c",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
