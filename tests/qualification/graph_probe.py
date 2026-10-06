@@ -9,6 +9,8 @@ from pathlib import Path
 
 from ladybug import Connection, Database
 
+from tests.helpers.ladybug import query_rows
+
 PERSISTENCE_FIXTURE = """CREATE NODE TABLE Probe(id STRING PRIMARY KEY, value STRING);
 BEGIN TRANSACTION;
 CREATE (:Probe {id: 'kept', value: 'source'});
@@ -20,16 +22,17 @@ MATCH (p:Probe) RETURN p.id ORDER BY p.id;"""
 
 
 def _execute_fixture(connection: Connection) -> list[str]:
-    result = None
-    for statement in PERSISTENCE_FIXTURE.splitlines():
-        result = connection.execute(statement)
-    assert result is not None
-    return [row[0] for row in result.get_all()]
+    statements = PERSISTENCE_FIXTURE.splitlines()
+    for statement in statements[:-1]:
+        connection.execute(statement)
+    return [str(row[0]) for row in query_rows(connection, statements[-1])]
 
 
 def _read_ids(connection: Connection) -> list[str]:
-    result = connection.execute("MATCH (p:Probe) RETURN p.id ORDER BY p.id;")
-    return [row[0] for row in result.get_all()]
+    return [
+        str(row[0])
+        for row in query_rows(connection, "MATCH (p:Probe) RETURN p.id ORDER BY p.id;")
+    ]
 
 
 def persist(database_path: Path) -> dict[str, list[str]]:

@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from ladybug import Connection
 
+from tests.helpers.ladybug import query_rows
 from tychora.adapters.ladybug.generation import LadybugGraphStore
 
 pytestmark = pytest.mark.qualification
@@ -15,9 +16,7 @@ pytestmark = pytest.mark.qualification
 
 def test_graph_creates_seven_native_tables(tmp_path):
     graph = LadybugGraphStore(tmp_path / "graph")
-    rows = graph._connection.execute(
-        "CALL SHOW_TABLES() RETURN name ORDER BY name"
-    ).get_all()
+    rows = query_rows(graph._connection, "CALL SHOW_TABLES() RETURN name ORDER BY name")
     assert {row[0] for row in rows} == {
         "Entity",
         "Evidence",
@@ -37,7 +36,7 @@ def test_native_reader_does_not_see_uncommitted_generation_node(tmp_path):
         graph._connection.execute(
             "CREATE (:Evidence {pk:'pending',generation_id:'g',evidence_id:'u'})"
         )
-        assert reader.execute("MATCH (e:Evidence) RETURN count(e)").get_all() == [[0]]
+        assert query_rows(reader, "MATCH (e:Evidence) RETURN count(e)") == [[0]]
     finally:
         graph._connection.execute("ROLLBACK")
         reader.close()
@@ -76,9 +75,9 @@ signal.pause()
     writer.communicate(timeout=10)
     assert writer.returncode is not None and writer.returncode < 0
     reopened = LadybugGraphStore(path)
-    assert reopened._connection.execute(
-        "MATCH (e:Evidence) RETURN count(e)"
-    ).get_all() == [[0]]
+    assert query_rows(reopened._connection, "MATCH (e:Evidence) RETURN count(e)") == [
+        [0]
+    ]
     reopened.close()
 
 
@@ -91,7 +90,7 @@ def test_native_database_serves_concurrent_read_connections(tmp_path):
     def read_count():
         reader = Connection(graph._database)
         try:
-            return reader.execute("MATCH (e:Evidence) RETURN count(e)").get_all()
+            return query_rows(reader, "MATCH (e:Evidence) RETURN count(e)")
         finally:
             reader.close()
 
