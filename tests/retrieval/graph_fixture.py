@@ -2,6 +2,7 @@
 
 import io
 from dataclasses import dataclass, field
+from typing import Literal
 
 from tychora.adapters.files.cas import LocalArtifacts
 from tychora.adapters.ladybug.generation import LadybugGraphStore
@@ -53,7 +54,7 @@ def assertion(
     *,
     predicate: str = "references@1",
     key: str | None = None,
-    status: str = "recorded",
+    status: Literal["recorded", "proposed", "confirmed", "rejected"] = "recorded",
     confidence: float = 1.0,
 ) -> RelationshipAssertion:
     return RelationshipAssertion.from_observation(

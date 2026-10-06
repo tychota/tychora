@@ -3,6 +3,7 @@ from hashlib import sha256
 from pathlib import Path
 
 import pytest
+from tokenizers import Tokenizer
 
 from tychora.application.setup import load_voyage_tokenizer
 from tychora.configuration.resolve import resolve_config
@@ -23,15 +24,13 @@ class VoyageCounter:
     model = "voyage-context-4"
     tokenizer_id = "voyage-context-4:8ca946072a18e398cd61f2ad0243b56d0350b1db"
 
-    def __init__(self, tokenizer: object) -> None:
+    def __init__(self, tokenizer: Tokenizer) -> None:
         self._tokenizer = tokenizer
 
     def count(self, text: str) -> int:
         if not text:
             return 0
-        encodings = self._tokenizer.encode_batch(  # type: ignore[attr-defined]
-            [text], add_special_tokens=False
-        )
+        encodings = self._tokenizer.encode_batch([text], add_special_tokens=False)
         return sum(len(encoding.ids) for encoding in encodings)
 
 

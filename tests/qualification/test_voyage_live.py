@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 import pytest
+from tokenizers import Tokenizer
 
 from tychora.adapters.voyage.text import (
     HttpxVoyageTransport,
@@ -22,15 +23,13 @@ pytestmark = pytest.mark.live
 
 
 class ProvisionedCounter:
-    def __init__(self, model: str, tokenizer: object) -> None:
+    def __init__(self, model: str, tokenizer: Tokenizer) -> None:
         self.model = model
         self.tokenizer_id = f"{model}:live-qualified"
         self._tokenizer = tokenizer
 
     def count(self, text: str) -> int:
-        encoded = self._tokenizer.encode_batch(  # type: ignore[attr-defined]
-            [text], add_special_tokens=False
-        )
+        encoded = self._tokenizer.encode_batch([text], add_special_tokens=False)
         return len(encoded[0].ids)
 
 

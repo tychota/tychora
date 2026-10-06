@@ -92,8 +92,10 @@ async def test_retry_uses_exact_committed_capture_and_verified_plan(
         monkeypatch.setattr(owner.store, "publish_snapshot", fail_once)
         with pytest.raises(RuntimeError, match="sensitive activation interruption"):
             await service.add(source, scope, "same-request")
+        jobs = service._jobs
+        assert jobs is not None
         status = await owner.run_blocking(
-            lambda: service._jobs.get(
+            lambda: jobs.get(
                 owner.db.execute("SELECT job_id FROM jobs").fetchone()[0]
             ),
             ExecutionContext(),

@@ -2,13 +2,76 @@
 
 from tests.retrieval.test_segments import config
 from tychora.configuration.registry import Registry
-from tychora.contracts.graph import AssertionPage, GraphPath
+from tychora.contracts.evidence import EvidenceUnit
+from tychora.contracts.graph import (
+    AssertionPage,
+    EligibilityView,
+    GraphBatchReceipt,
+    GraphBudget,
+    GraphCandidates,
+    GraphGenerationSpec,
+    GraphManifest,
+    GraphPath,
+)
+from tychora.contracts.identity import digest
+from tychora.contracts.relationships import RelationshipAssertion
 from tychora.ports.execution import ExecutionContext
 from tychora.retrieval.response import inspect_relations
 
 
 class Graph:
-    def get_assertions(self, view, selected_unit_ids, predicates, limits, ctx):
+    def begin_generation(self, spec: GraphGenerationSpec) -> str:
+        raise AssertionError("inspection must not begin a graph generation")
+
+    def sealed_receipt(self, generation_id: str) -> GraphBatchReceipt | None:
+        raise AssertionError("inspection must not read a seal receipt")
+
+    def upsert_batch(
+        self,
+        generation_id: str,
+        assertions: tuple[RelationshipAssertion, ...],
+        units: tuple[EvidenceUnit, ...],
+        ctx: ExecutionContext,
+    ) -> None:
+        raise AssertionError("inspection must not upsert a graph batch")
+
+    def seal_generation(
+        self, generation_id: str, expected: GraphManifest, ctx: ExecutionContext
+    ) -> GraphBatchReceipt:
+        raise AssertionError("inspection must not seal a graph generation")
+
+    def drop_generation(self, generation_id: str, ctx: ExecutionContext) -> None:
+        raise AssertionError("inspection must not drop a graph generation")
+
+    def expand(
+        self,
+        view: EligibilityView,
+        seed_unit_ids: tuple[str, ...],
+        limits: GraphBudget,
+        ctx: ExecutionContext,
+    ) -> GraphCandidates:
+        raise AssertionError("inspection must not expand semantic graph paths")
+
+    def structural_context(
+        self,
+        view: EligibilityView,
+        seed_unit_ids: tuple[str, ...],
+        limits: GraphBudget,
+        ctx: ExecutionContext,
+    ) -> GraphCandidates:
+        raise AssertionError("inspection must not expand structural graph paths")
+
+    def get_assertions(
+        self,
+        view: EligibilityView,
+        selected_unit_ids: tuple[str, ...],
+        predicates: tuple[str, ...],
+        limits: GraphBudget,
+        ctx: ExecutionContext,
+        *,
+        direction: str | None = None,
+        relation_view: str | None = None,
+    ) -> AssertionPage:
         assert limits.inspected_rows == 1999
         limits.inspected_rows += 1
         return AssertionPage(
@@ -28,16 +91,33 @@ class Graph:
         )
 
 
+def _view(eligible: frozenset[str]) -> EligibilityView:
+    return EligibilityView(
+        snapshot_id="snapshot",
+        policy_epoch=0,
+        scope_digest=digest("scope"),
+        eligibility_policy_digest=digest("policy"),
+        eligibility_request_digest=digest("request"),
+        selected_batch_ids=("generation-1",),
+        revision_ids=frozenset(),
+        source_unit_ids=eligible,
+        context_unit_ids=eligible,
+        structural_unit_ids=frozenset(),
+        proxy_unit_ids=frozenset(),
+        chunk_ids=frozenset(),
+        asset_ids=frozenset(),
+        vector_record_ids=frozenset(),
+        blocked_assertion_ids=frozenset(),
+        graph_generation_id="generation-1",
+        graph_family_id=digest("family"),
+        graph_config_sha=digest("config"),
+        graph_decision_watermark=0,
+        graph_manifest_digest=digest("manifest"),
+    )
+
+
 def test_inspection_carries_expansion_work_and_keeps_eligible_conflict(tmp_path):
-    view = type(
-        "View",
-        (),
-        {
-            "graph_generation_id": "generation-1",
-            "graph_eligible_unit_ids": frozenset({"unit-1", "unit-2"}),
-            "blocked_assertion_ids": frozenset(),
-        },
-    )()
+    view = _view(frozenset({"unit-1", "unit-2"}))
     registry = Registry.from_config(config(tmp_path))
     checks = inspect_relations(
         Graph(),
@@ -55,15 +135,7 @@ def test_inspection_carries_expansion_work_and_keeps_eligible_conflict(tmp_path)
 
 def test_exhausted_shared_work_is_partial_and_disabled_is_not_evaluated(tmp_path):
     registry = Registry.from_config(config(tmp_path))
-    view = type(
-        "View",
-        (),
-        {
-            "graph_generation_id": "generation-1",
-            "graph_eligible_unit_ids": frozenset({"unit-1"}),
-            "blocked_assertion_ids": frozenset(),
-        },
-    )()
+    view = _view(frozenset({"unit-1"}))
     assert (
         inspect_relations(
             Graph(),
@@ -105,21 +177,23 @@ def test_configured_decision_flag_overrides_predicate_name(tmp_path):
         ),
     )
     registry = Registry.from_config(configured)
-    view = type(
-        "View",
-        (),
-        {
-            "graph_generation_id": "generation-1",
-            "graph_eligible_unit_ids": frozenset({"unit-1", "unit-2"}),
-            "blocked_assertion_ids": frozenset(),
-        },
-    )()
+    view = _view(frozenset({"unit-1", "unit-2"}))
 
-    class NamedGraph:
+    class NamedGraph(Graph):
         def __init__(self, predicate):
             self.predicate = predicate
 
-        def get_assertions(self, view, selected_unit_ids, predicates, limits, ctx):
+        def get_assertions(
+            self,
+            view,
+            selected_unit_ids,
+            predicates,
+            limits,
+            ctx,
+            *,
+            direction=None,
+            relation_view=None,
+        ):
             return AssertionPage(
                 assertions=(
                     GraphPath(

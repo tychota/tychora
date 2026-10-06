@@ -130,12 +130,9 @@ def test_two_public_clients_share_durable_source_job_and_async_discovery(tmp_pat
             assert first.jobs.get(accepted.id).state == "succeeded"
             result = second.search({"question": "synthetic", "modalities": ["lexical"]})
             assert result.segments
-            assert (
-                "Synthetic local record."
-                in first.evidence.get(
-                    result.segments[0].matched_unit_ids[0]
-                ).evidence.text
-            )
+            evidence = first.evidence.get(result.segments[0].matched_unit_ids[0])
+            assert evidence.evidence is not None
+            assert "Synthetic local record." in evidence.evidence.text
 
             import asyncio
 
