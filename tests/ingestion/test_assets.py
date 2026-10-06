@@ -156,18 +156,36 @@ def test_rejected_proxy_and_missing_original_support_are_excluded(proxy_source):
         (proxy_source.units[0].unit_id,),
         artifact(b"receipt", "text/plain"),
     )
-    args = {
-        "review_state": "needs_review",
-        "permitted_review_states": frozenset({"needs_review", "rejected"}),
-        "eligible_original_ids": proxy.binding.required_unit_ids,
-        "asset_eligible": True,
-    }
-    assert proxy_context_allowed(proxy, **args)
-    assert not proxy_context_allowed(proxy, **{**args, "review_state": "rejected"})
-    assert not proxy_context_allowed(
-        proxy, **{**args, "eligible_original_ids": frozenset()}
+    permitted = frozenset({"needs_review", "rejected"})
+    original_ids = proxy.binding.required_unit_ids
+    assert proxy_context_allowed(
+        proxy,
+        review_state="needs_review",
+        permitted_review_states=permitted,
+        eligible_original_ids=original_ids,
+        asset_eligible=True,
     )
-    assert not proxy_context_allowed(proxy, **{**args, "asset_eligible": False})
+    assert not proxy_context_allowed(
+        proxy,
+        review_state="rejected",
+        permitted_review_states=permitted,
+        eligible_original_ids=original_ids,
+        asset_eligible=True,
+    )
+    assert not proxy_context_allowed(
+        proxy,
+        review_state="needs_review",
+        permitted_review_states=permitted,
+        eligible_original_ids=frozenset(),
+        asset_eligible=True,
+    )
+    assert not proxy_context_allowed(
+        proxy,
+        review_state="needs_review",
+        permitted_review_states=permitted,
+        eligible_original_ids=original_ids,
+        asset_eligible=False,
+    )
 
 
 def test_image_only_original_dependency_and_existing_caption_proxy_cycle(proxy_source):
@@ -225,7 +243,7 @@ def test_decompression_bomb_and_invalid_resize_are_bounded(monkeypatch):
     payload = image_bytes()
     for resize in ((0, 1), (9, 6), (4,), (4, 3, 2)):
         with pytest.raises(ValueError):
-            validate_image(payload, "image/png", resize_to=resize)
+            validate_image(payload, "image/png", resize_to=resize)  # ty: ignore[invalid-argument-type] - malformed tuple lengths exercise runtime validation
     monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 20)
     with pytest.raises(ValueError, match="pixel capacity"):
         validate_image(payload, "image/png")
