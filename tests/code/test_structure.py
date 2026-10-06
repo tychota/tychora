@@ -168,7 +168,9 @@ def test_mixed_repository_retains_replays_and_registers_exact_file_facts(tmp_pat
     assert predicates.count("contains@1") == 5
     assert predicates.count("precedes@1") == 2
     assert predicates.count("calls@1") == 1
-    call = next(item["data"] for item in assertions if item["data"]["predicate"] == "calls@1")
+    call = next(
+        item["data"] for item in assertions if item["data"]["predicate"] == "calls@1"
+    )
     assert set(call["required_support_ids"]) == {
         call["origin_unit_id"],
         call["object"]["unit_id"],
@@ -194,9 +196,7 @@ def test_mixed_repository_retains_replays_and_registers_exact_file_facts(tmp_pat
     )
     assert parent_context["dependency_unit_ids"] == [child_data["parent_unit_id"]]
     parent = next(
-        unit
-        for unit in bundle.units
-        if unit.unit_id == child_data["parent_unit_id"]
+        unit for unit in bundle.units if unit.unit_id == child_data["parent_unit_id"]
     )
     parent_attributes = json.loads(parent.model_dump_json())["attributes"]
     assert child.unit_id in parent_attributes["range_dependency_ids"]
@@ -582,9 +582,7 @@ def test_descriptor_cannot_change_full_capture_entry_identity(tmp_path):
     artifacts, registration, parsed = _registration(tmp_path)
     retained = retain_code_extraction(registration, parsed, registry(), artifacts)
     bundle = normalize_code(retained, registry())
-    forged = bundle.code_files[0].model_copy(
-        update={"capture_entry_digest": "f" * 64}
-    )
+    forged = bundle.code_files[0].model_copy(update={"capture_entry_digest": "f" * 64})
     bundle = bundle.model_copy(update={"code_files": (forged, *bundle.code_files[1:])})
     store = CorpusStore(
         open_corpus(tmp_path / "forged-capture-entry.sqlite3", initialize=True),

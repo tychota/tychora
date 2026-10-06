@@ -4,7 +4,9 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def deny_network(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+def deny_network(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
     live = request.node.get_closest_marker("live")
     qualification = request.node.get_closest_marker("qualification")
     local_loopback = qualification and qualification.kwargs.get("loopback") is True

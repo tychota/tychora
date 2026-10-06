@@ -1769,9 +1769,7 @@ def test_first_pdf_context_is_authorized_from_raw_selector_and_replays(
         pixels = ImageOps.exif_transpose(encoded_page).convert("RGB")
         pixels.load()
     original_transform = "exif-transpose-rgb-v1"
-    region_transform = (
-        f"{original_transform}:crop:0,0,{pixels.width},{pixels.height}"
-    )
+    region_transform = f"{original_transform}:crop:0,0,{pixels.width},{pixels.height}"
     region_data = {
         "source_native_ref": parsed_page.native_ref,
         "image": page_bytes,
@@ -1824,10 +1822,15 @@ def test_first_pdf_context_is_authorized_from_raw_selector_and_replays(
         proof=proof,
         region=region,
     )
-    assert owner.run_blocking_sync(
-        lambda: owner.db.execute("SELECT count(*) FROM evidence_units").fetchone()[0],
-        ExecutionContext(),
-    ) == 0
+    assert (
+        owner.run_blocking_sync(
+            lambda: owner.db.execute("SELECT count(*) FROM evidence_units").fetchone()[
+                0
+            ],
+            ExecutionContext(),
+        )
+        == 0
+    )
 
     missing_selector = SourceSelector(
         native_ref="#/texts/missing",
@@ -1866,11 +1869,13 @@ def test_first_pdf_context_is_authorized_from_raw_selector_and_replays(
         )
         with pytest.raises(TychoraError) as error:
             owner.run_blocking_sync(
-                lambda forged_region=forged_region: owner.upload_policy.authorize_captured(
-                    scope,
-                    "anthropic",
-                    authorization.model_copy(update={"region": forged_region}),
-                    0,
+                lambda forged_region=forged_region: (
+                    owner.upload_policy.authorize_captured(
+                        scope,
+                        "anthropic",
+                        authorization.model_copy(update={"region": forged_region}),
+                        0,
+                    )
                 ),
                 ExecutionContext(),
             )
@@ -1954,9 +1959,10 @@ def test_first_pdf_context_is_authorized_from_raw_selector_and_replays(
         )
     )
     assert provider_requests
-    assert selected.literal_text in provider_requests[0]["messages"][0]["content"][1][
-        "text"
-    ]
+    assert (
+        selected.literal_text
+        in provider_requests[0]["messages"][0]["content"][1]["text"]
+    )
     receipt = identity.canonical_bytes(
         {
             "type": "vision_derivation",
@@ -1969,9 +1975,7 @@ def test_first_pdf_context_is_authorized_from_raw_selector_and_replays(
                 "original_pixel_sha256": region.original_pixel_sha256,
                 "region_pixel_sha256": region.region_pixel_sha256,
                 "context_sha256": region.context_sha256,
-                "source_context_sha256": source_context_identity(
-                    region.source_context
-                ),
+                "source_context_sha256": source_context_identity(region.source_context),
                 "dependency_ids": sorted(region.dependency_ids),
                 "model": observation.model,
                 "prompt_schema_version": observation.prompt_schema_version,
@@ -1994,20 +1998,18 @@ def test_first_pdf_context_is_authorized_from_raw_selector_and_replays(
         proxies=(planned_vision_proxy(region, observation),),
     )
     result = owner.run_blocking_sync(
-        lambda: compose_document(parsed, case.registry, plan, owner.artifacts, case.ctx),
+        lambda: compose_document(
+            parsed, case.registry, plan, owner.artifacts, case.ctx
+        ),
         case.ctx,
     )
     forged_receipt = json.loads(receipt)
     forged_receipt["data"]["source_context_sha256"] = "f" * 64
     forged_payload = identity.canonical_bytes(forged_receipt)
-    forged_ref = owner.artifacts.put_stream(
-        BytesIO(forged_payload), "application/json"
-    )
+    forged_ref = owner.artifacts.put_stream(BytesIO(forged_payload), "application/json")
     forged_plan = plan.model_copy(
         update={
-            "proxies": (
-                plan.proxies[0].model_copy(update={"derivation": forged_ref}),
-            )
+            "proxies": (plan.proxies[0].model_copy(update={"derivation": forged_ref}),)
         }
     )
     with pytest.raises(ValueError, match="derivation"):
@@ -2039,7 +2041,9 @@ def test_first_pdf_context_is_authorized_from_raw_selector_and_replays(
         *context_owner_ids,
     }
     assert all(
-        next(unit for unit in result.bundle.units if unit.unit_id == dependency).extraction_id
+        next(
+            unit for unit in result.bundle.units if unit.unit_id == dependency
+        ).extraction_id
         == result.bundle.extraction.extraction_id
         for dependency in result.bundle.proxies[0].required_unit_ids
     )
@@ -2056,10 +2060,15 @@ def test_first_pdf_context_is_authorized_from_raw_selector_and_replays(
         retained,
     )
     assert replay.bundle == result.bundle
-    assert owner.run_blocking_sync(
-        lambda: owner.db.execute("SELECT count(*) FROM evidence_units").fetchone()[0],
-        ExecutionContext(),
-    ) == 0
+    assert (
+        owner.run_blocking_sync(
+            lambda: owner.db.execute("SELECT count(*) FROM evidence_units").fetchone()[
+                0
+            ],
+            ExecutionContext(),
+        )
+        == 0
+    )
 
 
 @pytest.mark.qualification

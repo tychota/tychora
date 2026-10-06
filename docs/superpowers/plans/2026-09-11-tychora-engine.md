@@ -150,10 +150,16 @@ import os
 import subprocess
 import sys
 
+
 def test_import_has_no_runtime_side_effects(tmp_path):
     code = "import sys, tychora; assert not ({'chromadb','ladybug','torch','docling','voyageai'} & sys.modules.keys())"
-    run = subprocess.run([sys.executable, "-c", code], cwd=tmp_path,
-                         env={**os.environ, "HOME": str(tmp_path)}, capture_output=True, text=True)
+    run = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=tmp_path,
+        env={**os.environ, "HOME": str(tmp_path)},
+        capture_output=True,
+        text=True,
+    )
     assert run.returncode == 0, run.stderr
     assert run.stdout == ""
     assert list(tmp_path.iterdir()) == []
@@ -194,11 +200,15 @@ markers = ["qualification: real local adapters", "live: explicitly authorized re
 ```python
 import typer
 
-app = typer.Typer(no_args_is_help=True, help="Discover and retrieve versioned evidence.")
+app = typer.Typer(
+    no_args_is_help=True, help="Discover and retrieve versioned evidence."
+)
+
 
 @app.callback()
 def root() -> None:
     """Configure a workspace, add sources, search and inspect evidence."""
+
 
 def main() -> None:
     app()
@@ -244,6 +254,7 @@ import math
 import pytest
 from tychora.contracts.identity import canonical_bytes, digest
 
+
 def test_identity_is_order_stable_and_preserves_source_bytes():
     assert canonical_bytes({"b": 2, "a": 1}) == b'{"a":1,"b":2}'
     assert digest("revision-v1", "é") != digest("revision-v1", "e\u0301")
@@ -257,9 +268,16 @@ def test_identity_is_order_stable_and_preserves_source_bytes():
 import hashlib
 import json
 
+
 def canonical_bytes(value) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True,
-                      separators=(",", ":"), allow_nan=False).encode("utf-8")
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+
 
 def digest(tag: str, *parts) -> str:
     return hashlib.sha256(canonical_bytes([tag, *parts])).hexdigest()
@@ -282,11 +300,16 @@ def digest(tag: str, *parts) -> str:
 ```python
 def test_chroma_search_honors_explicit_ids(tmp_path):
     import chromadb
+
     client = chromadb.PersistentClient(path=str(tmp_path / "vectors"))
     col = client.create_collection("eligibility_probe", embedding_function=None)
     col.add(ids=["hidden", "allowed"], embeddings=[[1.0, 0.0], [0.8, 0.6]])
-    result = col.query(query_embeddings=[[1.0, 0.0]], ids=["allowed"],
-                       n_results=1, include=["distances"])
+    result = col.query(
+        query_embeddings=[[1.0, 0.0]],
+        ids=["allowed"],
+        n_results=1,
+        include=["distances"],
+    )
     assert result["ids"] == [["allowed"]]
 ```
 
@@ -321,9 +344,12 @@ MATCH (p:Probe) RETURN p.id ORDER BY p.id;
 ```python
 from tychora.configuration.resolve import merge_values
 
+
 def test_explicit_false_zero_and_empty_list_survive():
-    result = merge_values({"graph": True, "bonus": 1, "lanes": ["a"]},
-                          {"graph": False, "bonus": 0, "lanes": []})
+    result = merge_values(
+        {"graph": True, "bonus": 1, "lanes": ["a"]},
+        {"graph": False, "bonus": 0, "lanes": []},
+    )
     assert result == {"graph": False, "bonus": 0, "lanes": []}
 ```
 
@@ -359,6 +385,7 @@ import pytest
 from tychora.contracts.errors import TychoraError
 from tychora.configuration.compatibility import require_kind_coverage
 
+
 def test_missing_historical_kind_is_not_silently_dropped():
     with pytest.raises(TychoraError) as err:
         require_kind_coverage(frozenset({"standard@1"}), {}, {})
@@ -369,10 +396,16 @@ def test_missing_historical_kind_is_not_silently_dropped():
 
 ```python
 def require_kind_coverage(readable_kinds, lane_bindings, historical_definitions):
-    missing = sorted(k for k in readable_kinds
-                     if k not in lane_bindings or k not in historical_definitions)
+    missing = sorted(
+        k
+        for k in readable_kinds
+        if k not in lane_bindings or k not in historical_definitions
+    )
     if missing:
-        raise TychoraError("PROFILE_INCOMPATIBLE", "Missing explicit kind/schema bindings: " + ", ".join(missing))
+        raise TychoraError(
+            "PROFILE_INCOMPATIBLE",
+            "Missing explicit kind/schema bindings: " + ", ".join(missing),
+        )
 ```
 
 - [ ] Create complete descriptions/examples/required metadata for law, regulation, decision, standard, guidance, manual, template, procedure, feedback, evidence, example, rationale, research_note, code_file, architecture_decision. Supply the six generic lanes, compose/audit/lookup modes and original/proxy-state differences from §3/§5. Registered normalizers are `structured_sections@1`, `numbered_provisions@1`, `rule_records@1`, `feedback_records@1`, `template_slots@1`, `code_symbols@1`. Split aggregate TOML registries into explicit local definition files if required by the resolver, retaining identical versioned IDs.
@@ -393,12 +426,19 @@ def require_kind_coverage(readable_kinds, lane_bindings, historical_definitions)
 ```python
 from tychora.adapters.sqlite.connection import open_corpus
 
+
 def test_canonical_schema_integrity(tmp_path):
     db = open_corpus(tmp_path / "corpus.sqlite3", initialize=True)
     assert db.execute("PRAGMA foreign_key_check").fetchall() == []
     assert db.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-    names = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    assert {"snapshot_batches", "asset_proxy_dependencies", "original_payload_tombstones"} <= names
+    names = {
+        r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+    }
+    assert {
+        "snapshot_batches",
+        "asset_proxy_dependencies",
+        "original_payload_tombstones",
+    } <= names
     assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 ```
 
@@ -428,6 +468,7 @@ db.execute("PRAGMA busy_timeout=2000")
 ```python
 import io
 from tychora.adapters.files.cas import LocalArtifacts
+
 
 def test_artifact_roundtrip_is_verified_and_idempotent(tmp_path):
     store = LocalArtifacts(tmp_path)
@@ -470,6 +511,7 @@ finally:
 ```python
 from tychora.application.leases import LeaseSet
 
+
 def test_nested_leases_keep_resources_pinned():
     leases = LeaseSet()
     with leases.pin(frozenset({"snapshot-a"})):
@@ -484,8 +526,9 @@ def test_nested_leases_keep_resources_pinned():
 ```python
 async def run_blocking(self, call, ctx):
     ctx.checkpoint()
-    return await anyio.to_thread.run_sync(call, limiter=self.blocking_limiter,
-                                         abandon_on_cancel=False)
+    return await anyio.to_thread.run_sync(
+        call, limiter=self.blocking_limiter, abandon_on_cancel=False
+    )
 ```
 
 - [ ] Implement local filesystem lock, protected runtime directory/files (0700/0600), workspace UUID and protocol handshake, random token outside corpus/config. A busy standalone process yields `WORKSPACE_BUSY`; delegation only occurs after authenticated live identity verification in Task 36. Maximum two parser processes and two concurrent requests/provider; bounded queues initially 32 operations with actionable busy errors. Shutdown stops admission, drains workers, closes databases, removes runtime endpoint and releases lock last.
@@ -505,6 +548,7 @@ async def run_blocking(self, call, ctx):
 import pytest
 from tychora.contracts.errors import TychoraError
 
+
 def test_key_conflict_does_not_schedule_new_work(jobs):
     a = jobs.accept("add", jobs.scope, "k", {"path": "a.md"}, jobs.config)
     b = jobs.accept("add", jobs.scope, "k", {"path": "a.md"}, jobs.config)
@@ -517,7 +561,9 @@ def test_key_conflict_does_not_schedule_new_work(jobs):
 - [ ] Implement digest comparison before default resolution/live-path reads. Preserve omitted fields in caller intent; include supplied inline bytes via digest, explicit configuration references and operation/principal/workspace. Under `BEGIN IMMEDIATE`, compare or insert scoped key; return existing job unchanged for equal digest. Persist capture once before extraction. Kernel:
 
 ```python
-request_digest = digest("request-v1", workspace_id, scope.principal_id, operation, intent)
+request_digest = digest(
+    "request-v1", workspace_id, scope.principal_id, operation, intent
+)
 if existing is not None and existing.request_digest != request_digest:
     raise TychoraError("IDEMPOTENCY_CONFLICT", "This key is bound to different input.")
 ```
@@ -539,9 +585,15 @@ if existing is not None and existing.request_digest != request_digest:
 from tychora.contracts import SourceInput
 from tychora.ingestion.acquire import Acquirer
 
+
 def test_inline_capture_needs_no_caller_temporary_file(artifacts, execution):
-    source = SourceInput(type="text", source_key="notes", collection_id="default",
-                         kind="manual", text="Résumé")
+    source = SourceInput(
+        type="text",
+        source_key="notes",
+        collection_id="default",
+        kind="manual",
+        text="Résumé",
+    )
     captured = Acquirer(artifacts, execution.config).capture(source, execution.ctx)
     with artifacts.open_verified(captured.original_ref) as data:
         assert data.read().decode() == "Résumé"
@@ -572,6 +624,7 @@ if not resolved.is_relative_to(root.resolve(strict=True)):
 ```python
 from tychora.ingestion.native import parse_markdown
 
+
 def test_fenced_heading_is_not_a_document_section():
     units = parse_markdown("# Manual\n\n```md\n# fake\n```\n\nRecord results.\n")
     assert [u.text for u in units if u.unit_type == "heading"] == ["Manual"]
@@ -582,6 +635,7 @@ def test_fenced_heading_is_not_a_document_section():
 
 ```python
 from markdown_it import MarkdownIt
+
 
 def block_tokens(text: str):
     return tuple(MarkdownIt("commonmark").enable("table").parse(text))
@@ -603,8 +657,11 @@ def block_tokens(text: str):
 ```python
 import pytest
 
+
 @pytest.mark.qualification
-def test_real_docling_retains_document_and_locators(rich_capture, docling_parser, execution):
+def test_real_docling_retains_document_and_locators(
+    rich_capture, docling_parser, execution
+):
     artifact = docling_parser.extract(rich_capture, execution.config, execution.ctx)
     assert artifact.parser_fingerprint
     assert artifact.raw_document_ref is not None
@@ -617,7 +674,9 @@ def test_real_docling_retains_document_and_locators(rich_capture, docling_parser
 ```python
 converted = converter.convert(str(private_staging_path))
 document_json = converted.document.export_to_dict()
-raw_ref = artifacts.put_stream(io.BytesIO(canonical_bytes(document_json)), "application/json")
+raw_ref = artifacts.put_stream(
+    io.BytesIO(canonical_bytes(document_json)), "application/json"
+)
 ```
 
 - [ ] Preserve complete JSON, `self_ref`, hierarchy/order, page dimensions/origin, bbox, charspan coordinate domain and picture/table/page assets. Preserve native annotation objects if available; unsupported extraction becomes a capability diagnostic. DOCX without renderer gets no physical page. Normalize geometry only with recorded transforms; keep raw coordinates too. Run parser inside owner-managed private staging, with explicit model paths/download disabled and no canonical handles in child processes.
@@ -649,7 +708,10 @@ Implementation boundary: this task qualifies `structured_sections@1` for rich do
 ```python
 result = document_record_case("standard@1", format)
 record = next(row for row in result.bundle.records if row.record_type == "rule@1")
-assert "Record the sample before changing the instrument." in record.data_json["requirement"]
+assert (
+    "Record the sample before changing the instrument."
+    in record.data_json["requirement"]
+)
 assert "Keep the original label." in record.data_json["requirement"]
 assert record.data_json["proof"] == "The sample identifier is quotable."
 assert record.data_json["control"] == "Inspect the source."
@@ -683,17 +745,34 @@ The engine specification remains binding, including exact configured aliases, so
 ```python
 from tychora.ingestion.tables import continuation_score
 
+
 def test_missing_features_do_not_inflate_table_confidence():
-    assert continuation_score(headers=True, caption=False, heading=True,
-                              overlap=False, page_edges=False, marker=False) == 0.5
+    assert (
+        continuation_score(
+            headers=True,
+            caption=False,
+            heading=True,
+            overlap=False,
+            page_edges=False,
+            marker=False,
+        )
+        == 0.5
+    )
 ```
 
 - [ ] Implement hard rejects before this score, then thresholds `>=0.85` high-confidence derived, `>=0.60` proposed, otherwise separate. Exactly matching normalized header rows may be omitted only from reconstructed view, never original fragments.
 
 ```python
 def continuation_score(*, headers, caption, heading, overlap, page_edges, marker):
-    return round(0.35 * headers + 0.20 * caption + 0.15 * heading
-                 + 0.10 * overlap + 0.10 * page_edges + 0.10 * marker, 2)
+    return round(
+        0.35 * headers
+        + 0.20 * caption
+        + 0.15 * heading
+        + 0.10 * overlap
+        + 0.10 * page_edges
+        + 0.10 * marker,
+        2,
+    )
 ```
 
 - [ ] Store fragment grids/assets and `continues_table@1` assertions with complete support/locators. Row text remains exact source; repeated column labels belong to index representation. Add figure/table original captions as source units and separate noncitable caption/OCR/description/value proxies. Every proxy has one asset, same-extraction nonempty original dependency set, derivation artifact and review state. Pillow validates decoded pixel limits (initial 40 million pixels), MIME/dimensions and explicit recorded resizing; decompression bombs fail before allocation exceeds limits.
@@ -713,6 +792,7 @@ def continuation_score(*, headers, caption, heading, overlap, page_edges, marker
 import pytest
 from tychora.contracts.errors import TychoraError
 from tychora.adapters.vision.anthropic import validate_target
+
 
 def test_vision_cannot_invent_annotation_target():
     with pytest.raises(TychoraError) as err:
@@ -754,9 +834,21 @@ def test_dirty_bytes_are_not_attributed_only_to_head(repo, capture):
 - [ ] Implement read-only Git inventory and direct filesystem/blob capture. Use argument arrays, no shell or repository checkout/code execution. System Git capability failure affects only repositories. Command baseline:
 
 ```python
-argv = [git_executable, "--no-optional-locks", "-C", str(root),
-        "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null",
-        "ls-files", "-z", "--cached", "--others", "--exclude-standard"]
+argv = [
+    git_executable,
+    "--no-optional-locks",
+    "-C",
+    str(root),
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.hooksPath=/dev/null",
+    "ls-files",
+    "-z",
+    "--cached",
+    "--others",
+    "--exclude-standard",
+]
 ```
 
 - [ ] Disable user/global Git configuration where it could execute helpers, optional locks and inherited Git environment overrides; never invoke filters, hooks, submodules or `git show` textconv. Apply pathspec excludes, generated/vendor/secret defaults, containment and moving-file checks. Read NUL delimiters without newline splitting. Files with unsupported encoding remain registered with explicit coverage diagnostics. Historical bytes live in artifacts, not HEAD or live files.
@@ -775,12 +867,13 @@ argv = [git_executable, "--no-optional-locks", "-C", str(root),
 ```python
 from tychora.adapters.code.python import PythonAdapter
 
+
 def test_python_decorated_async_method_ranges():
     data = b"class Store:\n    @logged\n    async def load(self):\n        return 1\n"
     adapter = PythonAdapter()
     defs = adapter.definitions(adapter.parse(data, {}))
     method = next(d for d in defs if d.qualified_name == "Store.load")
-    assert data[method.byte_start:method.byte_end].startswith(b"@logged")
+    assert data[method.byte_start : method.byte_end].startswith(b"@logged")
     assert method.parent_name == "Store"
 ```
 
@@ -810,12 +903,13 @@ tree = parser.parse(file_bytes)
 ```python
 from tychora.adapters.code.typescript import TypeScriptAdapter
 
+
 def test_exported_method_has_class_and_export_context():
     source = b"export class Store { async load(): Promise<number> { return 1; } }"
     adapter = TypeScriptAdapter("typescript")
     defs = adapter.definitions(adapter.parse(source, {}))
     method = next(d for d in defs if d.qualified_name == "Store.load")
-    assert source[method.byte_start:method.byte_end].startswith(b"async load")
+    assert source[method.byte_start : method.byte_end].startswith(b"async load")
     assert method.parent_name == "Store"
 ```
 
@@ -849,9 +943,11 @@ grammars = {
 ```python
 from tychora.adapters.code.normalize import definition_key
 
+
 def test_definition_identity_includes_file_and_revision():
     def key(rev, path):
         return definition_key(rev, path, "python", "validate", "function", 0)
+
     assert key("r1", "a.py") != key("r1", "b.py")
     assert key("r1", "a.py") != key("r2", "a.py")
 ```
@@ -880,8 +976,11 @@ selected = unique[0] if state == "resolved" else None
 ```python
 def test_windows_cover_end_match_and_preserve_exact_ranges(long_unit, counter):
     from tychora.indexing.windows import window_unit
+
     windows = window_unit(long_unit, counter)
-    assert any("END_MARKER" in long_unit.text[w.char_start:w.char_end] for w in windows)
+    assert any(
+        "END_MARKER" in long_unit.text[w.char_start : w.char_end] for w in windows
+    )
     assert windows[0].char_start == 0
     assert windows[-1].char_end == len(long_unit.text)
     assert all(a.char_end == b.char_start for a, b in zip(windows, windows[1:]))
@@ -912,6 +1011,7 @@ import pytest
 from tychora.adapters.voyage.validation import normalize_vector
 from tychora.contracts.errors import TychoraError
 
+
 @pytest.mark.parametrize("values", [[0.0, 0.0], [math.nan, 1.0], [1.0]])
 def test_invalid_embeddings_cannot_be_sealed(values):
     with pytest.raises(TychoraError):
@@ -922,7 +1022,12 @@ def test_invalid_embeddings_cannot_be_sealed(values):
 
 ```python
 norm = math.sqrt(sum(value * value for value in values))
-if len(values) != dimension or not all(math.isfinite(v) for v in values) or not math.isfinite(norm) or norm == 0:
+if (
+    len(values) != dimension
+    or not all(math.isfinite(v) for v in values)
+    or not math.isfinite(norm)
+    or norm == 0
+):
     raise TychoraError("PROVIDER_FAILURE", "Invalid embedding shape or values.")
 packed = struct.pack("<" + "f" * dimension, *(v / norm for v in values))
 ```
@@ -941,7 +1046,9 @@ packed = struct.pack("<" + "f" * dimension, *(v / norm for v in values))
 - [ ] Write/run an injected SDK test with `RecordingVisualSDK` defined in this test file; it records arguments and returns finite synthetic vectors:
 
 ```python
-def test_visual_input_contains_pixels_not_only_description(visual_provider, pixel_asset, execution):
+def test_visual_input_contains_pixels_not_only_description(
+    visual_provider, pixel_asset, execution
+):
     visual_provider.embed_assets((pixel_asset,), execution.ctx)
     sent = visual_provider.sdk.calls[0]
     assert sent["model"] == "voyage-multimodal-3.5"
@@ -953,8 +1060,9 @@ def test_visual_input_contains_pixels_not_only_description(visual_provider, pixe
 
 ```python
 inputs = [[item.context, item.image] for item in batch]
-response = sdk.multimodal_embed(inputs=inputs, model=model,
-                                input_type="document", truncation=False)
+response = sdk.multimodal_embed(
+    inputs=inputs, model=model, input_type="document", truncation=False
+)
 ```
 
 - [ ] Enforce qualified per-input/per-image limits plus 32 assets/100K estimated multimodal tokens per request, exact count/mapping validation, current upload scope and recorded explicit resize. Text question and image query share only the matching multimodal model space. No truncation or textual proxy substitution for missing pixels. Capability mismatch returns typed unavailable/failure.
@@ -975,6 +1083,7 @@ import pytest
 from tychora.adapters.voyage.rerank import validate_indices
 from tychora.contracts.errors import TychoraError
 
+
 @pytest.mark.parametrize("indices", [(0, 0), (0, 2), (0,)])
 def test_reranker_cannot_drop_duplicate_or_invent_candidates(indices):
     with pytest.raises(TychoraError):
@@ -986,7 +1095,9 @@ def test_reranker_cannot_drop_duplicate_or_invent_candidates(indices):
 ```python
 def validate_indices(indices, count):
     if len(indices) != count or set(indices) != set(range(count)):
-        raise TychoraError("PROVIDER_FAILURE", "Reranker returned invalid candidate mapping.")
+        raise TychoraError(
+            "PROVIDER_FAILURE", "Reranker returned invalid candidate mapping."
+        )
 ```
 
 - [ ] Select explicit `rerank-3` candidate only after preview access/capability verification; unavailable configuration fails rather than replacing model. Set truncation false, query <=2,000 tokens, representations <=1,200 provider tokens and validate aggregate repeated-query limits using installed tokenizer/API capability. Reduce requested pool only with explicit coverage diagnostics or fail strict mode. Do not split arbitrary rerank calls and assume scores are comparable unless the provider contract establishes that behavior. Apply upload permission to every exact span/context dependency immediately before dispatch.
@@ -1003,11 +1114,22 @@ def validate_indices(indices, count):
 - [ ] Write/run real adapter test against two synthetic vectors and one forbidden nearer point:
 
 ```python
-def test_only_eligible_owners_enter_vector_candidates(vector_index, vector_family, execution):
-    vector_index.upsert_batch(vector_family.batch([("hidden", "u0", [1., 0.]),
-                                                 ("visible", "u1", [.8, .6])]), execution.ctx)
-    page = vector_index.search(vector_family.query([1., 0.]), {"visible": ("unit", "u1")},
-                               1, vector_family.limits, execution.ctx)
+def test_only_eligible_owners_enter_vector_candidates(
+    vector_index, vector_family, execution
+):
+    vector_index.upsert_batch(
+        vector_family.batch(
+            [("hidden", "u0", [1.0, 0.0]), ("visible", "u1", [0.8, 0.6])]
+        ),
+        execution.ctx,
+    )
+    page = vector_index.search(
+        vector_family.query([1.0, 0.0]),
+        {"visible": ("unit", "u1")},
+        1,
+        vector_family.limits,
+        execution.ctx,
+    )
     assert [c.key for c in page.candidates] == [("unit", "u1")]
 ```
 
@@ -1015,8 +1137,12 @@ def test_only_eligible_owners_enter_vector_candidates(vector_index, vector_famil
 - [ ] Implement eligible ID intersection with verified present IDs; missing expected records mark incomplete coverage. Partition all IDs at <=5,000, max 64 partitions; reject larger scope instead of dropping partitions. Search typed source/proxy owner pools with one family work budget. Begin at `min(2*k, size)` per partition, collapse owners by best distance and adaptively double eligible partitions whose approximate tail can improve kth owner. Core query:
 
 ```python
-raw = collection.query(query_embeddings=[query], ids=partition_ids,
-                       n_results=requested, include=["distances"])
+raw = collection.query(
+    query_embeddings=[query],
+    ids=partition_ids,
+    n_results=requested,
+    include=["distances"],
+)
 work.returned_records += sum(len(row) for row in raw["ids"])
 ```
 
@@ -1036,7 +1162,10 @@ work.returned_records += sum(len(row) for row in raw["ids"])
 import pytest
 from tychora.contracts.errors import TychoraError
 
-def test_graph_cannot_seal_ungrounded_assertion(graph, generation, assertion, execution):
+
+def test_graph_cannot_seal_ungrounded_assertion(
+    graph, generation, assertion, execution
+):
     bad = assertion.model_copy(update={"required_support_ids": ()})
     with pytest.raises(TychoraError) as err:
         graph.upsert_batch(generation, (bad,), (), execution.ctx)
@@ -1095,6 +1224,7 @@ budget.inspected_rows += path.assertion_occurrences
 import pytest
 from tychora.contracts.errors import TychoraError
 
+
 def test_partial_new_projection_does_not_replace_active(published_corpus):
     f = published_corpus
     old = f.store.resolve_snapshot(None).snapshot_id
@@ -1111,7 +1241,11 @@ def test_partial_new_projection_does_not_replace_active(published_corpus):
 ```python
 with corpus.immediate_transaction():
     if corpus.active_snapshot_id() != plan.base_snapshot_id:
-        raise TychoraError("WORKSPACE_BUSY", "Publication base changed; rebase required.", retryable=True)
+        raise TychoraError(
+            "WORKSPACE_BUSY",
+            "Publication base changed; rebase required.",
+            retryable=True,
+        )
     corpus.insert_snapshot_bindings(plan)
     corpus.set_active_snapshot(plan.snapshot_id)
 ```
@@ -1131,6 +1265,7 @@ with corpus.immediate_transaction():
 ```python
 from tychora.retrieval.eligibility import eligible_cache_key
 
+
 def test_audit_and_compose_do_not_share_eligibility(views):
     assert views.audit.snapshot_id == views.compose.snapshot_id
     assert views.audit.scope_digest == views.compose.scope_digest
@@ -1141,8 +1276,13 @@ def test_audit_and_compose_do_not_share_eligibility(views):
 
 ```python
 def eligible_cache_key(view):
-    return (view.snapshot_id, view.policy_epoch, view.scope_digest,
-            view.eligibility_policy_digest, view.eligibility_request_digest)
+    return (
+        view.snapshot_id,
+        view.policy_epoch,
+        view.scope_digest,
+        view.eligibility_policy_digest,
+        view.eligibility_request_digest,
+    )
 ```
 
 - [ ] Separate source-candidate/context/structural/proxy/chunk/asset/vector ID sets and full representation/group dependencies. Intersect collection/source floors, granted uses, source/child review, withdrawal, mode/lane, typed facets and proxy policy. Check historical kind mappings before lane filtering. Accepted parent never exposes rejected child. Provider upload eligibility is separate from readable eligibility; denied upload cannot be bypassed through capsule, asset proxy, graph support or record.
@@ -1162,10 +1302,11 @@ def eligible_cache_key(view):
 ```python
 from tychora.retrieval.lexical_query import lexical_expression
 
+
 def test_user_query_cannot_supply_fts_operators():
-    expression = lexical_expression('alpha OR beta NEAR(secret)', frozenset())
+    expression = lexical_expression("alpha OR beta NEAR(secret)", frozenset())
     assert expression is not None
-    assert 'NEAR(' not in expression
+    assert "NEAR(" not in expression
     assert '"alpha"' in expression
 ```
 
@@ -1199,8 +1340,11 @@ SELECT chunk_id, score FROM scored ORDER BY score, chunk_id;
 import pytest
 from tychora.retrieval.fusion import rrf_score
 
+
 def test_rrf_uses_one_vote_per_channel():
-    assert rrf_score({"lexical": 1, "text": 2}, {"lexical": 1., "text": 1.}) == pytest.approx(1/61 + 1/62)
+    assert rrf_score(
+        {"lexical": 1, "text": 2}, {"lexical": 1.0, "text": 1.0}
+    ) == pytest.approx(1 / 61 + 1 / 62)
 ```
 
 - [ ] Implement best-window collapse per owner/channel, one-based ranks and exact/lexical/text/visual/graph weights `2/1/1/.7/.35`. Across text families take minimum rank, sort by rank/ID and rerank densely for one text vote. Stable tie-break by typed ID; hints add capped total .01 only when enabled.
@@ -1226,6 +1370,7 @@ def rrf_score(ranks, weights):
 ```python
 def test_rerank_representation_keeps_end_match(long_candidate, units, view, counter):
     from tychora.retrieval.rerank import ranking_input
+
     item = ranking_input(long_candidate, units, view, counter, budget=1200)
     assert "END_MARKER" in item.text
     assert item.anchor_ranges[0].char_start > 0
@@ -1235,7 +1380,7 @@ def test_rerank_representation_keeps_end_match(long_candidate, units, view, coun
 - [ ] Build strongest matched window first (channel rank, weight, offset), append nonoverlapping matched windows as budget permits, then exact parent/import context <=160 tokens with dependencies. Never use unrelated whole-unit prefix for a retrieved end match. For graph-only use valid target-support span, otherwise labelled unit fallback. Slice canonical source via exact range:
 
 ```python
-excerpt = unit.text[anchor.char_start:anchor.char_end]
+excerpt = unit.text[anchor.char_start : anchor.char_end]
 if excerpt != ranking_range.text:
     raise TychoraError("INTEGRITY_ERROR", "Ranking range is not source text.")
 ```
@@ -1260,7 +1405,10 @@ def test_segment_keeps_winning_range_and_never_bridges_denied_gap(segment_case):
     assert len(result.segments) == 2
     for segment in result.segments:
         for excerpt in segment.excerpts:
-            assert excerpt.text == f.units[excerpt.unit_id].text[excerpt.char_start:excerpt.char_end]
+            assert (
+                excerpt.text
+                == f.units[excerpt.unit_id].text[excerpt.char_start : excerpt.char_end]
+            )
     assert all("gap" not in s.context_only_unit_ids for s in result.segments)
 ```
 
@@ -1287,8 +1435,12 @@ text_tokens = total_tokens - visual_tokens
 
 ```python
 def test_mcp_canonical_and_envelope_are_counted_together(response_case):
-    delivered = response_case.assemble(targets=("canonical-json@1", "agent@1"), tokens=900)
-    assert sum(response_case.counter.count(b.decode()) for b in delivered.payloads) <= 900
+    delivered = response_case.assemble(
+        targets=("canonical-json@1", "agent@1"), tokens=900
+    )
+    assert (
+        sum(response_case.counter.count(b.decode()) for b in delivered.payloads) <= 900
+    )
     assert sum(len(b) for b in delivered.payloads) <= 1048576
     assert delivered.result.budget_contract.max_tokens == 900
 ```
@@ -1299,8 +1451,13 @@ def test_mcp_canonical_and_envelope_are_counted_together(response_case):
 ```python
 import html
 
+
 def envelope(tag: str, body: str) -> str:
-    if not tag or not tag.replace("_", "a").replace("-", "a").isalnum() or not tag[0].isalpha():
+    if (
+        not tag
+        or not tag.replace("_", "a").replace("-", "a").isalnum()
+        or not tag[0].isalpha()
+    ):
         raise TychoraError("INVALID_REQUEST", "Invalid envelope tag.")
     return f"<{tag}>\n{html.escape(body, quote=False)}\n</{tag}>"
 ```
@@ -1355,6 +1512,7 @@ if entry is None or clock.monotonic() >= entry.expires_at:
 ```python
 def test_empty_configured_kind_remains_discoverable(discovery, reader):
     from tychora.contracts import DiscoverRequest
+
     result = discovery.discover(DiscoverRequest(subject="kinds"), reader)
     standard = next(k for k in result.items if k.key == "standard")
     assert standard.description
@@ -1399,12 +1557,22 @@ text = unit.text[start:end]
 ```python
 from tychora import Tychora, SourceInput, QueryRequest
 
+
 def test_public_api_ingests_text_without_cli_or_temporary_input(tmp_path, counter):
     with Tychora.open(tmp_path / "knowledge", token_counter=counter) as kb:
-        job = kb.sources.add(SourceInput(type="text", source_key="manual", collection_id="default",
-                                         kind="manual", text="Record verification outcomes."))
+        job = kb.sources.add(
+            SourceInput(
+                type="text",
+                source_key="manual",
+                collection_id="default",
+                kind="manual",
+                text="Record verification outcomes.",
+            )
+        )
         assert kb.jobs.wait(job.id).state == "complete"
-        result = kb.search(QueryRequest(question="verification", modalities=("lexical",)))
+        result = kb.search(
+            QueryRequest(question="verification", modalities=("lexical",))
+        )
         assert result.segments
         unit = kb.evidence.get(result.segments[0].matched_unit_ids[0])
         assert unit.text == "Record verification outcomes."
@@ -1414,7 +1582,9 @@ def test_public_api_ingests_text_without_cli_or_temporary_input(tmp_path, counte
 
 ```python
 def search(self, request, *, scope=None, timeout=None):
-    parsed = QueryRequest.from_mapping(request) if isinstance(request, Mapping) else request
+    parsed = (
+        QueryRequest.from_mapping(request) if isinstance(request, Mapping) else request
+    )
     effective = self.scope if scope is None else self.scope.narrow(scope)
     return self.services.query.search(parsed, effective, self.context(timeout)).result
 ```
@@ -1447,8 +1617,16 @@ def search(self, request, *, scope=None, timeout=None):
 
 ```python
 async def test_reader_cannot_add_sources(http_reader):
-    response = await http_reader.post("/v1/sources", json={"type": "text", "source_key": "x",
-        "collection_id": "default", "kind": "manual", "text": "source"})
+    response = await http_reader.post(
+        "/v1/sources",
+        json={
+            "type": "text",
+            "source_key": "x",
+            "collection_id": "default",
+            "kind": "manual",
+            "text": "source",
+        },
+    )
     assert response.status_code == 403
     assert response.json()["code"] == "FORBIDDEN_SCOPE"
 ```
@@ -1478,7 +1656,9 @@ async def test_mcp_reader_surface_and_structured_result(mcp_reader):
     tools = await mcp_reader.list_tools()
     assert {t.name for t in tools} >= {"discover", "search", "inspect"}
     assert "add_sources" not in {t.name for t in tools}
-    result = await mcp_reader.call_tool("search", {"request": {"question": "verification"}})
+    result = await mcp_reader.call_tool(
+        "search", {"request": {"question": "verification"}}
+    )
     assert result.structured_content["schema_version"] == "1"
 ```
 
@@ -1487,6 +1667,7 @@ async def test_mcp_reader_surface_and_structured_result(mcp_reader):
 
 ```python
 mcp_app = mcp_server.streamable_http_app()
+
 
 @asynccontextmanager
 async def lifespan(app):
@@ -1512,8 +1693,11 @@ import json
 from typer.testing import CliRunner
 from tychora.interfaces.cli import app
 
+
 def test_json_discovery_contains_no_progress_noise(cli_workspace):
-    result = CliRunner().invoke(app, ["--workspace", str(cli_workspace), "inspect", "kinds", "--json"])
+    result = CliRunner().invoke(
+        app, ["--workspace", str(cli_workspace), "inspect", "kinds", "--json"]
+    )
     assert result.exit_code == 0
     payload = json.loads(result.stdout)
     assert payload["schema_version"] == "1"
@@ -1523,7 +1707,13 @@ def test_json_discovery_contains_no_progress_noise(cli_workspace):
 - [ ] Implement error/progress routing, canonical `--json`, explicit profile `--format json|markdown|agent`, conflicting switches invalid. Exit map kernel:
 
 ```python
-exit_code = 2 if error.code in {"INVALID_REQUEST", "BUDGET_TOO_SMALL", "OUTPUT_BUDGET_EXCEEDED"} else 130 if error.code == "CANCELLED" else 1
+exit_code = (
+    2
+    if error.code in {"INVALID_REQUEST", "BUDGET_TOO_SMALL", "OUTPUT_BUDGET_EXCEEDED"}
+    else 130
+    if error.code == "CANCELLED"
+    else 1
+)
 print(error.to_json(), file=sys.stderr)
 raise typer.Exit(exit_code)
 ```
@@ -1552,6 +1742,7 @@ raise typer.Exit(exit_code)
 ```python
 import pytest
 from tychora.contracts.errors import TychoraError
+
 
 def test_removal_is_per_revision_binding(shared_originals):
     f = shared_originals
@@ -1662,6 +1853,7 @@ WHERE family_id IN (SELECT family_id FROM index_families WHERE channel IN ('text
 import pytest
 from tychora.evaluation.metrics import recall, ndcg
 
+
 def test_empty_denominator_is_not_perfect_quality():
     assert recall(set(), set()) is None
     assert recall({"a", "b"}, {"a"}) == 0.5
@@ -1673,8 +1865,10 @@ def test_empty_denominator_is_not_perfect_quality():
 ```python
 import math
 
+
 def recall(expected, returned):
     return len(expected & returned) / len(expected) if expected else None
+
 
 def ndcg(grades, ideal_grades):
     actual = sum((2**g - 1) / math.log2(i + 2) for i, g in enumerate(grades))
@@ -1730,6 +1924,7 @@ p95 = samples[max(0, math.ceil(0.95 * len(samples)) - 1)] if samples else None
 ```python
 from pathlib import Path
 
+
 def test_query_skill_starts_with_discovery_and_preserves_provenance():
     text = Path("src/tychora/resources/skills/query/SKILL.md").read_text()
     assert "discover" in text
@@ -1764,6 +1959,7 @@ tychora --workspace ./knowledge search "How is verification recorded?" --json
 ```python
 from importlib.resources import files
 
+
 def test_installed_package_contains_schema_and_generic_profiles():
     root = files("tychora")
     assert root.joinpath("resources/migrations/0001.sql").is_file()
@@ -1795,8 +1991,10 @@ if path.is_absolute() or ".." in path.parts or not allowed_member(path):
 ```python
 if __name__ == "__main__":
     import multiprocessing
+
     multiprocessing.freeze_support()
     from tychora.interfaces.cli import main
+
     main()
 ```
 

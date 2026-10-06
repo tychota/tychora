@@ -20,9 +20,11 @@ with Tychora.open("knowledge") as kb:
     job = kb.sources.add(source, idempotency_key="manual-v1")
     status = kb.jobs.wait(job.id)
     if status.state == "succeeded":
-        result = kb.search(QueryRequest.from_mapping(
-            {"question": "verification", "modalities": ["lexical"]}
-        ))
+        result = kb.search(
+            QueryRequest.from_mapping(
+                {"question": "verification", "modalities": ["lexical"]}
+            )
+        )
         for segment in result.segments:
             print(segment.text)
 ```
@@ -63,14 +65,20 @@ An asynchronous call uses the same typed request and evidence identity:
 import asyncio
 from tychora import AsyncTychora
 
+
 async def show_evidence() -> None:
     async with AsyncTychora.open("knowledge") as kb:
         await kb.discover({"subject": "kinds"})
-        result = await kb.search({"question": "verification", "modalities": ["lexical"]})
+        result = await kb.search(
+            {"question": "verification", "modalities": ["lexical"]}
+        )
         for segment in result.segments:
             for unit_id in segment.matched_unit_ids:
                 inspection = await kb.evidence.get(unit_id)
-                print(unit_id, inspection.evidence.text if inspection.evidence else None)
+                print(
+                    unit_id, inspection.evidence.text if inspection.evidence else None
+                )
+
 
 asyncio.run(show_evidence())
 ```

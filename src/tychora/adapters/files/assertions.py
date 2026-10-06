@@ -147,9 +147,7 @@ def verify_assertion_closure(
     expected_digest: str | None = None
     indexed = root_ref.media_type != "application/x-ndjson"
     if root_ref.media_type == "application/x-ndjson":
-        links = (
-            ManifestRef(artifact=root_ref, type="assertion", schema_version="1"),
-        )
+        links = (ManifestRef(artifact=root_ref, type="assertion", schema_version="1"),)
     else:
         try:
             root = json.loads(root_payload, object_pairs_hook=_unique)
@@ -171,8 +169,7 @@ def verify_assertion_closure(
                     link.type != "assertion" or link.schema_version != "1"
                     for link in links
                 )
-                or data["leaf_shas"]
-                != [link.artifact.sha256 for link in links]
+                or data["leaf_shas"] != [link.artifact.sha256 for link in links]
                 or len({link.artifact.sha256 for link in links}) != len(links)
                 or not isinstance(expected_count, int)
                 or isinstance(expected_count, bool)

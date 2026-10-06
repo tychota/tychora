@@ -138,10 +138,7 @@ def encode_assertions(assertions: tuple[RelationshipAssertion, ...]) -> bytes:
         line, line_references = _assertion_line(assertion)
         size += len(line)
         references += line_references
-        if (
-            size > MAX_ASSERTION_ARTIFACT_BYTES
-            or references > MAX_ASSERTION_REFERENCES
-        ):
+        if size > MAX_ASSERTION_ARTIFACT_BYTES or references > MAX_ASSERTION_REFERENCES:
             raise ValueError("Assertion artifact exceeds canonical framing capacity")
         lines.append(line)
     return b"".join(lines)
@@ -163,13 +160,10 @@ def partition_assertions(
             raise ValueError("Duplicate assertion observation identity")
         seen.add(assertion.assertion_id)
         line, line_references = _assertion_line(assertion)
-        if (
-            current
-            and (
-                len(current) == MAX_ASSERTIONS_PER_ARTIFACT
-                or current_size + len(line) > MAX_ASSERTION_ARTIFACT_BYTES
-                or current_references + line_references > MAX_ASSERTION_REFERENCES
-            )
+        if current and (
+            len(current) == MAX_ASSERTIONS_PER_ARTIFACT
+            or current_size + len(line) > MAX_ASSERTION_ARTIFACT_BYTES
+            or current_references + line_references > MAX_ASSERTION_REFERENCES
         ):
             parts.append(encode_assertions(tuple(current)))
             current = []
@@ -200,7 +194,9 @@ def assertion_index_document(
     leaf_shas = tuple(link.artifact.sha256 for link in leaves)
     if (
         len(set(leaf_shas)) != len(leaf_shas)
-        or any(link.type != "assertion" or link.schema_version != "1" for link in leaves)
+        or any(
+            link.type != "assertion" or link.schema_version != "1" for link in leaves
+        )
         or any(item.extraction_id != extraction_id for item in assertions)
     ):
         raise ValueError("Assertion index leaves or extraction ownership differ")

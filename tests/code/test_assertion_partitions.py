@@ -68,9 +68,7 @@ def _retained_index(artifacts, assertions):
     assert len(parts) > 1
     leaves = tuple(
         ManifestRef(
-            artifact=artifacts.put_stream(
-                BytesIO(part), "application/x-ndjson"
-            ),
+            artifact=artifacts.put_stream(BytesIO(part), "application/x-ndjson"),
             type="assertion",
             schema_version="1",
         )
@@ -95,7 +93,9 @@ def test_more_than_ten_thousand_sparse_assertions_roundtrip_and_bind_root_decisi
         )
         for part in parts
     )
-    payload = assertion_index_document(bundle.extraction.extraction_id, leaves, assertions)
+    payload = assertion_index_document(
+        bundle.extraction.extraction_id, leaves, assertions
+    )
     root = artifact(payload, "application/json")
     assert required_refs(json.loads(payload), capture_published=True) == frozenset(
         link.artifact.sha256 for link in leaves
@@ -147,9 +147,12 @@ def test_more_than_ten_thousand_sparse_assertions_roundtrip_and_bind_root_decisi
         "confirmed",
         "reviewer",
     )
-    assert corpus.db.execute(
-        "SELECT provenance_artifact_sha FROM assertion_decisions"
-    ).fetchone()[0] == root.sha256
+    assert (
+        corpus.db.execute(
+            "SELECT provenance_artifact_sha FROM assertion_decisions"
+        ).fetchone()[0]
+        == root.sha256
+    )
     with pytest.raises(TychoraError, match="not registered to an extraction"):
         corpus.record_assertion_decision(
             child.assertion_id,
@@ -182,12 +185,8 @@ def test_assertion_index_rejects_duplicate_child_and_cross_child_record(tmp_path
     second_ref = artifacts.put_stream(
         BytesIO(encode_assertions((first, second))), "application/x-ndjson"
     )
-    first_link = ManifestRef(
-        artifact=first_ref, type="assertion", schema_version="1"
-    )
-    second_link = ManifestRef(
-        artifact=second_ref, type="assertion", schema_version="1"
-    )
+    first_link = ManifestRef(artifact=first_ref, type="assertion", schema_version="1")
+    second_link = ManifestRef(artifact=second_ref, type="assertion", schema_version="1")
 
     duplicate_child = canonical_bytes(
         {

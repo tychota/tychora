@@ -228,9 +228,7 @@ def test_resolution_records_smallest_canonical_source_owner():
             byte_end=8,
         ),
     )
-    result = resolve(
-        (reference("missing"),), catalog(source_ranges=source_ranges)
-    )[0]
+    result = resolve((reference("missing"),), catalog(source_ranges=source_ranges))[0]
     assert result.source_unit_id == "inner-unit"
 
 
