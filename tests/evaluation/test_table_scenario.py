@@ -9,6 +9,7 @@ import pytest
 from tests.evaluation.conftest import SyntheticCounter
 from tychora.adapters.docling.parser import DoclingParser
 from tychora.adapters.sqlite.jobs import JobRepository
+from tychora.application.inspection import InspectionService
 from tychora.application.owner import StagedOutput, WorkspaceOwner
 from tychora.application.query import QueryService
 from tychora.configuration.registry import Registry
@@ -18,7 +19,11 @@ from tychora.contracts.composition import DocumentCompositionPlan
 from tychora.contracts.corpus import CollectionRow, RevisionRow, SourceRow, WorkspaceRow
 from tychora.contracts.documents import DocumentRegistration
 from tychora.contracts.identity import canonical_bytes, digest, revision_id, source_id
-from tychora.contracts.operations import ConfigurationVariant, EvaluationRequest
+from tychora.contracts.operations import (
+    ConfigurationVariant,
+    EvaluationRequest,
+    InspectRequest,
+)
 from tychora.contracts.requests import QueryRequest, RequestScope, SourceInput
 from tychora.evaluation.provenance import verify_result_locators
 from tychora.evaluation.runner import EvaluationService
@@ -340,8 +345,35 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
             for locator in row.locators
         )
         assert any(
-            table.unit_id in segment.matched_unit_ids
+            row.unit_id in segment.matched_unit_ids
             for segment in delivered.result.segments
+        )
+        lexical_hits = await owner.run_blocking(
+            lambda: {
+                unit_id
+                for (unit_id,) in owner.db.execute(
+                    "SELECT c.unit_id FROM lexical_fts "
+                    "JOIN lexical_records r ON r.rowid=lexical_fts.rowid "
+                    "JOIN chunks c ON c.chunk_id=r.chunk_id "
+                    "JOIN snapshot_batches b ON b.batch_id=r.batch_id "
+                    "WHERE lexical_fts MATCH 'Needle' AND b.snapshot_id=? "
+                    "AND b.slot='lexical' AND c.unit_id IN (?,?)",
+                    (snapshot_id, table.unit_id, row.unit_id),
+                )
+            },
+            context,
+        )
+        assert lexical_hits == {table.unit_id, row.unit_id}
+        inspected_table = await InspectionService(owner).inspect(
+            InspectRequest(subject="evidence", id=table.unit_id, view="full"),
+            scope,
+            context,
+        )
+        assert inspected_table.evidence is not None
+        assert inspected_table.evidence.text == table.text
+        assert any(
+            locator.type == "document" and locator.physical_page == 2
+            for locator in inspected_table.evidence.locators
         )
         assert row.attributes["source_refs"] == ("#/tables/1",)
         assert any(
@@ -356,13 +388,13 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
         )
         assert verified.valid == verified.total and verified.total > 0
 
-        start = table.text.index("Needle")
+        start = row.text.index("Needle")
         case = {
             "case_id": "table-split",
             "family_key": "table-split",
             "split": "test",
             "benchmark": "integrity",
-            "label_provenance": "declared two-page PDF, parser-shaped table cells, canonical retained table identity",
+            "label_provenance": "declared two-page PDF, parser-shaped table cells, canonical retained table and row identities",
             "query": {
                 "question": "Needle",
                 "modalities": ["lexical"],
@@ -370,10 +402,10 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
             },
             "expected_source_ids": [sid],
             "expected_revision_ids": [registration.revision.revision_id],
-            "expected_unit_ids": [table.unit_id],
+            "expected_unit_ids": [row.unit_id],
             "expected_spans": [
                 {
-                    "unit_id": table.unit_id,
+                    "unit_id": row.unit_id,
                     "char_start": start,
                     "char_end": start + len("Needle"),
                 }

@@ -4,6 +4,7 @@
 *.sqlite3*
 
 dist/
+packaging/release-features.json
 build/
 __pycache__/
 *.py[cod]
