@@ -1,5 +1,19 @@
 import pytest
 
+from tests.helpers.eligibility import eligibility_view
+from tests.retrieval.test_segments import config as base_config
+from tychora.configuration.models import ResolvedConfig
+from tychora.contracts.evidence import EvidenceUnit
+from tychora.contracts.graph import (
+    AssertionPage,
+    EligibilityView,
+    GraphBatchReceipt,
+    GraphBudget,
+    GraphGenerationSpec,
+    GraphManifest,
+)
+from tychora.contracts.relationships import RelationshipAssertion
+from tychora.ports.execution import ExecutionContext
 from tychora.retrieval.admission import LanePolicy, admit
 from tychora.retrieval.fusion import FusedCandidate
 
@@ -46,21 +60,88 @@ def test_missing_canonical_lane_fails_closed():
         admit((_candidate("a", 1),), (), {}, LanePolicy(), lanes={})
 
 
-from types import SimpleNamespace
-
 from tychora.contracts.graph import GraphCandidate, GraphCandidates
-from tychora.ports.execution import ExecutionContext
 from tychora.retrieval.graph import augment
 
 
-class _ResumingGraph:
+def _config(
+    tmp_path, *, structural: str, semantic: bool, candidates: int = 32
+) -> ResolvedConfig:
+    base = base_config(tmp_path)
+    values = base.values
+    return base.model_copy(
+        update={
+            "values": values.model_copy(
+                update={
+                    "limits": values.limits.model_copy(
+                        update={"graph_candidate_limit": candidates}
+                    ),
+                    "retrieval": values.retrieval.model_copy(
+                        update={
+                            "graph": values.retrieval.graph.model_copy(
+                                update={"structural": structural, "semantic": semantic}
+                            )
+                        }
+                    ),
+                }
+            )
+        }
+    )
+
+
+def _view(*seeds: str) -> EligibilityView:
+    view = eligibility_view(
+        context_unit_ids=frozenset(seeds), graph_generation_id="generation"
+    )
+    return view.model_copy(update={"source_unit_ids": frozenset(seeds)})
+
+
+class _TraversalGraph:
+    def begin_generation(self, spec: GraphGenerationSpec) -> str:
+        raise AssertionError("query traversal must not begin generation")
+
+    def sealed_receipt(self, generation_id: str) -> GraphBatchReceipt | None:
+        raise AssertionError("query traversal must not read seal receipt")
+
+    def upsert_batch(
+        self,
+        generation_id: str,
+        assertions: tuple[RelationshipAssertion, ...],
+        units: tuple[EvidenceUnit, ...],
+        ctx: ExecutionContext,
+    ) -> None:
+        raise AssertionError("query traversal must not upsert")
+
+    def seal_generation(
+        self, generation_id: str, expected: GraphManifest, ctx: ExecutionContext
+    ) -> GraphBatchReceipt:
+        raise AssertionError("query traversal must not seal")
+
+    def drop_generation(self, generation_id: str, ctx: ExecutionContext) -> None:
+        raise AssertionError("query traversal must not drop")
+
+    def get_assertions(
+        self,
+        view: EligibilityView,
+        selected_unit_ids: tuple[str, ...],
+        predicates: tuple[str, ...],
+        limits: GraphBudget,
+        ctx: ExecutionContext,
+        *,
+        direction: str | None = None,
+        relation_view: str | None = None,
+    ) -> AssertionPage:
+        raise AssertionError("query traversal must not inspect assertions")
+
+
+class _ResumingGraph(_TraversalGraph):
     def __init__(self):
         self.calls = []
 
-    def structural_context(self, view, seeds, budget, ctx):
-        self.calls.append(("structural", seeds, budget))
+    def structural_context(self, view, seed_unit_ids, limits, ctx):
+        self.calls.append(("structural", seed_unit_ids, limits))
         if len(self.calls) == 1:
-            budget.new_unit_ids.add("target")
+            limits.new_unit_ids.add("target")
             return GraphCandidates(
                 candidates=(
                     GraphCandidate(
@@ -73,12 +154,12 @@ class _ResumingGraph:
                 truncation="candidate_limit",
                 exhausted=False,
             )
-        budget.completed_strategies.add("structural")
+        limits.completed_strategies.add("structural")
         return GraphCandidates(exhausted=True)
 
-    def expand(self, view, seeds, budget, ctx):
-        self.calls.append(("semantic", seeds, budget))
-        budget.completed_strategies.add("semantic")
+    def expand(self, view, seed_unit_ids, limits, ctx):
+        self.calls.append(("semantic", seed_unit_ids, limits))
+        limits.completed_strategies.add("semantic")
         return GraphCandidates(
             enrichments=(
                 GraphCandidate(
@@ -92,19 +173,10 @@ class _ResumingGraph:
         )
 
 
-def test_graph_coordinator_reuses_fixed_seeds_budget_and_merges_enrichment():
+def test_graph_coordinator_reuses_fixed_seeds_budget_and_merges_enrichment(tmp_path):
     graph = _ResumingGraph()
-    config = SimpleNamespace(
-        values=SimpleNamespace(
-            limits=SimpleNamespace(
-                graph_seed_limit=5, graph_candidate_limit=32, graph_work_limit=2000
-            ),
-            retrieval=SimpleNamespace(
-                graph=SimpleNamespace(structural="code_context@1", semantic=True)
-            ),
-        )
-    )
-    view = SimpleNamespace(source_unit_ids={"a", "b"}, graph_generation_id="generation")
+    config = _config(tmp_path, structural="code_context@1", semantic=True)
+    view = _view("a", "b")
     result = augment(
         view,
         (_candidate("a", 1), _candidate("b", 2)),
@@ -121,19 +193,10 @@ def test_graph_coordinator_reuses_fixed_seeds_budget_and_merges_enrichment():
 
 
 @pytest.mark.parametrize("strategy", ["structural", "semantic"])
-def test_graph_ablation_calls_only_selected_strategy(strategy):
+def test_graph_ablation_calls_only_selected_strategy(strategy, tmp_path):
     graph = _ResumingGraph()
-    config = SimpleNamespace(
-        values=SimpleNamespace(
-            limits=SimpleNamespace(
-                graph_seed_limit=5, graph_candidate_limit=32, graph_work_limit=2000
-            ),
-            retrieval=SimpleNamespace(
-                graph=SimpleNamespace(structural="code_context@1", semantic=True)
-            ),
-        )
-    )
-    view = SimpleNamespace(source_unit_ids={"a"}, graph_generation_id="generation")
+    config = _config(tmp_path, structural="code_context@1", semantic=True)
+    view = _view("a")
     first = augment(
         view,
         (_candidate("a", 1),),
@@ -187,16 +250,7 @@ def test_native_graph_composes_seed_and_candidate_eligibility(tmp_path):
     from tests.retrieval.graph_fixture import assertion, sealed_graph, unit
 
     case = sealed_graph(tmp_path, (unit("a"), unit("b")), (assertion("a", "b"),))
-    config = SimpleNamespace(
-        values=SimpleNamespace(
-            limits=SimpleNamespace(
-                graph_seed_limit=5, graph_candidate_limit=32, graph_work_limit=2000
-            ),
-            retrieval=SimpleNamespace(
-                graph=SimpleNamespace(structural="none", semantic=True)
-            ),
-        )
-    )
+    config = _config(tmp_path, structural="none", semantic=True)
     view = case.view(context={"a", "b"}, candidates={"a", "b"})
     result = augment(view, (_candidate("a", 1),), config, case.graph, case.ctx)
     assert [candidate.unit_id for candidate in result.candidates] == ["b"]
@@ -204,14 +258,14 @@ def test_native_graph_composes_seed_and_candidate_eligibility(tmp_path):
     assert result.exhausted
 
 
-class _OrderedGraph:
+class _OrderedGraph(_TraversalGraph):
     def __init__(self):
         self.calls = []
 
-    def structural_context(self, view, seeds, budget, ctx):
+    def structural_context(self, view, seed_unit_ids, limits, ctx):
         self.calls.append("structural")
-        budget.completed_strategies.add("structural")
-        budget.new_unit_ids.update({"s1", "s2"})
+        limits.completed_strategies.add("structural")
+        limits.new_unit_ids.update({"s1", "s2"})
         return GraphCandidates(
             candidates=tuple(
                 GraphCandidate(
@@ -221,10 +275,10 @@ class _OrderedGraph:
             )
         )
 
-    def expand(self, view, seeds, budget, ctx):
+    def expand(self, view, seed_unit_ids, limits, ctx):
         self.calls.append("semantic")
-        budget.completed_strategies.add("semantic")
-        budget.new_unit_ids.update({"m1", "m2"})
+        limits.completed_strategies.add("semantic")
+        limits.new_unit_ids.update({"m1", "m2"})
         return GraphCandidates(
             candidates=tuple(
                 GraphCandidate(
@@ -235,19 +289,10 @@ class _OrderedGraph:
         )
 
 
-def test_graph_targets_interleave_structural_first():
+def test_graph_targets_interleave_structural_first(tmp_path):
     graph = _OrderedGraph()
-    config = SimpleNamespace(
-        values=SimpleNamespace(
-            limits=SimpleNamespace(
-                graph_seed_limit=5, graph_candidate_limit=32, graph_work_limit=2000
-            ),
-            retrieval=SimpleNamespace(
-                graph=SimpleNamespace(structural="code_context@1", semantic=True)
-            ),
-        )
-    )
-    view = SimpleNamespace(source_unit_ids={"a"}, graph_generation_id="generation")
+    config = _config(tmp_path, structural="code_context@1", semantic=True)
+    view = _view("a")
     result = augment(view, (_candidate("a", 1),), config, graph, ExecutionContext())
     assert [candidate.unit_id for candidate in result.candidates] == [
         "s1",
@@ -258,19 +303,10 @@ def test_graph_targets_interleave_structural_first():
     assert graph.calls == ["structural", "semantic"]
 
 
-def test_zero_graph_candidate_allowance_does_not_traverse():
+def test_zero_graph_candidate_allowance_does_not_traverse(tmp_path):
     graph = _OrderedGraph()
-    config = SimpleNamespace(
-        values=SimpleNamespace(
-            limits=SimpleNamespace(
-                graph_seed_limit=5, graph_candidate_limit=0, graph_work_limit=2000
-            ),
-            retrieval=SimpleNamespace(
-                graph=SimpleNamespace(structural="code_context@1", semantic=True)
-            ),
-        )
-    )
-    view = SimpleNamespace(source_unit_ids={"a"}, graph_generation_id="generation")
+    config = _config(tmp_path, structural="code_context@1", semantic=True, candidates=0)
+    view = _view("a")
     result = augment(view, (_candidate("a", 1),), config, graph, ExecutionContext())
     assert graph.calls == []
     assert result.candidates == ()
@@ -389,22 +425,22 @@ def test_native_augment_resumes_structural_after_semantic_releases_slots(tmp_pat
     )
     case = sealed_graph(tmp_path, tuple(units), tuple(relations), policy)
 
-    class TracingGraph:
+    class TracingGraph(_TraversalGraph):
         def __init__(self, native):
             self.native = native
             self.calls = []
 
-        def structural_context(self, view, seed_ids, budget, ctx):
-            page = self.native.structural_context(view, seed_ids, budget, ctx)
+        def structural_context(self, view, seed_unit_ids, limits, ctx):
+            page = self.native.structural_context(view, seed_unit_ids, limits, ctx)
             self.calls.append(
-                ("structural", seed_ids, id(budget), budget.inspected_rows, page)
+                ("structural", seed_unit_ids, id(limits), limits.inspected_rows, page)
             )
             return page
 
-        def expand(self, view, seed_ids, budget, ctx):
-            page = self.native.expand(view, seed_ids, budget, ctx)
+        def expand(self, view, seed_unit_ids, limits, ctx):
+            page = self.native.expand(view, seed_unit_ids, limits, ctx)
             self.calls.append(
-                ("semantic", seed_ids, id(budget), budget.inspected_rows, page)
+                ("semantic", seed_unit_ids, id(limits), limits.inspected_rows, page)
             )
             return page
 
@@ -414,16 +450,7 @@ def test_native_augment_resumes_structural_after_semantic_releases_slots(tmp_pat
         }
         parents = {f"parent-{group}" for group in range(5)}
         view = case.view(context=eligible, candidates=eligible, structural=parents)
-        config = SimpleNamespace(
-            values=SimpleNamespace(
-                limits=SimpleNamespace(
-                    graph_seed_limit=5, graph_candidate_limit=32, graph_work_limit=2000
-                ),
-                retrieval=SimpleNamespace(
-                    graph=SimpleNamespace(structural="code_context@1", semantic=True)
-                ),
-            )
-        )
+        config = _config(tmp_path, structural="code_context@1", semantic=True)
         graph = TracingGraph(case.graph)
         result = augment(
             view,
