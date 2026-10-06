@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import subprocess
 import tarfile
 import zipfile
@@ -48,6 +49,22 @@ def test_hosted_deliverable_uses_same_public_stage_boundary():
     assert "python packaging/build_public_stage.py" in workflow
     assert '--source-root "$RUNNER_TEMP/tychora-public-stage"' in workflow
     assert "uv build --out-dir dist" not in workflow
+
+
+def test_sandbox_build_drops_checkout_virtualenv(tmp_path: Path, monkeypatch):
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    monkeypatch.setenv("VIRTUAL_ENV", str(checkout / ".venv"))
+    monkeypatch.setenv("PYTHONPATH", str(checkout / "src"))
+    monkeypatch.setenv("PATH", str(checkout / ".venv/bin") + os.pathsep + "/usr/bin")
+    script = Path(__file__).parents[2] / "packaging/sandbox_build.py"
+    spec = importlib.util.spec_from_file_location("release_sandbox_build", script)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    env = module._build_env(checkout)
+    assert env["PATH"] == "/usr/bin"
+    assert "VIRTUAL_ENV" not in env and "PYTHONPATH" not in env
 
 
 def test_wheel_rejects_traversal_even_when_member_looks_like_source(tmp_path: Path):

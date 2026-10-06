@@ -14,6 +14,26 @@ def _rule(path: Path) -> str:
     return f"(deny file-read* (subpath {json.dumps(str(path.resolve()))}))"
 
 
+def _build_env(checkout: Path) -> dict[str, str]:
+    allowed = {
+        "PATH",
+        "HOME",
+        "TMPDIR",
+        "LANG",
+        "LC_ALL",
+        "SSL_CERT_FILE",
+        "UV_CACHE_DIR",
+    }
+    env = {key: value for key, value in os.environ.items() if key in allowed}
+    env["PATH"] = os.pathsep.join(
+        part
+        for part in env.get("PATH", "").split(os.pathsep)
+        if part and not Path(part).resolve().is_relative_to(checkout.resolve())
+    )
+    env["PYTHONNOUSERSITE"] = "1"
+    return env
+
+
 def _inside(args: argparse.Namespace) -> None:
     for private in (
         args.checkout / "README.md",
@@ -91,7 +111,7 @@ def main() -> None:
             *forwarded,
         ],
         cwd=args.source,
-        env=dict(os.environ),
+        env=_build_env(args.checkout),
         check=True,
     )
 
