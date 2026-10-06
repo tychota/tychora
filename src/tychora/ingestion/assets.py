@@ -91,8 +91,9 @@ def validate_image(
 class ProxyFactory:
     """One deterministic construction pass over a complete original-unit set."""
 
-    def __init__(self, bundle: ExtractionBundle):
+    def __init__(self, bundle: ExtractionBundle, *, legacy_v1: bool = False):
         self.bundle = bundle
+        self.legacy_v1 = legacy_v1
         self.assets = {asset.asset_id: asset for asset in bundle.assets}
         self.proxy_ids = {proxy.proxy_unit_id for proxy in bundle.proxies}
         self.originals = {
@@ -135,11 +136,12 @@ class ProxyFactory:
             if text != asset.caption or not captions.intersection(required):
                 raise ValueError("Caption copy must retain the linked original caption")
             required.update(captions)
-        required.update(
-            link.unit_id
-            for link in self.bundle.unit_assets
-            if link.asset_id == asset_id and link.role in {"source", "caption"}
-        )
+        if not self.legacy_v1:
+            required.update(
+                link.unit_id
+                for link in self.bundle.unit_assets
+                if link.asset_id == asset_id and link.role in {"source", "caption"}
+            )
         if any(
             uid not in self.originals or self.originals[uid].extraction_id != eid
             for uid in required
@@ -163,7 +165,8 @@ class ProxyFactory:
                     )
                 if owner_id not in required:
                     required.add(owner_id)
-                    pending.append(owner_id)
+                    if not self.legacy_v1:
+                        pending.append(owner_id)
         key = digest(
             "asset-proxy-input-v1",
             asset_id,

@@ -192,6 +192,54 @@ def test_add_emits_stage_before_a_held_job_completes(capsys):
     assert wait_with_progress(HeldJobs(), handle).state == "succeeded"
 
 
+def test_add_wait_default_covers_cold_parser_and_explicit_deadline_is_bounded(
+    monkeypatch,
+):
+    from types import SimpleNamespace
+
+    from tychora.contracts.errors import TychoraError
+    from tychora.interfaces.commands import add
+
+    handle = SimpleNamespace(id="synthetic-job")
+
+    class FinishedJobs:
+        def wait(self, job_id, *, timeout):
+            assert job_id == handle.id and 0 < timeout <= 0.25
+            return SimpleNamespace(state="succeeded")
+
+        def events_after(self, job_id, *, after):
+            return ()
+
+    times = iter((0.0, 31.0))
+    monkeypatch.setattr(add, "monotonic", lambda: next(times))
+    assert add.wait_with_progress(FinishedJobs(), handle).state == "succeeded"
+
+    times = iter((0.0, 31.0))
+    monkeypatch.setattr(add, "monotonic", lambda: next(times))
+    with pytest.raises(TychoraError) as error:
+        add.wait_with_progress(FinishedJobs(), handle, wait_seconds=30.0)
+    assert error.value.code == "DEADLINE_EXCEEDED"
+
+
+@pytest.mark.parametrize("value", [0.0, -1.0, 3600.1, float("nan"), float("inf")])
+def test_add_rejects_invalid_wait_without_submitting_job(tmp_path, value):
+    from tychora.interfaces.cli import app
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "--workspace",
+            str(tmp_path / "workspace"),
+            "add",
+            "--wait-seconds",
+            str(value),
+        ],
+    )
+    assert result.exit_code != 0
+    assert json.loads(result.stderr)["code"] == "INVALID_REQUEST"
+    assert not (tmp_path / "workspace").exists()
+
+
 def test_unknown_inspect_noun_is_canonical_error(tmp_path):
     result = CliRunner().invoke(
         app, ["--workspace", str(tmp_path / "workspace"), "inspect", "unregistered"]

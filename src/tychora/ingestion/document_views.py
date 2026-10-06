@@ -50,7 +50,13 @@ def source_views(
         item: DocumentUnit, kind: str, row: int | None = None, *, original: bool = False
     ) -> str:
         text, parts, separators, locators = represent_document_parts(
-            (item,), revision, eid, source_key, budget, parsed.original_ref.sha256
+            (item,),
+            revision,
+            eid,
+            source_key,
+            budget,
+            parsed.original_ref.sha256,
+            legacy_v1=context.legacy_v1,
         )
         if row is not None:
             cells = cast(Mapping[str, Any], item.raw_item["data"])["table_cells"]

@@ -559,9 +559,7 @@ class SourceService:
             if base is not None and not source.root.vision:
                 selected_base = base
                 can_reuse = await self.owner.run_blocking(
-                    lambda: self._selected_revision(
-                        selected_base, registration.revision.revision_id
-                    ),
+                    lambda: self._selected_revision(selected_base, registration),
                     ctx,
                 )
                 if can_reuse:
@@ -792,14 +790,62 @@ class SourceService:
             scope=scope,
         )
 
-    def _selected_revision(self, base: str, revision: str) -> bool:
-        return (
-            self.owner.db.execute(
-                "SELECT 1 FROM snapshot_members WHERE snapshot_id=? AND revision_id=?",
-                (base, revision),
-            ).fetchone()
-            is not None
+    def _selected_revision(
+        self,
+        base: str,
+        registration: NativeRegistration | DocumentRegistration | CodeRegistration,
+    ) -> bool:
+        row = self.owner.db.execute(
+            "SELECT e.document_artifact_sha FROM snapshot_members m "
+            "JOIN extractions e USING(extraction_id) "
+            "WHERE m.snapshot_id=? AND m.revision_id=?",
+            (base, registration.revision.revision_id),
+        ).fetchone()
+        if row is None:
+            return False
+        if not isinstance(registration, DocumentRegistration):
+            return True
+        artifact_row = self.owner.db.execute(
+            "SELECT size_bytes,media_type,storage_key FROM artifacts "
+            "WHERE artifact_sha=?",
+            (row[0],),
+        ).fetchone()
+        if artifact_row is None:
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Selected document manifest is missing"
+            )
+        from tychora.contracts.artifacts import ArtifactRef
+        from tychora.ingestion.document_records import document_normalizer_fingerprint
+
+        ref = ArtifactRef(
+            sha256=row[0],
+            size_bytes=artifact_row[0],
+            media_type=artifact_row[1],
+            storage_key=artifact_row[2],
         )
+        with self.owner.artifacts.open_verified(ref) as stream:
+            root = json.load(stream)
+        if (
+            not isinstance(root, dict)
+            or root.get("type") != "extraction"
+            or root.get("schema_version") != "1"
+        ):
+            raise TychoraError("INTEGRITY_ERROR", "Selected document manifest differs")
+        data = root.get("data", {})
+        if (
+            not isinstance(data, dict)
+            or data.get("representation") != "document-composition@1"
+        ):
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Selected document composition differs"
+            )
+        plan = data.get("plan")
+        if not isinstance(plan, dict):
+            raise TychoraError("INTEGRITY_ERROR", "Selected document plan differs")
+        kind = self.owner.store.registry.kinds[registration.revision.kind_id]
+        return plan.get(
+            "base_normalizer_fingerprint"
+        ) == document_normalizer_fingerprint(kind, self.owner.store.registry)
 
     def _retained_bundle(
         self,
@@ -874,6 +920,22 @@ class SourceService:
                     != registration.capture.config_sha
                 ):
                     continue
+                from tychora.ingestion.document_records import (
+                    document_normalizer_fingerprint,
+                )
+
+                kind = self.owner.store.registry.kinds[registration.revision.kind_id]
+                current_fingerprint = document_normalizer_fingerprint(
+                    kind, self.owner.store.registry
+                )
+                if parsed.normalizer_fingerprint != current_fingerprint:
+                    if parsed.normalizer_fingerprint == document_normalizer_fingerprint(
+                        kind, self.owner.store.registry, legacy_v1=True
+                    ):
+                        continue
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Retained document normalizer differs"
+                    )
                 bundle = compose_document(
                     parsed,
                     self.owner.store.registry,

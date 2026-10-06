@@ -282,9 +282,13 @@ def build_composed_document(
     registry: Registry,
     plan: DocumentCompositionPlan,
     inputs: Mapping[str, bytes],
+    *,
+    legacy_v1: bool = False,
 ) -> ComposedDocument:
     """Pure build from validated raw SDK facts and explicit retained derived inputs."""
-    context = DocumentNormalizationContext.bind(parsed, registry, plan)
+    context = DocumentNormalizationContext.bind(
+        parsed, registry, plan, legacy_v1=legacy_v1
+    )
     plan = context.plan
     references = _input_references(parsed, plan)
     for ref in references.values():
@@ -445,7 +449,7 @@ def build_composed_document(
                 }
             )
         )
-    factory = ProxyFactory(bundle)
+    factory = ProxyFactory(bundle, legacy_v1=legacy_v1)
     proxies: list[ProxyRecord] = []
 
     def keep_proxy(proxy: ProxyRecord) -> None:
@@ -679,7 +683,15 @@ def replay_composed_document(
     plan = DocumentCompositionPlan.model_validate_json(
         canonical_bytes(root["data"]["plan"])
     )
-    result = build_composed_document(parsed, registry, plan, inputs)
+    from .document_records import document_normalizer_fingerprint
+
+    kind = cast(Mapping[str, Any], registry.kinds[parsed.registration.revision.kind_id])
+    legacy_v1 = parsed.normalizer_fingerprint == document_normalizer_fingerprint(
+        kind, registry, legacy_v1=True
+    )
+    result = build_composed_document(
+        parsed, registry, plan, inputs, legacy_v1=legacy_v1
+    )
     if (
         result.manifest_ref != manifest_ref
         or result.payloads[manifest_ref.sha256] != manifest

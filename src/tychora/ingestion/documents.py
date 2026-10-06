@@ -57,7 +57,7 @@ def normalize_document(
 
         return normalize_document_records(parsed, revision_id, registry)
     if parsed.normalizer_fingerprint != digest(
-        "docling-normalizer-v1", kind, registry.schema_digests
+        "docling-normalizer-v2", kind, registry.schema_digests
     ):
         raise TychoraError("INTEGRITY_ERROR", "Document normalizer fingerprint differs")
     eid = extraction_id(
@@ -138,7 +138,9 @@ def normalize_standalone_image(
     kind = cast(Mapping[str, Any], registry.kinds[registration.revision.kind_id])
     from .document_records import document_normalizer_fingerprint
 
-    if parsed.normalizer_fingerprint != document_normalizer_fingerprint(kind, registry):
+    if parsed.normalizer_fingerprint != document_normalizer_fingerprint(
+        kind, registry, legacy_v1=context.legacy_v1 if context else False
+    ):
         raise TychoraError(
             "INTEGRITY_ERROR", "Standalone image normalizer binding differs"
         )

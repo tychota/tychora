@@ -677,6 +677,265 @@ def test_composed_replay_requires_retained_derivations(document_record_case):
 
 
 @pytest.mark.qualification
+def test_legacy_document_replay_keeps_identity_but_new_normalizer_separates_it(
+    document_record_case,
+):
+    from hashlib import sha256
+
+    from tychora.contracts.composition import DocumentCompositionPlan
+    from tychora.contracts.extraction import ExtractionArtifact, extraction_document
+    from tychora.contracts.identity import canonical_bytes, digest
+    from tychora.ingestion.composition import (
+        build_composed_document,
+        replay_composed_document,
+    )
+    from tychora.ingestion.document_records import document_normalizer_fingerprint
+
+    source = document_record_case(
+        "standard@1", "pdf", source_builder=create_table_source, commit=False
+    )
+    parsed = source.parsed
+    kind = source.registry.kinds[parsed.registration.revision.kind_id]
+    old_fingerprint = digest(
+        "docling-record-normalizer-v1", kind, source.registry.schema_digests
+    )
+    assert document_normalizer_fingerprint(kind, source.registry) != old_fingerprint
+    old_data = parsed.model_dump(
+        mode="json", exclude={"raw_document_ref", "document_json"}
+    )
+    old_data["normalizer_fingerprint"] = old_fingerprint
+    old_manifest = extraction_document(old_data)
+    old_sha = sha256(old_manifest).hexdigest()
+    old_parsed = ExtractionArtifact.model_validate_json(
+        canonical_bytes(
+            {
+                **old_data,
+                "document_json": parsed.document_json,
+                "raw_document_ref": {
+                    "sha256": old_sha,
+                    "storage_key": old_sha,
+                    "size_bytes": len(old_manifest),
+                    "media_type": "application/json",
+                },
+            }
+        )
+    )
+    old_plan = DocumentCompositionPlan(base_normalizer_fingerprint=old_fingerprint)
+    current_plan = DocumentCompositionPlan(
+        base_normalizer_fingerprint=parsed.normalizer_fingerprint
+    )
+    inputs = composed_inputs(source)
+    old = build_composed_document(
+        old_parsed, source.registry, old_plan, inputs, legacy_v1=True
+    )
+    current = build_composed_document(parsed, source.registry, current_plan, inputs)
+    assert (
+        old.bundle.extraction.extraction_id != current.bundle.extraction.extraction_id
+    )
+    manifest = old.payloads[old.manifest_ref.sha256]
+    assert (
+        replay_composed_document(
+            manifest,
+            old.manifest_ref,
+            old_parsed,
+            source.registry,
+            {**inputs, **old.payloads},
+        ).bundle
+        == old.bundle
+    )
+    with pytest.raises(ValueError):
+        replay_composed_document(
+            manifest,
+            old.manifest_ref,
+            old_parsed.model_copy(update={"normalizer_fingerprint": "0" * 64}),
+            source.registry,
+            {**inputs, **old.payloads},
+        )
+
+
+@pytest.mark.qualification
+def test_valid_legacy_document_backup_restores_exact_snapshot_and_rejects_tampering(
+    document_record_case, tmp_path
+):
+    import asyncio
+    import json
+    import os
+    import sqlite3
+    from hashlib import sha256
+    from io import BytesIO
+    from pathlib import Path
+
+    from tychora.application.backup import BackupService
+    from tychora.application.restore import RestoreService
+    from tychora.application.sources import SourceService
+    from tychora.contracts.composition import DocumentCompositionPlan
+    from tychora.contracts.errors import TychoraError
+    from tychora.contracts.extraction import ExtractionArtifact, extraction_document
+    from tychora.contracts.identity import canonical_bytes, digest
+    from tychora.contracts.requests import RequestScope, SourceInput
+    from tychora.indexing.coordinator import ProjectionCoordinator
+    from tychora.ingestion.composition import build_composed_document
+    from tychora.ports.execution import ExecutionContext
+
+    scope = RequestScope(
+        principal_id="owner",
+        collection_ids=frozenset({"00000000-0000-4000-8000-000000000010"}),
+        access_ceiling=3,
+        uses=frozenset({"lookup"}),
+        capabilities=frozenset({"manage", "read", "write"}),
+    )
+    source = document_record_case(
+        "standard@1",
+        "docx",
+        source_builder=create_table_source,
+        commit=False,
+        scope=scope,
+    )
+    parsed = source.parsed
+    kind = source.registry.kinds[parsed.registration.revision.kind_id]
+    old_data = parsed.model_dump(
+        mode="json", exclude={"raw_document_ref", "document_json"}
+    )
+    old_data["normalizer_fingerprint"] = digest(
+        "docling-record-normalizer-v1", kind, source.registry.schema_digests
+    )
+    raw = extraction_document(old_data)
+    ref = source.owner.run_blocking_sync(
+        lambda: source.owner.artifacts.put_stream(BytesIO(raw), "application/json"),
+        source.ctx,
+    )
+    old_parsed = ExtractionArtifact.model_validate_json(
+        canonical_bytes(
+            {
+                **old_data,
+                "document_json": parsed.document_json,
+                "raw_document_ref": ref.model_dump(mode="json"),
+            }
+        )
+    )
+    old = build_composed_document(
+        old_parsed,
+        source.registry,
+        DocumentCompositionPlan(
+            base_normalizer_fingerprint=old_parsed.normalizer_fingerprint
+        ),
+        composed_inputs(source),
+        legacy_v1=True,
+    )
+    refs = {item.sha256: item for item in old.bundle.artifacts}
+    for sha, payload in old.payloads.items():
+        source.owner.run_blocking_sync(
+            lambda sha=sha, payload=payload: source.owner.artifacts.put_stream(
+                BytesIO(payload), refs[sha].media_type
+            ),
+            source.ctx,
+        )
+    source.owner.run_blocking_sync(
+        lambda: source.store.commit_extraction(old.bundle), source.ctx
+    )
+    archive = tmp_path / "legacy-archive"
+    BackupService(source.owner).export(archive, scope, ctx=ExecutionContext())
+
+    class _Counter:
+        model = "synthetic-upgrade-counter"
+        tokenizer_id = "cl100k_base"
+
+        def count(self, text):
+            return len(text)
+
+    service = SourceService(
+        source.owner,
+        ProjectionCoordinator(
+            store=source.owner.store,
+            artifacts=source.owner.artifacts,
+            config=source.owner.config,
+            counter=_Counter(),
+        ),
+        docling_models=Path(os.environ["TYCHORA_TEST_DOCLING_MODELS"]),
+    )
+    assert (
+        source.owner.run_blocking_sync(
+            lambda: service._retained_bundle(parsed.registration, ExecutionContext()),
+            source.ctx,
+        )
+        is None
+    )
+    same_source = SourceInput.from_mapping(
+        {
+            "type": "file",
+            "path": str(source.owner.path.parent / "source.docx"),
+            "source_key": parsed.registration.source.source_key,
+            "collection_id": parsed.registration.collection.collection_id,
+            "kind": parsed.registration.revision.kind_id,
+            "format": "docx",
+            "metadata": dict(parsed.registration.revision.metadata_json),
+        }
+    )
+    upgraded = asyncio.run(service.add(same_source, scope))
+    assert upgraded.state == "succeeded"
+    current_rows = source.owner.run_blocking_sync(
+        lambda: source.owner.db.execute(
+            "SELECT extraction_id FROM extractions WHERE revision_id=?",
+            (parsed.registration.revision.revision_id,),
+        ).fetchall(),
+        source.ctx,
+    )
+    assert len(current_rows) == 2
+    assert {row[0] for row in current_rows} > {old.bundle.extraction.extraction_id}
+
+    def selected_version_gate():
+        base = source.owner.store.active_snapshot_id()
+        assert base is not None
+        assert service._selected_revision(base, parsed.registration)
+        source.owner.db.execute("SAVEPOINT legacy_selection_probe")
+        try:
+            source.owner.db.execute(
+                "UPDATE snapshot_members SET extraction_id=? "
+                "WHERE snapshot_id=? AND revision_id=?",
+                (
+                    old.bundle.extraction.extraction_id,
+                    base,
+                    parsed.registration.revision.revision_id,
+                ),
+            )
+            assert not service._selected_revision(base, parsed.registration)
+        finally:
+            source.owner.db.execute("ROLLBACK TO legacy_selection_probe")
+            source.owner.db.execute("RELEASE legacy_selection_probe")
+
+    source.owner.run_blocking_sync(selected_version_gate, source.ctx)
+    RestoreService().import_backup(
+        archive, tmp_path / "legacy-restored", scope, ExecutionContext()
+    )
+    restored = sqlite3.connect(tmp_path / "legacy-restored/corpus.sqlite3")
+    try:
+        assert restored.execute("SELECT extraction_id FROM extractions").fetchone()[
+            0
+        ] == (old.bundle.extraction.extraction_id)
+    finally:
+        restored.close()
+    archive_db = sqlite3.connect(archive / "corpus.sqlite3")
+    try:
+        archive_db.execute(
+            "UPDATE evidence_units SET text='tampered' WHERE unit_id=?",
+            (old.bundle.units[0].unit_id,),
+        )
+        archive_db.commit()
+    finally:
+        archive_db.close()
+    receipt_path = archive / "backup-receipt.json"
+    receipt = json.loads(receipt_path.read_bytes())
+    receipt["sqlite_sha256"] = sha256(
+        (archive / "corpus.sqlite3").read_bytes()
+    ).hexdigest()
+    receipt_path.write_bytes(canonical_bytes(receipt))
+    with pytest.raises(TychoraError, match="Retained document source mapping differs"):
+        RestoreService().import_backup(
+            archive, tmp_path / "legacy-tampered", scope, ExecutionContext()
+        )
+
+
+@pytest.mark.qualification
 def test_composition_plan_and_manifest_forgery_fail_before_commit(document_record_case):
     import json
 

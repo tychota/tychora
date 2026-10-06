@@ -17,6 +17,7 @@ class DocumentNormalizationContext:
     raw_manifest_sha: str
     source_fingerprint: str
     normalizer_fingerprint: str
+    legacy_v1: bool = False
 
     @classmethod
     def bind(
@@ -24,6 +25,8 @@ class DocumentNormalizationContext:
         parsed: ExtractionArtifact,
         registry: Registry,
         plan: DocumentCompositionPlan,
+        *,
+        legacy_v1: bool = False,
     ):
         from .document_records import document_normalizer_fingerprint
 
@@ -39,7 +42,7 @@ class DocumentNormalizationContext:
         if (
             registry.registry_digest != parsed.registry_digest
             or parsed.normalizer_fingerprint
-            != document_normalizer_fingerprint(kind, registry)
+            != document_normalizer_fingerprint(kind, registry, legacy_v1=legacy_v1)
             or plan.base_normalizer_fingerprint != parsed.normalizer_fingerprint
         ):
             raise ValueError("Composition base normalizer or registry binding differs")
@@ -60,10 +63,10 @@ class DocumentNormalizationContext:
         fingerprint = digest(
             "document-composition-normalizer-v1", source, plan.semantic_data()
         )
-        return cls(plan, parsed.raw_document_ref.sha256, source, fingerprint)
+        return cls(plan, parsed.raw_document_ref.sha256, source, fingerprint, legacy_v1)
 
     def verify(self, parsed: ExtractionArtifact, registry: Registry) -> None:
-        if self != self.bind(parsed, registry, self.plan):
+        if self != self.bind(parsed, registry, self.plan, legacy_v1=self.legacy_v1):
             raise ValueError(
                 "Composition context differs from verified original inputs"
             )

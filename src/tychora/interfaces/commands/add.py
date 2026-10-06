@@ -2,6 +2,7 @@
 
 # ruff: noqa: B008 - Typer declares CLI options in function defaults.
 
+from math import isfinite
 from pathlib import Path
 from time import monotonic
 
@@ -10,16 +11,28 @@ import typer
 from ._common import client, emit, fail, load_json, progress, selected_format, state
 
 
-def wait_with_progress(jobs, handle):
-    """Poll one bounded job while printing each durable stage exactly once."""
+def _validate_wait_seconds(wait_seconds: float) -> None:
     from tychora.contracts.errors import TychoraError
 
-    deadline = monotonic() + 30.0
+    if not isfinite(wait_seconds) or not 0 < wait_seconds <= 3600:
+        raise TychoraError(
+            "INVALID_REQUEST", "--wait-seconds must be finite and within (0, 3600]."
+        )
+
+
+def wait_with_progress(jobs, handle, *, wait_seconds: float = 180.0):
+    """Poll one bounded caller wait while printing each durable stage once."""
+    from tychora.contracts.errors import TychoraError
+
+    _validate_wait_seconds(wait_seconds)
+    deadline = monotonic() + wait_seconds
     cursor = 0
     while True:
         remaining = deadline - monotonic()
         if remaining <= 0:
-            raise TychoraError("DEADLINE_EXCEEDED", "Source job is still running.")
+            raise TychoraError(
+                "DEADLINE_EXCEEDED", f"Wait for source job {handle.id} expired."
+            )
         status = jobs.wait(handle.id, timeout=min(0.25, remaining))
         while True:
             events = jobs.events_after(handle.id, after=cursor)
@@ -50,6 +63,11 @@ def register(app: typer.Typer) -> None:
         collection: str = typer.Option(
             "default", help="Granted collection ID or default."
         ),
+        wait_seconds: float = typer.Option(
+            180.0,
+            "--wait-seconds",
+            help="Maximum caller wait for the job (up to 3600 seconds).",
+        ),
         json_output: bool = typer.Option(False, "--json"),
     ) -> None:
         """Add a file, folder, or repository. Inspect kinds before choosing metadata."""
@@ -58,6 +76,7 @@ def register(app: typer.Typer) -> None:
         options = state(ctx)
         try:
             output_format = selected_format(options, json_output)
+            _validate_wait_seconds(wait_seconds)
             if request_file:
                 if path is not None or kind or metadata_file or sidecar:
                     raise TychoraError(
@@ -87,7 +106,7 @@ def register(app: typer.Typer) -> None:
             with client(options) as kb:
                 handle = kb.sources.add(source)
                 progress(f"Accepted {handle.operation} job {handle.id}")
-                status = wait_with_progress(kb.jobs, handle)
+                status = wait_with_progress(kb.jobs, handle, wait_seconds=wait_seconds)
                 emit(status, format=output_format)
                 if status.state != "succeeded":
                     raise TychoraError(

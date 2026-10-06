@@ -34,11 +34,14 @@ from .documents import assemble_document_bundle
 from .normalize import DEFAULT_LABELS, RECORD_FIELDS, RECORD_TYPES
 
 
-def document_normalizer_fingerprint(kind: Mapping[str, Any], registry: Registry) -> str:
+def document_normalizer_fingerprint(
+    kind: Mapping[str, Any], registry: Registry, *, legacy_v1: bool = False
+) -> str:
+    version = "v1" if legacy_v1 else "v2"
     version = (
-        "docling-normalizer-v1"
+        f"docling-normalizer-{version}"
         if kind["normalizer"] == "structured_sections@1"
-        else "docling-record-normalizer-v1"
+        else f"docling-record-normalizer-{version}"
     )
     return digest(version, kind, registry.schema_digests)
 
@@ -311,7 +314,9 @@ def normalize_document_records(
         raise TychoraError(
             "CAPABILITY_MISSING", "Requested rich-document normalizer is not qualified"
         )
-    if parsed.normalizer_fingerprint != document_normalizer_fingerprint(kind, registry):
+    if parsed.normalizer_fingerprint != document_normalizer_fingerprint(
+        kind, registry, legacy_v1=context.legacy_v1 if context else False
+    ):
         raise TychoraError(
             "INTEGRITY_ERROR", "Document semantic normalizer fingerprint differs"
         )
@@ -345,6 +350,7 @@ def normalize_document_records(
             registration.source.source_key,
             budget,
             parsed.original_ref.sha256,
+            legacy_v1=context.legacy_v1 if context else False,
         )
         uid = unit_id(eid, group.native_ref, ordinal, sha256(text.encode()).hexdigest())
         for item in group.originals:
