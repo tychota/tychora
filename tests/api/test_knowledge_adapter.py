@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from examples.knowledge_adapter import retrieve_segments
+from tychora.contracts.evidence import Citation
 
 
 def test_visual_metadata_is_limited_to_cited_segment():
@@ -13,9 +14,7 @@ def test_visual_metadata_is_limited_to_cited_segment():
             source_id="source",
             revision_id="revision",
             extraction_id="extraction",
-            citations=(
-                SimpleNamespace(asset_id="asset" if cited else None, locators=()),
-            ),
+            citations=(Citation(asset_id="asset" if cited else None, locators=()),),
             role="evidence",
         )
 
@@ -37,5 +36,9 @@ def test_visual_metadata_is_limited_to_cited_segment():
     first, second = retrieve_segments(kb, "synthetic question")
     assert first["metadata"]["asset_ids"] == ["asset"]
     assert first["metadata"]["derived"] == ["proxy"]
+    assert first["metadata"]["citations"] == [
+        Citation(asset_id="asset").model_dump(mode="json")
+    ]
     assert second["metadata"]["asset_ids"] == []
     assert second["metadata"]["derived"] == []
+    assert second["metadata"]["citations"] == [Citation().model_dump(mode="json")]

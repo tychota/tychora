@@ -57,7 +57,7 @@ Configured `env:NAME` credentials resolve when the first authorized remote opera
 
 The base installation can import and run lexical-only local workflows without Pillow. Image decoding loads Pillow only at an image operation and reports `CAPABILITY_MISSING` when the optional documents extra is absent.
 
-`connect` uses the authenticated loopback transport. `evaluations.run` and `management.run` execute their registered operations under management scope. Unsupported optional channels still return typed capability errors; discovery distinguishes installed packages from usable configured channels.
+`connect` uses the authenticated loopback transport. `evaluations.run` requires management scope; `management.run` permits read-only health under read scope and requires management scope for mutation or deletion resume. Unsupported optional channels still return typed capability errors; discovery distinguishes installed packages from usable configured channels.
 
 An asynchronous call uses the same typed request and evidence identity:
 

@@ -1,14 +1,16 @@
 """Real SQLite transactions with verified synthetic artifact bytes."""
 
 from collections.abc import Mapping
+from contextlib import AbstractContextManager
 from hashlib import sha256
-from typing import cast
+from typing import BinaryIO, cast
 
 import pytest
 
 from tests.helpers.corpus import artifact, reader, registry, seed_bundle
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
+from tychora.contracts.artifacts import ArtifactRef, ArtifactStat
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.corpus import (
     AssetProxyRow,
@@ -621,9 +623,24 @@ def test_artifact_reads_are_outside_write_transactions(corpus):
     delegate = reader()
 
     class RecordingReader:
-        def open_verified(self, ref):
+        def open_verified(self, ref: ArtifactRef) -> AbstractContextManager[BinaryIO]:
             assert not corpus.db.in_transaction
             return delegate.open_verified(ref)
+
+        def put_stream(self, stream: BinaryIO, media_type: str) -> ArtifactRef:
+            return delegate.put_stream(stream, media_type)
+
+        def stat(self, ref: ArtifactRef) -> ArtifactStat:
+            return delegate.stat(ref)
+
+        def pin_payloads(self, shas: frozenset[str]) -> AbstractContextManager[None]:
+            return delegate.pin_payloads(shas)
+
+        def payload_guard(self, sha: str) -> AbstractContextManager[None]:
+            return delegate.payload_guard(sha)
+
+        def payload_is_pinned(self, sha: str) -> bool:
+            return delegate.payload_is_pinned(sha)
 
     corpus.artifacts = RecordingReader()
     b = assertion_bundle([VALID_ASSERTION])

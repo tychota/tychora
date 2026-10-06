@@ -99,9 +99,12 @@ def test_future_operations_check_their_own_capability_before_reporting_unavailab
     with Tychora.open(
         tmp_path / "knowledge", scope=read_only, token_counter=OutputCounter()
     ) as kb:
-        with pytest.raises(TychoraError) as health:
-            kb.management.run({"operation": "health"})
-        assert health.value.code == "CAPABILITY_MISSING"
+        health = kb.management.run({"operation": "health"})
+        assert health.plan.operation == "health"
+        assert health.recovery is not None
+        with pytest.raises(TychoraError) as resume:
+            kb.management.run({"operation": "health", "resume_pending_deletions": True})
+        assert resume.value.code == "FORBIDDEN_SCOPE"
         with pytest.raises(TychoraError) as remove:
             kb.management.run({"operation": "remove", "source_ids": ["source"]})
         assert remove.value.code == "FORBIDDEN_SCOPE"
