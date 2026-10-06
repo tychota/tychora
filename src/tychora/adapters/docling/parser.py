@@ -118,10 +118,9 @@ def _image_decode_guard() -> Iterator[None]:
 
 
 def _check_pdf_image_capacity(path: Path) -> None:
-    """Inspect 1x canvases and nested image objects without rendering/decoding.
+    """Inspect canvases, image objects and separately referenced masks predecode.
 
-    PDFium exposes image-object dimensions, but not separately referenced mask
-    dimensions here. This is a pixel preflight, not a total native-memory bound.
+    This is a per-image pixel preflight, not a total native-memory bound.
     """
     import pypdfium2 as pdfium
     import pypdfium2.raw as pdfium_raw
@@ -139,6 +138,7 @@ def _check_pdf_image_capacity(path: Path) -> None:
                 "PDF image or canvas exceeds the predecode pixel limit",
             )
 
+    _check_pdf_mask_capacity(path, check_size)
     work = 0
     try:
         with pdfium.PdfDocument(path) as document:
@@ -168,6 +168,132 @@ def _check_pdf_image_capacity(path: Path) -> None:
     except (pdfium.PdfiumError, OSError, ValueError, OverflowError) as exc:
         raise TychoraError(
             "INVALID_REQUEST", "Cannot inspect PDF image dimensions before decoding"
+        ) from exc
+
+
+def _check_pdf_mask_capacity(path: Path, check_size) -> None:
+    """Walk PDF XObject dictionaries without decoding image streams."""
+    try:
+        from pypdf import PdfReader, apply_configuration
+        from pypdf.errors import PyPdfError
+        from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject
+    except ImportError as exc:
+        raise TychoraError(
+            "CAPABILITY_MISSING",
+            "PDF mask preflight requires the documents extra (pypdf==6.19.0).",
+        ) from exc
+
+    work = 0
+    active: set[tuple[int, int] | int] = set()
+    complete: set[tuple[int, int] | int] = set()
+
+    def malformed() -> NoReturn:
+        raise TychoraError(
+            "INVALID_REQUEST", "Cannot verify PDF image mask metadata before decoding"
+        )
+
+    def resolve(value):
+        nonlocal work
+        work += 1
+        if work > MAX_ITEMS:
+            malformed()
+        if isinstance(value, IndirectObject):
+            return value.get_object()
+        return value
+
+    def walk(value, depth: int) -> None:
+        if depth > 128:
+            malformed()
+        key = (
+            (value.idnum, value.generation)
+            if isinstance(value, IndirectObject)
+            else id(value)
+        )
+        if key in active:
+            malformed()
+        if key in complete:
+            return
+        active.add(key)
+        try:
+            obj = resolve(value)
+            if not isinstance(obj, DictionaryObject):
+                malformed()
+            subtype = obj.get("/Subtype")
+            if subtype == "/Image":
+                for name in ("/SMask", "/Mask"):
+                    mask = obj.get(name)
+                    if mask is None or mask == "/None":
+                        continue
+                    mask = resolve(mask)
+                    if name == "/Mask" and isinstance(mask, ArrayObject):
+                        continue  # Color-key mask has no independent image size.
+                    if (
+                        not isinstance(mask, DictionaryObject)
+                        or mask.get("/Subtype") != "/Image"
+                    ):
+                        malformed()
+                    width, height = (
+                        resolve(mask.get("/Width")),
+                        resolve(mask.get("/Height")),
+                    )
+                    if not isinstance(width, int) or not isinstance(height, int):
+                        malformed()
+                    check_size(width, height)
+                    # Follow mask-of-mask references too, including malformed cycles.
+                    walk(obj.get(name), depth + 1)
+            elif subtype == "/Form":
+                resources = resolve(obj.get("/Resources"))
+                if not isinstance(resources, DictionaryObject):
+                    malformed()
+                xobjects = resolve(resources.get("/XObject", DictionaryObject()))
+                if not isinstance(xobjects, DictionaryObject):
+                    malformed()
+                for child in xobjects.values():
+                    walk(child, depth + 1)
+            else:
+                malformed()
+        finally:
+            active.remove(key)
+        complete.add(key)
+
+    try:
+        with (
+            path.open("rb") as pdf_stream,
+            apply_configuration(
+                maximum_declared_stream_length=64 * 1024 * 1024,
+                zlib_maximum_output_length=64 * 1024 * 1024,
+                array_based_stream_maximum_output_length=64 * 1024 * 1024,
+                page_tree_maximum_entries=MAX_ITEMS,
+                page_tree_maximum_depth=128,
+            ),
+        ):
+            reader = PdfReader(pdf_stream, strict=True)
+            if len(reader.pages) > MAX_ITEMS:
+                malformed()
+            for page in reader.pages:
+                resources = resolve(page.get("/Resources"))
+                if resources is None:
+                    continue
+                if not isinstance(resources, DictionaryObject):
+                    malformed()
+                xobjects = resolve(resources.get("/XObject", DictionaryObject()))
+                if not isinstance(xobjects, DictionaryObject):
+                    malformed()
+                for obj in xobjects.values():
+                    walk(obj, 0)
+    except TychoraError:
+        raise
+    except (
+        PyPdfError,
+        OSError,
+        ValueError,
+        TypeError,
+        KeyError,
+        IndexError,
+        RecursionError,
+    ) as exc:
+        raise TychoraError(
+            "INVALID_REQUEST", "Cannot verify PDF image mask metadata before decoding"
         ) from exc
 
 

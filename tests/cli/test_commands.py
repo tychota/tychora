@@ -490,13 +490,13 @@ async def test_generic_http_inspect_roundtrips_binary_original(tmp_path):
             return revision_id
 
         revision_id = await owner.run_blocking(install_binary, ExecutionContext())
-        app = create_app(
+        http_app = create_app(
             owner,
             kb._workspace.services,
             LocalAuth({"owner": owner.scope}, authority="127.0.0.1:8765"),
         )
         async with AsyncClient(
-            transport=ASGITransport(app=app),
+            transport=ASGITransport(app=http_app),
             base_url="http://127.0.0.1:8765",
             headers={"Authorization": "Bearer owner"},
         ) as http:
@@ -511,6 +511,66 @@ async def test_generic_http_inspect_roundtrips_binary_original(tmp_path):
         assert response.status_code == 200, response.text
         result = InspectionResult.model_validate_json(response.content)
         assert result.payload == payload
+    cli = CliRunner().invoke(
+        app,
+        [
+            "--workspace",
+            str(tmp_path / "workspace"),
+            "inspect",
+            "revisions",
+            revision_id,
+            "--original",
+            "--json",
+        ],
+    )
+    assert cli.exit_code == 0, cli.stderr
+    cli_data = json.loads(cli.stdout)
+    assert cli_data.pop("schema_version") == "1"
+    assert InspectionResult.model_validate_json(json.dumps(cli_data)).payload == payload
+    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+        source_id = await kb._workspace.owner.run_blocking(
+            lambda: kb._workspace.owner.db.execute(
+                "SELECT source_id FROM revisions WHERE revision_id=?", (revision_id,)
+            ).fetchone()[0],
+            ExecutionContext(),
+        )
+        kb.management.run({"operation": "remove", "source_ids": [source_id]})
+        kb.management.run(
+            {
+                "operation": "purge-originals",
+                "source_id": source_id,
+                "revision_ids": [revision_id],
+                "confirm_original_removal": True,
+            }
+        )
+    tombstoned = CliRunner().invoke(
+        app,
+        [
+            "--workspace",
+            str(tmp_path / "workspace"),
+            "inspect",
+            "revisions",
+            revision_id,
+            "--original",
+            "--json",
+        ],
+    )
+    assert tombstoned.exit_code != 0
+    assert json.loads(tombstoned.stderr)["code"] == "ORIGINAL_REMOVED"
+    missing = CliRunner().invoke(
+        app,
+        [
+            "--workspace",
+            str(tmp_path / "workspace"),
+            "inspect",
+            "revisions",
+            "missing",
+            "--original",
+            "--json",
+        ],
+    )
+    assert missing.exit_code != 0
+    assert json.loads(missing.stderr)["code"] == "FORBIDDEN_SCOPE"
 
 
 @pytest.mark.asyncio

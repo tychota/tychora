@@ -9,10 +9,9 @@ from io import BytesIO
 from types import SimpleNamespace
 from uuid import UUID
 
+import pytest
 from httpx import ASGITransport, AsyncClient
 from PIL import Image, ImageDraw, ImageFont
-from reportlab.lib.utils import ImageReader
-from reportlab.pdfgen import canvas
 from typer.testing import CliRunner
 
 from tychora import Tychora
@@ -37,6 +36,7 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
     tmp_path, monkeypatch
 ):
     from tychora.adapters.vision import anthropic
+    from tychora.contracts.errors import TychoraError
 
     cache = os.environ["TYCHORA_TEST_MODEL_CACHE"]
     monkeypatch.setenv("TYCHORA_MODEL_CACHE", cache)
@@ -64,6 +64,7 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
         "metadata": {"title": "Diagram", "publisher": "Example Team", "edition": "1"},
     }
     sent = []
+    fail_next = [False]
 
     class MockMessages:
         def create(self, **kwargs):
@@ -71,6 +72,8 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
             encoded = base64.b64decode(content[0]["source"]["data"])
             with Image.open(BytesIO(encoded)) as crop:
                 sent.append((crop.width, crop.height, len(encoded), content[1]["text"]))
+            if fail_next[0]:
+                raise RuntimeError("synthetic selected-vision transport interruption")
             return SimpleNamespace(
                 stop_reason="end_turn",
                 content=[
@@ -156,12 +159,31 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
         assert kb.jobs.wait(still_denied.id).state == "failed"
         assert sent == []
     with Tychora.open(workspace, config=config, token_counter=Counter()) as kb:
+        fail_next[0] = True
+        interrupted = kb.sources.add(selected)
+        interrupted_status = kb.jobs.wait(interrupted.id)
+        assert interrupted_status.state == "succeeded", (interrupted_status, sent)
+        failed_calls = len(sent)
+        assert failed_calls >= 1
+        assert (
+            kb._workspace.bridge.call(
+                kb._workspace.owner.run_blocking(
+                    lambda: kb._workspace.owner.db.execute(
+                        "SELECT count(*) FROM asset_proxies"
+                    ).fetchone()[0],
+                    ExecutionContext(),
+                )
+            )
+            == 0
+        )
+    fail_next[0] = False
+    with Tychora.open(workspace, config=config, token_counter=Counter()) as kb:
         second = kb.sources.add(selected, idempotency_key="selected-once")
         status = kb.jobs.wait(second.id)
         assert status.state == "succeeded", status
-        assert len(sent) == 1
+        assert len(sent) == failed_calls + 1
         assert kb.sources.add(selected, idempotency_key="selected-once").id == second.id
-        assert len(sent) == 1
+        assert len(sent) == failed_calls + 1
 
         async def transport_parity():
             app = create_app(
@@ -224,8 +246,8 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
                 _current.reset(marker)
 
         asyncio.run(transport_parity())
-        assert len(sent) == 1
-        assert sent[0][:2] == (4, 2)
+        assert len(sent) == failed_calls + 1
+        assert all(item[:2] == (4, 2) for item in sent)
         rows = kb._workspace.bridge.call(
             kb._workspace.owner.run_blocking(
                 lambda: kb._workspace.owner.db.execute(
@@ -249,9 +271,46 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
                 }
             ],
         }
-        variant = kb.sources.add(changed_schema)
+        original_publish = kb._workspace.owner.store.publish_snapshot
+
+        def interrupt_after_selected_cache(plan):
+            monkeypatch.setattr(
+                kb._workspace.owner.store, "publish_snapshot", original_publish
+            )
+            raise TychoraError(
+                "PROVIDER_FAILURE",
+                "Synthetic post-selection interruption",
+                retryable=True,
+            )
+
+        monkeypatch.setattr(
+            kb._workspace.owner.store,
+            "publish_snapshot",
+            interrupt_after_selected_cache,
+        )
+        variant = kb.sources.add(changed_schema, idempotency_key="selected-retry")
+        failed_variant = kb.jobs.wait(variant.id)
+        assert failed_variant.state == "failed"
+        assert failed_variant.error_code == "PROVIDER_FAILURE"
+        assert len(sent) == failed_calls + 2
+
+        async def retry_selected_job(job_id):
+            app = create_app(
+                kb._workspace.owner,
+                kb._workspace.services,
+                LocalAuth({"writer": kb.scope}, authority="127.0.0.1:8765"),
+            )
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="http://127.0.0.1:8765",
+                headers={"Authorization": "Bearer writer"},
+            ) as client:
+                return await client.post(f"/v1/jobs/{job_id}/retry")
+
+        retry_response = asyncio.run(retry_selected_job(variant.id))
+        assert retry_response.status_code == 202, retry_response.text
         assert kb.jobs.wait(variant.id).state == "succeeded"
-        assert len(sent) == 2
+        assert len(sent) == failed_calls + 2
         count = kb._workspace.bridge.call(
             kb._workspace.owner.run_blocking(
                 lambda: kb._workspace.owner.db.execute(
@@ -260,13 +319,71 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
                 ExecutionContext(),
             )
         )
-        assert count == 3
+        assert count == 4  # Initial, capability-gap, recovered, changed-schema.
         synced = kb.sources.sync(source_identity)
         assert kb.jobs.wait(synced.id).state == "succeeded"
+        revoked_schema = {
+            **changed_schema,
+            "vision": [
+                {
+                    **changed_schema["vision"][0],
+                    "task_schema": {
+                        "type": "object",
+                        "properties": {
+                            "label": {"type": "string", "enum": ["blue", "green"]}
+                        },
+                        "required": ["label"],
+                        "additionalProperties": False,
+                    },
+                }
+            ],
+        }
+        original_selected = kb._workspace.services.sources._selected_vision_proxy
+
+        async def interrupt_before_uncached_dispatch(*args):
+            monkeypatch.setattr(
+                kb._workspace.services.sources,
+                "_selected_vision_proxy",
+                original_selected,
+            )
+            raise TychoraError(
+                "PROVIDER_FAILURE",
+                "Synthetic pre-dispatch interruption",
+                retryable=True,
+            )
+
+        monkeypatch.setattr(
+            kb._workspace.services.sources,
+            "_selected_vision_proxy",
+            interrupt_before_uncached_dispatch,
+        )
+        pending = kb.sources.add(revoked_schema, idempotency_key="selected-revoke")
+        pending_state = kb.jobs.wait(pending.id)
+        assert pending_state.state == "failed"
+        assert pending_state.captured_inputs is not None
+        assert len(sent) == failed_calls + 2
+        kb.management.run(
+            {
+                "operation": "provider-upload-consent",
+                "collection_id": "default",
+                "provider": "anthropic",
+                "action": "revoke",
+            }
+        )
+        denied_retry = asyncio.run(retry_selected_job(pending.id))
+        assert denied_retry.status_code == 202, denied_retry.text
+        retry_state = kb.jobs.wait(pending.id)
+        assert retry_state.state == "failed"
+        assert retry_state.error_code in {"SCOPE_CHANGED", "FORBIDDEN_SCOPE"}
+        assert len(sent) == failed_calls + 2
+    with Tychora.open(workspace, config=config, token_counter=Counter()) as kb:
+        revoked = kb.sources.add(revoked_schema)
+        assert kb.jobs.wait(revoked.id).state == "failed"
+        assert len(sent) == failed_calls + 2
         Image.new("RGB", (8, 6), "green").save(picture)
         stale = kb.sources.add(selected)
         assert kb.jobs.wait(stale.id).state == "failed"
-        assert len(sent) == 2
+        assert len(sent) == failed_calls + 2
 
 
 def test_offline_cli_selected_ocr_uses_local_models_without_remote_call(
@@ -391,6 +508,10 @@ def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_targ
     tmp_path, monkeypatch
 ):
     from tychora.adapters.vision import anthropic
+
+    pytest.importorskip("reportlab", reason="PDF fixture requires optional reportlab")
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
 
     monkeypatch.setenv("TYCHORA_MODEL_CACHE", os.environ["TYCHORA_TEST_MODEL_CACHE"])
     monkeypatch.setenv("SYNTHETIC_VISION_KEY", "synthetic-key")

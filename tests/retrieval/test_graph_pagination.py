@@ -176,6 +176,54 @@ def test_expired_deadline_does_not_hold_generation_lock(tmp_path):
         case.graph.close()
 
 
+def test_deadline_during_native_read_unwinds_at_next_checkpoint(tmp_path):
+    case = sealed_graph(tmp_path, (unit("a"), unit("b")), (assertion("a", "b"),))
+    entered, release, finished = Event(), Event(), Event()
+    failures = []
+    native_rows = case.graph._rows
+
+    def held_read(query, parameters=None):
+        rows = native_rows(query, parameters)
+        if "MATCH (u:Entity)" in query:
+            entered.set()
+            assert release.wait(5)
+        return rows
+
+    case.graph._rows = held_read
+    view = case.view(context={"a", "b"}, candidates={"a", "b"})
+    deadline = time.monotonic() + 0.15
+
+    def read():
+        try:
+            case.graph.expand(
+                view,
+                ("a",),
+                case.budget(),
+                ExecutionContext(deadline=deadline),
+            )
+        except TychoraError as error:
+            failures.append(error)
+        finally:
+            finished.set()
+
+    worker = Thread(target=read)
+    try:
+        worker.start()
+        assert entered.wait(5)
+        assert not finished.wait(max(0, deadline - time.monotonic()) + 0.05)
+        release.set()
+        worker.join(5)
+        assert finished.is_set()
+        assert len(failures) == 1
+        assert failures[0].code == "DEADLINE_EXCEEDED"
+        case.graph.drop_generation(case.spec.generation_id, ExecutionContext())
+        assert case.graph._read_state(case.spec.generation_id) is None
+    finally:
+        release.set()
+        worker.join(5)
+        case.graph.close()
+
+
 def test_shared_budget_rejects_overlay_change_between_strategy_calls(tmp_path):
     relation = assertion("a", "b")
     case = sealed_graph(tmp_path, (unit("a"), unit("b")), (relation,))

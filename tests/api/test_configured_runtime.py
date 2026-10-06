@@ -453,6 +453,158 @@ def test_public_add_dispatches_configured_text_only_after_policy_grant(
         assert result.segments
 
 
+def test_configured_text_provider_cli_api_mcp_grant_then_revoke(tmp_path, monkeypatch):
+    import asyncio
+    import json
+    import os
+
+    from typer.testing import CliRunner
+
+    from tychora.adapters.voyage.request_types import RawVoyageResponse
+    from tychora.contracts.errors import TychoraError
+    from tychora.interfaces.cli import app as cli_app
+    from tychora.interfaces.mcp.server import _current, build_mcp
+
+    monkeypatch.setenv("TYCHORA_MODEL_CACHE", os.environ["TYCHORA_TEST_MODEL_CACHE"])
+    monkeypatch.setenv("TEST_VOYAGE_KEY", "synthetic-test-key")
+    posts = []
+
+    class Transport:
+        def __init__(self, *, api_key):
+            assert api_key == "synthetic-test-key"
+
+        def post_json(self, path, body, timeout):
+            posts.append(path)
+            batches = json.loads(body)["inputs"]
+            vector = [1.0] + [0.0] * 1023
+            return RawVoyageResponse(
+                200,
+                json.dumps(
+                    {
+                        "data": [
+                            {
+                                "index": outer,
+                                "data": [
+                                    {"index": inner, "embedding": vector}
+                                    for inner, _ in enumerate(batch)
+                                ],
+                            }
+                            for outer, batch in enumerate(batches)
+                        ]
+                    }
+                ).encode(),
+            )
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        "tychora.application.default_bindings.HttpxVoyageTransport", Transport
+    )
+    workspace = tmp_path / "knowledge"
+    workspace.mkdir()
+    settings = workspace / "workspace.toml"
+    settings.write_text(
+        'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
+        '[defaults]\nprofile="test"\n'
+        "[configuration]\noffline=false\n"
+        '[configuration.providers.text]\nprovider="voyage"\n'
+        'model="voyage-context-4"\ncredential_ref="env:TEST_VOYAGE_KEY"\n'
+        '[configuration.index.text]\nbackend="chroma"\n'
+    )
+    config = resolve_config(settings, "test", {})
+    source = {
+        "type": "text",
+        "text": "Synthetic valve inspection record.",
+        "format": "text",
+        "kind": "manual@1",
+        "source_key": "valve-inspection",
+        "collection_id": "default",
+        "metadata": {
+            "title": "Valve",
+            "publisher": "Example Team",
+            "edition": "1",
+        },
+    }
+    with Tychora.open(workspace, config=config, token_counter=OutputCounter()) as kb:
+        denied = kb.sources.add(source)
+        assert kb.jobs.wait(denied.id).state == "failed"
+        assert posts == []
+        kb.management.run(
+            {
+                "operation": "provider-upload-consent",
+                "collection_id": "default",
+                "provider": "voyage",
+                "action": "grant",
+            }
+        )
+    with Tychora.open(workspace, token_counter=OutputCounter()) as kb:
+        added = kb.sources.add(source)
+        assert kb.jobs.wait(added.id).state == "succeeded"
+        assert posts == ["/v1/contextualizedembeddings"]
+        api_result = kb.search({"question": "valve api", "modalities": ["text"]})
+        assert api_result.segments
+        assert posts[-1] == "/v1/contextualizedembeddings"
+    cli_request = tmp_path / "cli-query.json"
+    cli_request.write_text(
+        json.dumps({"question": "valve cli", "modalities": ["text"]})
+    )
+    cli = CliRunner().invoke(
+        cli_app,
+        [
+            "--workspace",
+            str(workspace),
+            "search",
+            "--request-file",
+            str(cli_request),
+            "--json",
+        ],
+    )
+    assert cli.exit_code == 0, cli.stderr
+    assert json.loads(cli.stdout)["segments"]
+    assert len(posts) == 3
+    with Tychora.open(workspace, token_counter=OutputCounter()) as kb:
+        server = build_mcp(kb._workspace.services, kb.scope)
+
+        async def mcp_search():
+            marker = _current.set((kb._workspace.services, kb.scope))
+            try:
+                return await server.call_tool(
+                    "search",
+                    {
+                        "request": {
+                            "question": "valve mcp",
+                            "modalities": ["text"],
+                        }
+                    },
+                )
+            finally:
+                _current.reset(marker)
+
+        mcp = asyncio.run(mcp_search())
+        assert not mcp.is_error and mcp.structured_content["segments"]
+        assert len(posts) == 4
+        kb.management.run(
+            {
+                "operation": "provider-upload-consent",
+                "collection_id": "default",
+                "provider": "voyage",
+                "action": "revoke",
+            }
+        )
+    rejected_cli = CliRunner().invoke(
+        cli_app,
+        ["--workspace", str(workspace), "search", "revoked valve", "--json"],
+    )
+    assert rejected_cli.exit_code != 0
+    assert json.loads(rejected_cli.stderr)["code"] == "FORBIDDEN_SCOPE"
+    with Tychora.open(workspace, token_counter=OutputCounter()) as kb:
+        with pytest.raises(TychoraError) as rejected_api:
+            kb.search({"question": "revoked valve api", "modalities": ["text"]})
+        assert rejected_api.value.code == "FORBIDDEN_SCOPE"
+    assert len(posts) == 4
+
+
 def test_public_visual_query_uses_default_binding_and_narrow_scope(
     tmp_path, monkeypatch
 ):
@@ -570,8 +722,9 @@ def test_public_rerank_uses_default_binding_and_narrow_scope(tmp_path, monkeypat
     from types import SimpleNamespace
 
     from tychora.adapters.voyage.request_types import RawVoyageResponse
+    from tychora.application.query import QueryExecutionPlan, QueryService
     from tychora.contracts.errors import TychoraError
-    from tychora.contracts.requests import RequestScope
+    from tychora.contracts.requests import QueryRequest, RequestScope
     from tychora.ports.execution import ExecutionContext
 
     cache = os.environ.get("TYCHORA_TEST_MODEL_CACHE")
@@ -591,9 +744,23 @@ def test_public_rerank_uses_default_binding_and_narrow_scope(tmp_path, monkeypat
             assert api_key == "synthetic-test-key"
 
         def post_json(self, path, body, timeout):
-            posts.append((path, json.loads(body)))
+            request = json.loads(body)
+            posts.append((path, request))
             return RawVoyageResponse(
-                200, b'{"data":[{"index":0,"relevance_score":0.75}]}'
+                200,
+                json.dumps(
+                    {
+                        "data": [
+                            {
+                                "index": index,
+                                "relevance_score": 0.9
+                                if index == len(request["documents"]) - 1
+                                else 0.1,
+                            }
+                            for index in range(len(request["documents"]))
+                        ]
+                    }
+                ).encode(),
             )
 
         def close(self):
@@ -649,10 +816,50 @@ def test_public_rerank_uses_default_binding_and_narrow_scope(tmp_path, monkeypat
             }
         )
         assert kb.jobs.wait(job.id).state == "succeeded"
-        assert kb.search({"question": "valve", "modalities": ["lexical"]}).segments
+        second = kb.sources.add(
+            {
+                "type": "text",
+                "text": "Synthetic valve alternate inspection.",
+                "format": "text",
+                "kind": "manual@1",
+                "source_key": "valve-alternate",
+                "collection_id": "default",
+                "metadata": {
+                    "title": "Valve alternate",
+                    "publisher": "Example Team",
+                    "edition": "1",
+                },
+            }
+        )
+        assert kb.jobs.wait(second.id).state == "succeeded"
+        request = QueryRequest.from_mapping(
+            {"question": "valve", "modalities": ["lexical"], "limit": 2}
+        )
+        plain_service = QueryService(
+            owner,
+            output_counter=kb._workspace.services.query.counter,
+            execution_plan=QueryExecutionPlan(
+                lexical=True,
+                text=False,
+                image=False,
+                graph_structural=False,
+                graph_semantic=False,
+                rerank=False,
+            ),
+        )
+        plain = kb._workspace.bridge.call(
+            plain_service.search(request, scope, ExecutionContext())
+        ).result
+        assert len(plain.segments) == 2
+        assert posts == []
+        reranked = kb.search(request)
+        assert len(reranked.segments) == 2
         assert len(posts) == 1
         assert posts[0][0] == "/v1/rerank"
-        assert posts[0][1]["documents"]
+        assert len(posts[0][1]["documents"]) == 2
+        assert [s.matched_unit_ids for s in reranked.segments] == [
+            s.matched_unit_ids for s in reversed(plain.segments)
+        ]
         narrow = scope.model_copy(update={"upload_providers": frozenset()})
         with pytest.raises(TychoraError) as denied:
             kb.search(
