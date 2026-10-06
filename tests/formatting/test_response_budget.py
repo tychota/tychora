@@ -72,7 +72,8 @@ def case(
         text_budget=tokens,
         visual_reserved_tokens=0,
     )
-    request = QueryRequest(
+    request = type.__call__(
+        QueryRequest,
         question="What is recorded?",
         budgets=BudgetContract(
             max_tokens=tokens, max_response_bytes=max_response_bytes
@@ -259,8 +260,10 @@ def test_reserved_visual_proxy_can_be_omitted_while_asset_remains():
         text_budget=900,
         visual_reserved_tokens=0,
     )
-    request = QueryRequest(
-        question="What is recorded?", budgets=BudgetContract(max_tokens=900)
+    request = type.__call__(
+        QueryRequest,
+        question="What is recorded?",
+        budgets=BudgetContract(max_tokens=900),
     )
     ctx = ResponseContext(
         run_id="run-1",
@@ -295,36 +298,37 @@ def test_conditional_requirement_uses_explicit_context_and_not_query_text():
         text_budget=900,
         visual_reserved_tokens=0,
     )
-    request = QueryRequest(
-        question="project alpha", budgets=BudgetContract(max_tokens=900)
+    request = type.__call__(
+        QueryRequest, question="project alpha", budgets=BudgetContract(max_tokens=900)
     )
-    explicit = QueryRequest(
+    explicit = type.__call__(
+        QueryRequest,
         question="project alpha",
         context=FrozenJsonMap({"project": "alpha"}),
         budgets=BudgetContract(max_tokens=900),
     )
-    base = {
-        "run_id": "run-1",
-        "snapshot_id": "snapshot-1",
-        "scope": RequestScope(principal_id="reader"),
-        "counter": counter(),
-        "profiles": (OutputProfile(renderer="canonical-json@1"),),
-        "eligible_unit_ids": frozenset({"unit-1"}),
-        "requirements": (requirement,),
-    }
+    base = ResponseContext(
+        run_id="run-1",
+        snapshot_id="snapshot-1",
+        scope=RequestScope(principal_id="reader"),
+        counter=counter(),
+        profiles=(OutputProfile(renderer="canonical-json@1"),),
+        eligible_unit_ids=frozenset({"unit-1"}),
+        requirements=(requirement,),
+    )
     absent = ResponseAssembler().assemble(
         selection,
         (),
         RelationChecks(status="not_evaluated"),
         request,
-        ResponseContext(**base),
+        base,
     )
     present = ResponseAssembler().assemble(
         selection,
         (),
         RelationChecks(status="not_evaluated"),
         explicit,
-        ResponseContext(**base),
+        base,
     )
     assert absent.result.coverage_gaps == ()
     assert present.result.coverage_gaps[0].code == "need-standard"
