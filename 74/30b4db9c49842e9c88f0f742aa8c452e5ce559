@@ -1,0 +1,23 @@
+tests/indexing/test_sources.py
+  s_35b641b930a96d::t_74af82f0499430 262-264,358,401,489,492,504,507
+  s_35b641b930a96d::t_b0158f7c8f73ef 29,33,36,116-121
+  s_35b641b930a96d::t_309ccbcf62c05e 85-115,122
+  s_35b641b930a96d::t_07bba619aa1fa8 526
+  s_35b641b930a96d::t_3ca24157afff9b 518,527,546,984,997
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7430b4db9c49842e9c88f0f742aa8c452e5ce559",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
