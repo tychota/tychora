@@ -1,0 +1,22 @@
+tests/configuration/test_global_facets.py
+  s_35b641b930a96d::t_29998b3aece8ed 111
+  s_35b641b930a96d::t_25c1dde5d06c5c 7,103,110
+tests/contracts/test_identity.py
+  s_35b641b930a96d::t_be592e37163c0b 64-68
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b2ced26042a47e46950e75d04315c1193b5475f4",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
