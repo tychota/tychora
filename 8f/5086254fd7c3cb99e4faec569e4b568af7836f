@@ -1,0 +1,75 @@
+README.md
+  s_35b641b930a96d::t_23f69634fe4308 1-30
+docs/api.md
+  s_35b641b930a96d::t_5af411bde48c08 48,58-78
+docs/cli.md
+  s_35b641b930a96d::t_9ac598c0b6ae57 3,5,7,9-13,16,18,20
+docs/configuration.md
+  s_35b641b930a96d::t_23e7bce5e27257 1-38
+docs/distribution.md
+  s_35b641b930a96d::t_6f0369f268e14f 1-14
+docs/evaluation.md
+  s_c37b0508beebe6::t_62ce743a8c1648 3
+docs/http.md
+  s_c37b0508beebe6::t_b319fe9fbf5b36 21,28
+docs/mcp.md
+  s_c37b0508beebe6::t_39f1a536bfc078 5
+docs/operations.md
+  s_35b641b930a96d::t_31c16f509f802b 1-26
+docs/performance.md
+  s_35b641b930a96d::t_a8387acb602ca1 24-26
+docs/superpowers/specs/2026-09-10-tychora-engine-design.md
+  s_35b641b930a96d::t_cf67e0e896fa00 206,379,607,851,1443,2181-2194
+examples/profiles/workbench/README.md
+  s_35b641b930a96d::t_8f00a3b3dc6010 1-17
+examples/profiles/workbench/kinds/legacy_standard.toml
+  s_35b641b930a96d::t_7e36f442b8e0e4 1-10
+examples/profiles/workbench/profile.toml
+  s_35b641b930a96d::t_8a2ee5b8c0016f 1-31
+examples/profiles/workbench/relations/clarifies.toml
+  s_35b641b930a96d::t_c5d5816449e7b2 1-22
+examples/profiles/workbench/schemas/legacy-standard-metadata.json
+  s_35b641b930a96d::t_9db20cc5707ef9 1
+examples/quickstart.py
+  s_35b641b930a96d::t_02f4141238a071 1-119
+src/tychora/interfaces/commands/init.py
+  s_35b641b930a96d::t_9cbec639e0bace 60
+src/tychora/resources/skills/add-sources/SKILL.md
+  s_35b641b930a96d::t_551d178b28b37b 1-19
+src/tychora/resources/skills/configure/SKILL.md
+  s_35b641b930a96d::t_7bfb33f6143635 1-24
+src/tychora/resources/skills/inspect-evidence/SKILL.md
+  s_c37b0508beebe6::t_bbd93c73ef3f40 1-12
+src/tychora/resources/skills/query/SKILL.md
+  s_35b641b930a96d::t_add32dd3b7d3d5 1-18
+tests/cli/test_commands.py
+  s_35b641b930a96d::t_7cdfd15be4a01b 625-649
+tests/docs/test_examples.py
+  s_35b641b930a96d::t_29f63122bfd5e4 1-157
+tests/docs/test_skills.py
+  s_35b641b930a96d::t_47fbbf962ca292 1-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8f5086254fd7c3cb99e4faec569e4b568af7836f",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    },
+    "s_c37b0508beebe6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a7650dd0-4c82-4a0e-a414-a7a38c2d9a3f",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
