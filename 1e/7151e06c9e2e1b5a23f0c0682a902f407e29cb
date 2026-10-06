@@ -1,0 +1,21 @@
+tests/retrieval/test_graph_policy.py
+  s_35b641b930a96d::t_9a38f0e2961cdf 145-148,178,233
+tests/retrieval/test_exact.py
+  s_35b641b930a96d::t_b555f91fff9c5d 9,59-69,148,166-171,175-181
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1e7151e06c9e2e1b5a23f0c0682a902f407e29cb",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
