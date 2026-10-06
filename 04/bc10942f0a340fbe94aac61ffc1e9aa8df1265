@@ -1,0 +1,22 @@
+tests/ingestion/test_tables.py
+  s_35b641b930a96d::t_cbe2cd972a908e 3,29-43,47-50,59,235-255
+  s_35b641b930a96d::t_ca95abb544fee8 1164-1167
+  s_35b641b930a96d::t_761950be24f320 1150,1176,1179-1193,1223,1260-1261
+  s_35b641b930a96d::t_8c472110d3861d 44,136-139,1225-1229
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "04bc10942f0a340fbe94aac61ffc1e9aa8df1265",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
