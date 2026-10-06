@@ -5,13 +5,21 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
+from tests.typed_json import json_array, json_object
+from tychora.contracts.requests import SourceInput
+
+
+def source_input_via_keywords(**fields: object) -> SourceInput:
+    """Exercise RootModel's public keyword constructor despite its root-only typing."""
+    return type.__call__(SourceInput, **fields)
+
 
 def test_nested_json_is_detached_and_immutable():
     from tychora.contracts.base import FrozenJsonMap
-    from tychora.contracts.requests import SourceInput
 
-    original = {"nested": {"tags": ["one", {"number": 2}]}}
-    source = SourceInput(
+    nested = {"tags": ["one", {"number": 2}]}
+    original = {"nested": nested}
+    source = source_input_via_keywords(
         type="text",
         source_key="note",
         collection_id=UUID(int=1),
@@ -19,15 +27,19 @@ def test_nested_json_is_detached_and_immutable():
         text="hi",
         metadata=original,
     )
-    original["nested"]["tags"].append("two")
-    assert source.root.metadata["nested"]["tags"] == (
+    nested["tags"].append("two")
+    tags = json_array(json_object(source.root.metadata, "nested")["tags"])
+    assert tags == (
         "one",
         FrozenJsonMap({"number": 2}),
     )
     with pytest.raises(TypeError):
-        source.root.metadata["nested"]["bad"] = True
+        from operator import setitem
+
+        # A write to immutable contract JSON must fail at runtime.
+        setitem(json_object(source.root.metadata, "nested"), "bad", True)  # ty: ignore[no-matching-overload]
     with pytest.raises((AttributeError, TypeError)):
-        source.root.metadata["nested"]["tags"].append("bad")
+        tags.append("bad")  # ty: ignore[unresolved-attribute]
     assert json.loads(source.model_dump_json())["metadata"] == {
         "nested": {"tags": ["one", {"number": 2}]}
     }
@@ -102,9 +114,15 @@ def test_primitive_query_mapping_roundtrips_losslessly():
     assert request.as_of == date(2025, 2, 28)
     assert request.revision_ids == ("r1",)
     assert QueryRequest.from_mapping(request.model_dump(mode="json")) == request
-    assert QueryRequest(question="hello").input.text == "hello"
+    from tychora.contracts.requests import QuestionInput
+
+    direct = type.__call__(QueryRequest, question="hello")
+    assert isinstance(direct.input, QuestionInput)
+    assert direct.input.text == "hello"
     with pytest.raises(ValidationError):
-        QueryRequest(input={"type": "question", "text": "x"}, revision_ids=["r"])
+        type.__call__(
+            QueryRequest, input={"type": "question", "text": "x"}, revision_ids=["r"]
+        )
 
 
 @pytest.mark.parametrize(
@@ -126,10 +144,9 @@ def test_effective_interval_validation(end, valid):
     "extra", [{"path": "file.md"}, {"bytes": "abc"}, {"unexpected": "x"}]
 )
 def test_source_payload_exclusivity_and_unknown_fields(extra):
-    from tychora.contracts.requests import SourceInput
 
     with pytest.raises(ValidationError):
-        SourceInput(
+        source_input_via_keywords(
             type="text",
             source_key="note",
             collection_id=UUID(int=1),
@@ -174,6 +191,9 @@ def test_source_wire_variants_roundtrip(variant, payload):
     assert "root" not in source.model_dump(mode="json")
     assert SourceInput.from_mapping(source.model_dump(mode="json")) == source
     if variant == "bytes":
+        from tychora.contracts.requests import BytesSource
+
+        assert isinstance(source.root, BytesSource)
         assert source.root.data == b"\x00\xff"
 
 
@@ -246,7 +266,8 @@ def test_error_mapping_and_bounded_safe_envelope(code, http, cli):
     from tychora.contracts.errors import TychoraError
 
     error = TychoraError(code, "é\n" * 10000, retryable=True)
-    error.provider_body = {"secret": "never serialize this"}
+    # Attach an undeclared secret canary to prove error serialization excludes it.
+    error.provider_body = {"secret": "never serialize this"}  # ty: ignore[unresolved-attribute]
     assert error.http_status == http
     assert error.cli_exit_code == cli
     wire = error.to_json()
@@ -272,12 +293,15 @@ def test_operations_are_typed_bounded_and_registered_id_only():
         with pytest.raises(ValidationError):
             DiscoverRequest.from_mapping(data)
     with pytest.raises(ValidationError):
-        InspectRequest(subject="evidence", id="u", path="/etc/passwd")
+        type.__call__(InspectRequest, subject="evidence", id="u", path="/etc/passwd")
     with pytest.raises(ValidationError):
         RelationRequest(unit_ids=("u",), max_hops=-1)
     valid = MaintenanceRequest.from_mapping(
         {"operation": "remove", "source_ids": ["s"]}
     )
+    from tychora.contracts.operations import RemoveMaintenance
+
+    assert isinstance(valid.root, RemoveMaintenance)
     assert valid.root.source_ids == ("s",)
     with pytest.raises(ValidationError):
         MaintenanceRequest.from_mapping(
@@ -378,11 +402,15 @@ def test_query_result_roundtrip_preserves_exact_excerpts_and_nested_records():
     assert result.segments[0].excerpts[0].text == "é🙂"
     assert QueryResult.from_mapping(result.model_dump(mode="json")) == result
     with pytest.raises(TypeError):
-        result.segments[0].structured_records[0].value["nested"][0]["requirement"] = (
-            False
+        from operator import setitem
+
+        nested = json_array(
+            json_object(result.segments[0].structured_records[0].value)["nested"]
         )
+        # Deliberately attempt a write through the frozen nested JSON mapping.
+        setitem(json_object(nested[0]), "requirement", False)  # ty: ignore[no-matching-overload]
     with pytest.raises(ValidationError):
-        result.segments[0].text = "changed"
+        result.segments[0].text = "changed"  # ty: ignore[invalid-assignment]
 
 
 @pytest.mark.parametrize(
@@ -417,10 +445,9 @@ def test_maintenance_variant_roundtrips(variant):
 
 @pytest.mark.parametrize("value", [float("nan"), float("inf"), object(), {1: "bad"}])
 def test_metadata_rejects_non_json_or_nonfinite_payloads(value):
-    from tychora.contracts.requests import SourceInput
 
     with pytest.raises((ValidationError, ValueError)):
-        SourceInput(
+        source_input_via_keywords(
             type="text",
             source_key="s",
             collection_id=UUID(int=1),
