@@ -4,6 +4,14 @@ from dataclasses import replace
 
 from tests.helpers.corpus import seed_bundle
 from tychora.configuration.resolve import resolve_config
+from tychora.contracts.evidence import (
+    CodeLocator,
+    DocumentLocator,
+    Locator,
+    TextLocator,
+)
+from tychora.contracts.graph import EligibilityView
+from tychora.contracts.identity import digest
 from tychora.contracts.indexing import OwnedInterval
 from tychora.indexing.representations import prepare_extraction
 from tychora.retrieval.fusion import FusedCandidate
@@ -24,6 +32,45 @@ class Counter:
         return len(text)
 
 
+def eligibility_view(
+    *,
+    revision_ids: frozenset[str],
+    context_unit_ids: frozenset[str],
+    chunk_ids: frozenset[str] = frozenset(),
+    graph_generation_id: str | None = None,
+) -> EligibilityView:
+    graph_bound = graph_generation_id is not None
+    return EligibilityView(
+        snapshot_id="synthetic-snapshot",
+        policy_epoch=0,
+        scope_digest=digest("synthetic-scope"),
+        eligibility_policy_digest=digest("synthetic-policy"),
+        eligibility_request_digest=digest("synthetic-request"),
+        selected_batch_ids=(graph_generation_id,) if graph_bound else (),
+        revision_ids=revision_ids,
+        source_unit_ids=frozenset(),
+        context_unit_ids=context_unit_ids,
+        structural_unit_ids=frozenset(),
+        proxy_unit_ids=frozenset(),
+        chunk_ids=chunk_ids,
+        asset_ids=frozenset(),
+        vector_record_ids=frozenset(),
+        blocked_assertion_ids=frozenset(),
+        graph_generation_id=graph_generation_id,
+        graph_family_id=digest("synthetic-graph-family") if graph_bound else None,
+        graph_config_sha=digest("synthetic-graph-config") if graph_bound else None,
+        graph_decision_watermark=0 if graph_bound else None,
+        graph_manifest_digest=digest("synthetic-graph-manifest")
+        if graph_bound
+        else None,
+    )
+
+
+def locator_char_start(locator: Locator) -> int:
+    assert isinstance(locator, (TextLocator, DocumentLocator, CodeLocator))
+    return locator.char_start
+
+
 def config(tmp_path):
     path = tmp_path / "workspace.toml"
     path.write_text('schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n')
@@ -39,19 +86,11 @@ def case(text, matches, *, kind="manual@1", source_key="manual.md"):
     item = RankedEvidenceItem(
         candidate, None, RerankFacts(bundle, prepared, matches), "disabled"
     )
-    view = type(
-        "View",
-        (),
-        {
-            "revision_ids": frozenset({bundle.revision.revision_id}),
-            "context_unit_ids": frozenset({unit.unit_id}),
-            "structural_unit_ids": frozenset(),
-            "asset_ids": frozenset(),
-            "chunk_ids": frozenset(
-                match.window_id for match in matches if match.window_id
-            ),
-        },
-    )()
+    view = eligibility_view(
+        revision_ids=frozenset({bundle.revision.revision_id}),
+        context_unit_ids=frozenset({unit.unit_id}),
+        chunk_ids=frozenset(match.window_id for match in matches if match.window_id),
+    )
     return bundle, prepared, RankedEvidence((item,)), view
 
 
@@ -59,7 +98,7 @@ def _mapped_code_rows(bundle, units, file_texts):
     from tychora.adapters.code.syntax import source_maps
     from tychora.contracts.base import FrozenJsonMap
     from tychora.contracts.code_storage import CodeFileDescriptor
-    from tychora.contracts.corpus import LocatorRow
+    from tychora.contracts.corpus import LocatorRow, RevisionArtifactRow
     from tychora.contracts.identity import digest
 
     mapped_units = tuple(
@@ -110,6 +149,18 @@ def _mapped_code_rows(bundle, units, file_texts):
                 for index, locator in enumerate(unit.locators)
             ),
             "code_files": tuple(descriptors),
+            "revision_artifacts": (
+                *bundle.revision_artifacts,
+                *(
+                    RevisionArtifactRow(
+                        revision_id=bundle.revision.revision_id,
+                        role="source_file",
+                        source_ref=descriptor.relative_path,
+                        artifact_sha=descriptor.artifact_ref,
+                    )
+                    for descriptor in descriptors
+                ),
+            ),
         }
     )
     from tychora.indexing.representations import _bundle_index
@@ -162,7 +213,9 @@ def test_segment_keeps_winning_range_and_never_bridges_denied_gap(tmp_path):
             ),
         )
     )
-    view.context_unit_ids = frozenset({unit.unit_id, "left", "right"})
+    view = view.model_copy(
+        update={"context_unit_ids": frozenset({unit.unit_id, "left", "right"})}
+    )
     result = assemble_segments(ranked, view, config(tmp_path), Counter())
     assert len(result.segments) == 2
     for segment in result.segments:
@@ -377,20 +430,15 @@ def test_code_parent_and_child_original_ranges_do_not_duplicate(tmp_path):
             for index, candidate in enumerate(candidates)
         )
     )
-    view = type(
-        "View",
-        (),
-        {
-            "revision_ids": frozenset({bundle.revision.revision_id}),
-            "context_unit_ids": frozenset({parent.unit_id, child.unit_id}),
-            "structural_unit_ids": frozenset(),
-            "asset_ids": frozenset(),
-            "chunk_ids": frozenset(),
-        },
-    )()
+    view = eligibility_view(
+        revision_ids=frozenset({bundle.revision.revision_id}),
+        context_unit_ids=frozenset({parent.unit_id, child.unit_id}),
+        chunk_ids=frozenset(),
+    )
     result = assemble_segments(ranked, view, config(tmp_path), Counter())
     assert len(result.segments) == 1
     locator = result.segments[0].citations[0].locators[0]
+    assert isinstance(locator, CodeLocator)
     assert locator.relative_path == "box.py"
     assert locator.char_start == 0 and locator.char_end == len(text)
 
@@ -478,19 +526,12 @@ def test_continuation_context_requires_current_eligible_graph_path(tmp_path):
             ),
         )
     )
-    view = type(
-        "View",
-        (),
-        {
-            "revision_ids": frozenset({bundle.revision.revision_id}),
-            "context_unit_ids": frozenset({first.unit_id, second.unit_id}),
-            "structural_unit_ids": frozenset(),
-            "asset_ids": frozenset(),
-            "chunk_ids": frozenset(),
-            "blocked_assertion_ids": frozenset(),
-            "graph_generation_id": "pinned-generation",
-        },
-    )()
+    view = eligibility_view(
+        revision_ids=frozenset({bundle.revision.revision_id}),
+        context_unit_ids=frozenset({first.unit_id, second.unit_id}),
+        chunk_ids=frozenset(),
+        graph_generation_id="pinned-generation",
+    )
     path = GraphPath(
         assertion_ids=("a" * 64,),
         required_support_ids=frozenset({first.unit_id, second.unit_id}),
@@ -542,7 +583,9 @@ def test_continuation_context_requires_current_eligible_graph_path(tmp_path):
             assert segment.citations[1].physical_page == 2
         else:
             assert len(segment.citations) == 1
-    view.blocked_assertion_ids = frozenset(path.assertion_ids)
+    view = view.model_copy(
+        update={"blocked_assertion_ids": frozenset(path.assertion_ids)}
+    )
     configured = base.model_copy(
         update={
             "values": base.values.model_copy(
@@ -583,18 +626,12 @@ def test_lane_reservation_and_visual_space_under_tight_budget(tmp_path):
         "Authority", (), kind="law@1", source_key="law.md"
     )
     ranked = RankedEvidence((*standard.items, *authority.items))
-    view = type(
-        "View",
-        (),
-        {
-            "revision_ids": standard_view.revision_ids | authority_view.revision_ids,
-            "context_unit_ids": standard_view.context_unit_ids
-            | authority_view.context_unit_ids,
-            "structural_unit_ids": frozenset(),
-            "asset_ids": frozenset(),
-            "chunk_ids": frozenset(),
-        },
-    )()
+    view = eligibility_view(
+        revision_ids=standard_view.revision_ids | authority_view.revision_ids,
+        context_unit_ids=standard_view.context_unit_ids
+        | authority_view.context_unit_ids,
+        chunk_ids=frozenset(),
+    )
     base = config(tmp_path)
     values = base.values.model_copy(
         update={
@@ -688,25 +725,23 @@ def test_same_boundary_neighbors_require_complete_current_eligibility(tmp_path):
             ),
         )
     )
-    view = type(
-        "View",
-        (),
-        {
-            "revision_ids": frozenset({bundle.revision.revision_id}),
-            "context_unit_ids": frozenset(unit.unit_id for unit in units),
-            "structural_unit_ids": frozenset(),
-            "asset_ids": frozenset(),
-            "chunk_ids": frozenset(),
-        },
-    )()
+    view = eligibility_view(
+        revision_ids=frozenset({bundle.revision.revision_id}),
+        context_unit_ids=frozenset(unit.unit_id for unit in units),
+        chunk_ids=frozenset(),
+    )
     segment = assemble_segments(ranked, view, config(tmp_path), Counter()).segments[0]
     assert segment.context_only_unit_ids == (units[0].unit_id, units[2].unit_id)
-    assert [citation.locators[0].char_start for citation in segment.citations] == [
+    assert [
+        locator_char_start(citation.locators[0]) for citation in segment.citations
+    ] == [
         4,
         0,
         8,
     ]
-    view.context_unit_ids = frozenset({units[1].unit_id, units[2].unit_id})
+    view = view.model_copy(
+        update={"context_unit_ids": frozenset({units[1].unit_id, units[2].unit_id})}
+    )
     result = assemble_segments(ranked, view, config(tmp_path), Counter())
     segment = result.segments[0]
     assert segment.context_only_unit_ids == (units[2].unit_id,)
@@ -789,22 +824,18 @@ def test_one_eligible_ordinal_gap_can_join_matches_but_denied_gap_cannot(tmp_pat
             for order, unit in enumerate((units[0], units[2]), 1)
         )
     )
-    view = type(
-        "View",
-        (),
-        {
-            "revision_ids": frozenset({bundle.revision.revision_id}),
-            "context_unit_ids": frozenset(unit.unit_id for unit in units),
-            "structural_unit_ids": frozenset(),
-            "asset_ids": frozenset(),
-            "chunk_ids": frozenset(),
-        },
-    )()
+    view = eligibility_view(
+        revision_ids=frozenset({bundle.revision.revision_id}),
+        context_unit_ids=frozenset(unit.unit_id for unit in units),
+        chunk_ids=frozenset(),
+    )
     joined = assemble_segments(ranked, view, config(tmp_path), Counter())
     assert len(joined.segments) == 1
     assert joined.segments[0].matched_unit_ids == (units[0].unit_id, units[2].unit_id)
     assert joined.segments[0].context_only_unit_ids == (units[1].unit_id,)
-    view.context_unit_ids = frozenset({units[0].unit_id, units[2].unit_id})
+    view = view.model_copy(
+        update={"context_unit_ids": frozenset({units[0].unit_id, units[2].unit_id})}
+    )
     split = assemble_segments(ranked, view, config(tmp_path), Counter())
     assert len(split.segments) == 2
     assert all(
@@ -920,17 +951,11 @@ def test_code_import_context_is_separate_bounded_and_owner_checked(tmp_path):
             ),
         )
     )
-    view = type(
-        "View",
-        (),
-        {
-            "revision_ids": frozenset({bundle.revision.revision_id}),
-            "context_unit_ids": frozenset(unit.unit_id for unit in units),
-            "structural_unit_ids": frozenset(),
-            "asset_ids": frozenset(),
-            "chunk_ids": frozenset(),
-        },
-    )()
+    view = eligibility_view(
+        revision_ids=frozenset({bundle.revision.revision_id}),
+        context_unit_ids=frozenset(unit.unit_id for unit in units),
+        chunk_ids=frozenset(),
+    )
     segment = assemble_segments(ranked, view, config(tmp_path), Counter()).segments[0]
     assert segment.text == units[1].text
     assert segment.context_excerpts[0].text == units[0].text
@@ -938,8 +963,8 @@ def test_code_import_context_is_separate_bounded_and_owner_checked(tmp_path):
         sum(Counter().count(excerpt.text) for excerpt in segment.context_excerpts)
         <= 160
     )
-    assert segment.citations[1].locators[0].char_start == 0
-    view.context_unit_ids = frozenset({units[1].unit_id})
+    assert locator_char_start(segment.citations[1].locators[0]) == 0
+    view = view.model_copy(update={"context_unit_ids": frozenset({units[1].unit_id})})
     assert (
         assemble_segments(ranked, view, config(tmp_path), Counter())
         .segments[0]
@@ -1183,17 +1208,11 @@ def test_code_diversity_counts_each_file_not_entire_repository(tmp_path):
             for index, unit in enumerate(units, 1)
         )
     )
-    view = type(
-        "View",
-        (),
-        {
-            "revision_ids": frozenset({bundle.revision.revision_id}),
-            "context_unit_ids": frozenset(unit.unit_id for unit in units),
-            "structural_unit_ids": frozenset(),
-            "asset_ids": frozenset(),
-            "chunk_ids": frozenset(),
-        },
-    )()
+    view = eligibility_view(
+        revision_ids=frozenset({bundle.revision.revision_id}),
+        context_unit_ids=frozenset(unit.unit_id for unit in units),
+        chunk_ids=frozenset(),
+    )
     result = assemble_segments(ranked, view, config(tmp_path), Counter())
     assert [segment.excerpts[0].text for segment in result.segments] == ["A", "B", "D"]
     assert result.omitted_anchors[0].unit_id == units[2].unit_id
@@ -1312,6 +1331,7 @@ def test_clipped_code_citation_uses_retained_encoding_and_cr_line_map(tmp_path):
             "disabled",
         )
         clipped = _citation(item, source.unit_id, start, end).locators[0]
+        assert isinstance(clipped, CodeLocator)
         assert clipped.char_start == start and clipped.char_end == end
         assert clipped.byte_start == len(text[:start].encode(encoding))
         assert clipped.byte_end == len(text[:end].encode(encoding))
@@ -1352,6 +1372,7 @@ def test_clipped_code_citation_uses_validated_capture_descriptor_map():
         "disabled",
     )
     clipped = _citation(item, source.unit_id, 6, 10).locators[0]
+    assert isinstance(clipped, CodeLocator)
     assert clipped.byte_start == len(text[:6].encode())
     assert clipped.byte_end == len(text[:10].encode())
     assert clipped.line_start == clipped.line_end == 2
