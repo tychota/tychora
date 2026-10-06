@@ -1,0 +1,22 @@
+tests/retrieval/test_eligibility.py
+  s_35b641b930a96d::t_af66af51b5e3cf 52,336-338,351-353,438-440,1348
+  s_35b641b930a96d::t_22485e56361d83 344-346,454
+  s_35b641b930a96d::t_e54735e1ee5a46 4-6,13-14,18,53-65,126,150,197,330-331,335,340,343,348,354-356,359,392,443,487-495,532-539,555-568,570,596-603,605-614,616,747,757,783,788,807-818,820-826,828,841-842,855-859,861-862,864-876,1244-1250,1252,1320-1321,1392-1394
+  s_35b641b930a96d::t_3bb7d3dd0fa67c 347
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "65d155405da77f4cfd707c10a9b06428dedae8cb",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
