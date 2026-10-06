@@ -11,6 +11,7 @@ import pytest
 from PIL import Image
 
 from tests.retrieval.graph_fixture import assertion, sealed_graph, unit
+from tests.typed_json import json_array, json_object, json_string
 from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
 from tychora.application.discovery import DiscoveryService
 from tychora.application.inspection import InspectionService
@@ -435,7 +436,9 @@ async def test_explicit_relations_require_authorized_seed_before_graph(published
 
 
 @pytest.mark.asyncio
-async def test_ready_native_relation_cursor_rejects_changed_query(published, tmp_path):
+async def test_ready_native_relation_cursor_rejects_changed_query(
+    published, tmp_path, monkeypatch
+):
     owner, scope, _ = published
     case = sealed_graph(
         tmp_path,
@@ -448,8 +451,12 @@ async def test_ready_native_relation_cursor_rejects_changed_query(published, tmp
     )
     service = InspectionService(owner, case.graph)
     view = case.view(context={"a", "b", "c"}, candidates={"a", "b", "c"})
-    service._attempt = lambda _snapshot, _scope: SimpleNamespace(view=view)
-    service.compiler = SimpleNamespace(revalidate_epoch=lambda *_: None)
+    monkeypatch.setattr(
+        service, "_attempt", lambda _snapshot, _scope: SimpleNamespace(view=view)
+    )
+    monkeypatch.setattr(
+        service, "compiler", SimpleNamespace(revalidate_epoch=lambda *_: None)
+    )
     first = await service.relations(
         RelationRequest(
             unit_ids=("a",), predicates=frozenset({"cites@1"}), max_hops=1, max_edges=1
@@ -472,8 +479,12 @@ async def test_ready_native_relation_cursor_rejects_changed_query(published, tmp
             ExecutionContext(),
         )
     assert changed.value.code == "INVALID_REQUEST"
-    service._attempt = lambda _snapshot, _scope: SimpleNamespace(
-        view=view.model_copy(update={"graph_generation_id": "later-generation"})
+    monkeypatch.setattr(
+        service,
+        "_attempt",
+        lambda _snapshot, _scope: SimpleNamespace(
+            view=view.model_copy(update={"graph_generation_id": "later-generation"})
+        ),
     )
     with pytest.raises(TychoraError) as generation:
         await service.relations(
@@ -491,7 +502,9 @@ async def test_ready_native_relation_cursor_rejects_changed_query(published, tmp
 
 
 @pytest.mark.asyncio
-async def test_ready_native_relation_inspection_stops_at_100_edges(published, tmp_path):
+async def test_ready_native_relation_inspection_stops_at_100_edges(
+    published, tmp_path, monkeypatch
+):
     owner, scope, _ = published
     targets = tuple(f"target-{i:03d}" for i in range(101))
     case = sealed_graph(
@@ -502,10 +515,16 @@ async def test_ready_native_relation_inspection_stops_at_100_edges(published, tm
     )
     service = InspectionService(owner, case.graph)
     eligible = {"seed", *targets}
-    service._attempt = lambda _snapshot, _scope: SimpleNamespace(
-        view=case.view(context=eligible, candidates=eligible)
+    monkeypatch.setattr(
+        service,
+        "_attempt",
+        lambda _snapshot, _scope: SimpleNamespace(
+            view=case.view(context=eligible, candidates=eligible)
+        ),
     )
-    service.compiler = SimpleNamespace(revalidate_epoch=lambda *_: None)
+    monkeypatch.setattr(
+        service, "compiler", SimpleNamespace(revalidate_epoch=lambda *_: None)
+    )
     result = await service.relations(
         RelationRequest(
             unit_ids=("seed",),
@@ -695,24 +714,22 @@ async def test_full_original_cannot_expose_rejected_source_unit(published):
 @pytest.mark.asyncio
 async def test_discovery_counts_only_readable_collection_sources(published):
     owner, scope, _ = published
+    discovery = DiscoveryService(owner.config, owner.store.registry, owner)
     result = await asyncio.to_thread(
-        DiscoveryService(owner.config, owner.store.registry, owner).discover,
+        discovery.discover,
         DiscoverRequest(subject="kinds"),
         scope,
     )
     assert next(item.count for item in result.counts if item.name == "manual@1") == 1
     sources = await asyncio.to_thread(
-        DiscoveryService(owner.config, owner.store.registry, owner).discover,
+        discovery.discover,
         DiscoverRequest(subject="sources"),
         scope,
     )
     assert len(sources.definitions) == 1
-    assert (
-        sources.definitions[0].definition["revisions"][0]["extractions"][0]["stages"][
-            "extraction"
-        ]
-        == "retained"
-    )
+    revisions = json_array(sources.definitions[0].definition["revisions"])
+    extractions = json_array(json_object(revisions[0])["extractions"])
+    assert json_object(extractions[0], "stages")["extraction"] == "retained"
     denied = scope.model_copy(update={"collection_ids": frozenset()})
     hidden = await asyncio.to_thread(
         DiscoveryService(owner.config, owner.store.registry, owner).discover,
@@ -764,32 +781,45 @@ async def test_source_discovery_preserves_unextracted_source_and_revision_stages
         )
 
     await owner.run_blocking(stage, ExecutionContext())
+    discovery = DiscoveryService(owner.config, owner.store.registry, owner)
     result = await asyncio.to_thread(
-        DiscoveryService(owner.config, owner.store.registry, owner).discover,
+        discovery.discover,
         DiscoverRequest(subject="sources"),
         scope,
     )
     definitions = {entry.id: entry.definition for entry in result.definitions}
-    assert definitions["awaiting"]["stages"]["registration"] == "registered"
+    assert (
+        json_object(definitions["awaiting"], "stages")["registration"] == "registered"
+    )
     assert definitions["awaiting"]["revisions"] == ()
-    original = next(item for key, item in definitions.items() if key != "awaiting")
-    revisions = original["revisions"]
+    original_id = next(key for key in definitions if key != "awaiting")
+    original = definitions[original_id]
+    preview = json_array(original["revisions"])
+    assert len(preview) == 1
+    cursor = json_string(original["next_revision_cursor"])
+    next_page = await asyncio.to_thread(
+        discovery.source_revisions, original_id, scope, cursor=cursor, limit=1
+    )
+    assert len(next_page.revisions) == 1
+    assert next_page.revisions[0].revision_id != json_object(preview[0])["revision_id"]
+    full_page = await asyncio.to_thread(discovery.source_revisions, original_id, scope)
+    revisions = full_page.revisions
     assert len(revisions) == 2
-    assert [item["revision_id"] for item in revisions] == sorted(
-        item["revision_id"] for item in revisions
+    assert [item.revision_id for item in revisions] == sorted(
+        item.revision_id for item in revisions
     )
     assert (
-        next(item for item in revisions if item["revision_id"] == "second-revision")[
-            "extractions"
-        ]
+        next(
+            item for item in revisions if item.revision_id == "second-revision"
+        ).extractions
         == ()
     )
     original_extractions = next(
-        item for item in revisions if item["revision_id"] != "second-revision"
-    )["extractions"]
+        item for item in revisions if item.revision_id != "second-revision"
+    ).extractions
     assert len(original_extractions) == 2
-    assert [item["extraction_id"] for item in original_extractions] == sorted(
-        item["extraction_id"] for item in original_extractions
+    assert [item.extraction_id for item in original_extractions] == sorted(
+        item.extraction_id for item in original_extractions
     )
 
 
