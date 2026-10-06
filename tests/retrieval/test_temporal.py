@@ -1,5 +1,6 @@
 """Temporal selection over retained snapshot editions."""
 
+from contextlib import contextmanager
 from datetime import date
 from hashlib import sha256
 
@@ -154,6 +155,8 @@ def test_compiled_attempt_exposes_overlap_warning(tmp_path):
         slots=(),
     )
 
+    snapshot_view = snapshot
+
     class Reader:
         registry = Registry.from_config(config)
 
@@ -163,6 +166,13 @@ def test_compiled_attempt_exposes_overlap_warning(tmp_path):
         def policy_epoch(self, workspace_id):
             return 0
 
+        def retained_config(self, snapshot):
+            return config
+
+        @contextmanager
+        def pin_snapshot(self, selector):
+            yield snapshot_view
+
     scope = RequestScope(
         principal_id="principal",
         collection_ids=frozenset({"collection"}),
@@ -171,7 +181,9 @@ def test_compiled_attempt_exposes_overlap_warning(tmp_path):
     attempt = EligibilityCompiler(Reader()).compile_attempt(
         snapshot,
         scope,
-        QueryRequest(question="Why?", mode="audit", as_of=date(2024, 1, 1)),
+        QueryRequest.from_mapping(
+            {"question": "Why?", "mode": "audit", "as_of": "2024-01-01"}
+        ),
         config,
     )
     assert attempt.warnings
