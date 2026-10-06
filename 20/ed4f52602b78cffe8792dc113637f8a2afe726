@@ -1,0 +1,30 @@
+tests/operations/test_removal.py
+  s_35b641b930a96d::t_2b4777faa14815 7,66
+tests/retrieval/test_lexical.py
+  s_35b641b930a96d::t_ba2e0dfb7e70d5 29
+  s_35b641b930a96d::t_db14fa0fe85c71 30-31,164,166,168-170
+tests/operations/test_backup.py
+  s_35b641b930a96d::t_2b4777faa14815 97-100,111
+tests/cli/test_commands.py
+  s_35b641b930a96d::t_2b4777faa14815 26,36
+tests/evaluation/test_dataset.py
+  s_35b641b930a96d::t_2b4777faa14815 48
+tests/retrieval/test_caches.py
+  s_35b641b930a96d::t_db14fa0fe85c71 3,66-69,71,91-94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "20ed4f52602b78cffe8792dc113637f8a2afe726",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
