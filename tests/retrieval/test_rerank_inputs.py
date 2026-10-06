@@ -5,6 +5,8 @@ from dataclasses import replace
 import pytest
 
 from tests.helpers.corpus import registry, seed_bundle
+from tests.helpers.eligibility import eligibility_view
+from tests.typed_json import json_array, json_object
 from tychora.contracts.candidates import ChannelCandidate
 from tychora.contracts.corpus import ChunkRow
 from tychora.contracts.errors import TychoraError
@@ -60,17 +62,11 @@ def test_rerank_representation_keeps_end_match():
         ranks={"lexical": 1},
         matching_window_ids=(chunk.chunk_id,),
     )
-    view = type(
-        "View",
-        (),
-        {
-            "revision_ids": frozenset({bundle.revision.revision_id}),
-            "context_unit_ids": frozenset({unit.unit_id}),
-            "structural_unit_ids": frozenset(),
-            "asset_ids": frozenset(),
-            "chunk_ids": frozenset({chunk.chunk_id}),
-        },
-    )()
+    view = eligibility_view(
+        revision_ids=frozenset({bundle.revision.revision_id}),
+        context_unit_ids=frozenset({unit.unit_id}),
+        chunk_ids=frozenset({chunk.chunk_id}),
+    )
     facts = RerankFacts(
         rows=bundle,
         prepared=prepared,
@@ -110,17 +106,11 @@ def _case(text: str, matches: tuple[RerankMatch, ...]):
             match.window_id for match in matches if match.window_id is not None
         ),
     )
-    view = type(
-        "View",
-        (),
-        {
-            "revision_ids": frozenset({bundle.revision.revision_id}),
-            "context_unit_ids": frozenset({unit.unit_id}),
-            "structural_unit_ids": frozenset(),
-            "asset_ids": frozenset(),
-            "chunk_ids": frozenset(candidate.matching_window_ids),
-        },
-    )()
+    view = eligibility_view(
+        revision_ids=frozenset({bundle.revision.revision_id}),
+        context_unit_ids=frozenset({unit.unit_id}),
+        chunk_ids=frozenset(candidate.matching_window_ids),
+    )
     return (
         bundle,
         candidate,
@@ -233,7 +223,7 @@ def test_denied_match_dependency_fails_entire_representation():
     bundle, candidate, view, facts = _case(text, (match,))
     unit_id = bundle.units[0].unit_id
     facts = replace(facts, matches=(replace(match, unit_id=unit_id),))
-    view.context_unit_ids = frozenset()
+    view = view.model_copy(update={"context_unit_ids": frozenset()})
     with pytest.raises(TychoraError) as error:
         ranking_input(
             candidate,
@@ -281,7 +271,7 @@ def test_channel_matches_use_retained_chunk_ranges_including_nonwinning_family()
             ),
         ),
     }
-    view = type("View", (), {"chunk_ids": frozenset({chunk.chunk_id})})()
+    view = eligibility_view(chunk_ids=frozenset({chunk.chunk_id}))
     matches = matches_from_channels(
         candidate,
         rows,
@@ -344,8 +334,8 @@ def test_code_parent_context_is_exact_and_dropped_before_winner(tmp_path):
     child = next(unit for unit in bundle.units if unit.unit_id == child_record.unit_id)
     parent_context = next(
         span
-        for span in child_record.data_json["context_spans"]
-        if span["reason"] == "parent_declaration"
+        for raw in json_array(child_record.data_json["context_spans"])
+        if (span := json_object(raw))["reason"] == "parent_declaration"
     )
     parent = next(
         unit
@@ -354,17 +344,10 @@ def test_code_parent_context_is_exact_and_dropped_before_winner(tmp_path):
     )
     match = RerankMatch(None, child.unit_id, 0, len(child.text), "text", 1, 1.0)
     candidate = FusedCandidate(("unit", child.unit_id), 1, 1.0, {"text": 1})
-    view = type(
-        "View",
-        (),
-        {
-            "revision_ids": frozenset({bundle.revision.revision_id}),
-            "context_unit_ids": frozenset(unit.unit_id for unit in bundle.units),
-            "structural_unit_ids": frozenset(),
-            "asset_ids": frozenset(),
-            "chunk_ids": frozenset(),
-        },
-    )()
+    view = eligibility_view(
+        revision_ids=frozenset({bundle.revision.revision_id}),
+        context_unit_ids=frozenset(unit.unit_id for unit in bundle.units),
+    )
     facts = RerankFacts(bundle, prepare_extraction(bundle), (match,))
     units = {unit.unit_id: unit for unit in bundle.units}
     full = ranking_input(candidate, units, view, CharacterCounter(), facts=facts)
