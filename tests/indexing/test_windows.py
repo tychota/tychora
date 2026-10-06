@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from tests.helpers.corpus import artifact, seed_bundle
+from tests.typed_json import json_array, json_integer, json_object
 from tychora.adapters.code.syntax import source_maps
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.code_storage import CodeFileDescriptor
@@ -289,13 +290,15 @@ def test_prepared_extraction_reuses_complete_code_ownership_view(counter) -> Non
     assert child_id in parent_windows[1].dependency_ids
     assert parent_id in child_windows[0].dependency_ids
 
-    bad_locator = code_child.locators[0].model_copy(update={"byte_start": 8})
+    code_locator = code_child.locators[0]
+    assert isinstance(code_locator, CodeLocator)
+    bad_locator = code_locator.model_copy(update={"byte_start": 8})
     bad_child = code_child.model_copy(update={"locators": (bad_locator,)})
     with pytest.raises(ValueError, match="codepoint/byte/line"):
         prepare_extraction(_replace_units(bundle, (code_parent, bad_child)))
 
     bad_codepoint_map = list(descriptor.codepoint_to_byte)
-    bad_codepoint_map[code_child.locators[0].char_start] += 1
+    bad_codepoint_map[code_locator.char_start] += 1
     bad_descriptor = descriptor.model_copy(
         update={"codepoint_to_byte": tuple(bad_codepoint_map)}
     )
@@ -345,10 +348,10 @@ def test_post_sql_code_rows_prepare_without_transient_file_maps(
     context_record = next(
         record for record in canonical.records if record.data_json["context_spans"]
     )
-    context = context_record.data_json["context_spans"][0]
-    original = context["original_file_locator"]
+    context = json_object(json_array(context_record.data_json["context_spans"])[0])
+    original = json_object(context, "original_file_locator")
     bad_original = FrozenJsonMap(
-        {**dict(original), "byte_start": original["byte_start"] + 1}
+        {**dict(original), "byte_start": json_integer(original["byte_start"]) + 1}
     )
     bad_context = FrozenJsonMap(
         {**dict(context), "original_file_locator": bad_original}
@@ -395,14 +398,17 @@ def test_post_sql_code_rows_prepare_without_transient_file_maps(
             )
         )
 
-    declaration = context_record.data_json["declaration_span"]
+    declaration = json_object(context_record.data_json, "declaration_span")
     bad_declaration_record = context_record.model_copy(
         update={
             "data_json": FrozenJsonMap(
                 {
                     **dict(context_record.data_json),
                     "declaration_span": FrozenJsonMap(
-                        {**dict(declaration), "line_end": declaration["line_end"] + 1}
+                        {
+                            **dict(declaration),
+                            "line_end": json_integer(declaration["line_end"]) + 1,
+                        }
                     ),
                 }
             )
@@ -634,11 +640,13 @@ def test_retained_code_ranges_handle_bom_unicode_and_crlf_without_maps(
         for window in window_unit(prepared.representation(source_id), counter)
     ] == [text]
 
+    source_locator = source.locators[0]
+    assert isinstance(source_locator, CodeLocator)
     bad_bytes = source.model_copy(
         update={
             "locators": (
-                source.locators[0].model_copy(
-                    update={"byte_end": source.locators[0].byte_end + 1}
+                source_locator.model_copy(
+                    update={"byte_end": source_locator.byte_end + 1}
                 ),
             )
         }
@@ -717,10 +725,12 @@ def test_retained_code_ranges_handle_bom_unicode_and_crlf_without_maps(
     overlapping = _replace_units(retained, (container, source_with_overlap, overlap))
     prepare_extraction(overlapping)
 
-    shifted_locator = overlap.locators[0].model_copy(
+    overlap_locator = overlap.locators[0]
+    assert isinstance(overlap_locator, CodeLocator)
+    shifted_locator = overlap_locator.model_copy(
         update={
-            "byte_start": overlap.locators[0].byte_start + 1,
-            "byte_end": overlap.locators[0].byte_end + 1,
+            "byte_start": overlap_locator.byte_start + 1,
+            "byte_end": overlap_locator.byte_end + 1,
         }
     )
     shifted_overlap = overlap.model_copy(update={"locators": (shifted_locator,)})
@@ -832,8 +842,12 @@ def test_docling_source_parts_bind_narrow_overlapping_owner(counter) -> None:
     assert child_id in windows[1].dependency_ids
     assert child_id not in windows[0].dependency_ids | windows[2].dependency_ids
 
-    broken_parts = list(parent.attributes["source_parts"])
-    broken_parts[0] = {**dict(broken_parts[0]), "unit_end": 8, "source_end": 8}
+    parent_parts = json_array(parent.attributes["source_parts"])
+    child_parts = json_array(child.attributes["source_parts"])
+    broken_parts = list(parent_parts)
+    broken_parts[0] = FrozenJsonMap(
+        {**dict(json_object(broken_parts[0])), "unit_end": 8, "source_end": 8}
+    )
     broken_parent = parent.model_copy(
         update={
             "attributes": FrozenJsonMap(
@@ -851,7 +865,7 @@ def test_docling_source_parts_bind_narrow_overlapping_owner(counter) -> None:
                     **dict(parent.attributes),
                     "source_parts": [
                         {
-                            **dict(parent.attributes["source_parts"][0]),
+                            **dict(json_object(parent_parts[0])),
                             "source_domain": "fabricated-domain",
                         }
                     ],
@@ -866,7 +880,7 @@ def test_docling_source_parts_bind_narrow_overlapping_owner(counter) -> None:
                     **dict(child.attributes),
                     "source_parts": [
                         {
-                            **dict(child.attributes["source_parts"][0]),
+                            **dict(json_object(child_parts[0])),
                             "source_domain": "fabricated-domain",
                         }
                     ],
