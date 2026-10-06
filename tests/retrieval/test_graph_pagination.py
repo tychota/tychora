@@ -105,7 +105,7 @@ def test_explicit_inspection_returns_bounded_assertion_page(tmp_path):
         case.graph.close()
 
 
-def test_cancelled_native_read_releases_generation_for_drop(tmp_path):
+def test_cancelled_native_read_releases_generation_for_drop(tmp_path, monkeypatch):
     case = sealed_graph(tmp_path, (unit("a"), unit("b")), (assertion("a", "b"),))
     entered = Event()
     release = Event()
@@ -121,7 +121,7 @@ def test_cancelled_native_read_releases_generation_for_drop(tmp_path):
             assert release.wait(5)
         return rows
 
-    case.graph._rows = held_read
+    monkeypatch.setattr(case.graph, "_rows", held_read)
     view = case.view(context={"a", "b"}, candidates={"a", "b"})
 
     def read():
@@ -176,7 +176,7 @@ def test_expired_deadline_does_not_hold_generation_lock(tmp_path):
         case.graph.close()
 
 
-def test_deadline_after_native_rows_unwinds_at_next_checkpoint(tmp_path):
+def test_deadline_after_native_rows_unwinds_at_next_checkpoint(tmp_path, monkeypatch):
     case = sealed_graph(tmp_path, (unit("a"), unit("b")), (assertion("a", "b"),))
     entered, release, finished = Event(), Event(), Event()
     failures = []
@@ -189,7 +189,7 @@ def test_deadline_after_native_rows_unwinds_at_next_checkpoint(tmp_path):
             assert release.wait(5)
         return rows
 
-    case.graph._rows = held_read
+    monkeypatch.setattr(case.graph, "_rows", held_read)
     view = case.view(context={"a", "b"}, candidates={"a", "b"})
     deadline = time.monotonic() + 0.15
 
@@ -322,7 +322,7 @@ def test_distinct_support_paths_to_one_target_remain_inspectable(tmp_path):
         case.graph.close()
 
 
-def test_zero_assertion_work_does_not_issue_traversal_query(tmp_path):
+def test_zero_assertion_work_does_not_issue_traversal_query(tmp_path, monkeypatch):
     case = sealed_graph(tmp_path, (unit("a"), unit("b")), (assertion("a", "b"),))
     try:
         view = case.view(context={"a", "b"}, candidates={"a", "b"})
@@ -330,7 +330,7 @@ def test_zero_assertion_work_does_not_issue_traversal_query(tmp_path):
         def forbidden_read(query, parameters=None):
             raise AssertionError("No native graph rows may be inspected")
 
-        case.graph._rows = forbidden_read
+        monkeypatch.setattr(case.graph, "_rows", forbidden_read)
         page = case.graph.expand(view, ("a",), case.budget(max_rows=0), case.ctx)
         assert page.candidates == ()
         assert page.truncation == "edge_work_limit"
