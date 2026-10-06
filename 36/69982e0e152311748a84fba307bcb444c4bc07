@@ -1,0 +1,30 @@
+tests/application/test_discovery.py
+  s_35b641b930a96d::t_8958a05c6c7cd4 11,216
+  s_35b641b930a96d::t_f6c5d659d9c32d 71,80-82,142-143,215,281
+  s_35b641b930a96d::t_d62e5a9437106b 276-277,282-283
+  s_35b641b930a96d::t_5bdef9524d2b13 217-218,272,278-280,287-293
+tests/configuration/test_resolve.py
+  s_35b641b930a96d::t_731e2493a840be 68-71,81-84,90,392-395,412-415,506-508,523-528,577,814,817-822,825-830,834,836-838
+  s_35b641b930a96d::t_d8c06f70a16976 9,72,75-77,79-80,87-88,169
+  s_35b641b930a96d::t_e59495b83a5eba 89
+tests/typed_json.py
+  s_35b641b930a96d::t_8958a05c6c7cd4 23-27
+  s_35b641b930a96d::t_ab48ba42756dd4 18-22
+  s_35b641b930a96d::t_c010b6fe2f94c5 1-17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3669982e0e152311748a84fba307bcb444c4bc07",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
