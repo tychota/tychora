@@ -176,7 +176,7 @@ def test_expired_deadline_does_not_hold_generation_lock(tmp_path):
         case.graph.close()
 
 
-def test_deadline_during_native_read_unwinds_at_next_checkpoint(tmp_path):
+def test_deadline_after_native_rows_unwinds_at_next_checkpoint(tmp_path):
     case = sealed_graph(tmp_path, (unit("a"), unit("b")), (assertion("a", "b"),))
     entered, release, finished = Event(), Event(), Event()
     failures = []

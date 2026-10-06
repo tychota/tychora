@@ -242,14 +242,19 @@ def _check_pdf_mask_capacity(path: Path, check_size) -> None:
                     # Follow mask-of-mask references too, including malformed cycles.
                     walk(obj.get(name), depth + 1)
             elif subtype == "/Form":
-                resources = resolve(obj.get("/Resources"))
-                if not isinstance(resources, DictionaryObject):
-                    malformed()
-                xobjects = resolve(resources.get("/XObject", DictionaryObject()))
-                if not isinstance(xobjects, DictionaryObject):
-                    malformed()
-                for child in xobjects.values():
-                    walk(child, depth + 1)
+                if "/Resources" in obj:
+                    resources = resolve(obj.get("/Resources"))
+                    if not isinstance(resources, DictionaryObject):
+                        malformed()
+                    xobjects = resolve(resources.get("/XObject", DictionaryObject()))
+                    if not isinstance(xobjects, DictionaryObject):
+                        malformed()
+                    for child in xobjects.values():
+                        walk(child, depth + 1)
+                # A Form with no resource dictionary uses its caller's context.
+                # That dictionary is already walked in full, including images
+                # that the Form may name; recursing it again could visit this
+                # Form's own binding and falsely report a cycle.
             else:
                 malformed()
         finally:

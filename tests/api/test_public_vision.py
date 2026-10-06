@@ -43,6 +43,7 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
     monkeypatch.setenv("SYNTHETIC_VISION_KEY", "synthetic-key")
     picture = tmp_path / "diagram.png"
     Image.new("RGB", (8, 6), "blue").save(picture)
+    original_picture = picture.read_bytes()
     settings = tmp_path / "workspace.toml"
     settings.write_text(
         'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
@@ -322,6 +323,13 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
         assert count == 4  # Initial, capability-gap, recovered, changed-schema.
         synced = kb.sources.sync(source_identity)
         assert kb.jobs.wait(synced.id).state == "succeeded"
+        Image.new("RGB", (8, 6), "green").save(picture)
+        stale = kb.sources.add(selected)
+        stale_state = kb.jobs.wait(stale.id)
+        assert stale_state.state == "failed"
+        assert stale_state.error_code == "INVALID_REQUEST"
+        assert len(sent) == failed_calls + 2
+        picture.write_bytes(original_picture)
         revoked_schema = {
             **changed_schema,
             "vision": [
@@ -379,10 +387,6 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
     with Tychora.open(workspace, config=config, token_counter=Counter()) as kb:
         revoked = kb.sources.add(revoked_schema)
         assert kb.jobs.wait(revoked.id).state == "failed"
-        assert len(sent) == failed_calls + 2
-        Image.new("RGB", (8, 6), "green").save(picture)
-        stale = kb.sources.add(selected)
-        assert kb.jobs.wait(stale.id).state == "failed"
         assert len(sent) == failed_calls + 2
 
 

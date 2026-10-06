@@ -21,7 +21,13 @@ def _stream(dictionary: bytes, payload: bytes) -> bytes:
 
 
 def _masked_pdf(
-    path, *, kind: str, width: int, height: int, mask_ref: bytes | None = None
+    path,
+    *,
+    kind: str,
+    width: int,
+    height: int,
+    mask_ref: bytes | None = None,
+    inherited_resources: bool = False,
 ):
     if kind == "soft":
         mask_data = zlib.compress(bytes(width * height), 9)
@@ -43,7 +49,9 @@ def _masked_pdf(
         3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << /XObject << /F1 5 0 R >> >> /Contents 4 0 R >>",
         4: _stream(b"", b"q /F1 Do Q"),
         5: _stream(
-            b"/Type /XObject /Subtype /Form /BBox [0 0 200 200] /Resources << /XObject << /F2 7 0 R >> >>",
+            b"/Type /XObject /Subtype /Form /BBox [0 0 200 200] /Resources << /XObject << /F2 7 0 R "
+            + (b"/Im1 6 0 R " if inherited_resources else b"")
+            + b">> >>",
             b"q /F2 Do Q",
         ),
         6: _stream(
@@ -52,7 +60,12 @@ def _masked_pdf(
             zlib.compress(b"\xff\xff\xff"),
         ),
         7: _stream(
-            b"/Type /XObject /Subtype /Form /BBox [0 0 200 200] /Resources << /XObject << /Im1 6 0 R >> >>",
+            b"/Type /XObject /Subtype /Form /BBox [0 0 200 200] "
+            + (
+                b""
+                if inherited_resources
+                else b"/Resources << /XObject << /Im1 6 0 R >> >>"
+            ),
             b"q /Im1 Do Q",
         ),
         8: b"<< /Producer (Synthetic mask fixture) >>",
@@ -89,6 +102,77 @@ def test_small_referenced_mask_remains_accepted(tmp_path, kind):
     path = tmp_path / f"small-{kind}.pdf"
     _masked_pdf(path, kind=kind, width=10, height=10)
     _check_pdf_image_capacity(path)
+
+
+def test_form_without_resources_inherits_small_mask_resource(tmp_path):
+    import pypdfium2
+    import pypdfium2.raw as pdfium_raw
+
+    path = tmp_path / "inherited-small-mask.pdf"
+    _masked_pdf(path, kind="soft", width=10, height=10, inherited_resources=True)
+    with pypdfium2.PdfDocument(path) as pdf:
+        page = pdf[0]
+        assert any(
+            item.type == pdfium_raw.FPDF_PAGEOBJ_IMAGE
+            for item in page.get_objects(max_depth=3)
+        )
+        page.close()
+    _check_pdf_image_capacity(path)
+
+
+def test_form_without_resources_still_rejects_oversized_inherited_mask(tmp_path):
+    path = tmp_path / "inherited-large-mask.pdf"
+    _masked_pdf(path, kind="soft", width=6500, height=6500, inherited_resources=True)
+    with pytest.raises(TychoraError, match="pixel limit") as failure:
+        _check_pdf_image_capacity(path)
+    assert failure.value.code == "INVALID_REQUEST"
+
+
+@pytest.mark.parametrize(
+    ("resources", "accepted"),
+    [(b"", True), (b"/Resources (not-a-dictionary)", False)],
+)
+def test_form_resource_dictionary_is_optional_but_present_value_is_strict(
+    tmp_path, resources, accepted
+):
+    import pypdfium2
+
+    objects = (
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /XObject << /F 5 0 R >> >> /Contents 4 0 R >>",
+        _stream(b"", b"q /F Do Q"),
+        _stream(
+            b"/Type /XObject /Subtype /Form /BBox [0 0 100 100] " + resources,
+            b"0 0 1 rg 10 10 80 80 re f",
+        ),
+    )
+    data = bytearray(b"%PDF-1.7\n")
+    offsets = [0]
+    for number, obj in enumerate(objects, 1):
+        offsets.append(len(data))
+        data.extend(f"{number} 0 obj\n".encode() + obj + b"\nendobj\n")
+    xref = len(data)
+    data.extend(f"xref\n0 {len(offsets)}\n0000000000 65535 f \n".encode())
+    for offset in offsets[1:]:
+        data.extend(f"{offset:010d} 00000 n \n".encode())
+    data.extend(
+        f"trailer\n<< /Size {len(offsets)} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
+    )
+    path = tmp_path / "resource-free-form.pdf"
+    path.write_bytes(data)
+    with pypdfium2.PdfDocument(path) as pdf:
+        page = pdf[0]
+        bitmap = page.render()
+        assert bitmap.to_pil().getpixel((50, 50)) == (0, 0, 255)
+        bitmap.close()
+        page.close()
+    if accepted:
+        _check_pdf_image_capacity(path)
+    else:
+        with pytest.raises(TychoraError, match="mask metadata") as failure:
+            _check_pdf_image_capacity(path)
+        assert failure.value.code == "INVALID_REQUEST"
 
 
 def test_malformed_mask_reference_fails_closed(tmp_path):
