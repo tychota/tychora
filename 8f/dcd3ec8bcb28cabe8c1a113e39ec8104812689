@@ -1,0 +1,20 @@
+tests/performance/engine_probe.py
+  s_35b641b930a96d::t_c86528d2e10419 13,16,30-34,38,154,188-194,223-224,226,235,237,244,309,313-314,320-326,328,336,338-340,342,344-345,371
+  s_35b641b930a96d::t_9822c9206da7e3 157,310-312,316-318,329-335,350-353
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8fdcd3ec8bcb28cabe8c1a113e39ec8104812689",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
