@@ -10,8 +10,10 @@ import subprocess
 import sys
 import time
 import tracemalloc
+from collections.abc import Hashable, Mapping
 from dataclasses import asdict, replace
 from pathlib import Path
+from typing import Literal
 
 from tests.indexing.test_publication import RecordingCounter, RecordingEmbedder
 from tychora.adapters.chroma.index import ChromaVectorIndex
@@ -25,9 +27,15 @@ from tychora.application.owner import WorkspaceOwner
 from tychora.application.query import QueryService
 from tychora.application.sources import SourceService
 from tychora.configuration.resolve import resolve_config
+from tychora.contracts.base import FrozenJsonMap
+from tychora.contracts.candidates import CandidateKey, ChannelCandidates
+from tychora.contracts.embeddings import EmbeddingCapabilities
+from tychora.contracts.evidence import QueryResult
+from tychora.contracts.graph import EligibilityView
 from tychora.contracts.identity import digest
 from tychora.contracts.indexing import FamilySpec
 from tychora.contracts.requests import QueryRequest, RequestScope, SourceInput
+from tychora.contracts.vectors import CandidatePage, WorkLimits
 from tychora.evaluation.benchmarks import (
     BenchmarkConditions,
     BenchmarkIdentity,
@@ -143,10 +151,10 @@ def setup_corpus(
 
         stable = coordinator.stable_capability_json
 
-        def historical(capabilities):
+        def historical(capabilities: EmbeddingCapabilities):
             return {**stable(capabilities), "input_types": list(legacy_order)}
 
-        coordinator.stable_capability_json = historical
+        vars(coordinator)["stable_capability_json"] = historical
     asyncio.run(create())
 
 
@@ -177,7 +185,13 @@ class EngineSession:
             lambda: self.owner.store.resolve_snapshot(None), ExecutionContext()
         )
         slot = next(slot for slot in snapshot.slots if slot.slot == "text")
-        retained_spec = FamilySpec.model_validate(dict(slot.family.config_json["spec"]))
+        spec_json = slot.family.config_json["spec"]
+        capabilities_json = slot.family.config_json["capabilities"]
+        origin_sha = slot.family.config_json["effective_config_sha"]
+        assert isinstance(spec_json, FrozenJsonMap)
+        assert isinstance(capabilities_json, FrozenJsonMap)
+        assert isinstance(origin_sha, str)
+        retained_spec = FamilySpec.model_validate(dict(spec_json))
         self.index.create_family(retained_spec)
         coordinator = ProjectionCoordinator(
             store=self.owner.store,
@@ -206,27 +220,28 @@ class EngineSession:
             runtime=runtime,
             authorize_document=lambda payload_sha, dependencies, ctx: None,
         )
+        input_types = capabilities_json["input_types"]
+        assert isinstance(input_types, tuple)
         self.capability_order = (
-            tuple(slot.family.config_json["capabilities"]["input_types"]),
+            input_types,
             tuple(embedder.capabilities.model_dump(mode="json")["input_types"]),
         )
-        origin_sha = slot.family.config_json["effective_config_sha"]
         settings = self.owner.config.values.providers.text.model_dump(mode="json")
         self.family_proof = {
             "retained_matches": digest(
                 "text-family-config-v1",
                 origin_sha,
                 settings,
-                slot.family.config_json["capabilities"],
+                capabilities_json,
             )
-            == slot.family.config_json["spec"]["config_sha"],
+            == spec_json["config_sha"],
             "fresh_matches": digest(
                 "text-family-config-v1",
                 origin_sha,
                 settings,
                 embedder.capabilities.model_dump(mode="json"),
             )
-            == slot.family.config_json["spec"]["config_sha"],
+            == spec_json["config_sha"],
         }
         self.service = QueryService(
             self.owner,
@@ -291,28 +306,51 @@ class EngineSession:
         revalidate = self.service.compiler.revalidate_epoch
         cached_result = self.caches.get_result
 
-        def measured_lexical(*args, **kwargs):
+        def measured_lexical(
+            view: EligibilityView,
+            query: str,
+            candidate_limit: int,
+            ctx: ExecutionContext,
+        ) -> ChannelCandidates:
             self._bump(retrieval_calls=1)
-            return self._time("lexical_search", lexical_search, *args, **kwargs)
+            return self._time(
+                "lexical_search", lexical_search, view, query, candidate_limit, ctx
+            )
 
-        def measured_vector(*args, **kwargs):
+        def measured_vector(
+            query_vector: bytes,
+            eligible_records_and_owners: Mapping[str, CandidateKey],
+            candidate_limit: int,
+            work_limits: WorkLimits,
+            ctx: ExecutionContext,
+        ) -> CandidatePage:
             self._bump(retrieval_calls=1)
-            return self._time("vector_search", vector_search, *args, **kwargs)
+            return self._time(
+                "vector_search",
+                vector_search,
+                query_vector,
+                eligible_records_and_owners,
+                candidate_limit,
+                work_limits,
+                ctx,
+            )
 
-        def measured_revalidate(*args, **kwargs):
+        def measured_revalidate(
+            view: EligibilityView, stage: Literal["provider", "delivery"]
+        ) -> None:
             self._bump(policy_revalidations=1)
-            return self._time("policy_revalidation", revalidate, *args, **kwargs)
+            self._time("policy_revalidation", revalidate, view, stage)
 
-        def measured_result(*args, **kwargs):
-            value = cached_result(*args, **kwargs)
+        def measured_result(key: Hashable) -> object | None:
+            value = cached_result(key)
             if value is not None:
                 self._bump(cache_hits=1)
             return value
 
-        self.lexical.search = measured_lexical
-        self.index.search = measured_vector
-        self.service.compiler.revalidate_epoch = measured_revalidate
-        self.caches.get_result = measured_result
+        vars(self.lexical)["search"] = measured_lexical
+        vars(self.index)["search"] = measured_vector
+        vars(self.service.compiler)["revalidate_epoch"] = measured_revalidate
+        vars(self.caches)["get_result"] = measured_result
 
     def prepare(self, state: str) -> None:
         if tracemalloc.is_tracing():
@@ -330,7 +368,7 @@ class EngineSession:
         )
         return replace(self.counts, index_bytes=index_bytes)
 
-    def search(self, request: QueryRequest) -> object:
+    def search(self, request: QueryRequest) -> QueryResult:
         delivered = asyncio.run(
             self.service.search(request, self.scope, ExecutionContext())
         )
