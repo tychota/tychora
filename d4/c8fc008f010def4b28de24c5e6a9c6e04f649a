@@ -1,0 +1,50 @@
+src/tychora/application/sources.py
+  s_35b641b930a96d::t_dab9baa1a01b64 18,845-846,848,915-918
+  s_35b641b930a96d::t_33097022ebe089 919-920
+tests/evaluation/test_graph_scenarios.py
+  s_35b641b930a96d::t_e9ebbd5f331d18 281
+  s_35b641b930a96d::t_d1658480edc23e 153,256,305,345
+src/tychora/adapters/code/normalize.py
+  s_35b641b930a96d::t_dab9baa1a01b64 185-193
+  s_35b641b930a96d::t_a0e3314bc1bc53 194
+tests/code/test_legacy_retry.py
+  s_35b641b930a96d::t_2bfbf56b895e83 63
+  s_35b641b930a96d::t_8716128807f022 1-62,64-72
+tests/evaluation/test_temporal_scenarios.py
+  s_35b641b930a96d::t_a61532d59864a8 86
+  s_35b641b930a96d::t_430ef028c930c3 39-85,87-96,98
+  s_35b641b930a96d::t_7ff6d4b6ad17aa 97
+tests/formatting/test_response_budget.py
+  s_35b641b930a96d::t_360533fe328701 15,60,88,109-136
+  s_35b641b930a96d::t_7e2f97418ec6a8 137-138
+src/tychora/formatting/render.py
+  s_35b641b930a96d::t_8eb0c97843166c 27,141,222-223
+  s_35b641b930a96d::t_d502930f6538e2 224
+tests/formatting/test_render.py
+  s_35b641b930a96d::t_db0cc0b4763e9f 8-13,60-73,75-76,78-81,87
+  s_35b641b930a96d::t_ce97db4e831dd6 74
+  s_35b641b930a96d::t_2bfbf56b895e83 77
+  s_35b641b930a96d::t_f2cda845ff43f9 82-86,88
+src/tychora/indexing/coordinator.py
+  s_35b641b930a96d::t_461e376cb96a8b 1206-1211
+tests/fixtures/results/agent.txt
+  s_35b641b930a96d::t_7b3b226913f4fb 2-3
+tests/fixtures/results/hierarchical.json
+  s_35b641b930a96d::t_e7683c7ab1c5ea 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d4c8fc008f010def4b28de24c5e6a9c6e04f649a",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
