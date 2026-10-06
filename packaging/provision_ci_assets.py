@@ -50,6 +50,7 @@ def main() -> None:
     args = parser.parse_args()
     args.workspace.mkdir(parents=True, exist_ok=True)
     (args.workspace / "workspace.toml").write_text(
+        'schema_version = 1\n[profiles.local]\nbuiltin = "documents@1"\n'
         '[defaults]\nprofile = "local"\n[configuration]\noffline = false\n'
     )
     args.cache.mkdir(parents=True, exist_ok=True)
