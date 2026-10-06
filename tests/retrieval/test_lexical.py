@@ -26,14 +26,9 @@ def test_bounded_phrases_stopwords_and_diacritics():
     assert '"the"' not in expression
     assert expression.count('"alpha"') == 1
     assert lexical_expression("the", frozenset({"the"})) is None
-    assert (
-        len(
-            lexical_expression(
-                " ".join(f"word{i}" for i in range(100)), frozenset()
-            ).split(" OR ")
-        )
-        == 32
-    )
+    bounded = lexical_expression(" ".join(f"word{i}" for i in range(100)), frozenset())
+    assert bounded is not None
+    assert len(bounded.split(" OR ")) == 32
 
 
 def test_explicit_phrase_retains_internal_stopwords_for_adjacency():
@@ -166,12 +161,13 @@ def test_cancelled_search_clears_owner_connection_temp_rows():
     view = _view(chunks=("window",), sources=("source",))
     index = LexicalIndex(db)
 
-    class CancelAfterMaterialization:
-        calls = 0
+    calls = 0
 
+    class CancelAfterMaterialization(ExecutionContext):
         def checkpoint(self):
-            self.calls += 1
-            if self.calls == 2:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
                 raise TychoraError("CANCELLED", "Cancelled")
 
     try:

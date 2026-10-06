@@ -1,5 +1,6 @@
 """Memory cache boundaries for query embeddings and result preparation."""
 
+from tychora.adapters.voyage.request_types import VoyageTransport
 from tychora.adapters.voyage.runtime import VoyageRuntime
 from tychora.retrieval.cache import QueryCaches
 
@@ -62,8 +63,12 @@ def test_shared_byte_ceiling_bypasses_oversized_entry_and_purge() -> None:
 
 def test_provider_runtime_shares_query_cache_memory_ceiling() -> None:
     caches = QueryCaches(clock=Clock(), max_bytes=300)
+
+    def forbidden_transport() -> VoyageTransport:
+        raise AssertionError("cache accounting must not construct a transport")
+
     runtime = VoyageRuntime(
-        lambda: None,
+        forbidden_transport,
         workspace_id="workspace",
         credential_binding_id="credential",
         query_caches=caches,
@@ -83,8 +88,10 @@ def test_nested_prepared_result_is_serialized_and_all_retained_bytes_are_bounded
     caches.put_result(large_key, nested)
     nested["segments"].clear()
     stored = caches.get_result(large_key)
-    assert stored is not None
-    assert len(stored["segments"]) == 60
+    assert isinstance(stored, dict)
+    segments = stored["segments"]
+    assert isinstance(segments, list)
+    assert len(segments) == 60
     assert caches.retained_bytes <= 4096
     assert all(len(key) == 64 for key in caches._entries[1])
     assert all(isinstance(entry.value, bytes) for entry in caches._entries[1].values())

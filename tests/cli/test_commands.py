@@ -23,7 +23,7 @@ def test_json_discovery_contains_no_progress_noise(tmp_path):
 
 
 def test_setup_request_has_explicit_asset_and_bundle_fields():
-    from tychora.contracts.operations import MaintenanceRequest
+    from tychora.contracts.operations import MaintenanceRequest, SetupMaintenance
 
     request = MaintenanceRequest.from_mapping(
         {
@@ -33,6 +33,7 @@ def test_setup_request_has_explicit_asset_and_bundle_fields():
             "offline": True,
         }
     )
+    assert isinstance(request.root, SetupMaintenance)
     assert request.root.assets == ("output-tokenizer",)
     assert request.root.local_bundle == "/bundle"
 

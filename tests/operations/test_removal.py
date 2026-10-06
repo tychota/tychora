@@ -4,7 +4,7 @@ import pytest
 
 from tychora import Tychora
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.operations import MaintenanceRequest
+from tychora.contracts.operations import MaintenanceRequest, PurgeOriginalsMaintenance
 
 
 class _Counter:
@@ -63,6 +63,7 @@ def test_purge_requires_source_and_explicit_confirmation_contract():
             "confirm_original_removal": True,
         }
     )
+    assert isinstance(request.root, PurgeOriginalsMaintenance)
     assert request.root.source_id == "synthetic-source"
     assert request.root.confirm_original_removal is True
 

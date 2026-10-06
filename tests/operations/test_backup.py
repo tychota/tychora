@@ -94,6 +94,10 @@ def backup_case(tmp_path):
             unreferenced_but_present_sha = unreferenced_sha
             destination = tmp_path / "backup"
 
+            def __init__(self, owner: WorkspaceOwner, scope: RequestScope):
+                self.owner = owner
+                self.scope = scope
+
             def export(
                 self, *, scope_override=None, mode="canonical", destination=None
             ):
@@ -104,9 +108,7 @@ def backup_case(tmp_path):
                     ctx=ExecutionContext(),
                 )
 
-        case = Case()
-        case.owner = owner
-        case.scope = scope
+        case = Case(owner, scope)
         yield case
 
 

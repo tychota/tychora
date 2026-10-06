@@ -45,7 +45,7 @@ def test_load_versioned_immutable_dataset(executable_integrity_corpus):
     assert {case.split for case in dataset.cases} == {"test"}
     assert len(dataset.cases) == 6
     with pytest.raises((AttributeError, TypeError, ValueError)):
-        dataset.cases[0].family_key = "other"
+        dataset.cases[0].__setattr__("family_key", "other")
 
 
 def test_tampered_cases_fail_version_check(tmp_path, executable_integrity_corpus):
