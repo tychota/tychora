@@ -361,6 +361,80 @@ def test_caption_copy_retains_every_disjoint_literal_caption_owner(
     assert all(unit.citable for unit in source.units) and not copied.unit.citable
 
 
+def test_derived_proxy_retains_same_asset_source_and_caption_owners(
+    multi_caption_source,
+):
+    from tests.helpers.corpus import artifact
+    from tychora.contracts.corpus import UnitAssetRow
+    from tychora.ingestion.assets import ProxyFactory
+
+    source = multi_caption_source
+    first, second = source.units
+    asset = source.assets[0]
+    source = source.model_copy(
+        update={
+            "unit_assets": (
+                source.unit_assets[0],
+                UnitAssetRow(
+                    unit_id=second.unit_id, asset_id=asset.asset_id, role="source"
+                ),
+            )
+        }
+    )
+    proxy = ProxyFactory(source).make_proxy(
+        asset.asset_id,
+        "description",
+        "Verified synthetic figure",
+        (first.unit_id,),
+        artifact(b"same-asset owners", "text/plain"),
+    )
+    assert proxy.binding.required_unit_ids == frozenset({first.unit_id, second.unit_id})
+
+
+def test_derived_proxy_overlap_closure_is_transitive_and_cycle_safe(proxy_source):
+    from tests.helpers.corpus import artifact
+    from tychora.contracts.base import FrozenJsonMap
+    from tychora.ingestion.assets import ProxyFactory
+
+    first = proxy_source.units[0]
+    second = first.model_copy(
+        update={
+            "unit_id": "second-original-owner",
+            "ordinal": 1,
+            "native_ref": "second:owner",
+            "boundary_key": "second:owner",
+            "attributes": FrozenJsonMap(
+                {"overlapping_owner_ids": ["third-original-owner"]}
+            ),
+        }
+    )
+    third = first.model_copy(
+        update={
+            "unit_id": "third-original-owner",
+            "ordinal": 2,
+            "native_ref": "third:owner",
+            "boundary_key": "third:owner",
+            "attributes": FrozenJsonMap({"overlapping_owner_ids": [first.unit_id]}),
+        }
+    )
+    first = first.model_copy(
+        update={
+            "attributes": FrozenJsonMap({"overlapping_owner_ids": [second.unit_id]})
+        }
+    )
+    source = proxy_source.model_copy(update={"units": (first, second, third)})
+    proxy = ProxyFactory(source).make_proxy(
+        source.assets[0].asset_id,
+        "description",
+        "Verified synthetic figure",
+        (first.unit_id,),
+        artifact(b"transitive owners", "text/plain"),
+    )
+    assert proxy.binding.required_unit_ids == frozenset(
+        {first.unit_id, second.unit_id, third.unit_id}
+    )
+
+
 @pytest.mark.parametrize("invalid", ["missing", "foreign", "proxy"])
 def test_every_implicit_caption_dependency_must_be_original(
     multi_caption_source, invalid

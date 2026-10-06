@@ -96,6 +96,61 @@ def normalized(source_case, export):
     )
 
 
+def test_empty_original_text_retains_its_source_without_empty_index_parts(source_case):
+    bundle = normalized(source_case, export_case(source_case, [(0, "")]))
+    unit = next(
+        unit
+        for unit in bundle.units
+        if unit.attributes.get("document_representation") == "docling-source-parts@1"
+    )
+    assert unit.text == ""
+    assert tuple(unit.attributes["source_refs"]) == ("#/texts/0",)
+    assert tuple(unit.attributes["source_parts"]) == ()
+
+
+def test_empty_table_cell_adds_only_structure_not_indexed_cell_text(source_case):
+    from tychora.ingestion.document_parts import _Budget, represent_document_parts
+
+    item = source_case.parsed.units[0].model_copy(
+        update={
+            "unit_type": "table",
+            "raw_item": FrozenJsonMap(
+                {
+                    "data": {
+                        "table_cells": [
+                            {
+                                "text": "",
+                                "start_row_offset_idx": 0,
+                                "start_col_offset_idx": 0,
+                            },
+                            {
+                                "text": "Value",
+                                "start_row_offset_idx": 0,
+                                "start_col_offset_idx": 1,
+                            },
+                        ]
+                    }
+                }
+            ),
+        }
+    )
+    text, parts, separators, _ = represent_document_parts(
+        (item,),
+        "revision",
+        "extraction",
+        "source.docx",
+        _Budget(),
+        source_case.parsed.original_ref.sha256,
+    )
+    assert text == "\tValue"
+    assert [
+        (part.cell_index, text[part.unit_start : part.unit_end]) for part in parts
+    ] == [(1, "Value")]
+    assert [(separator.unit_start, separator.unit_end) for separator in separators] == [
+        (0, 1)
+    ]
+
+
 def test_field_split_across_items_preserves_literal_markup(source_case):
     export = export_case(
         source_case,

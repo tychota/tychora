@@ -135,6 +135,11 @@ class ProxyFactory:
             if text != asset.caption or not captions.intersection(required):
                 raise ValueError("Caption copy must retain the linked original caption")
             required.update(captions)
+        required.update(
+            link.unit_id
+            for link in self.bundle.unit_assets
+            if link.asset_id == asset_id and link.role in {"source", "caption"}
+        )
         if any(
             uid not in self.originals or self.originals[uid].extraction_id != eid
             for uid in required
@@ -142,20 +147,23 @@ class ProxyFactory:
             raise ValueError(
                 "Caption dependencies must be original same-extraction units"
             )
-        for uid in tuple(required):
-            required.update(
-                cast(
-                    tuple[str, ...],
-                    self.originals[uid].attributes.get("overlapping_owner_ids", ()),
-                )
-            )
-        if any(
-            uid not in self.originals or self.originals[uid].extraction_id != eid
-            for uid in required
-        ):
-            raise ValueError(
-                "Proxy overlapping owners must be original same-extraction units"
-            )
+        pending = list(required)
+        while pending:
+            uid = pending.pop()
+            for owner_id in cast(
+                tuple[str, ...],
+                self.originals[uid].attributes.get("overlapping_owner_ids", ()),
+            ):
+                if (
+                    owner_id not in self.originals
+                    or self.originals[owner_id].extraction_id != eid
+                ):
+                    raise ValueError(
+                        "Proxy overlapping owners must be original same-extraction units"
+                    )
+                if owner_id not in required:
+                    required.add(owner_id)
+                    pending.append(owner_id)
         key = digest(
             "asset-proxy-input-v1",
             asset_id,

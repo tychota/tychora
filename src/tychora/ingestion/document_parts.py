@@ -182,6 +182,8 @@ def represent_document_parts(
     ) -> None:
         nonlocal offset
         budget.add(work=1)
+        if not value:
+            return
         budget.reserve(len(value.encode()))
         part = DocumentSourcePart.model_validate(
             {
