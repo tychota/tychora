@@ -1,0 +1,22 @@
+tests/helpers/eligibility.py
+  s_35b641b930a96d::t_9b3c49fb19902d 11,26
+tests/formatting/test_code_record_binding.py
+  s_35b641b930a96d::t_9b3c49fb19902d 9,11-12,37-40,64,68,76,88,95-98
+  s_35b641b930a96d::t_81e06536e1854d 20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5872a4270126242e6b1854559b10e18b67a9c30c",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
