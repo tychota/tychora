@@ -1,101 +1,20 @@
 # Command line
 
-Tychora has five daily commands: `init`, `add`, `search`, `inspect`, and `serve`.
-Maintenance lives under `manage`. Put common options such as `--workspace`,
-`--profile`, `--offline`, and `--format json|markdown|agent` before the command.
-Use `--json` for canonical machine output. Status and errors go to stderr; JSON
-results go to stdout.
+Place `--workspace`, `--profile`, `--offline`, `--format json|markdown|agent`, or `--json` before the command. The daily verbs are `init`, `add`, `search`, `inspect`, and `serve`; lifecycle work is under `manage`. JSON results go to stdout and progress/errors to stderr. Use `--help` on a verb to see its current flags.
 
-```sh
-tychora --workspace ./knowledge init --provider local
-tychora --workspace ./knowledge inspect kinds --json
-tychora --workspace ./knowledge inspect capabilities --json
+`init` creates a local workspace without fetching assets. Its `--config` argument is an existing **workspace TOML** that registers profile roots, not an external pack's `profile.toml`. It installs those bytes at `WORKSPACE/workspace.toml`; relative pack paths must resolve both at initialization and after restart. When a config is supplied, the JSON response labels the installed provider choice `configured`. `inspect config --json` validates the file without opening a workspace. Other `inspect` subjects open the owner and can initialize a missing empty path; confirm the target before using them in read-only preparation.
+
+The [README recipe](../README.md) gives a tested offline inline-source first run. To add a file, register an absolute acquisition root in `workspace.toml`, discover kinds and metadata schemas, then provide a valid kind and metadata file:
+
+```bash
+tychora --workspace ./knowledge --offline inspect kinds --json
+tychora --workspace ./knowledge --offline add ./manual.md --kind manual@1 --metadata-file ./manual.metadata.json --json
+tychora --workspace ./knowledge --offline inspect sources --json
+tychora --workspace ./knowledge --offline search "verification" --json
 ```
 
-`init --provider configured --config workspace.toml` uses an explicitly supplied
-profile document. `init` never fetches model assets. The configuration must
-register acquisition roots before `add PATH` can read local files. The ordinary CLI and loopback server open the same configured owner: enabled
-Voyage text, image and rerank settings compose their qualified adapters, while
-Chroma uses separate text/image collections and Ladybug persists graph generations.
-An offline profile keeps native storage without constructing remote clients.
-Tokenizers and parser models must be explicitly provisioned with `manage setup`;
-`add` and `search` never download them. `env:NAME` credentials resolve only at a
-remote operation. `secret:NAME` is available through the Python API's explicit
-resolver; CLI/server operations without one report a typed missing-credential error.
+`add --request-file source.json` accepts a complete `SourceInput` mapping, including inline text and selected vision requests. `search --request-file query.json` accepts a complete `QueryRequest` with filters, snapshot/edition choices, and budgets. `search --passage TEXT` and `search --image ASSET_ID` are separate input forms. Search returns structured evidence and coverage, not a generated answer. Use `--format markdown` or `--format agent` for a renderer output within the recorded budget.
 
-The kind registry defines required metadata. For example, `manual@1` requires
-`title`, `publisher`, and `edition`. Supply actual values in a JSON file:
+`inspect kinds|facets|relations|profiles|settings|models|sources|runs --json` discovers the active registry and visible records. `inspect evidence UNIT_ID --json` reads exact authorized evidence; `inspect revisions REVISION_ID --original --json` requests a retained original if allowed. `inspect selections SOURCE_ID:REVISION_ID:EXTRACTION_ID --json` gives bounded selectors for an explicit image-region request. `inspect job JOB_ID --json` checks a durable job. Discovery and inspection reflect the current caller scope; unavailable or restricted records should not be inferred from missing IDs or counts.
 
-```json
-{"title":"Synthetic handbook","publisher":"Example","edition":"1"}
-```
-
-```sh
-tychora --workspace ./knowledge add ./handbook.txt --kind manual@1 --metadata-file handbook.metadata.json --json
-```
-
-For code or other source kinds, run `inspect kinds --json`, choose a registered
-kind and its required metadata, then supply a complete `SourceInput` JSON with
-`add --request-file code-source.json`. The same request file accepts text,
-bytes, URL, folder, and repository variants. No metadata field is inferred from
-the filename. Source jobs run the configured acquisition, extraction, lexical,
-vector, and graph stages; their status is returned as a job record.
-
-For selected PDF/DOCX/PNG/JPEG vision, first ingest the original and run
-`tychora --workspace ./knowledge inspect selections SOURCE_ID:REVISION_ID:EXTRACTION_ID --json`.
-Use the listed native image reference, dimensions and original/extraction hashes in a
-complete `SourceInput` request file with a `vision` array, then submit with
-`add --request-file`. The selected task, pixel rectangle, JSON schema and optional
-exact native text context are part of that durable request. OCR runs locally when
-its provisioned model succeeds; remote vision needs an enabled online profile and
-current provider-upload consent.
-Use `inspect selections SOURCE:REVISION:EXTRACTION --limit 20 --page 2 --json`
-to reach later choices in a one-shot CLI invocation. `--page` follows bounded,
-scope-checked cursors while one owner remains open (pages 1–100); `--cursor`
-continues a selection page only while the same delegated owner session is alive.
-
-```sh
-tychora --workspace ./knowledge search "Where is the exact term defined?" --json
-tychora --workspace ./knowledge search --passage "synthetic passage" --json
-tychora --workspace ./knowledge search --image IMAGE_ASSET_ID --json
-tychora --workspace ./knowledge search --request-file exact-query.json --json
-```
-
-An exact lookup request file uses the public `QueryRequest` fields, for example:
-
-```json
-{"question":"Find the declared term","exact_identifiers":["rule:SYNTHETIC-42"],"exact_only":true}
-```
-
-The request file also carries filters, limits, budgets, and other advanced
-options. `--format markdown` and `--format agent` render search evidence under
-the recorded output budget. Search returns evidence rather than an answer.
-
-```sh
-tychora --workspace ./knowledge inspect sources --json
-tychora --workspace ./knowledge inspect sources SOURCE_ID --json
-tychora --workspace ./knowledge inspect evidence UNIT_ID --json
-tychora --workspace ./knowledge inspect revisions REVISION_ID --original --json
-tychora --workspace ./knowledge inspect job JOB_ID --json
-```
-
-`inspect config --json` resolves and redacts static settings without opening the
-workspace database. Missing offline tokenizer assets produce a setup error before
-query provider work. Explicitly select manifest assets and supply a verified
-local bundle when staying offline:
-
-```sh
-tychora --workspace ./knowledge --offline manage setup --asset output-tokenizer --bundle ./model-bundle --json
-```
-
-`serve` hosts authenticated loopback HTTP and MCP through one workspace owner.
-`serve --stdio` runs MCP on stdout with a private loopback control endpoint;
-another CLI process delegates to that owner instead of opening a second one.
-All diagnostics remain on stderr. Other maintenance verbs are discoverable with
-`manage --help`; handlers still in development report `CAPABILITY_MISSING`.
-`manage purge-originals` and its `--confirm` flag remain unavailable until the
-owner-authorized preview and execution workflow is installed.
-
-Provider configuration never grants upload consent. Collections deny uploads by
-default; the public owner-authorized collection grant and revoke operation is
-being added separately. Do not treat credentials or profile selection as a grant.
+`manage setup --asset output-tokenizer --bundle BUNDLE` verifies a local offline asset. `manage health`, `export`, `import`, `sync`, `remove`, `purge-originals`, `purge-cache`, `purge-history`, `provider-upload-consent`, and `evaluate` have their own typed inputs. See [operations](operations.md). `serve` owns loopback HTTP and MCP for one workspace; `serve --stdio` reserves stdout for MCP frames. A second local client delegates through the owner's protected endpoint record.

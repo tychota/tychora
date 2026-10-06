@@ -1,6 +1,6 @@
 # Retrieval evaluation
 
-An evaluation runs the existing query pipeline against a registered, immutable gold dataset. The declared source fixture at `tests/fixtures/evaluation/corpus.json` is materialized by `tests/evaluation/conftest.py` into workspace-specific canonical IDs and digest-pinned gold. Its five executable cases exercise local lexical retrieval, exact identifier lookup, and a shared-term revision exclusion. The 13 entries in `scenario-catalog.json` are explicitly unqualified intents, not registerable gold or passing tests. Neither fixture is an independently reviewed semantic benchmark.
+An evaluation runs the existing query pipeline against a registered, immutable gold dataset. The declared source fixture at `tests/fixtures/evaluation/corpus.json` is materialized by `tests/evaluation/conftest.py` into workspace-specific canonical IDs and digest-pinned gold. Its five executable cases exercise local lexical retrieval, exact identifier lookup, and a shared-term revision exclusion. The 13 catalog intents also execute with independently declared canonical labels through the real stores and evaluation service. They exercise mechanics on synthetic fixtures; neither set is a semantic-model quality, legal-coverage, or real-corpus benchmark.
 
 ## Gold format and registration
 

@@ -1,0 +1,1 @@
+{"$id":"legacy-standard-metadata@1","$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"title":{"type":"string","minLength":1},"publisher":{"type":"string","minLength":1},"edition":{"type":"string","minLength":1}},"required":["title","publisher","edition"],"additionalProperties":false}

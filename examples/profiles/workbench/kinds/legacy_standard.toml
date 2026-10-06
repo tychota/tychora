@@ -1,0 +1,10 @@
+schema_version = 1
+id = "legacy-standard@1"
+key = "legacy-standard"
+label = "Legacy standard"
+description = "Retained prior standard edition with its own versioned metadata schema."
+role = "normative_reference"
+metadata_schema = "schemas/legacy-standard-metadata.json"
+normalizer = "structured_sections@1"
+allowed_uses = ["lookup", "audit"]
+examples = ["Inspect an explicitly retained legacy standard."]

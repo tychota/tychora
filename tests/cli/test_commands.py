@@ -622,3 +622,28 @@ async def test_job_event_cursor_rejects_oversized_integer_at_public_and_http_bou
             )
         assert response.status_code == 400
         assert response.json()["code"] == "INVALID_REQUEST"
+
+
+def test_init_reports_effective_configured_provider_when_config_is_supplied(tmp_path):
+    settings = tmp_path / "input.toml"
+    settings.write_text(
+        'schema_version = 1\n[profiles.workbench]\nbuiltin = "documents@1"\n'
+        '[defaults]\nprofile = "workbench"\n'
+    )
+    workspace = tmp_path / "knowledge"
+    result = CliRunner().invoke(
+        app,
+        [
+            "--workspace",
+            str(workspace),
+            "init",
+            "--provider",
+            "local",
+            "--config",
+            str(settings),
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0, result.stderr
+    assert json.loads(result.stdout)["provider"] == "configured"
+    assert (workspace / "workspace.toml").read_bytes() == settings.read_bytes()

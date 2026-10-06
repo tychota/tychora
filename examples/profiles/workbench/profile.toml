@@ -1,0 +1,31 @@
+schema_version = 1
+id = "workbench"
+version = "1"
+extends = ["builtin:documents@1"]
+relation_definitions = ["relations/clarifies.toml"]
+kind_definitions = ["kinds/legacy_standard.toml"]
+default_mode = "lookup"
+
+# The bundled dependency supplies regulation, standard, template, feedback,
+# their schemas, and distinct authority/standard/feedback lanes.
+[compatibility.kind_lanes]
+"legacy-standard@1" = "standard"
+
+[facets."scope.project"]
+key = "scope.project"
+alias = "project"
+value_type = "string"
+operators = ["eq", "in"]
+source_binding = "metadata.scope.project"
+filter_scope = "all_units"
+missing = "exclude"
+allow_global = true
+hint = true
+
+[output]
+renderer = "hierarchical-evidence@1"
+lane_order = ["authority", "standard", "feedback", "evidence", "example", "maintenance"]
+include_empty_lanes = true
+locale = "en"
+title = "Workbench evidence"
+envelope_tag = "evidence_context"

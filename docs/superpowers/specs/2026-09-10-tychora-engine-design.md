@@ -203,7 +203,7 @@ Less frequent lifecycle operations belong under `tychora manage`: sync registere
 
 Use positional inputs, shell completion and concise help with examples. Human output is readable; `--json` emits only the versioned machine response to stdout, with progress/errors on stderr. Structured error codes and process exit statuses are consistent. Common flags cover workspace, profile, output format and offline execution. Advanced ranking knobs stay out of the default help.
 
-Configuration lives in `tychora.toml`, with source metadata in sidecar manifests or the registry. Precedence is validated defaults → selected preset → explicit versioned pack dependencies → selected pack → workspace config → allowlisted request/CLI overrides; the configuration section defines merge and conflict rules. Credentials are environment/secret references only. `inspect config` shows effective values and their origins with secrets redacted. Configuration is strict: unknown keys or contradictory provider/index settings fail with a useful explanation. Profile upgrades must explicitly map retained historical kind versions or fail with a scoped incompatibility error. Eligibility-cache identity includes the full resolved policy and eligibility request. Embedding changes create a new compatible family; graph representation changes require a new graph generation.
+Configuration lives in `workspace.toml`, with source metadata in sidecar manifests or the registry. Precedence is validated defaults → selected preset → explicit versioned pack dependencies → selected pack → workspace config → allowlisted request/CLI overrides; the configuration section defines merge and conflict rules. Credentials are environment/secret references only. `inspect config` shows effective values and their origins with secrets redacted. Configuration is strict: unknown keys or contradictory provider/index settings fail with a useful explanation. Profile upgrades must explicitly map retained historical kind versions or fail with a scoped incompatibility error. Eligibility-cache identity includes the full resolved policy and eligibility request. Embedding changes create a new compatible family; graph representation changes require a new graph generation.
 
 ### Programmatic, agent and HTTP interfaces
 
@@ -376,7 +376,7 @@ One Python distribution exports the library and CLI; PyInstaller one-file execut
 | Async integration | AnyIO / standard executors | Bounded offload of blocking libraries, deadlines and cancellation boundaries |
 | MCP | Official `mcp==2.2.0` Python SDK, `MCPServer` | SDK protocol lifecycle; no separately versioned third-party FastMCP dependency |
 | SQLite | `sqlite3` | Explicit SQL, WAL, FTS5, transactions; no ORM or graph/vector scan layer |
-| Vector database | `chromadb==1.5.9` initial candidate | Persistent embedded cosine HNSW; provider-supplied embeddings only |
+| Vector database | `chromadb==1.5.9` initial candidate | Persistent embedded `ip` HNSW over validated unit-normalized float32 vectors; provider-supplied embeddings only |
 | Graph database | `ladybug==0.20.3` initial candidate | Embedded property graph; gated by real installation/recovery checks |
 | Documents | `docling` + its resolved `docling-core` | Retain structured document JSON, provenance and extracted assets |
 | Markdown | `markdown-it-py` | Token structure and source line ranges; no regex-only interpretation of fenced code |
@@ -604,7 +604,7 @@ A pack contains `profile.toml`, explicit kind/relation TOML files, local JSON Sc
 
 Built-in packs are package resources. A workspace may explicitly reference external local pack directories; canonicalize and authorize the selected root, then keep all includes inside it. Do not scan parent folders or arbitrary environment paths. Record effective values with their origins; redact secrets and private paths when discovery is not owner-authorized.
 
-Example workspace binding in `tychora.toml` (paths are relative to that file):
+Example workspace binding in `workspace.toml` (paths are relative to that file):
 
 ```toml
 schema_version = 1
@@ -848,7 +848,7 @@ Required implementation fixtures cover: loading a custom kind and predicate with
 
 ```text
 knowledge/
-  tychora.toml
+  workspace.toml
   .tychora/
     corpus.sqlite3                 # source records, FTS, manifests, jobs/history
     vectors/                       # Chroma-owned files; never edited directly
@@ -1440,7 +1440,7 @@ Enable `foreign_keys=ON`, `journal_mode=WAL`, `synchronous=FULL` and a bounded b
 
 ### Chroma collections and vector records
 
-One collection per compatible family: `ty_<workspace_hash>_<channel>_<family_hash>`. The full workspace/config/model IDs are validated in collection metadata. Text and image are always separate, including when both have 1,024 dimensions. Code may choose a separate text embedding family. HNSW uses cosine, with initial `ef_search=200`; construction settings remain explicitly recorded defaults until measured.
+One collection per compatible family: `ty_<workspace_hash>_<channel>_<family_hash>`. The full workspace/config/model IDs are validated in collection metadata. Text and image are always separate, including when both have 1,024 dimensions. Code may choose a separate text embedding family. The logical metric is cosine over finite unit-normalized float32 vectors. Embedded Chroma HNSW physically uses `space=ip` with `ef_search=200`, `embedding_function=None`, and recorded complete native configuration. Its `1-dot` distance approximates cosine distance for unit vectors; finite-precision norms and ANN recall can affect near ties and ranking. Family, handle and receipt fingerprints bind logical metric, normalization policy, actual native configuration and namespace separately. Publication verifies exact stored little-endian float32 vector bytes, input/value digests and record identities; it does not accept native cosine renormalization as equivalent.
 
 A vector record has immutable record ID, normalized finite vector, chunk/asset binding, input hash and family/batch identity. Chroma stores the vector and minimal technical metadata. Canonical text, access decisions and citations come from SQLite. Set `embedding_function=None`; pass `query_embeddings`, never `query_texts`, to avoid a hidden embedding provider. Chroma's current API supports `query(..., ids=eligible_ids, include=['distances'])`. [Collection API](https://docs.trychroma.com/reference/python/collection).
 
@@ -2178,3 +2178,17 @@ Required gates on the **actual installed wheel and final one-file executable**:
 7. Runtime/asset manifests, license inventory, artifact-content audit, import/dependency checks and measured size/startup/resource use.
 
 Semantic retrieval quality and live-provider correctness retain their separate evaluation gates. This distribution section does not assert that the large native/Docling stack already freezes successfully; proving that on the final artifact is required before a binary release claim.
+
+
+### Implemented engine reconciliation through the current local qualification
+
+This section records the implemented boundaries of the engine described above. The dashboard design remains separate; no dashboard, Agno integration, LLM answer generation, installed standalone executable, or cross-platform release is claimed here.
+
+- The local API and CLI persist `workspace.toml`. `Tychora.open` can create an empty workspace; `init --config` installs a workspace TOML that binds a selected data-only profile root. Discovery, query, inspection, ingestion jobs, management and evaluation run through the one owner. CLI `inspect config` validates statically; other discovery subjects open the owner.
+- One installation principal owns the workspace. HTTP/MCP bearer tokens and explicit Python scopes narrow collection, use, access, provider and operation grants independently. They are not multi-user identity isolation. Settings `PUT` accepts exactly `{profile, workspace_toml}`, may return `WORKSPACE_BUSY`, changes effective policy/epoch without rebuilding native indexes, and can make an incompatible pinned query return `PROFILE_INCOMPATIBLE` until a compatible snapshot is published.
+- Normalized vectors use logical cosine with physical Chroma `ip`. Semantic family configuration and physical native configuration are separate hash domains. Exact vector-byte receipts are verified on reopen and recovery. A legacy immutable vector family without complete embedding capability proof fails `CAPABILITY_MISSING` before provider/native mutation; create a fresh workspace and reingest available originals. A rebuild does not upgrade that family's immutable proof. Approximate native retrieval, short results and floating-point near ties remain visible coverage limits.
+- Canonical SQLite revisions, typed manifests, retained artifacts and publication receipts govern source identity. The graph and vector stores are physical projections. Source metadata projects registered scalar facets; explicit per-facet global declarations have immutable proof and never bypass scope, date, review or child narrowing. Distinct editions coexist, same-edition updates replace that member, and latest explicit publication selects the default. Unknown dates remain unknown; effective intervals are half-open. Historical kind mappings preserve old schemas and assign presentation lanes only.
+- New code graph normalization uses a v2 proof identity with registered revision kinds, structural unit types, canonical symbol origins and relative paths in citations. Historical v1 exact proofs replay without guessing new bytes. New graph paths in query results retain ordered assertion, support and provenance data after eligibility and output-budget filtering. Query-history scope proofs use a set-stable v2 digest; old v1 proofs require an exact retained-serialization match, and old ephemeral cursors can invalidate.
+- Query text and image provider awaits can overlap within one pinned attempt; cancellation drains workers and retained pins. A native graph deadline is observed at the next checkpoint after native rows return, not as a strict interruption of a native call. A missing optional channel, incomplete source vision enrichment, or truncated native result must be explicit. Source text and derived proxies are evidence data, not executable instructions or automatically accepted rules.
+- Export records a consistent canonical cut and a static versioned config projection with credential reference names, not secret values or arbitrary configuration fields. Non-null query defaults are rejected for that projection. Original removal tombstones the original while separately retained derived evidence can remain. Cache purge and metadata-only 30-day history purge have separate effects. Native readiness is private and reverified after restore; synthetic crash tests do not establish power-loss durability.
+- Evaluation admits at most 1,024 case × variant × repetition searches and 64 MiB retained case artifacts. Selected binding hydration is capped at 16 MiB serialized bytes and 16,384 rows. These are admission bounds rather than total heap or latency promises. The executable scenario catalog exercises synthetic mechanics but does not establish live model quality or real-corpus coverage.

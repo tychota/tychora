@@ -57,7 +57,7 @@ def register(app: typer.Typer) -> None:
                 {
                     "schema_version": "1",
                     "workspace": str(options.workspace),
-                    "provider": provider,
+                    "provider": "configured" if config is not None else provider,
                 },
                 format=output_format,
             )

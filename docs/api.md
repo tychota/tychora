@@ -45,7 +45,7 @@ Only the selected crop and verified context may be sent. Configuration is not up
 
 `build_services(owner, config, providers, counter)` constructs `Services.source_jobs`, the single bounded accepted-job scheduler for this owner. Python facades use its `add`/`sync` or `add_async`/`sync_async` methods; HTTP transport can await the same async methods from its own event loop and must not create a second job scheduler. `source_jobs` dispatches to its own owned loop, so its task registry and semaphore never cross loop boundaries. A transport that constructs `Services` directly must await `services.source_jobs.aclose()` and wait for drain before closing `WorkspaceOwner`. Blocking methods may run on a caller's event loop thread, but cannot be called from the scheduler's own loop.
 
-Both clients expose `discover`, `search`, and namespaces `sources`, `evidence`, `assets`, `relations`, `jobs`, `evaluations`, and `management`. The namespace methods have synchronous signatures on `Tychora` and awaitable equivalents on `AsyncTychora`; `jobs.events` is an iterator or async iterator, respectively. `search` returns `QueryResult`, `evidence.get` and `assets.get` return `InspectionResult`, `assets.read` returns bounded registered bytes, and `relations.traverse` returns `RelationResult`. Exact text ranges return `partial_evidence` and authorized `excerpts`; `canonical_text_sha` and `canonical_text_length` are null when the whole unit is not readable. A full evidence inspection returns `evidence` instead. `format_result(result, output_profile, *, counter=None)` renders a prior authorized result within its recorded budget.
+Both clients expose `discover`, `inspect`, `search`, and namespaces `sources`, `evidence`, `assets`, `relations`, `jobs`, `evaluations`, and `management`. The namespace methods have synchronous signatures on `Tychora` and awaitable equivalents on `AsyncTychora`; `jobs.events` is an iterator or async iterator, respectively. `search` returns `QueryResult`, `evidence.get` and `assets.get` return `InspectionResult`, `assets.read` returns bounded registered bytes, and `relations.traverse` returns `RelationResult`. Exact text ranges return `partial_evidence` and authorized `excerpts`; `canonical_text_sha` and `canonical_text_length` are null when the whole unit is not readable. A full evidence inspection returns `evidence` instead. `format_result(result, output_profile, *, counter=None)` renders a prior authorized result within its recorded budget.
 
 Pass `scope=` to `search` to narrow the client's `RequestScope`; it cannot broaden the principal, collections, uses, access ceiling, or provider grants. Synchronous calls are permitted inside an active event loop and block its thread; use `AsyncTychora` for a responsive loop. Async cancellation waits for admitted worker cleanup and retained snapshot pin release before surfacing cancellation.
 
@@ -55,4 +55,24 @@ Configured `env:NAME` credentials resolve when the first authorized remote opera
 
 The base installation can import and run lexical-only local workflows without Pillow. Image decoding loads Pillow only at an image operation and reports `CAPABILITY_MISSING` when the optional documents extra is absent.
 
-`connect` uses the qualified Task 36 transport. `evaluations.run` and `management.run` await their owning later services. These methods currently raise `TychoraError(code="CAPABILITY_MISSING")` after relevant local scope checks and do not return fabricated jobs or results. Discovery's capability inventory reports installed optional packages, not completion of these later service routes. The framework-neutral [`knowledge_adapter.py`](../examples/knowledge_adapter.py) maps each segment into `{id, text, metadata}`, preserving canonical IDs and provenance in metadata so a later framework serializer cannot silently drop them.
+`connect` uses the authenticated loopback transport. `evaluations.run` and `management.run` execute their registered operations under management scope. Unsupported optional channels still return typed capability errors; discovery distinguishes installed packages from usable configured channels.
+
+An asynchronous call uses the same typed request and evidence identity:
+
+```python
+import asyncio
+from tychora import AsyncTychora
+
+async def show_evidence() -> None:
+    async with AsyncTychora.open("knowledge") as kb:
+        await kb.discover({"subject": "kinds"})
+        result = await kb.search({"question": "verification", "modalities": ["lexical"]})
+        for segment in result.segments:
+            for unit_id in segment.matched_unit_ids:
+                inspection = await kb.evidence.get(unit_id)
+                print(unit_id, inspection.evidence.text if inspection.evidence else None)
+
+asyncio.run(show_evidence())
+```
+
+`knowledge_adapter.py` is framework-neutral. It keeps segment, source, revision, extraction, unit, asset, run and snapshot IDs inside metadata as well as top-level segment IDs. Serializers that drop top-level IDs can still preserve provenance. No Agno connector or LLM answer generation is installed.
