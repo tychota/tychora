@@ -208,6 +208,146 @@ def http_and_delegation(
                 process.wait(timeout=10)
 
 
+def external_pack_output(
+    artifact: Path,
+    wheel_cli: Path,
+    workspace: Path,
+    cwd: Path,
+    model_bundle: str,
+) -> None:
+    """Compare public hierarchical evidence from the binary and installed wheel."""
+    options = ("--workspace", str(workspace), "--offline")
+    runtime_env = {"TYCHORA_MODEL_CACHE": str(cwd / "external-model-cache")}
+    setup = json_result(
+        run(
+            artifact,
+            *options,
+            "manage",
+            "setup",
+            "--asset",
+            "output-tokenizer",
+            "--bundle",
+            model_bundle,
+            "--json",
+            cwd=cwd,
+            overrides=runtime_env,
+        ),
+        "binary external pack tokenizer setup",
+    )
+    assert setup["job"]["state"] == "succeeded"
+    source = cwd / "external-standard.json"
+    source.write_text(
+        json.dumps(
+            {
+                "type": "text",
+                "source_key": "synthetic-legacy-standard",
+                "collection_id": "default",
+                "kind": "legacy-standard@1",
+                "format": "text",
+                "text": "heritage standard evidence for frozen external pack",
+                "metadata": {
+                    "title": "Synthetic standard",
+                    "publisher": "Example Team",
+                    "edition": "1",
+                },
+            }
+        )
+    )
+    added = json_result(
+        run(
+            artifact,
+            *options,
+            "add",
+            "--request-file",
+            str(source),
+            "--json",
+            cwd=cwd,
+            overrides=runtime_env,
+        ),
+        "binary external kind ingestion",
+    )
+    assert added["state"] == "succeeded"
+
+    def hierarchical(cli: Path, *, frozen: bool) -> dict:
+        log_path = cwd / (
+            "external-binary-http.log" if frozen else "external-wheel-http.log"
+        )
+        endpoint_path = workspace / ".runtime/endpoint.json"
+        endpoint_path.unlink(missing_ok=True)
+        with log_path.open("w+") as log:
+            process = subprocess.Popen(
+                [str(cli), "--workspace", str(workspace), "serve", "--port", "0"],
+                cwd=cwd,
+                env=clean_env(cwd, runtime_env, frozen=frozen),
+                stdout=log,
+                stderr=log,
+            )
+            try:
+                deadline = time.monotonic() + 90
+                endpoint = {}
+                while "authority" not in endpoint:
+                    assert process.poll() is None, "External pack HTTP owner exited"
+                    assert time.monotonic() < deadline, (
+                        "External pack HTTP startup exceeded 90s"
+                    )
+                    if endpoint_path.is_file():
+                        endpoint = json.loads(endpoint_path.read_text())
+                    time.sleep(0.1)
+                request = urllib.request.Request(
+                    "http://" + endpoint["authority"] + "/v1/queries",
+                    data=json.dumps(
+                        {"question": "heritage", "modalities": ["lexical"]}
+                    ).encode("utf-8"),
+                    headers={
+                        "Authorization": "Bearer " + endpoint["token"],
+                        "Accept": "application/vnd.tychora.hierarchical+json",
+                        "Content-Type": "application/json",
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(request, timeout=90) as response:
+                    assert response.headers.get_content_type() == (
+                        "application/vnd.tychora.hierarchical+json"
+                    )
+                    return json.load(response)
+            finally:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=10)
+
+    binary = hierarchical(artifact, frozen=True)
+    wheel = hierarchical(wheel_cli, frozen=False)
+    assert (
+        binary["schema_version"]
+        == wheel["schema_version"]
+        == ("hierarchical-evidence@1")
+    )
+    assert binary["snapshot_id"] == wheel["snapshot_id"]
+    assert binary["hierarchy"] == wheel["hierarchy"]
+    assert binary["citations"] == wheel["citations"]
+    standard = next(
+        group for group in binary["hierarchy"] if group["lane_id"] == "standard"
+    )
+    matching = [
+        segment
+        for segment in standard["segments"]
+        if segment["kind"] == "legacy-standard@1"
+    ]
+    assert matching and all(
+        segment["text"] == "heritage standard evidence for frozen external pack"
+        and segment["citations"]
+        and all(
+            citation["source_id"] and citation["unit_id"]
+            for citation in segment["citations"]
+        )
+        for segment in matching
+    )
+    print("PASS: external kind ingestion and hierarchical binary/wheel parity")
+
+
 def parser_cancellation(
     artifact: Path, workspace: Path, cwd: Path, source: Path, metadata: dict
 ) -> None:
@@ -853,6 +993,9 @@ def main() -> None:
         )
         assert binary_config == wheel_config
         assert "hierarchical-evidence@1" in json.dumps(binary_config)
+        external_pack_output(
+            artifact, wheel_cli, external_workspace, clean, model_bundle
+        )
         repository = clean / "synthetic repository"
         repository.mkdir()
         (repository / "module.py").write_text(
