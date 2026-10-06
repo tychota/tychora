@@ -5,12 +5,14 @@ import base64
 import hashlib
 import json
 import os
+from collections.abc import Callable
 from io import BytesIO
 from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from mcp.types import CallToolResult
 from PIL import Image, ImageDraw, ImageFont
 from typer.testing import CliRunner
 
@@ -92,11 +94,26 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
             pass
 
     actual_create = anthropic.create_provider
+
+    def create_with_mock(
+        *,
+        offline: bool,
+        capabilities: frozenset[str],
+        model: str,
+        api_key: str,
+        client_factory: Callable[..., object] | None = None,
+    ):
+        return actual_create(
+            offline=offline,
+            capabilities=capabilities,
+            model=model,
+            api_key=api_key,
+            client_factory=lambda **_: MockClient(),
+        )
+
     monkeypatch.setattr(
         "tychora.adapters.vision.anthropic.create_provider",
-        lambda **kwargs: actual_create(
-            **{**kwargs, "client_factory": lambda **client_kwargs: MockClient()}
-        ),
+        create_with_mock,
     )
     with Tychora.open(workspace, config=config, token_counter=Counter()) as kb:
         first = kb.sources.add(source)
@@ -228,7 +245,9 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
                         }
                     },
                 )
+                assert isinstance(inspected, CallToolResult)
                 assert not inspected.is_error
+                assert inspected.structured_content is not None
                 assert (
                     inspected.structured_content["result"]["captured_original_sha256"]
                     == selections.captured_original_sha256
@@ -241,7 +260,9 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
                         "idempotency_key": "selected-once",
                     },
                 )
+                assert isinstance(accepted_tool, CallToolResult)
                 assert not accepted_tool.is_error
+                assert accepted_tool.structured_content is not None
                 assert accepted_tool.structured_content["id"] == second.id
             finally:
                 _current.reset(marker)
@@ -606,12 +627,27 @@ def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_targ
             pass
 
     actual_create = anthropic.create_provider
+
+    def create_with_mock(
+        *,
+        offline: bool,
+        capabilities: frozenset[str],
+        model: str,
+        api_key: str,
+        client_factory: Callable[..., object] | None = None,
+    ):
+        return actual_create(
+            offline=offline,
+            capabilities=capabilities,
+            model=model,
+            api_key=api_key,
+            client_factory=lambda **_: MockClient(),
+        )
+
     monkeypatch.setattr(
         anthropic,
         "create_provider",
-        lambda **kwargs: actual_create(
-            **{**kwargs, "client_factory": lambda **_: MockClient()}
-        ),
+        create_with_mock,
     )
     workspace = tmp_path / "knowledge"
     with Tychora.open(workspace, config=config, token_counter=Counter()) as kb:
@@ -873,12 +909,27 @@ def test_first_selected_add_retains_original_and_reports_incomplete_vision(
             pass
 
     actual_create = anthropic.create_provider
+
+    def create_with_mock(
+        *,
+        offline: bool,
+        capabilities: frozenset[str],
+        model: str,
+        api_key: str,
+        client_factory: Callable[..., object] | None = None,
+    ):
+        return actual_create(
+            offline=offline,
+            capabilities=capabilities,
+            model=model,
+            api_key=api_key,
+            client_factory=lambda **_: MockClient(),
+        )
+
     monkeypatch.setattr(
         anthropic,
         "create_provider",
-        lambda **kwargs: actual_create(
-            **{**kwargs, "client_factory": lambda **_: MockClient()}
-        ),
+        create_with_mock,
     )
     workspace = tmp_path / "knowledge"
     with Tychora.open(workspace, config=config, token_counter=Counter()) as kb:
