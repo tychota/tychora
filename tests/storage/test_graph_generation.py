@@ -34,6 +34,12 @@ from tychora.contracts.relationships import (
 from tychora.ports.execution import ExecutionContext
 
 
+def _query_rows(graph: LadybugGraphStore, query: str):
+    result = graph._connection.execute(query)
+    assert not isinstance(result, list)
+    return result.get_all()
+
+
 def _assertion(method="native", status="recorded") -> RelationshipAssertion:
     origin = TextLocator(artifact_ref="text", native_ref="a", char_start=0, char_end=1)
     observation = AssertionObservation(
@@ -152,9 +158,10 @@ def test_generation_seals_native_grounding_and_reopens(tmp_path):
     assert receipt.config_sha == spec.config_sha
     assert receipt.assertion_count == 1
     assert receipt.evidence_count == 2
-    assert graph._connection.execute(
-        "MATCH (a:RelationAssertion)-[:SupportedBy]->(e:Evidence) WHERE a.generation_id='generation' RETURN e.evidence_id ORDER BY e.evidence_id"
-    ).get_all() == [["a"], ["b"]]
+    assert _query_rows(
+        graph,
+        "MATCH (a:RelationAssertion)-[:SupportedBy]->(e:Evidence) WHERE a.generation_id='generation' RETURN e.evidence_id ORDER BY e.evidence_id",
+    ) == [["a"], ["b"]]
     graph.close()
     reopened = LadybugGraphStore(tmp_path / "graph", build=build)
     assert reopened.seal_generation(generation, expected, ExecutionContext()) == receipt
@@ -170,9 +177,7 @@ def test_graph_rejects_unresolved_support_before_native_write(tmp_path):
     with pytest.raises(TychoraError) as err:
         graph.upsert_batch(generation, (assertion,), (units[0],), ExecutionContext())
     assert err.value.code == "INTEGRITY_ERROR"
-    assert graph._connection.execute(
-        "MATCH (a:RelationAssertion) RETURN count(a)"
-    ).get_all() == [[0]]
+    assert _query_rows(graph, "MATCH (a:RelationAssertion) RETURN count(a)") == [[0]]
 
 
 def test_sqlite_graph_build_checks_registered_membership(tmp_path):
@@ -371,9 +376,9 @@ def test_model_promotion_uses_applicable_pinned_canonical_human_decision(tmp_pat
     graph.seal_generation(
         generation, GraphManifest.from_build(build), ExecutionContext()
     )
-    assert graph._connection.execute(
-        "MATCH (a:RelationAssertion) RETURN a.method,a.status"
-    ).get_all() == [["model", "confirmed"]]
+    assert _query_rows(
+        graph, "MATCH (a:RelationAssertion) RETURN a.method,a.status"
+    ) == [["model", "confirmed"]]
     db.close()
 
 
@@ -432,9 +437,7 @@ def test_native_batch_rejects_contradictory_entity_grounding(tmp_path):
     with pytest.raises(TychoraError) as err:
         graph.upsert_batch(generation, (bad,), units, ExecutionContext())
     assert err.value.code == "INTEGRITY_ERROR"
-    assert graph._connection.execute(
-        "MATCH (a:RelationAssertion) RETURN count(a)"
-    ).get_all() == [[0]]
+    assert _query_rows(graph, "MATCH (a:RelationAssertion) RETURN count(a)") == [[0]]
 
 
 def test_retry_restores_missing_native_edge_after_interruption(tmp_path):
@@ -498,9 +501,7 @@ def test_predicate_many_to_one_rejects_second_object(tmp_path):
             generation, (first, second), (*units, _unit("c")), ExecutionContext()
         )
     assert err.value.code == "INTEGRITY_ERROR"
-    assert graph._connection.execute(
-        "MATCH (a:RelationAssertion) RETURN count(a)"
-    ).get_all() == [[0]]
+    assert _query_rows(graph, "MATCH (a:RelationAssertion) RETURN count(a)") == [[0]]
 
 
 def test_explicit_model_predicate_projects_proposed_status(tmp_path):
@@ -513,9 +514,9 @@ def test_explicit_model_predicate_projects_proposed_status(tmp_path):
     graph.seal_generation(
         generation, GraphManifest.from_build(build), ExecutionContext()
     )
-    assert graph._connection.execute(
-        "MATCH (a:RelationAssertion) RETURN a.method,a.status"
-    ).get_all() == [["model", "proposed"]]
+    assert _query_rows(
+        graph, "MATCH (a:RelationAssertion) RETURN a.method,a.status"
+    ) == [["model", "proposed"]]
 
 
 def test_unlisted_or_self_promoting_model_method_is_rejected(tmp_path):
@@ -540,9 +541,7 @@ def test_drop_generation_removes_native_nodes_and_allows_rebuild(tmp_path):
         generation, GraphManifest.from_build(build), ExecutionContext()
     )
     graph.drop_generation(generation, ExecutionContext())
-    assert graph._connection.execute("MATCH (n:Entity) RETURN count(n)").get_all() == [
-        [0]
-    ]
+    assert _query_rows(graph, "MATCH (n:Entity) RETURN count(n)") == [[0]]
     generation = graph.begin_generation(spec)
     graph.upsert_batch(generation, (assertion,), units, ExecutionContext())
     graph.seal_generation(
@@ -596,9 +595,7 @@ def test_cancelled_batch_leaves_native_graph_empty(tmp_path):
             generation, (assertion,), units, ExecutionContext(cancelled=cancel)
         )
     assert err.value.code == "CANCELLED"
-    assert graph._connection.execute(
-        "MATCH (e:Evidence) RETURN count(e)"
-    ).get_all() == [[0]]
+    assert _query_rows(graph, "MATCH (e:Evidence) RETURN count(e)") == [[0]]
 
 
 def test_immutable_unit_retry_rejects_changed_canonical_content(tmp_path):
@@ -628,12 +625,10 @@ def test_failed_native_transaction_rolls_back_partial_generation_write(tmp_path)
             ],
             ExecutionContext(),
         )
-    assert graph._connection.execute(
-        "MATCH (e:Evidence) RETURN count(e)"
-    ).get_all() == [[0]]
+    assert _query_rows(graph, "MATCH (e:Evidence) RETURN count(e)") == [[0]]
 
 
-def test_evidence_upsert_chunks_more_than_128_native_operations(tmp_path):
+def test_evidence_upsert_chunks_more_than_128_native_operations(tmp_path, monkeypatch):
     units = tuple(_unit(f"unit-{index}") for index in range(260))
     spec = GraphGenerationSpec(
         generation_id="large",
@@ -667,15 +662,15 @@ def test_evidence_upsert_chunks_more_than_128_native_operations(tmp_path):
         lengths.append(len(operations))
         return original(operations, ctx)
 
-    graph._transaction = capture
+    monkeypatch.setattr(graph, "_transaction", capture)
     graph.upsert_batch(generation, (), units, ExecutionContext())
     assert lengths == [128, 128, 4]
-    assert graph._connection.execute(
-        "MATCH (e:Evidence) RETURN count(e)"
-    ).get_all() == [[260]]
+    assert _query_rows(graph, "MATCH (e:Evidence) RETURN count(e)") == [[260]]
 
 
-def test_interrupted_drop_keeps_dropping_state_and_resumes_in_bounded_chunks(tmp_path):
+def test_interrupted_drop_keeps_dropping_state_and_resumes_in_bounded_chunks(
+    tmp_path, monkeypatch
+):
     from threading import Event
 
     graph = LadybugGraphStore(tmp_path / "graph")
@@ -708,15 +703,15 @@ def test_interrupted_drop_keeps_dropping_state_and_resumes_in_bounded_chunks(tmp
         cancel.set()
         return result
 
-    graph._transaction = capture
+    monkeypatch.setattr(graph, "_transaction", capture)
     with pytest.raises(TychoraError) as err:
         graph.drop_generation(generation, ctx)
     assert err.value.code == "CANCELLED"
     assert lengths == [128]
-    assert graph._read_state(generation)["dropping"] is True
-    assert graph._connection.execute(
-        "MATCH (e:Evidence) RETURN count(e)"
-    ).get_all() == [[132]]
+    state = graph._read_state(generation)
+    assert state is not None
+    assert state["dropping"] is True
+    assert _query_rows(graph, "MATCH (e:Evidence) RETURN count(e)") == [[132]]
     with pytest.raises(TychoraError, match="removal is in progress"):
         graph.begin_generation(spec)
     with pytest.raises(TychoraError, match="removal is in progress"):
@@ -725,9 +720,7 @@ def test_interrupted_drop_keeps_dropping_state_and_resumes_in_bounded_chunks(tmp
     graph = LadybugGraphStore(tmp_path / "graph")
     graph.drop_generation(generation, ExecutionContext())
     assert graph._read_state(generation) is None
-    assert graph._connection.execute(
-        "MATCH (e:Evidence) RETURN count(e)"
-    ).get_all() == [[0]]
+    assert _query_rows(graph, "MATCH (e:Evidence) RETURN count(e)") == [[0]]
 
 
 @pytest.mark.parametrize("table", ("GroundedIn", "Subject", "Object", "SupportedBy"))
