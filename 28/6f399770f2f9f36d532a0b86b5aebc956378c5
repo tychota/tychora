@@ -1,0 +1,23 @@
+tests/qualification/test_docling.py
+  s_35b641b930a96d::t_3c8c2871cce6a9 190-195
+src/tychora/resources/model-assets.json
+  s_35b641b930a96d::t_9b33bf8015b3fe 15,154,166,178,190,202
+uv.lock
+  s_35b641b930a96d::t_1ca217d152ac18 569,574,576,581,594,599,601,635,643,645-649,654,660,667,669,1199-1207,1461-1485,1685,1687,1689
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "286f399770f2f9f36d532a0b86b5aebc956378c5",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
