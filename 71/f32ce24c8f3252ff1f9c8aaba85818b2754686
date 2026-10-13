@@ -1,0 +1,77 @@
+src/tychora/application/sources.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 23-28,88-90,92-94,103,174-176,210,558,789-796,801,804,811-822,912-923,991-992,996-997,1044-1045,1491-1492,1495-1518
+src/tychora/retrieval/anchors.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 81,85
+tests/retrieval/test_query.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 924-1104
+tests/release/test_ci_assets.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 49-52
+tests/code/test_parse_cache.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 1-152
+src/tychora/ingestion/native.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 35-43,186
+src/tychora/application/query.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 510-511,529-531,1092-1093,1096-1142
+  s_35b641b930a96d::t_b17038c70f1bf7 1143
+tests/application/test_inspection.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 570-571,644-672
+packaging/provision_ci_assets.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 13-15,77-78
+tests/providers/test_reranker.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 5,536-542
+tests/api/test_read_grants.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 1-211
+  s_35b641b930a96d::t_5908e31b2666df 212-254
+src/tychora/retrieval/rerank.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 55,382,421,481
+tests/storage/test_vector_contract.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 309-363
+docs/http.md
+  s_3a0d7c33a9daf9::t_b0428b3992124a 21
+docs/performance.md
+  s_3a0d7c33a9daf9::t_b0428b3992124a 17-19
+src/tychora/application/discovery.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 282-286
+tests/performance/test_ingestion_delta.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 92,102-104,118,145
+src/tychora/application/maintenance.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 6,47-100,165-180,207-211,308
+docs/operations.md
+  s_3a0d7c33a9daf9::t_b0428b3992124a 24
+src/tychora/adapters/code/parse_cache.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 1-179
+tests/api/test_scope.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 9,93-96
+tests/qualification/test_reranker.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 1-18
+src/tychora/application/inspection.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 7,31,589-650,655-656,692,729-730
+src/tychora/adapters/chroma/index.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 375-381,383-385,435-441,462-467
+tests/transports/test_http.py
+  s_3a0d7c33a9daf9::t_b0428b3992124a 1842-1934
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "71f32ce24c8f3252ff1f9c8aaba85818b2754686",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    },
+    "s_3a0d7c33a9daf9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3f0ee0d9-1b36-49c4-87a4-ed5dab077016",
+        "model": "claude-fable-5-1"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
