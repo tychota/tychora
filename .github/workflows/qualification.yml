@@ -41,6 +41,9 @@ jobs:
         run: uv sync --locked --all-extras --group test-fixtures
       - name: Provision pinned public test assets
         run: python packaging/provision_ci_assets.py --cache "$RUNNER_TEMP/tychora-public-models" --workspace "$RUNNER_TEMP/tychora-asset-setup" --github-env "$GITHUB_ENV"
+      - name: Compare synthetic Docling caption layouts on Linux
+        if: runner.os == 'Linux'
+        run: uv run --locked --all-extras --group test-fixtures python packaging/diagnose_docling_captions.py --models "$TYCHORA_TEST_DOCLING_MODELS" --output "$RUNNER_TEMP/tychora-caption-probes"
       - name: Record Python, SQLite, package versions, and installed wheel tags
         shell: bash
         run: |
