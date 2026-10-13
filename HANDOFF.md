@@ -1,0 +1,142 @@
+# Tychora handoff
+
+Updated: 2026-10-13. Audience: the next maintainer or agent continuing the engine and dashboard work.
+
+## Start here: dashboard specification and implementation plan
+
+The owner's next task is to specify and plan the dashboard. **Do not start dashboard implementation or the engine extension backlog automatically.** Begin with the existing [dashboard design draft](docs/superpowers/specs/2026-09-10-tychora-dashboard-design.md), reconcile it with the actual engine, then produce an actionable plan. That draft describes intended behavior; it is not proof that every backend endpoint exists.
+
+Read these in order:
+
+1. [Current architecture](docs/architecture.md): layers, libraries, SQLite tables, artifacts, indexing, reference resolution and sequence diagrams.
+2. [Implementation assessment](docs/review-assessment.md): confirmed defects, reproduced cases, fixed findings, and unverified review inventory.
+3. [Dashboard design draft](docs/superpowers/specs/2026-09-10-tychora-dashboard-design.md).
+4. [Engine specification](docs/superpowers/specs/2026-09-10-tychora-engine-design.md) and [engine implementation plan](docs/superpowers/plans/2026-09-11-tychora-engine.md): historical intent and execution context.
+5. [HTTP](docs/http.md), [Python API](docs/api.md), [operations](docs/operations.md), and [evaluation](docs/evaluation.md).
+
+For dashboard planning, create an endpoint/capability matrix: available and verified, available with limitations, or missing. Cover discovery, scoped source/revision inventory, original/asset inspection, bounded relations, job status/events/recovery, queries, traces, history/replay/purge, evaluations and configuration. Check response fields and authorization against actual HTTP handlers and contract tests. Do not make a convincing mock stand in for a missing backend feature.
+
+The dashboard draft proposes Search, Sources, Jobs, Evaluations, Activity and Settings. It is an evidence inspection and operations interface. It needs exact citations, source readers, original/derived distinctions, partial-coverage states, bounded graph exploration, and accessible edge lists. Query history represents retrieval runs; an LLM chat or answer-generation workflow is not required. Workspaces currently have no global directory registry, and collection management is incomplete: specify how selection will actually work before designing a universal selector.
+
+Plan small end-to-end journeys: search and inspect original evidence; add a source and follow a durable job; diagnose partial coverage; inspect relations; compare evaluations. Identify backend prerequisite tasks separately. Frontend business logic must not duplicate retrieval, authorization or indexing. The proposed React/TypeScript frontend and bundled static resources remain design choices to confirm. The existing draft calls for HTTP/SSE, keyboard access, small-screen inspection, safe rendering of imported content, and reconnect/recovery tests.
+
+## Product decisions to preserve
+
+- Tychora is a reusable local evidence engine with a programmatic sync/async Python API, CLI, HTTP and MCP. It returns structured, formatted evidence; the calling agent writes the answer or review.
+- Workflows belong in companion skills and the dashboard. Keep the Python interface suitable for future framework adapters such as an Agno KnowledgeBase integration; no completed Agno adapter is claimed.
+- Domain behavior belongs in configurable profiles, kinds, schemas, facets and relations. Use generic public examples such as standards, feedback, government templates, regulations and code. Do not introduce private customer context, corpora or conversation exports into the public project.
+- SQLite holds canonical structured evidence; Chroma and Ladybug provide derived vector and graph projections. Keep replaceable interfaces, but do not claim every storage operation is already abstracted.
+- Original bytes, exact locators, revision identity and provenance remain distinct from generated descriptions, embeddings and search windows. Changing a parser or model must not silently reinterpret old data.
+- An enabled remote provider is not upload authorization. Owner/collection consent and the caller's narrower scope remain enforced. No live provider upload or credential publication is authorized merely by this handoff.
+
+## Current repository and implementation state
+
+The engine branch was fast-forwarded into `main` at `e7de14081073c4a9020d5e595cb0f360c33aa52e`. Documentation, branding and the static site followed in `8c2f8cba26ce53238401a9abc8606d491b0e70cf`. This handoff follows those commits. The durable engine worktree was retained; do not delete worktrees or local verification records as routine cleanup.
+
+The package is an **alpha**, not a fully qualified production release. Implemented areas include versioned capture and extraction, typed evidence and locators, SQLite/FTS5, optional Chroma/Ladybug, document and code adapters, provider boundaries, hybrid retrieval, deterministic formatting, API/CLI/HTTP/MCP, evaluation machinery, and lifecycle operations. See the architecture for concrete code boundaries rather than inferring completion from this list.
+
+The dashboard has a design draft, but no implemented application UI. The Material for MkDocs site is documentation, not that dashboard. The public site excludes the historical planning archive; those specifications remain available in Git.
+
+Distribution supports a Python wheel and source archive. Standalone executable build/qualification tooling also exists, with platform and model-asset limits documented in [distribution](docs/distribution.md). Model weights and tokenizer assets are external. Do not equate a wheel, a local frozen build, and qualification on all supported operating systems.
+
+### Recorded verification from the preceding documentation update
+
+These are dated observations, not results automatically inherited by later changes:
+
+- Engine source suite at `e7de140`: **1,922 passed, 5 skipped, 4 deselected**, with release tests excluded and live-provider tests deselected.
+- Four skips were local OCR cases missing their asset environment variable. A follow-up covering documentation examples, release artifact auditing and all four OCR cases completed with **29 passed**. The remaining research-tokenizer skip was not closed.
+- A strict MkDocs build passed; desktop/mobile layouts and Mermaid diagrams were inspected.
+- Wheel/source-archive audits passed, including a build with the original checkout, Git directory and a synthetic private directory denied to the build subprocess.
+- The outgoing-history audit from `c914cb2` through `8c2f8cb` passed across 506 paths. Publication of this handoff requires a fresh outgoing check.
+- Logs and preview images were saved under the ignored local `.superpowers/docs-refresh-2026-10-13/` directory. They are not a public release artifact.
+
+The full source run does not establish live embedding/reranking quality, gold-set adequacy, a Linux or minimum-macOS qualification result, or closure of the behavior defects below. Historical dependency advisories remain disclosed in the distribution guide; rerun the current advisory audit rather than treating that older result as a waiver. Hosted CI outcomes must be checked after pushing.
+
+## Review findings and needed fixes
+
+The earlier review was checked against `e7de140`. Preserve the distinctions below when turning it into issues. The [full assessment](docs/review-assessment.md) has exact source references and the remaining review inventory.
+
+| Priority area | Current finding | Next useful acceptance test |
+| --- | --- | --- |
+| Strict lexical retrieval | More than the 80-per-kind cap marks the channel incomplete; strict queries can report `INDEX_INCOMPLETE` for normal truncation | More than 80 eligible matches remains a valid bounded search; genuinely unavailable/incomplete indexes still fail appropriately |
+| Historical editions | A unique selected edition can still produce an overlap warning and a human-decision requirement | Unique dated winner produces no spurious conflict; tied/unknown/overlapping cases retain explicit behavior |
+| Retention and purge | Advertised history/cache purge commands return `CAPABILITY_MISSING`; expiry is recorded but not enforced | Working scoped purge, expiry enforcement, retained-payload/replay behavior and job-diagnostic cleanup |
+| Vector identities | Family creation identity is configuration-derived; record IDs omit family identity | Independent families with identical configuration remain isolated across rebuild, restore and deletion; plan migration before changing durable IDs |
+| Workspace ownership | A second client encountering a standalone Python owner can receive `INTEGRITY_ERROR` | Two-process case returns a retryable ownership error without treating an ordinary live owner as corrupt |
+| Query traces | The trace request exists, but the result trace stays null | Scoped trace with bounded timings/counts/reasons and no hidden-source leakage, exposed consistently across transports |
+
+Synthetic probes reproduced lexical cap classification, the spurious edition warning, and missing purge dispatch. Their end-to-end consequences and the other findings were assessed through code inspection; do not describe all six as full end-to-end reproductions.
+
+Dashboard-relevant gaps also include incomplete collection creation/list/discovery, missing CLI relation-assertion inspection by ID, code context excerpts without their own locator/reason, and full request-history retention not exposed through normal configuration. Metadata-only history cannot provide exact replay. Do not display unavailable trace, retention or replay features as operational.
+
+Some findings were already overtaken: missing-revision original access was corrected in `e7de140`; parse reuse, read scope, vector candidate/window separation and reranker asset setup were finalized in earlier commits. Historical failing-suite counts and claims about workflows never running are not current facts.
+
+Further review items need targeted reproduction: pinned-generation GC, publication/receipt atomicity, startup integrity coverage, restore receipts, archive limits, mixed-scope import behavior, configuration/CLI error contracts, and code resolution provenance. The existing assessment records these without promoting them to newly verified defects. Passing tests do not close a test gap or a test that asserts the wrong contract.
+
+## Answers to the architecture questions
+
+### SHA-256 versus BLAKE3
+
+SHA-256 provides standard-library availability, checksum interoperability and a stable durable identity scheme without another native dependency. BLAKE3 may improve hashing throughput, but no current benchmark shows hashing is the bottleneck. It is not a claim that SHA-256 is faster. Changing public identities requires versioning and a migration/dual-read strategy across artifacts, references, backups and indexes. An internal cache could use a different hash without replacing retained public IDs. See [design choices](docs/design-choices.md).
+
+### Multiple independent RAGs and their locations
+
+One workspace directory owns one corpus: `corpus.sqlite3`, `artifacts/`, and the configured `indexes/text/`, `indexes/image/`, and `indexes/graph/` projections. Pass its path to Python, CLI or a one-workspace server. The CLI defaults to the current directory; there is no implicit home-directory corpus, global workspace catalog or federated query. Choose directories in a project or under a user-managed home directory. `TYCHORA_MODEL_CACHE` can share model assets, not corpus data. Collections partition a workspace logically but do not create separate database directories, and public collection lifecycle/discovery is incomplete. See [workspaces](docs/workspaces.md).
+
+### Document kinds and configurable relations
+
+Versioned data-only packs define kinds, bounded schemas, roles, lanes, facets, relationship predicates and policy. They can reuse existing normalizers; new extraction semantics need Python code and fingerprints. Defining a predicate constrains valid assertions but does not discover or create links automatically. Preserve historical schema identities or provide explicit mappings. Current built-in kinds and exact mechanisms are in [architecture](docs/architecture.md) and [extensions](docs/extensions.md).
+
+### Better Docling ingestion
+
+The current adapter retains structured extraction, geometry and visual assets, but the standard pipeline disables built-in Docling OCR. Separate selected-region OCR and optional vision exist. Priorities are explicit OCR policy, heading hierarchy, table cell matching/accuracy, layout and rendering options, resource limits, and selective formula/code/picture enrichment. Full-page VLM extraction is a separate path to evaluate, not the existing crop-vision adapter. Pin settings/assets into extraction identity and evaluate exact locators as well as text quality. Audio/video needs media handling, timestamp/frame provenance and transcription policies. All six requested upstream guides are mapped in the [ingestion roadmap](docs/ingestion-roadmap.md).
+
+### Code language and resolution coverage
+
+Dedicated adapters currently cover Python, JavaScript/JSX and TypeScript/TSX. Other suffixes are not equivalent to supported semantic code extraction. New language support includes grammar/dialect handling, semantic units, declarations, references, exact byte/line ranges, resolution, diagnostics, cache identity, tests and packaging. Syntax-only support and compiler-aware resolution must be advertised separately.
+
+Current resolution is static and bounded, not a compiler or runtime call graph. Non-explicit imports, package rules, overloads, inheritance, extensions, macros, generated code and build context need language-specific work. LSP/compiler/semantic-index ingestion is a candidate extension, not an existing capability. Preserve revision alignment, ambiguity and provenance; never label a plausible target as verified solely because its name matches. See [extensions](docs/extensions.md).
+
+### The 512-token target and 800-token soft ceiling
+
+These are initial constants in `src/tychora/indexing/windows.py`, not an empirically established optimum or normal TOML controls. The indexer partitions prepared evidence into exact adjacent windows with no overlap, preferring natural boundaries. A remaining 700-token interval can stay intact. Provider request limits are separate.
+
+The owner wants **semantic chunks and, ideally, contextual indexing**. Do not reduce this request to changing two numbers. First inspect how normalized semantic units become windows, contextual groups, provider inputs and returned segments. Contextual provider support already exists; distinguish the existence of a model path from its activation, grouping quality and evaluation. Preserve authoritative article/rule/table/symbol boundaries, exact spans and immutable identities. Specify oversized-unit handling and retrieval-time context reconstruction. Compare fixed-window, structural/semantic and contextual variants on the same labeled corpus and budget before selecting defaults.
+
+### Optional reranking and the new Voyage model
+
+Reranking is optional because the base profile is offline/provider-free; a remote reranker adds upload authorization, latency and cost. An explicitly online quality profile should evaluate and normally enable it. As checked on 2026-10-13, Voyage announced `rerank-3` and `rerank-3-lite` on [2026-09-30](https://blog.voyageai.com/2026/09/30/rerank-3/).
+
+The current configuration accepts `rerank-3`, but runtime tokenizer/capability qualification only supports `rerank-2.5`; `rerank-3-lite` is not an exposed choice. Complete tokenizer/asset identity, limits, response mapping, cache identity and actual evaluation before claiming support. Embedding support includes contextual text, code and multimodal paths; it is not proof of live reranking correctness. See [design choices](docs/design-choices.md).
+
+### Qdrant, Neo4j and PostgreSQL effort
+
+Vector and graph ports provide a starting boundary for Qdrant and Neo4j. Parity also needs eligible-ID filtering, bounded retrieval/traversal, generation/family isolation, receipts, publication, recovery, deletion and contract tests. PostgreSQL is larger: SQLite-specific SQL, migration and FTS assumptions appear across services, and the small `CorpusStore` protocol does not abstract all persistence.
+
+Earlier engineering estimates were 4–8 weeks for Qdrant parity, 6–12 for Neo4j, and 3–6 months for PostgreSQL canonical-store parity. At an illustrative €800/day, that is €16–32k, €24–48k and €48–96k respectively; narrow prototypes are smaller. These are uncertain human-effort estimates, not quotes, model-usage costs or commitments. Shared refactoring changes the combined estimate. See [extension boundaries](docs/extensions.md) before planning each implementation.
+
+## Owner's intended work after the dashboard specification/plan
+
+The following work is explicitly desired but not implemented by this handoff. The order after dashboard planning is not fixed:
+
+1. Polish the product and documentation.
+2. Understand and redesign chunking around semantic units, with contextual indexing and measured retrieval behavior.
+3. Improve Docling table/layout handling and the related extraction options described above.
+4. Exercise the complete reranking path, including the new model qualification gap and live quality evaluation on deliberately selected authorized data.
+5. Add **Java, Kotlin, Ruby, Elixir, Rust, Swift, C, C++, C#, Go**, and further code languages. Include resolution rules, source ranges, references and possibly LSP/compiler data; grammar installation alone is insufficient.
+6. Implement **Neo4j, Qdrant and PostgreSQL** adapters, including the necessary persistence refactoring for PostgreSQL.
+
+Use distinct acceptance criteria for syntax extraction, semantic resolution, retrieval quality and backend durability. Preserve the programmatic API, citations and policy behavior while introducing new implementations.
+
+## Documentation and publication
+
+The README links the tutorial, architecture and current limitations. The repository includes a logo and hero image. The searchable site uses Material for MkDocs with a separate locked docs environment:
+
+```bash
+uv run --project packaging/docs --locked mkdocs build --strict
+uv run --project packaging/docs --locked mkdocs serve
+```
+
+See [documentation maintenance and publication](docs/documentation.md). The docs workflow builds on pushes/PRs. GitHub Pages publication is a separate manual workflow action, with Pages configured to use GitHub Actions. Pushing the repository does not publish a package or deliberately deploy Pages. Runtime, native qualification and executable workflows also run on relevant pushes; inspect their actual results and do not weaken failing gates merely to obtain a green badge.
+
+Keep examples runnable, prerequisites explicit, current limits next to affected features, and tutorials/how-to/reference/explanation distinct. The local documentation previews are not a dashboard prototype. Any future handoff should update this file's baseline, remaining defects and verification evidence together.

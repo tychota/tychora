@@ -12,6 +12,8 @@ Tychora is a local evidence workspace. It registers versioned sources, retrieves
 
 Start with the [tutorial](docs/getting-started.md), [architecture walkthrough](docs/architecture.md), or [workspace guide](docs/workspaces.md). Build the searchable documentation site with the [documentation instructions](docs/documentation.md).
 
+Continuing development? Read [HANDOFF.md](HANDOFF.md) for the current state, open fixes, architecture decisions, and dashboard planning priorities.
+
 Python 3.12 and SQLite with FTS5 and JSON functions are required. Install the base package with `uv sync --locked --no-default-groups`. To enable every optional parser, native index, provider adapter, and server package in a development environment, use `uv sync --locked --all-extras`. An installed wheel is a Python package; it does not include model weights, tokenizer files, or a qualified standalone executable. See [distribution](docs/distribution.md).
 
 An offline first run needs a separately obtained, checksum-verifiable `output-tokenizer` bundle. Set `TYCHORA_MODEL_BUNDLE` to a local directory containing `tiktoken/0.14.0/cl100k_base.tiktoken` with the bytes declared in the packaged asset manifest. `manage setup` verifies its size and SHA-256. A missing or changed file fails; offline mode never downloads it. The following commands use only synthetic text and a clean cache.
