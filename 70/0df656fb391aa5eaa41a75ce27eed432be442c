@@ -1,0 +1,39 @@
+tests/release/test_artifact_audit.py
+  s_35b641b930a96d::t_026a829db7b226 35
+tests/api/test_public_vision.py
+  s_35b641b930a96d::t_de343e7cdffa0b 652-657,661,749,791,799,823
+tests/release/test_manifest.py
+  s_35b641b930a96d::t_026a829db7b226 77
+tests/release/test_installed_wheel.py
+  s_35b641b930a96d::t_026a829db7b226 11-12,25,70,154
+tests/release/test_resources.py
+  s_35b641b930a96d::t_026a829db7b226 9,11-12
+tests/cli/test_output.py
+  s_35b641b930a96d::t_2911eb58d19976 100-102,105-110,112
+.github/workflows/qualification.yml
+  s_35b641b930a96d::t_9fc0aa27c5f257 6
+HANDOFF.md
+  s_35b641b930a96d::t_89d097d3a8b007 3,34,42-62
+docs/distribution.md
+  s_35b641b930a96d::t_3035bde10e2512 31
+docs/qualification.md
+  s_35b641b930a96d::t_5fdb9f49766aef 7-14
+tests/fixtures/documents/create_rich_fixtures.py
+  s_35b641b930a96d::t_ca65fc4c53e2d2 77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "700df656fb391aa5eaa41a75ce27eed432be442c",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
