@@ -12,7 +12,7 @@
       "selection": "documents",
       "attribution": "Docling model assets published by the Docling project",
       "license": "Apache-2.0 and CDLA-Permissive-2.0 as recorded per asset",
-      "notice_url": "https://github.com/docling-project/docling/blob/v2.126.0/LICENSE",
+      "notice_url": "https://github.com/docling-project/docling/blob/v2.132.0/LICENSE",
       "model_card_url": "https://huggingface.co/docling-project/docling-models"
     },
     {
@@ -151,7 +151,7 @@
       "size_bytes": 3268,
       "url": "https://huggingface.co/docling-project/docling-layout-heron/resolve/8f39ad3c0b4c58e9c2d2c84a38465abf757272d8/config.json",
       "license": "Apache-2.0",
-      "owner": "docling==2.126.0",
+      "owner": "docling==2.132.0",
       "revision": "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8",
       "notice_url": "https://huggingface.co/docling-project/docling-layout-heron/tree/8f39ad3c0b4c58e9c2d2c84a38465abf757272d8"
     },
@@ -163,7 +163,7 @@
       "size_bytes": 444,
       "url": "https://huggingface.co/docling-project/docling-layout-heron/resolve/8f39ad3c0b4c58e9c2d2c84a38465abf757272d8/preprocessor_config.json",
       "license": "Apache-2.0",
-      "owner": "docling==2.126.0",
+      "owner": "docling==2.132.0",
       "revision": "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8",
       "notice_url": "https://huggingface.co/docling-project/docling-layout-heron/tree/8f39ad3c0b4c58e9c2d2c84a38465abf757272d8"
     },
@@ -175,7 +175,7 @@
       "size_bytes": 171658996,
       "url": "https://huggingface.co/docling-project/docling-layout-heron/resolve/8f39ad3c0b4c58e9c2d2c84a38465abf757272d8/model.safetensors",
       "license": "Apache-2.0",
-      "owner": "docling==2.126.0",
+      "owner": "docling==2.132.0",
       "revision": "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8",
       "notice_url": "https://huggingface.co/docling-project/docling-layout-heron/tree/8f39ad3c0b4c58e9c2d2c84a38465abf757272d8"
     },
@@ -187,7 +187,7 @@
       "size_bytes": 7060,
       "url": "https://huggingface.co/docling-project/docling-models/resolve/fc0f2d45e2218ea24bce5045f58a389aed16dc23/model_artifacts/tableformer/accurate/tm_config.json",
       "license": "CDLA-Permissive-2.0",
-      "owner": "docling==2.126.0",
+      "owner": "docling==2.132.0",
       "revision": "fc0f2d45e2218ea24bce5045f58a389aed16dc23",
       "notice_url": "https://huggingface.co/docling-project/docling-models/tree/fc0f2d45e2218ea24bce5045f58a389aed16dc23"
     },
@@ -199,7 +199,7 @@
       "size_bytes": 212758388,
       "url": "https://huggingface.co/docling-project/docling-models/resolve/fc0f2d45e2218ea24bce5045f58a389aed16dc23/model_artifacts/tableformer/accurate/tableformer_accurate.safetensors",
       "license": "CDLA-Permissive-2.0",
-      "owner": "docling==2.126.0",
+      "owner": "docling==2.132.0",
       "revision": "fc0f2d45e2218ea24bce5045f58a389aed16dc23",
       "notice_url": "https://huggingface.co/docling-project/docling-models/tree/fc0f2d45e2218ea24bce5045f58a389aed16dc23"
     },
