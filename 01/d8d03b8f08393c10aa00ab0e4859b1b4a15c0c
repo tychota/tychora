@@ -1,0 +1,24 @@
+tests/security/test_restore.py
+  s_35b641b930a96d::t_092836887dee9d 49-51,54-56
+  s_35b641b930a96d::t_9a2e2c4de48380 57,59-62
+  s_35b641b930a96d::t_ba2e0bf2f54348 8,31-48,52-53,58,63-64
+  s_35b641b930a96d::t_f2f24ed12d4b76 65-66
+src/tychora/adapters/sqlite/migrations.py
+  s_35b641b930a96d::t_9216b467dc1fc3 15-20,34,39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "01d8d03b8f08393c10aa00ab0e4859b1b4a15c0c",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
