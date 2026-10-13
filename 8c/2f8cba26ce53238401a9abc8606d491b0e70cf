@@ -1,0 +1,71 @@
+.github/workflows/docs.yml
+  s_35b641b930a96d::t_df047d776afc30 1-59
+.gitignore
+  s_35b641b930a96d::t_8e0ea2a493eb5c 22-27
+README.md
+  s_35b641b930a96d::t_9a0d1c09a9cf0f 3-8,11-14,41-43
+docs/architecture.md
+  s_35b641b930a96d::t_de72f17b29ca50 1-239
+docs/assets/logo.svg
+  s_35b641b930a96d::t_0fe028635cf35f 1-7
+docs/cli.md
+  s_35b641b930a96d::t_162106bc35753a 7,20-22
+docs/configuration.md
+  s_35b641b930a96d::t_12c62488ba3338 5
+docs/contributing.md
+  s_35b641b930a96d::t_b7543b5e4bad76 1-43
+docs/design-choices.md
+  s_35b641b930a96d::t_3abed2afea8701 1-33
+docs/distribution.md
+  s_35b641b930a96d::t_21c66c3610d1b4 12
+docs/documentation.md
+  s_35b641b930a96d::t_401189ab5e3100 1-42
+docs/evaluation.md
+  s_35b641b930a96d::t_5e33add47d9a8c 35-38
+docs/extensions.md
+  s_35b641b930a96d::t_5c76fc0a4120e3 1-51
+docs/getting-started.md
+  s_35b641b930a96d::t_49ed691a9b3a71 1-63
+docs/index.md
+  s_35b641b930a96d::t_4c8426c9319af3 1-27
+docs/ingestion-roadmap.md
+  s_35b641b930a96d::t_4470a756ce34dd 1-40
+docs/operations.md
+  s_35b641b930a96d::t_e9d7bdd65e664d 28
+docs/performance.md
+  s_35b641b930a96d::t_0e82c6b12fbdba 19
+docs/review-assessment.md
+  s_35b641b930a96d::t_69c98d23431a99 1-59
+docs/stylesheets/extra.css
+  s_35b641b930a96d::t_fbfc4176a33d26 1-56
+docs/workspaces.md
+  s_35b641b930a96d::t_bcade73eef0b82 1-32
+mkdocs.yml
+  s_35b641b930a96d::t_62f3f481e2737f 1-73
+packaging/build_public_stage.py
+  s_35b641b930a96d::t_55a5a9c9bf0f5c 13-20
+packaging/check_artifact.py
+  s_35b641b930a96d::t_ac829b89cf6565 91-99
+packaging/docs/pyproject.toml
+  s_35b641b930a96d::t_d4a22418015e2b 1-12
+packaging/docs/uv.lock
+  s_35b641b930a96d::t_a8ca99b923c145 1-617
+pyproject.toml
+  s_35b641b930a96d::t_d2eb97ebd12dc4 62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8c2f8cba26ce53238401a9abc8606d491b0e70cf",
+  "prompts": {},
+  "sessions": {
+    "s_35b641b930a96d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a08b65-e613-7380-80d3-808961eadc00",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
