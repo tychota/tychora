@@ -12,6 +12,12 @@ SCHEMA_VERSION = 1
 SCHEMA_CHECKSUM = "b98d888098fa0ea790484f37ab8cf746afc2299576411767012c9e3a3c5642a9"
 
 
+def _disable_extension_loading(db: sqlite3.Connection) -> None:
+    # Python omits this method when SQLite extension support is unavailable.
+    if disable := getattr(db, "enable_load_extension", None):
+        disable(False)
+
+
 def supported_migration_target(target_version: int) -> int:
     """V1 is the sole packaged version; never infer an upgrade from archive SQL."""
     if type(target_version) is not int or target_version != SCHEMA_VERSION:
@@ -25,12 +31,12 @@ def open_verified_import(path: Path) -> sqlite3.Connection:
         raise TychoraError("INTEGRITY_ERROR", "Unsafe imported database path")
     db = sqlite3.connect(path.as_uri() + "?mode=ro&immutable=1", uri=True)
     try:
-        db.enable_load_extension(False)
+        _disable_extension_loading(db)
         db.execute("PRAGMA trusted_schema=OFF")
         db.execute("PRAGMA query_only=ON")
         expected = sqlite3.connect(":memory:")
         try:
-            expected.enable_load_extension(False)
+            _disable_extension_loading(expected)
             expected.execute("PRAGMA trusted_schema=OFF")
             expected.executescript(migration_sql())
             schema_query = (

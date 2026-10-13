@@ -5,6 +5,7 @@ import sqlite3
 import pytest
 
 from tychora.adapters.files.archive import ArchiveReader, ArchiveWriter
+from tychora.adapters.sqlite import migrations
 from tychora.adapters.sqlite.migrations import initialize_schema, open_verified_import
 from tychora.contracts.errors import TychoraError
 from tychora.ports.execution import ExecutionContext
@@ -25,6 +26,42 @@ def test_imported_sqlite_rejects_unknown_trigger_before_table_reads(tmp_path):
     with pytest.raises(TychoraError) as error:
         open_verified_import(database)
     assert error.value.code == "PROFILE_INCOMPATIBLE"
+
+
+def test_imported_sqlite_without_extension_control_still_verifies_and_blocks_loading(
+    tmp_path, monkeypatch
+):
+    database = tmp_path / "corpus.sqlite3"
+    with sqlite3.connect(database) as db:
+        initialize_schema(db)
+
+    class NoExtensionControl(sqlite3.Connection):
+        def __getattribute__(self, name):
+            if name == "enable_load_extension":
+                raise AttributeError(name)
+            return super().__getattribute__(name)
+
+    real_connect = sqlite3.connect
+
+    def connect_without_extension_control(*args, **kwargs):
+        return real_connect(*args, factory=NoExtensionControl, **kwargs)
+
+    monkeypatch.setattr(
+        migrations.sqlite3, "connect", connect_without_extension_control
+    )
+    db = open_verified_import(database)
+    try:
+        assert db.execute(
+            "SELECT version, checksum FROM schema_migrations"
+        ).fetchall() == [(migrations.SCHEMA_VERSION, migrations.SCHEMA_CHECKSUM)]
+        with pytest.raises(sqlite3.OperationalError) as error:
+            db.execute("SELECT load_extension('never-existing-extension')")
+        assert str(error.value) in (
+            "not authorized",
+            "no such function: load_extension",
+        )
+    finally:
+        db.close()
 
 
 def test_archive_reader_rejects_symlink_member_and_cleans_stage(tmp_path):
