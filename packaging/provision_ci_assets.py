@@ -8,6 +8,8 @@ import json
 import os
 import shutil
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 SELECTIONS = frozenset(
@@ -37,6 +39,39 @@ def verify_selected(cache: Path, manifest: Path) -> dict[str, Path]:
     if not verified or "cl100k-base-ranks" not in verified:
         raise ValueError("Pinned tokenizer asset is absent from manifest")
     return verified
+
+
+def _retryable_download_failure(stderr: str) -> bool:
+    for line in reversed(stderr.splitlines()):
+        try:
+            error = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(error, dict):
+            return (
+                error.get("schema_version") == "1"
+                and error.get("code") == "PROVIDER_FAILURE"
+                and error.get("retryable") is True
+            )
+    return False
+
+
+def run_setup(command: list[str], env: dict[str, str]) -> None:
+    """Retry only an explicitly transient public asset download failure."""
+    for attempt in range(1, 4):
+        result = subprocess.run(
+            command, env=env, capture_output=True, text=True, check=False
+        )
+        if result.stdout:
+            sys.stdout.write(result.stdout)
+        if result.stderr:
+            sys.stderr.write(result.stderr)
+        if result.returncode == 0:
+            return
+        if attempt == 3 or not _retryable_download_failure(result.stderr):
+            result.check_returncode()
+        print(f"Retrying public asset setup ({attempt + 1}/3)", file=sys.stderr)
+        time.sleep(5 * attempt)
 
 
 def main() -> None:
@@ -80,7 +115,7 @@ def main() -> None:
     ]
     if args.bundle:
         command.extend(("--bundle", str(args.bundle)))
-    subprocess.run(command, env=env, check=True)
+    run_setup(command, env)
     manifest = Path(__file__).parents[1] / "src/tychora/resources/model-assets.json"
     verified = verify_selected(args.cache, manifest)
     tokenizer_dir = args.cache.parent / "tokenizer-test-assets"
