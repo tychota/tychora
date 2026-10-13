@@ -3,7 +3,7 @@ name: Native qualification
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, fix/hosted-builds]
 
 permissions:
   contents: read

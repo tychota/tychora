@@ -187,7 +187,19 @@ def test_real_docling_retains_document_and_locators(
     )
     for passage in expected["pdf"]["passages"]:
         found = [u for u in artifact.units if u.text == passage["text"]]
-        assert found, passage
+        assert found, {
+            "missing": passage,
+            "native_units": [
+                {
+                    "ref": unit.native_ref,
+                    "type": unit.unit_type,
+                    "text": unit.text,
+                    "pages": [locator.physical_page for locator in unit.locators],
+                }
+                for unit in artifact.units
+                if unit.text
+            ],
+        }
         if execution.format == "pdf":
             assert found[0].locators[0].physical_page == passage["page"]
     if execution.format == "pdf":

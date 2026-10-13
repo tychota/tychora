@@ -86,17 +86,25 @@ def test_selected_native_versions_and_wheel_tags_match_target():
 
     expected_tags = {
         ("Darwin", "arm64"): {
-            "chromadb": "cp39-abi3-macosx_11_0_arm64",
-            "ladybug": "cp312-cp312-macosx_15_0_arm64",
+            "chromadb": {"cp39-abi3-macosx_11_0_arm64"},
+            "ladybug": {"cp312-cp312-macosx_15_0_arm64"},
         },
         ("Linux", "x86_64"): {
-            "chromadb": "cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64",
-            "ladybug": "cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64",
+            # WHEEL metadata expands the compressed platform tags in filenames
+            # into separate Tag headers. Require every declared target tag.
+            "chromadb": {
+                "cp39-abi3-manylinux_2_17_x86_64",
+                "cp39-abi3-manylinux2014_x86_64",
+            },
+            "ladybug": {
+                "cp312-cp312-manylinux_2_27_x86_64",
+                "cp312-cp312-manylinux_2_28_x86_64",
+            },
         },
     }
     platform_tags = expected_tags[(platform.system(), platform.machine())]
-    for distribution_name, expected_tag in platform_tags.items():
-        assert expected_tag in _wheel_tags(distribution_name)
+    for distribution_name, required_tags in platform_tags.items():
+        assert required_tags <= _wheel_tags(distribution_name)
 
 
 def _run_graph_probe(
