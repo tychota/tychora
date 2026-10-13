@@ -649,10 +649,16 @@ def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_targ
         "create_provider",
         create_with_mock,
     )
+
+    def wait_for_pdf_job(kb, job_id, expected):
+        status = kb.jobs.wait(job_id, timeout=180)
+        assert status.state == expected, (status.state, status.error_code)
+        return status
+
     workspace = tmp_path / "knowledge"
     with Tychora.open(workspace, config=config, token_counter=Counter()) as kb:
         first = kb.sources.add(source)
-        assert kb.jobs.wait(first.id).state == "succeeded"
+        wait_for_pdf_job(kb, first.id, "succeeded")
         sid = canonical_source_id(UUID(str(kb.default_collection_id)), "mixed")
         revision = kb.sources.revisions(sid).revisions[0].revision_id
         extraction = kb.sources.extractions(sid, revision).extractions[0].extraction_id
@@ -740,8 +746,7 @@ def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_targ
     selected["vision"][0]["source_native_ref"] = later_image["source_native_ref"]
     with Tychora.open(workspace, config=config, token_counter=Counter()) as kb:
         accepted = kb.sources.add(selected)
-        status = kb.jobs.wait(accepted.id)
-        assert status.state == "succeeded", (status, prompts)
+        wait_for_pdf_job(kb, accepted.id, "succeeded")
         assert len(prompts) == 1
         proxy_id = kb._workspace.bridge.call(
             kb._workspace.owner.run_blocking(
@@ -783,7 +788,7 @@ def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_targ
             ],
         }
         bad = kb.sources.add(altered)
-        assert kb.jobs.wait(bad.id).state == "succeeded"
+        wait_for_pdf_job(kb, bad.id, "succeeded")
         assert len(prompts) == 2
         response_mode[0] = "malformed"
         malformed = {
@@ -791,7 +796,7 @@ def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_targ
             "vision": [{**selected["vision"][0], "task": "extract"}],
         }
         bad_json = kb.sources.add(malformed)
-        assert kb.jobs.wait(bad_json.id).state == "succeeded"
+        wait_for_pdf_job(kb, bad_json.id, "succeeded")
         assert len(prompts) == 3
         assert (
             sum(
@@ -815,7 +820,7 @@ def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_targ
             ],
         }
         refused = kb.sources.add(stale_context)
-        assert kb.jobs.wait(refused.id).state == "failed"
+        wait_for_pdf_job(kb, refused.id, "failed")
         assert len(prompts) == 3
         count = kb._workspace.bridge.call(
             kb._workspace.owner.run_blocking(

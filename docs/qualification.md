@@ -4,6 +4,14 @@ This report records package and SDK qualification for the Python 3.12 native
 dependency candidates. The probes use synthetic local data, make no provider
 calls, and do not download model or tokenizer assets.
 
+## Hosted verification update — 2026-10-14
+
+The [installed distribution qualification](https://github.com/tychota/tychora/actions/runs/38475452978) passed on the hosted macOS runner after correcting SQLite import verification for Python builds without extension-loading controls. The updated lock uses Docling 2.132.0, Docling Core 2.101.1 and Docling Parse 7.22.3. The tables below preserve the original qualification versions and observations; they are not a description of every current locked dependency.
+
+Linux native qualification currently has one unresolved quality failure: Docling retains a synthetic figure caption as page text but omits its picture-caption association, while macOS supplies the association. All 43 other native checks passed in the [Linux diagnostic run](https://github.com/tychota/tychora/actions/runs/38478547001/job/115575184906). Controlled caption spacing and typography variants did not resolve the platform difference. The exact caption assertion remains enabled; no heuristic association or test waiver was added. This is an extraction-quality gap, distinct from whether the package or executable builds.
+
+The resolved dependency audit remains blocked by four unique Chroma advisories. See [distribution and release limits](distribution.md). Passing functional qualification does not waive that gate.
+
 ## Tested environment
 
 The local qualification run used macOS 26.5.2 arm64, CPython 3.12.13, uv

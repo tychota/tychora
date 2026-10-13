@@ -97,11 +97,19 @@ def test_busy_owner_cli_delegates_discovery(tmp_path):
     try:
         endpoint = workspace / ".runtime" / "endpoint.json"
         deadline = time.monotonic() + 10
-        while time.monotonic() < deadline and not endpoint.exists():
+        record = {}
+        # Workspace ownership is published before the HTTP socket is bound.
+        while time.monotonic() < deadline:
             if process.poll() is not None:
                 raise AssertionError(process.communicate())
+            try:
+                record = json.loads(endpoint.read_text())
+            except (FileNotFoundError, json.JSONDecodeError):
+                record = {}
+            if isinstance(record, dict) and isinstance(record.get("authority"), str):
+                break
             time.sleep(0.05)
-        assert endpoint.exists()
+        assert isinstance(record, dict) and isinstance(record.get("authority"), str)
         result = _run(
             "--workspace", workspace, "inspect", "kinds", "--json", cwd=tmp_path
         )

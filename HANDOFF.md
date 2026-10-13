@@ -1,6 +1,6 @@
 # Tychora handoff
 
-Updated: 2026-10-13. Audience: the next maintainer or agent continuing the engine and dashboard work.
+Updated: 2026-10-14. Audience: the next maintainer or agent continuing the engine and dashboard work.
 
 ## Start here: dashboard specification and implementation plan
 
@@ -31,13 +31,34 @@ Plan small end-to-end journeys: search and inspect original evidence; add a sour
 
 ## Current repository and implementation state
 
-The engine branch was fast-forwarded into `main` at `e7de14081073c4a9020d5e595cb0f360c33aa52e`. Documentation, branding and the static site followed in `8c2f8cba26ce53238401a9abc8606d491b0e70cf`. This handoff follows those commits. The durable engine worktree was retained; do not delete worktrees or local verification records as routine cleanup.
+The engine branch was fast-forwarded into `main` at `e7de14081073c4a9020d5e595cb0f360c33aa52e`. Documentation, branding and the static site followed in `8c2f8cba26ce53238401a9abc8606d491b0e70cf`. The initial handoff was committed in `620df92`; the hosted build fixes follow that baseline. The durable engine worktree was retained; do not delete worktrees or local verification records as routine cleanup.
 
 The package is an **alpha**, not a fully qualified production release. Implemented areas include versioned capture and extraction, typed evidence and locators, SQLite/FTS5, optional Chroma/Ladybug, document and code adapters, provider boundaries, hybrid retrieval, deterministic formatting, API/CLI/HTTP/MCP, evaluation machinery, and lifecycle operations. See the architecture for concrete code boundaries rather than inferring completion from this list.
 
 The dashboard has a design draft, but no implemented application UI. The Material for MkDocs site is documentation, not that dashboard. The public site excludes the historical planning archive; those specifications remain available in Git.
 
 Distribution supports a Python wheel and source archive. Standalone executable build/qualification tooling also exists, with platform and model-asset limits documented in [distribution](docs/distribution.md). Model weights and tokenizer assets are external. Do not equate a wheel, a local frozen build, and qualification on all supported operating systems.
+
+### Hosted build repair and publication follow-up
+
+The public repository is [tychota/tychora](https://github.com/tychota/tychora); the documentation is deployed at [tychota.github.io/tychora](https://tychota.github.io/tychora/). The first Pages deployment passed, and the homepage, architecture page, search index and hero image were checked over HTTP.
+
+The hosted build repair addresses these portability and qualification issues:
+
+- Some Python SQLite builds omit `enable_load_extension`. Import verification now disables extension loading when the control exists; a regression test also verifies that SQL extension loading is denied when the method is unavailable. Schema and integrity checks remain enforced.
+- Linux wheel metadata lists compressed filename platform tags separately. Qualification checks the actual required tag set.
+- Docling can merge adjacent PDF paragraphs on Linux. Qualification checks exact passage retention and physical-page provenance without requiring identical paragraph grouping across operating systems. Table, figure and retained-artifact checks remain in place.
+- The split-table provenance scenario now requests enough output budget for both the table and row. Its synthetic counter counts characters as tokens; the original 6,000 cap correctly omitted one owner from a 6,170-character response. Both IDs are now required, while separate tight-budget omission tests remain intact.
+
+Six artifact-dependent tests now carry the release marker so the Linux generic-check filter excludes macOS `sandbox-exec` builds while the dedicated distribution workflow still runs them. The CLI delegation test waits for a published HTTP authority rather than the earlier ownership record. The 23-page vision fixture uses an explicit 180-second job wait instead of the SDK's 30-second default; its provider remains mocked and all source/context assertions remain enforced.
+
+The lock upgrades OAuthlib to 4.0.0, Docling/Docling Slim to 2.132.0, Docling Core to 2.101.1, Docling Parse to 7.22.3 and multidict to 6.9.1. The Docling model-asset owner labels were updated; asset bytes, hashes and revisions are unchanged.
+
+Verification during this repair: the full local source run completed with 1,926 passes, one skip and one failure in the split-table budget scenario. After correcting that test, the 15-test table/graph/output-budget follow-up passed. Eight synthetic CI asset tests passed: provisioning now retries an explicitly retryable provider download failure up to three attempts, while integrity failures stop immediately and size/hash verification remains mandatory. A final focused follow-up with real local parser assets and mocked providers passed 23 tests (six release-only tests deselected), covering CLI readiness, the 23-page vision scenario and portable release tooling. Ruff, formatting and type checks passed. The [installed distribution run](https://github.com/tychota/tychora/actions/runs/38475452978) and [macOS executable job](https://github.com/tychota/tychora/actions/runs/38475453144/job/115564894868) passed. These observations do not imply all hosted jobs are green.
+
+**Linux native qualification still blocked:** with Docling 2.132.0, the synthetic PDF's exact figure-caption text and page geometry are retained, but Linux labels it as body text and emits no picture-caption reference. macOS emits that reference. A controlled comparison of closer spacing, italic and bold captions reproduced the discrepancy; those temporary experiments were removed. The strict assertion and production requirement to bind asset captions to retained Docling references remain unchanged. The latest experiment produced 43 native passes and one caption-association failure. This belongs in the planned Docling improvement work: distinguish explicit parser relations from inferred candidates and evaluate platform behavior before changing the provenance contract.
+
+**Security gate still blocked:** the fresh installed-stack advisory audit reports five rows covering four unique Chroma 1.5.9 advisories, with no fixed versions reported. No advisory has been ignored or waived. See [distribution](docs/distribution.md) for identifiers. This is distinct from package and executable correctness; do not describe the full CI suite as green.
 
 ### Recorded verification from the preceding documentation update
 

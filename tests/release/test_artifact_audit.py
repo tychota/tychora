@@ -32,6 +32,7 @@ def _wheel(path: Path, members: dict[str, bytes]) -> Path:
     return path
 
 
+@pytest.mark.release
 def test_release_build_proves_private_paths_denied(artifacts):
     proof = json.loads(artifacts.isolation_proof.read_text())
     assert proof == {

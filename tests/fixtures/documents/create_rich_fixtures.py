@@ -74,8 +74,7 @@ def build(destination: Path) -> None:
     text("2. Observation", 54, 230, 16)
     text(PASSAGES[3], 54, 265)
     pdf.drawImage(ImageReader(picture), 96, 792 - 500, width=420, height=210)
-    # Align the caption with the visible figure so layout models can link them.
-    text(PASSAGES[4], 188, 528)
+    text(PASSAGES[4], 54, 528)
     pdf.save()
 
     doc = Document()

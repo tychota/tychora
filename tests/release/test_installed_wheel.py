@@ -8,6 +8,8 @@ import sys
 import tarfile
 from pathlib import Path
 
+import pytest
+
 
 def _python(installation, code: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -20,6 +22,7 @@ def _python(installation, code: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+@pytest.mark.release
 def test_minimal_installed_wheel_import_help_lexical_and_collision(installed_base):
     code = """import importlib.util, sqlite3, sys
 from pathlib import Path
@@ -64,6 +67,7 @@ with sqlite3.connect(db) as conn:
     assert "Usage" in help_result.stdout
 
 
+@pytest.mark.release
 def test_full_installed_wheel_native_sdk_document_http_mcp_and_restore(
     installed_full, artifacts
 ):
@@ -147,6 +151,7 @@ def test_full_installed_wheel_native_sdk_document_http_mcp_and_restore(
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.release
 def test_sdist_derived_wheel_import_and_resources(artifacts, tmp_path):
     from tests.release.conftest import UV, _clean_env, _run
 

@@ -74,6 +74,7 @@ def test_manifest_generator_is_present():
     assert (Path(__file__).parents[2] / "packaging/build_manifest.py").is_file()
 
 
+@pytest.mark.release
 def test_manifest_records_artifacts_features_and_resolved_licenses(
     artifacts, installed_base, installed_full, tmp_path: Path
 ):

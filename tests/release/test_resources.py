@@ -6,7 +6,10 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
 
+
+@pytest.mark.release
 def test_installed_package_contains_schema_and_generic_profiles(installed_base):
     code = """from importlib.resources import files
 root = files("tychora")
