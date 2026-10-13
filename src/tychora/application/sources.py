@@ -20,9 +20,13 @@ from tychora.adapters.code.normalize import (
     replay_code_extraction,
     retain_code_extraction,
 )
-from tychora.adapters.code.python import PythonAdapter
+from tychora.adapters.code.parse_cache import (
+    MAX_ENTRY_BYTES,
+    SyntaxCache,
+    file_adapter,
+    parse_identity,
+)
 from tychora.adapters.code.syntax import base_syntax_result
-from tychora.adapters.code.typescript import TypeScriptAdapter
 from tychora.adapters.docling.parser import DoclingParser
 from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.adapters.sqlite.publication import PublicationReceipts
@@ -81,23 +85,13 @@ if TYPE_CHECKING:
     from tychora.ports.language import SyntaxResult
 
 
-def _parse_code_file(paths: tuple[Path, ...], relative_path: str) -> SyntaxResult:
+def _parse_code_file(
+    paths: tuple[Path, ...], relative_path: str, options: FrozenJsonMap
+) -> SyntaxResult:
     payload = paths[0].read_bytes()
-    suffix = Path(relative_path).suffix.lower()
-    if suffix in {".py", ".pyi"}:
-        return PythonAdapter().parse(payload, {})
-    dialect = {
-        ".ts": "typescript",
-        ".tsx": "tsx",
-        ".js": "javascript",
-        ".mjs": "javascript",
-        ".cjs": "javascript",
-        ".jsx": "jsx",
-    }.get(suffix)
-    if dialect is not None:
-        return TypeScriptAdapter(
-            cast(Literal["typescript", "tsx", "javascript", "jsx"], dialect)
-        ).parse(payload, {})
+    adapter = file_adapter(relative_path)
+    if adapter is not None:
+        return adapter.parse(payload, options)
     return base_syntax_result(
         language="unknown",
         grammar="unsupported",
@@ -106,7 +100,7 @@ def _parse_code_file(paths: tuple[Path, ...], relative_path: str) -> SyntaxResul
         text=payload.decode("latin-1"),
         encoding="latin-1",
         coverage="text_fallback",
-        options={},
+        options=options,
         root_type="unsupported_file",
     )
 
@@ -177,7 +171,9 @@ class SourceService:
             ctx,
         )
 
-    def _committed_capture(self, ref: ArtifactRef) -> CaptureManifest:
+    def _committed_capture(
+        self, ref: ArtifactRef, *, historical: bool = False
+    ) -> CaptureManifest:
         from tychora.contracts.acquisition import CaptureManifest
 
         with self.owner.artifacts.open_verified(ref) as stream:
@@ -211,7 +207,7 @@ class SourceService:
             data["entries"] = entries
         data["manifest_ref"] = ref.model_dump(mode="json")
         capture = CaptureManifest.model_validate_json(canonical_bytes(data))
-        if capture.config_sha != self.owner.config.config_sha:
+        if not historical and capture.config_sha != self.owner.config.config_sha:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Committed capture configuration differs"
             )
@@ -559,7 +555,7 @@ class SourceService:
             if base is not None and not source.root.vision:
                 selected_base = base
                 can_reuse = await self.owner.run_blocking(
-                    lambda: self._selected_revision(selected_base, registration),
+                    lambda: self._selected_revision(selected_base, registration, ctx),
                     ctx,
                 )
                 if can_reuse:
@@ -790,21 +786,40 @@ class SourceService:
             scope=scope,
         )
 
+    def _code_options(self) -> FrozenJsonMap:
+        version = self.owner.config.values.extraction.representation_version
+        # Preserve the original default parser identity; explicit new representation
+        # versions invalidate parse facts and revision-qualified extraction IDs.
+        return FrozenJsonMap(
+            {} if version == "1" else {"representation_version": version}
+        )
+
     def _selected_revision(
         self,
         base: str,
         registration: NativeRegistration | DocumentRegistration | CodeRegistration,
+        ctx: ExecutionContext | None = None,
     ) -> bool:
         row = self.owner.db.execute(
-            "SELECT e.document_artifact_sha FROM snapshot_members m "
+            "SELECT e.document_artifact_sha,e.extraction_id,e.parser_fingerprint,e.normalizer_fingerprint FROM snapshot_members m "
             "JOIN extractions e USING(extraction_id) "
             "WHERE m.snapshot_id=? AND m.revision_id=?",
             (base, registration.revision.revision_id),
         ).fetchone()
         if row is None:
             return False
-        if not isinstance(registration, DocumentRegistration):
-            return True
+        if isinstance(registration, NativeRegistration):
+            from tychora.ingestion.native import native_parser_fingerprint
+
+            kind = self.owner.store.registry.kinds[registration.revision.kind_id]
+            return row[2] == native_parser_fingerprint(
+                registration.format, self.owner.config
+            ) and row[3] == digest(
+                "native-normalizer-v1", kind, self.owner.store.registry.schema_digests
+            )
+        if isinstance(registration, CodeRegistration):
+            retained = self._retained_bundle(registration, ctx or ExecutionContext())
+            return retained is not None and retained.extraction.extraction_id == row[1]
         artifact_row = self.owner.db.execute(
             "SELECT size_bytes,media_type,storage_key FROM artifacts "
             "WHERE artifact_sha=?",
@@ -894,6 +909,18 @@ class SourceService:
                 retained_code = replay_code_extraction(
                     ref, replay_registration, self.owner.artifacts
                 )
+                options = self._code_options()
+                if any(
+                    (
+                        item.syntax.language,
+                        item.syntax.grammar,
+                        item.syntax.adapter_fingerprint,
+                    )
+                    != parse_identity(item.captured.relative_path, options)
+                    or item.syntax.options != options
+                    for item in retained_code.files
+                ):
+                    continue
                 bundle = normalize_code(retained_code, self.owner.store.registry)
             elif data.get("representation") == "document-composition@1":
                 if not isinstance(registration, DocumentRegistration):
@@ -961,9 +988,13 @@ class SourceService:
                         {**data, "raw_document_ref": ref.model_dump(mode="json")}
                     )
                 )
+                from tychora.ingestion.native import native_parser_fingerprint
+
                 if (
                     parsed.registration.capture.config_sha
                     != registration.capture.config_sha
+                    or parsed.parser_fingerprint
+                    != native_parser_fingerprint(registration.format, self.owner.config)
                 ):
                     continue
                 bundle = normalize(
@@ -1010,12 +1041,12 @@ class SourceService:
                 size_bytes=row[1],
                 media_type=row[2],
                 storage_key=row[3],
-            )
+            ),
+            historical=True,
         )
         if (
             capture.original_sha == registration.capture.original_sha
             and capture.source_key == registration.capture.source_key
-            and capture.config_sha == registration.capture.config_sha
         ):
             return capture
         return None
@@ -1457,13 +1488,34 @@ class SourceService:
                 ctx,
             )
         files = []
+        cache = SyntaxCache(self.owner.path / "cache" / "syntax-v1")
+        options = self._code_options()
         for captured in capture.entries:
             ctx.checkpoint()
-            syntax = await self.owner.run_parser(
-                partial(_parse_code_file, relative_path=captured.relative_path),
-                (captured.artifact_ref,),
-                ctx,
-            )
+            identity = parse_identity(captured.relative_path, options)
+
+            def read_cached(captured=captured, identity=identity):
+                if captured.artifact_ref.size_bytes > MAX_ENTRY_BYTES:
+                    return None
+                with self.owner.artifacts.open_verified(
+                    captured.artifact_ref
+                ) as stream:
+                    return cache.get(stream.read(), identity, options)
+
+            syntax = await self.owner.run_blocking(read_cached, ctx)
+            if syntax is None:
+                syntax = await self.owner.run_parser(
+                    partial(
+                        _parse_code_file,
+                        relative_path=captured.relative_path,
+                        options=options,
+                    ),
+                    (captured.artifact_ref,),
+                    ctx,
+                )
+                await self.owner.run_blocking(
+                    partial(cache.put, syntax, identity, options), ctx
+                )
             files.append(CapturedSyntax(captured=captured, syntax=syntax))
         return await self.owner.run_blocking(
             lambda: normalize_code(

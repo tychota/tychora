@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from base64 import urlsafe_b64decode, urlsafe_b64encode
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, cast
 
 from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
@@ -27,6 +28,7 @@ from tychora.contracts.operations import (
     RelationRequest,
     RelationResult,
 )
+from tychora.contracts.publication import SnapshotMember
 from tychora.contracts.requests import (
     QueryRequest,
     RequestScope,
@@ -584,10 +586,74 @@ class InspectionService:
             ),
         )
 
+    @contextmanager
+    def _pin_retained(self, request: InspectRequest):
+        """Resolve explicit canonical identity without borrowing old permissions.
+
+        This inspection-only view has no native projections. Its members come
+        from retained canonical extractions, independently of snapshot retention.
+        Current policy and retained range ownership are compiled in the usual
+        same-epoch read. Owner serialization and leases hold these identities and
+        their payloads through delivery.
+        """
+        selectors = {
+            "evidence": "e.extraction_id=(SELECT extraction_id FROM evidence_units WHERE unit_id=?)",
+            "assets": "e.extraction_id=(SELECT extraction_id FROM assets WHERE asset_id=?)",
+            "diagnostics": "e.extraction_id=?",
+            "revisions": "e.revision_id=?",
+        }
+        rows = self.owner.db.execute(
+            "SELECT s.source_id,e.revision_id,e.extraction_id FROM extractions e "
+            "JOIN revisions r USING(revision_id) JOIN sources s USING(source_id) "
+            "JOIN collections c USING(collection_id) WHERE c.workspace_id=? AND "
+            + selectors[request.subject]
+            + " ORDER BY e.extraction_id",
+            (self.owner.workspace_id, request.id),
+        ).fetchall()
+        if not rows:
+            raise TychoraError("NOT_FOUND", "Retained identity is unavailable.")
+        members = tuple(
+            SnapshotMember(source_id=s, revision_id=r, extraction_id=e)
+            for s, r, e in rows
+        )
+        keys = frozenset(value for row in rows for value in row)
+        payloads = set()
+        for member in members:
+            payloads.update(
+                row[0]
+                for row in self.owner.db.execute(
+                    "SELECT artifact_sha FROM revision_artifacts WHERE revision_id=? "
+                    "UNION SELECT document_artifact_sha FROM extractions WHERE extraction_id=? "
+                    "UNION SELECT assertions_artifact_sha FROM extractions WHERE extraction_id=? "
+                    "UNION SELECT diagnostics_artifact_sha FROM extractions WHERE extraction_id=? "
+                    "UNION SELECT artifact_sha FROM assets WHERE extraction_id=?",
+                    (member.revision_id, *(member.extraction_id,) * 4),
+                )
+                if row[0] is not None
+            )
+        with (
+            self.owner.store.leases.pin(keys),
+            self.owner.artifacts.pin_payloads(frozenset(payloads)),
+            self.owner.store.pin_snapshot(None) as active,
+        ):
+            membership = digest(
+                "retained-inspection-v1", [m.model_dump(mode="json") for m in members]
+            )
+            yield active.model_copy(
+                update={
+                    "snapshot_id": membership,
+                    "membership_sha": membership,
+                    "members": members,
+                    "slots": (),
+                }
+            )
+
     def _inspect_sync(
         self, request: InspectRequest, scope: RequestScope, ctx: ExecutionContext
     ):
         granted = self.owner.scope.narrow(scope)
+        if "read" not in granted.capabilities:
+            _deny()
         if request.subject != "evidence" and (
             request.range is not None or request.ranges
         ):
@@ -623,7 +689,7 @@ class InspectionService:
                 ).fetchone()
             ):
                 raise TychoraError("ORIGINAL_REMOVED", "Original payload was removed.")
-        with self.owner.store.pin_snapshot(None) as snapshot:
+        with self._pin_retained(request) as snapshot:
             ctx.checkpoint()
             attempt = self._attempt(snapshot, granted)
             if request.subject == "evidence":
@@ -660,6 +726,8 @@ class InspectionService:
         self, request: RelationRequest, scope: RequestScope, ctx: ExecutionContext
     ) -> RelationResult:
         granted = self.owner.scope.narrow(scope)
+        if "read" not in granted.capabilities:
+            _deny()
         with self.owner.store.pin_snapshot(None) as snapshot:
             ctx.checkpoint()
             attempt = self._attempt(snapshot, granted)

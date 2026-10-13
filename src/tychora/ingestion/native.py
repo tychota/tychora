@@ -32,6 +32,15 @@ MAX_BLOCK_TOKENS = 100000
 MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
 
 
+def native_parser_fingerprint(source_format: str, config: ResolvedConfig) -> str:
+    return digest(
+        "native-parser-v1",
+        version("markdown-it-py"),
+        source_format,
+        config.values.extraction.model_dump(mode="json"),
+    )
+
+
 def block_tokens(text: str) -> tuple[Token, ...]:
     return tuple(MarkdownIt("commonmark").enable("table").parse(text))
 
@@ -174,12 +183,7 @@ class NativeParser:
                 "CAPABILITY_MISSING",
                 "Code symbols require an installed language adapter",
             )
-        parser = digest(
-            "native-parser-v1",
-            version("markdown-it-py"),
-            self.registration.format,
-            config.values.extraction.model_dump(mode="json"),
-        )
+        parser = native_parser_fingerprint(self.registration.format, config)
         normalizer = digest("native-normalizer-v1", kind, registry.schema_digests)
         from .normalize import prepare_records, resolve_records
 

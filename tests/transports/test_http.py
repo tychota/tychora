@@ -1839,3 +1839,96 @@ async def test_source_and_revision_history_use_bounded_database_pages(tmp_path):
             too_large = await client.get(f"/v1/sources/{source_id}")
             assert too_large.status_code == 400
             assert too_large.json()["code"] == "BUDGET_TOO_SMALL"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "restriction",
+    [
+        "empty",
+        "collection",
+        "uses",
+        "collection_floor",
+        "source_floor",
+        "revision_floor",
+    ],
+)
+@pytest.mark.parametrize("native", [False, True])
+async def test_health_requires_proven_whole_workspace_read(
+    tmp_path, monkeypatch, restriction, native
+):
+    from tychora.application.recovery import RecoveryService
+    from tychora.ports.execution import ExecutionContext
+
+    with Tychora.open(tmp_path / "kb", token_counter=Counter()) as kb:
+        job = kb.sources.add(
+            {
+                "type": "text",
+                "text": "Synthetic evidence",
+                "source_key": "manual",
+                "collection_id": "default",
+                "kind": "manual@1",
+                "format": "text",
+                "metadata": {"title": "Manual", "publisher": "Example", "edition": "1"},
+            }
+        )
+        assert kb.jobs.wait(job.id).state == "succeeded"
+        owner = kb._workspace.owner
+        other = "55825936-6a6a-4d29-945a-327d771a76b7"
+
+        def arrange():
+            owner.db.execute(
+                "INSERT INTO collections VALUES (?,?, 'other','Other',0,'{}')",
+                (other, owner.workspace_id),
+            )
+            if restriction.endswith("floor"):
+                table, column = {
+                    "collection_floor": ("collections", "access_floor"),
+                    "source_floor": ("sources", "access_floor"),
+                    "revision_floor": ("revisions", "access_rank"),
+                }[restriction]
+                owner.db.execute(f"UPDATE {table} SET {column}=1")
+
+        await owner.run_blocking(arrange, ExecutionContext())
+        # The owner itself may be narrowed: comparing the token to owner.scope
+        # cannot establish access to this second collection or elevated floors.
+        collections = kb.scope.collection_ids | {other}
+        owner.scope = owner.scope.model_copy(update={"collection_ids": collections})
+        reader = owner.scope.model_copy(
+            update={"capabilities": frozenset({"read"}), "access_ceiling": 0}
+        )
+        if restriction == "empty":
+            reader = reader.model_copy(update={"collection_ids": frozenset()})
+        elif restriction == "collection":
+            reader = reader.model_copy(update={"collection_ids": frozenset({other})})
+        elif restriction == "uses":
+            reader = reader.model_copy(update={"uses": frozenset({"lookup"})})
+        owner.scope = reader
+        calls = []
+        original = RecoveryService._reconcile_on_owner
+
+        def observed(self, *args, **kwargs):
+            calls.append(True)
+            return original(self, *args, **kwargs)
+
+        monkeypatch.setattr(RecoveryService, "_reconcile_on_owner", observed)
+        app = create_app(
+            owner,
+            kb._workspace.services,
+            LocalAuth({"reader": reader}, authority="127.0.0.1:8765"),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://127.0.0.1:8765"
+        ) as client:
+            response = await client.post(
+                "/v1/jobs",
+                json={
+                    "operation": "health",
+                    "verify_payloads": True,
+                    "verify_native": native,
+                },
+                headers={"Authorization": "Bearer reader"},
+            )
+        assert response.status_code == 403
+        assert "verified_payloads" not in response.text
+        assert calls == []

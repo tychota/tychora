@@ -78,10 +78,11 @@ def source_anchors(item: RankedEvidenceItem) -> tuple[AnchorRange, ...]:
     return tuple(anchors)
 
 
-def _order(match: RerankMatch) -> tuple[int, float, int, str, str, int, str]:
+def _order(match: RerankMatch) -> tuple[int, float, int, int, str, str, int, str]:
     return (
         match.rank,
         -match.weight,
+        match.window_rank,
         match.char_start,
         match.unit_id,
         match.window_id or "",

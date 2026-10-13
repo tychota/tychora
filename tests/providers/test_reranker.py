@@ -2,6 +2,7 @@
 
 import inspect
 import json
+import os
 from pathlib import Path
 from typing import Any, cast
 
@@ -532,12 +533,13 @@ async def test_standard_factory_rejects_absent_or_corrupt_pinned_asset(tmp_path:
 async def test_standard_factory_dispatches_with_verified_local_tokenizer(
     tmp_path: Path,
 ):
-    cache = Path(__file__).parents[2] / (
-        ".superpowers/sdd/2026-09-11-tychora-engine/task-22-qualification-cache"
-    )
-    (asset,) = SetupService(cache, offline=True).plan(("rerank-2.5",)).assets
-    if not (cache / asset.path).is_file():
-        pytest.skip("Optional pinned public tokenizer fixture is absent")
+    root = os.environ.get("TYCHORA_TEST_MODEL_CACHE")
+    if root is None:
+        pytest.skip("Set TYCHORA_TEST_MODEL_CACHE to verified public tokenizer assets")
+    cache = Path(root)
+    # An explicit test cache is a qualification promise. Missing or corrupt
+    # selected reranker assets fail; runtime offline availability stays separate.
+    load_voyage_tokenizer(cache, "rerank-2.5")
     config, scope = _online_rerank_config_scope(tmp_path)
     with WorkspaceOwner.open(tmp_path / "workspace", config, scope) as owner:
 

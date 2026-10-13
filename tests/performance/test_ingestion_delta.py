@@ -89,7 +89,7 @@ async def test_repository_ingestion_delta_matrix_uses_actual_pipeline(
             "projected_units": 0,
             "capture_dirty": None,
         }
-        original_extract = service._extract
+        original_parse = owner.run_parser
         original_embed = embedder.embed_groups
         original_prepare = coordinator.prepare
         original_capture = acquirer.capture
@@ -99,9 +99,9 @@ async def test_repository_ingestion_delta_matrix_uses_actual_pipeline(
             observed["capture_dirty"] = captured.dirty
             return captured
 
-        async def measured_extract(registration, capture, ctx, source, granted):
-            observed["parsed_files"] += len(capture.entries)
-            return await original_extract(registration, capture, ctx, source, granted)
+        async def measured_parse(parser, artifacts, ctx):
+            observed["parsed_files"] += 1
+            return await original_parse(parser, artifacts, ctx)
 
         def measured_embed(groups, ctx):
             observed["embedded_windows"] += sum(
@@ -115,7 +115,7 @@ async def test_repository_ingestion_delta_matrix_uses_actual_pipeline(
             return prepared
 
         monkeypatch.setattr(acquirer, "capture", measured_capture)
-        monkeypatch.setattr(service, "_extract", measured_extract)
+        monkeypatch.setattr(owner, "run_parser", measured_parse)
         monkeypatch.setattr(embedder, "embed_groups", measured_embed)
         monkeypatch.setattr(coordinator, "prepare", measured_prepare)
         samples = []
@@ -142,7 +142,7 @@ async def test_repository_ingestion_delta_matrix_uses_actual_pipeline(
         (repo / "renamed.py").write_text("def dirty(): return 3\n")
         await run("dirty")
 
-        assert [sample["parsed_files"] for _, sample in samples] == [2, 0, 2, 1, 1, 1]
+        assert [sample["parsed_files"] for _, sample in samples] == [2, 0, 1, 0, 0, 1]
         assert samples[1][1] == {
             "parsed_files": 0,
             "embedded_windows": 0,

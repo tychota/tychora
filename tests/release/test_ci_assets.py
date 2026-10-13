@@ -46,3 +46,7 @@ def test_selected_asset_verification_rejects_corrupt_bytes(tmp_path: Path):
     asset.write_bytes(b"tampered public test bytes")
     with pytest.raises(ValueError, match="checksum mismatch"):
         _provisioner().verify_selected(cache, manifest)
+
+
+def test_ci_provisions_selected_standard_reranker_manifest():
+    assert "rerank-2.5" in _provisioner().SELECTIONS

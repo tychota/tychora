@@ -567,7 +567,8 @@ async def test_removed_original_binding_blocks_read_even_while_hash_exists(publi
 
 
 @pytest.mark.asyncio
-async def test_registered_zero_text_asset_and_unregistered_paths(published):
+@pytest.mark.parametrize("historical", [False, True])
+async def test_registered_zero_text_asset_and_unregistered_paths(published, historical):
     owner, scope, uid = published
 
     def register_image():
@@ -640,6 +641,35 @@ async def test_registered_zero_text_asset_and_unregistered_paths(published):
     payload, revision, sha = await owner.run_blocking(
         register_image, ExecutionContext()
     )
+    if historical:
+        service = SourceService(
+            owner,
+            ProjectionCoordinator(
+                store=owner.store,
+                artifacts=owner.artifacts,
+                config=owner.config,
+                counter=Counter(),
+            ),
+        )
+        handle = await service.add(
+            SourceInput.from_mapping(
+                {
+                    "type": "text",
+                    "text": "Replacement text.",
+                    "format": "text",
+                    "kind": "manual@1",
+                    "source_key": "manual.txt",
+                    "collection_id": COLLECTION,
+                    "metadata": {
+                        "title": "Synthetic manual",
+                        "publisher": "Example Team",
+                        "edition": "1",
+                    },
+                }
+            ),
+            scope,
+        )
+        assert handle.state == "succeeded"
     service = InspectionService(owner)
     unit_result = await service.inspect(
         InspectRequest(subject="evidence", id="image-unit", view="full"),

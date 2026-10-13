@@ -921,3 +921,184 @@ async def test_image_only_query_uses_registered_original_and_visual_channel(
         assert len(transport.calls) == before + 1
         assert [item.asset_id for item in result.result.visuals] == [asset_id]
         assert "visual" in result.result.coverage.completed_channels
+
+
+@pytest.mark.asyncio
+async def test_vector_only_tail_window_reaches_reranker_and_delivery(
+    tmp_path, monkeypatch
+):
+    from tests.providers.test_reranker import LengthCounter, RecordingRerankTransport
+    from tychora.application.reranking import _create_injected_reranker
+    from tychora.contracts.vectors import CandidatePage, DenseCandidate
+
+    settings = tmp_path / "workspace.toml"
+    settings.write_text(
+        'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
+        "[configuration]\noffline=false\n"
+        '[configuration.providers.text]\nprovider="voyage"\nmodel="voyage-context-4"\ndimensions=2\n'
+        '[configuration.providers.rerank]\nprovider="voyage"\nmodel="rerank-2.5"\ncredential_ref="env:VOYAGE_KEY"\n'
+        '[configuration.index.text]\nbackend="chroma"\n'
+    )
+    config = resolve_config(settings, "test", {})
+    collection = "55825936-6a6a-4d29-945a-327d771a76b7"
+    scope = RequestScope(
+        principal_id="reader",
+        collection_ids=frozenset({collection}),
+        capabilities=frozenset({"read", "write", "manage"}),
+        uses=frozenset({"lookup", "compose"}),
+        upload_providers=frozenset({"voyage"}),
+    )
+    with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
+        await owner.run_blocking(
+            lambda: owner.db.execute(
+                "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,?)",
+                (
+                    collection,
+                    owner.workspace_id,
+                    "manuals",
+                    "Manuals",
+                    '{"schema_version":1,"upload_providers":["voyage"]}',
+                ),
+            ),
+            ExecutionContext(),
+        )
+        counter = RecordingCounter()
+        index = ChromaVectorIndex(tmp_path / "vectors")
+        sources = SourceService(
+            owner,
+            ProjectionCoordinator(
+                store=owner.store,
+                artifacts=owner.artifacts,
+                config=config,
+                counter=counter,
+                text_embedder=RecordingEmbedder(counter),
+                text_index=index,
+            ),
+        )
+
+        text = "Unrelated prefix. " * 1200 + "TAIL_EVIDENCE"
+        handle = await sources.add(
+            SourceInput.from_mapping(
+                {
+                    "type": "text",
+                    "text": text,
+                    "format": "text",
+                    "kind": "manual@1",
+                    "metadata": {
+                        "title": "Synthetic",
+                        "publisher": "Example",
+                        "edition": "1",
+                    },
+                    "source_key": "long",
+                    "collection_id": collection,
+                }
+            ),
+            scope,
+        )
+        assert handle.state == "succeeded"
+        record_id, chunk_id, unit_id, start, _end = await owner.run_blocking(
+            lambda: owner.db.execute(
+                "SELECT v.record_id,c.chunk_id,c.unit_id,c.char_start,c.char_end "
+                "FROM vector_records v JOIN chunks c USING(chunk_id) ORDER BY c.char_start DESC LIMIT 1"
+            ).fetchone(),
+            ExecutionContext(),
+        )
+        assert start > 0
+        prefix_record = await owner.run_blocking(
+            lambda: owner.db.execute(
+                "SELECT v.record_id FROM vector_records v JOIN chunks c USING(chunk_id) ORDER BY c.char_start LIMIT 1"
+            ).fetchone()[0],
+            ExecutionContext(),
+        )
+
+        def tail_search(query, mapping, limit, work, ctx):
+            assert mapping[record_id] == ("unit", unit_id)
+            return CandidatePage(
+                candidates=(
+                    DenseCandidate(
+                        key=("unit", unit_id),
+                        distance=0.0,
+                        record_ids=(record_id, prefix_record),
+                    ),
+                ),
+                missing_record_ids=(),
+                coverage_complete=True,
+                truncated=False,
+                exhausted=True,
+                returned_records=1,
+                queried_partitions=1,
+            )
+
+        monkeypatch.setattr(index, "search", tail_search)
+        caches = QueryCaches()
+        transport = RecordingRerankTransport()
+        runtime = VoyageRuntime(
+            lambda: transport,
+            workspace_id=owner.workspace_id,
+            credential_binding_id="synthetic",
+        )
+        rerank_counter = LengthCounter()
+        reranker = await _create_injected_reranker(
+            owner,
+            runtime=runtime,
+            scope=scope,
+            counter=rerank_counter,
+            ctx=ExecutionContext(),
+        )
+        service = QueryService(
+            owner,
+            output_counter=OutputTokenCounter(
+                Path(os.environ["TYCHORA_TEST_MODEL_CACHE"])
+            ),
+            text_provider=LocalTextQueryProvider(
+                owner, scope, RecordingEmbedder(counter).capabilities, counter, caches
+            ),
+            text_index=index,
+            reranker=reranker,
+            rerank_counter=rerank_counter,
+            caches=caches,
+        )
+        result = await service.search(
+            QueryRequest.from_mapping({"question": "quasar", "modalities": ["text"]}),
+            scope,
+            ExecutionContext(),
+        )
+        assert len(transport.calls) == 1
+        assert "TAIL_EVIDENCE" in transport.calls[0][1]["documents"][0]
+        assert result.result.segments
+        segment = result.result.segments[0]
+        assert "TAIL_EVIDENCE" in segment.text
+        assert any(
+            anchor.indexed_window_id == chunk_id and anchor.char_start >= start
+            for anchor in segment.anchors
+        )
+
+        # Shared ANN work exhaustion must remain an explicit strict-coverage
+        # failure, even when it has already returned a usable source candidate.
+        owner.config = owner.config.model_copy(
+            update={
+                "values": owner.config.values.model_copy(
+                    update={
+                        "retrieval": owner.config.values.retrieval.model_copy(
+                            update={"allow_degraded": False}
+                        )
+                    }
+                )
+            }
+        )
+
+        def truncated_search(*args):
+            return tail_search(*args).model_copy(
+                update={"truncated": True, "exhausted": False}
+            )
+
+        monkeypatch.setattr(index, "search", truncated_search)
+        with pytest.raises(TychoraError) as incomplete:
+            await service.search(
+                QueryRequest.from_mapping(
+                    {"question": "nebula", "modalities": ["text"]}
+                ),
+                scope,
+                ExecutionContext(),
+            )
+        assert incomplete.value.code == "INDEX_INCOMPLETE"

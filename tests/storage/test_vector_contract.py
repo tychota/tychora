@@ -306,3 +306,58 @@ os._exit(0)
     assert reader.verify_batch(receipt).ready
     raw = reader._present(["record-0"], embeddings=True)["record-0"][2]
     assert raw == struct.pack("<ff", -0.0, 1.0)
+
+
+@pytest.mark.parametrize("strong_kind", ["unit", "asset"])
+def test_text_pools_have_independent_admission_with_shared_work(
+    vector_index, vector_family, execution, strong_kind, monkeypatch
+):
+    weak_kind = "asset" if strong_kind == "unit" else "unit"
+    strong = [(f"strong-{i:03}", f"strong-owner-{i:03}", (1.0, 0.0)) for i in range(81)]
+    weak = [("weak", "weak-owner", (0.6, 0.8))]
+    vector_index.upsert_batch(vector_family.batch(strong + weak), execution.ctx)
+    mapping = {record: (strong_kind, owner) for record, owner, _ in strong}
+    mapping["weak"] = (weak_kind, "weak-owner")
+    # Deterministic backend distances isolate admission/termination from ANN
+    # recall for a deliberately saturated pool of equal-distance records.
+    collection, _ = vector_index._require()
+    monkeypatch.setattr(
+        vector_index,
+        "_chunks",
+        lambda ids: [list(ids[i : i + 80]) for i in range(0, len(ids), 80)],
+    )
+
+    def query(self, *, query_embeddings, ids, n_results, include):
+        distance = lambda rid: (
+            0.4 if rid == "weak" else 0.0 if rid == "strong-080" else 0.1
+        )
+        chosen = sorted(ids, key=lambda rid: (distance(rid), rid))[:n_results]
+        return {
+            "ids": [chosen],
+            "distances": [[distance(rid) for rid in chosen]],
+        }
+
+    monkeypatch.setattr(type(collection), "query", query)
+    page = vector_index.search(
+        vector_family.query((1.0, 0.0)),
+        mapping,
+        80,
+        vector_family.limits,
+        execution.ctx,
+    )
+    assert len([c for c in page.candidates if c.key[0] == strong_kind]) == 80
+    assert (weak_kind, "weak-owner") in [c.key for c in page.candidates], (
+        page.model_dump()
+    )
+    assert (strong_kind, "strong-owner-080") in [c.key for c in page.candidates]
+    assert page.returned_records == 82
+    assert not page.truncated
+    limited = vector_index.search(
+        vector_family.query((1.0, 0.0)),
+        mapping,
+        80,
+        WorkLimits(max_returned_records=81),
+        execution.ctx,
+    )
+    assert limited.returned_records <= 81
+    assert limited.truncated

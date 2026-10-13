@@ -507,6 +507,8 @@ class QueryService:
         """Reauthorize an explicitly retained request before channel execution."""
         ctx.checkpoint()
         granted = self.owner.scope.narrow(scope)
+        if "read" not in granted.capabilities:
+            raise TychoraError("FORBIDDEN_SCOPE", "Search requires read capability.")
         request = await self.owner.run_blocking(
             lambda: self.history.replay_request(
                 run_id,
@@ -524,6 +526,9 @@ class QueryService:
     async def search(
         self, request: QueryRequest, scope: RequestScope, ctx: ExecutionContext
     ) -> DeliveredResult:
+        granted = self.owner.scope.narrow(scope)
+        if "read" not in granted.capabilities:
+            raise TychoraError("FORBIDDEN_SCOPE", "Search requires read capability.")
         started = time.monotonic()
         ctx.checkpoint()
         preflight = getattr(self.counter, "ensure_available", None)
@@ -542,7 +547,6 @@ class QueryService:
             if self.visual_provider is not None
             else self.rerank_counter or self.counter,
         )
-        granted = self.owner.scope.narrow(scope)
         mode = _mode(self.registry, self.owner.config, request)
         requirements = tuple(
             ResponseRequirement.model_validate(value)
@@ -1085,15 +1089,57 @@ class QueryService:
             raise TychoraError(
                 "INDEX_INCOMPLETE", "Text vector coverage is incomplete."
             )
-        allowed = set(mapping.values())
-        if any(item.key not in allowed for item in page.candidates):
-            raise TychoraError(
-                "INTEGRITY_ERROR", "Vector candidate left the pinned scope."
-            )
-        return tuple(
-            ChannelCandidate(key=item.key, rank=rank, score=-item.distance)
-            for rank, item in enumerate(page.candidates, 1)
+        return await self.owner.run_blocking(
+            lambda: self._text_window_candidates(page, mapping, attempt), ctx
         )
+
+    def _text_window_candidates(self, page, mapping, attempt):
+        view = attempt.view
+        ranks = {"unit": 0, "asset": 0}
+        output = []
+        for candidate in page.candidates:
+            windows = []
+            if not candidate.record_ids:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Vector candidate has no matched records."
+                )
+            for record_id in candidate.record_ids:
+                if (
+                    record_id not in view.vector_record_ids
+                    or mapping.get(record_id) != candidate.key
+                ):
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Vector candidate left the pinned scope."
+                    )
+                row = self.owner.db.execute(
+                    "SELECT v.batch_id,v.chunk_id,c.unit_id,p.asset_id FROM vector_records v "
+                    "JOIN chunks c USING(chunk_id) LEFT JOIN asset_proxies p ON p.proxy_unit_id=c.unit_id "
+                    "WHERE v.record_id=?",
+                    (record_id,),
+                ).fetchone()
+                if (
+                    row is None
+                    or row[0] not in view.selected_batch_ids
+                    or row[1] not in view.chunk_ids
+                    or candidate.key
+                    != (("asset", row[3]) if row[3] is not None else ("unit", row[2]))
+                ):
+                    raise TychoraError(
+                        "INTEGRITY_ERROR",
+                        "Matched vector window differs from canonical binding.",
+                    )
+                windows.append(row[1])
+            kind = candidate.key[0]
+            ranks[kind] += 1
+            output.append(
+                ChannelCandidate(
+                    key=candidate.key,
+                    rank=ranks[kind],
+                    score=-candidate.distance,
+                    matching_window_ids=tuple(dict.fromkeys(windows)),
+                )
+            )
+        return tuple(output)
 
     def _vector_owners(
         self, attempt: EligibilityAttempt, kind: str

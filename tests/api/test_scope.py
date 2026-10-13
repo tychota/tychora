@@ -6,7 +6,7 @@ import pytest
 
 from tests.indexing.test_publication import RecordingCounter, RecordingEmbedder
 from tests.retrieval.test_query import LocalTextQueryProvider
-from tychora import ProviderBindings, RequestScope, Tychora
+from tychora import ProviderBindings, Tychora
 from tychora.adapters.chroma.index import ChromaVectorIndex
 from tychora.api import LocalTextBinding
 from tychora.application.query import QueryService
@@ -90,12 +90,10 @@ def test_pinned_runtime_compatibility_is_narrower_than_config_identity(tmp_path)
 def test_future_operations_check_their_own_capability_before_reporting_unavailable(
     tmp_path,
 ):
-    read_only = RequestScope(
-        principal_id="reader",
-        collection_ids=frozenset({"00000000-0000-4000-8000-000000000001"}),
-        capabilities=frozenset({"read"}),
-        uses=frozenset({"lookup"}),
-    )
+    with Tychora.open(tmp_path / "knowledge", token_counter=OutputCounter()) as initial:
+        read_only = initial.scope.model_copy(
+            update={"capabilities": frozenset({"read"})}
+        )
     with Tychora.open(
         tmp_path / "knowledge", scope=read_only, token_counter=OutputCounter()
     ) as kb:

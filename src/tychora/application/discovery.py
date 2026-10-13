@@ -279,6 +279,11 @@ class DiscoveryService:
                             "retrieval": values["retrieval"],
                             "acquisition": values["acquisition"],
                             "limits": values["limits"],
+                            "maintenance": {
+                                "health_scope": "whole_workspace",
+                                "health_capability": "read",
+                                "resume_deletions_capability": "manage",
+                            },
                             "parser_limits": {
                                 "native_source_bytes": min(
                                     4 * 1024 * 1024,

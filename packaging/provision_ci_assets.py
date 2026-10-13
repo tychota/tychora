@@ -10,7 +10,9 @@ import shutil
 import subprocess
 from pathlib import Path
 
-SELECTIONS = frozenset({"documents", "ocr", "output-tokenizer", "voyage-context-4"})
+SELECTIONS = frozenset(
+    {"documents", "ocr", "output-tokenizer", "voyage-context-4", "rerank-2.5"}
+)
 
 
 def verify_selected(cache: Path, manifest: Path) -> dict[str, Path]:
@@ -72,6 +74,8 @@ def main() -> None:
         "output-tokenizer",
         "--asset",
         "voyage-context-4",
+        "--asset",
+        "rerank-2.5",
         "--json",
     ]
     if args.bundle:

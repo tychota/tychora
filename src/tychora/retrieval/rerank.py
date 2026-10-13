@@ -52,6 +52,7 @@ class RerankMatch:
     channel: str
     rank: int
     weight: float
+    window_rank: int = 0
 
 
 @dataclass(frozen=True)
@@ -378,7 +379,7 @@ def matches_from_channels(
         for hit in hits:
             if hit.key != candidate.key:
                 continue
-            for window_id in hit.matching_window_ids:
+            for window_rank, window_id in enumerate(hit.matching_window_ids):
                 if window_id not in view.chunk_ids or window_id not in chunks:
                     raise TychoraError(
                         "FORBIDDEN_SCOPE", "Ranking window is not eligible."
@@ -417,6 +418,7 @@ def matches_from_channels(
                         channel=channel,
                         rank=hit.rank,
                         weight=weights[family],
+                        window_rank=window_rank if family == "text" else 0,
                     )
                 )
     return tuple(output)
@@ -476,6 +478,7 @@ def ranking_input(
         key=lambda match: (
             match.rank,
             -match.weight,
+            match.window_rank,
             match.char_start,
             match.unit_id,
             match.window_id or "",

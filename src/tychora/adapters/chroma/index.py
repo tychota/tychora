@@ -371,14 +371,18 @@ class ChromaVectorIndex:
         while True:
             progressed = False
             ranked = self._rank(seen, eligible_records_and_owners)
-            threshold = (
-                ranked[candidate_limit - 1].distance
-                if len(ranked) >= candidate_limit
-                else math.inf
-            )
             for index, partition in enumerate(partitions):
+                kind = eligible_records_and_owners[partition[0]][0]
+                pool = [item for item in ranked if item.key[0] == kind]
+                threshold = (
+                    pool[candidate_limit - 1].distance
+                    if len(pool) >= candidate_limit
+                    else math.inf
+                )
                 if requests[index] == 0 or (
-                    len(ranked) >= candidate_limit and tails[index] > threshold
+                    index in queried
+                    and len(pool) >= candidate_limit
+                    and tails[index] > threshold
                 ):
                     continue
                 if (
@@ -420,11 +424,6 @@ class ChromaVectorIndex:
                     truncated = True
                 progressed = True
                 ranked = self._rank(seen, eligible_records_and_owners)
-                threshold = (
-                    ranked[candidate_limit - 1].distance
-                    if len(ranked) >= candidate_limit
-                    else math.inf
-                )
                 if budget_clipped:
                     truncated = True
                     break
@@ -433,7 +432,13 @@ class ChromaVectorIndex:
         ranked = self._rank(seen, eligible_records_and_owners)
         exhausted = all(request == 0 for request in requests) and not truncated
         return CandidatePage(
-            candidates=tuple(ranked[:candidate_limit]),
+            candidates=tuple(
+                item
+                for kind in ("unit", "asset")
+                for item in [item for item in ranked if item.key[0] == kind][
+                    :candidate_limit
+                ]
+            ),
             missing_record_ids=missing,
             coverage_complete=not missing,
             truncated=truncated,
@@ -454,7 +459,12 @@ class ChromaVectorIndex:
                 DenseCandidate(
                     key=key,
                     distance=min(distance for _, distance in rows),
-                    record_ids=tuple(sorted(record_id for record_id, _ in rows)),
+                    record_ids=tuple(
+                        record_id
+                        for record_id, _ in sorted(
+                            rows, key=lambda row: (row[1], row[0])
+                        )
+                    ),
                 )
                 for key, rows in grouped.items()
             ),
