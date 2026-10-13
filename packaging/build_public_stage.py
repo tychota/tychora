@@ -10,7 +10,14 @@ import sys
 from pathlib import Path
 
 SOURCE_DIRS = ("src/tychora/", "tests/", "packaging/", "docs/", "examples/")
-SOURCE_FILES = {".gitignore", "README.md", "LICENSE", "pyproject.toml", "uv.lock"}
+SOURCE_FILES = {
+    ".gitignore",
+    "README.md",
+    "LICENSE",
+    "pyproject.toml",
+    "uv.lock",
+    "mkdocs.yml",
+}
 
 
 def build_public_stage(

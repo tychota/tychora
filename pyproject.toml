@@ -59,6 +59,7 @@ only-include = [
   "docs",
   "examples",
   "README.md",
+  "mkdocs.yml",
   "LICENSE",
   "pyproject.toml",
   "uv.lock",

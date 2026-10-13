@@ -1,6 +1,16 @@
 # Tychora
 
+<img src="docs/assets/logo.svg" alt="Tychora source and evidence mark" width="64" height="64">
+
+![Documents and code connected to inspectable evidence](docs/assets/hero.png)
+
+**Local evidence for applications and agents.**
+
 Tychora is a local evidence workspace. It registers versioned sources, retrieves scoped evidence, and returns citations and coverage for inspection. Search does not write an answer for you. The Python API, CLI, loopback HTTP, and MCP transport expose the same workspace policy.
+
+**Status: alpha.** The [current review assessment](docs/review-assessment.md) records known retrieval, retention and trace limitations. The dashboard is specified but not implemented.
+
+Start with the [tutorial](docs/getting-started.md), [architecture walkthrough](docs/architecture.md), or [workspace guide](docs/workspaces.md). Build the searchable documentation site with the [documentation instructions](docs/documentation.md).
 
 Python 3.12 and SQLite with FTS5 and JSON functions are required. Install the base package with `uv sync --locked --no-default-groups`. To enable every optional parser, native index, provider adapter, and server package in a development environment, use `uv sync --locked --all-extras`. An installed wheel is a Python package; it does not include model weights, tokenizer files, or a qualified standalone executable. See [distribution](docs/distribution.md).
 
@@ -28,3 +38,6 @@ A Python example using the same synthetic sentence is [quickstart.py](examples/q
 - [Python API](docs/api.md) · [CLI](docs/cli.md) · [HTTP](docs/http.md) · [MCP](docs/mcp.md)
 - [Configuration and packs](docs/configuration.md) · [Operations](docs/operations.md) · [Security](docs/security.md)
 - [Evaluation](docs/evaluation.md) · [Performance](docs/performance.md) · [Distribution](docs/distribution.md)
+
+- [Extension boundaries and effort](docs/extensions.md) · [Identity, chunking and providers](docs/design-choices.md) · [Ingestion improvements](docs/ingestion-roadmap.md)
+- [Contributing](docs/contributing.md) · [MIT license](LICENSE)

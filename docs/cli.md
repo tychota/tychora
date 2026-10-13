@@ -4,7 +4,7 @@ Place `--workspace`, `--profile`, `--offline`, `--format json|markdown|agent`, o
 
 `init` creates a local workspace without fetching assets. Its `--config` argument is an existing **workspace TOML** that registers profile roots, not an external pack's `profile.toml`. It installs those bytes at `WORKSPACE/workspace.toml`; relative pack paths must resolve both at initialization and after restart. When a config is supplied, the JSON response labels the installed provider choice `configured`. `inspect config --json` validates the file without opening a workspace. Other `inspect` subjects open the owner and can initialize a missing empty path; confirm the target before using them in read-only preparation.
 
-The [README recipe](../README.md) gives a tested offline inline-source first run. To add a file, register an absolute acquisition root in `workspace.toml`, discover kinds and metadata schemas, then provide a valid kind and metadata file:
+The [getting-started recipe](getting-started.md) gives a tested offline inline-source first run. To add a file, register an absolute acquisition root in `workspace.toml`, discover kinds and metadata schemas, then provide a valid kind and metadata file:
 
 ```bash
 tychora --workspace ./knowledge --offline inspect kinds --json
@@ -17,4 +17,6 @@ tychora --workspace ./knowledge --offline search "verification" --json
 
 `inspect kinds|facets|relations|profiles|settings|models|sources|runs --json` discovers the active registry and visible records. `inspect evidence UNIT_ID --json` reads exact authorized evidence; `inspect revisions REVISION_ID --original --json` requests a retained original if allowed. `inspect selections SOURCE_ID:REVISION_ID:EXTRACTION_ID --json` gives bounded selectors for an explicit image-region request. `inspect job JOB_ID --json` checks a durable job. Discovery and inspection reflect the current caller scope; unavailable or restricted records should not be inferred from missing IDs or counts.
 
-`manage setup --asset output-tokenizer --bundle BUNDLE` verifies a local offline asset. `manage health`, `export`, `import`, `sync`, `remove`, `purge-originals`, `purge-cache`, `purge-history`, `provider-upload-consent`, and `evaluate` have their own typed inputs. See [operations](operations.md). `serve` owns loopback HTTP and MCP for one workspace; `serve --stdio` reserves stdout for MCP frames. A second local client delegates through the owner's protected endpoint record.
+`manage setup --asset output-tokenizer --bundle BUNDLE` verifies a local offline asset. `manage health`, `export`, `import`, `sync`, `remove`, `purge-originals`, `provider-upload-consent`, and `evaluate` have their own typed inputs. See [operations](operations.md). `serve` owns loopback HTTP and MCP for one workspace; `serve --stdio` reserves stdout for MCP frames. A second local client delegates through the owner's protected endpoint record.
+
+The CLI currently advertises `purge-cache` and `purge-history`, but maintenance dispatch returns `CAPABILITY_MISSING`; these commands do not enforce retention. `inspect relations` discovers predicate definitions, not an assertion by ID. `inspect collections` is not implemented. A second client encountering a standalone Python owner can currently receive `INTEGRITY_ERROR` rather than `WORKSPACE_BUSY`. See the dated [review assessment](review-assessment.md).

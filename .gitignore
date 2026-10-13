@@ -19,3 +19,9 @@ reports/
 .cache/
 .huggingface/
 .torch/
+
+# Built documentation and local tutorial assets
+site/
+model-bundle/
+model-cache/
+knowledge/

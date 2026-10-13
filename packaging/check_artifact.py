@@ -88,7 +88,15 @@ def _allowed_path(path: PurePosixPath, kind: str) -> bool:
         return False
     rel = parts[1:]
     if (
-        rel[0] in {"README.md", "LICENSE", "pyproject.toml", "uv.lock", "PKG-INFO"}
+        rel[0]
+        in {
+            "README.md",
+            "LICENSE",
+            "pyproject.toml",
+            "uv.lock",
+            "mkdocs.yml",
+            "PKG-INFO",
+        }
         and len(rel) == 1
     ):
         return True

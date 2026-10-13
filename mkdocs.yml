@@ -1,0 +1,73 @@
+site_name: Tychora
+site_description: A local evidence workspace for scoped retrieval and inspectable citations.
+site_url: !ENV [TYCHORA_SITE_URL, '']
+docs_dir: docs
+site_dir: site
+strict: true
+exclude_docs: |
+  /superpowers/
+validation:
+  nav:
+    omitted_files: warn
+  links:
+    not_found: warn
+    unrecognized_links: warn
+    anchors: warn
+theme:
+  name: material
+  language: en
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
+  font: false
+  palette:
+    scheme: default
+    primary: custom
+    accent: custom
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - content.code.copy
+plugins:
+  - search
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.highlight:
+      anchor_linenums: true
+extra_css:
+  - stylesheets/extra.css
+nav:
+  - Home: index.md
+  - Start:
+      - Getting started: getting-started.md
+      - Workspaces: workspaces.md
+      - Configuration: configuration.md
+  - Understand:
+      - Architecture: architecture.md
+      - Design choices: design-choices.md
+      - Extensions: extensions.md
+      - Ingestion roadmap: ingestion-roadmap.md
+  - Use:
+      - Python API: api.md
+      - CLI: cli.md
+      - HTTP API: http.md
+      - MCP: mcp.md
+      - Operations: operations.md
+  - Assess:
+      - Review assessment: review-assessment.md
+      - Qualification: qualification.md
+      - Security: security.md
+      - Performance: performance.md
+      - Evaluation: evaluation.md
+      - Distribution: distribution.md
+  - Contribute:
+      - Contributing: contributing.md
+      - Documentation: documentation.md
