@@ -123,6 +123,9 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
     settings.write_text(
         'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
         f'[configuration.acquisition]\nroots=["{tmp_path}"]\n'
+        # SyntheticCounter charges one token per serialized character; this
+        # scenario needs room to deliver both the table and its source row.
+        "[configuration.limits]\nmax_tokens=12000\n"
     )
     config = resolve_config(settings, "test", {})
     registry = Registry.from_config(config)
@@ -323,6 +326,7 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
                     "question": "Needle",
                     "modalities": ["lexical"],
                     "mode": "lookup",
+                    "budgets": {"max_tokens": 12000},
                 }
             ),
             scope,
@@ -344,10 +348,11 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
             locator.type == "document" and locator.physical_page == 2
             for locator in row.locators
         )
-        assert any(
-            row.unit_id in segment.matched_unit_ids
+        assert {table.unit_id, row.unit_id} <= {
+            unit_id
             for segment in delivered.result.segments
-        )
+            for unit_id in segment.matched_unit_ids
+        }
         lexical_hits = await owner.run_blocking(
             lambda: {
                 unit_id
@@ -399,6 +404,7 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
                 "question": "Needle",
                 "modalities": ["lexical"],
                 "mode": "lookup",
+                "budgets": {"max_tokens": 12000},
             },
             "expected_source_ids": [sid],
             "expected_revision_ids": [registration.revision.revision_id],
