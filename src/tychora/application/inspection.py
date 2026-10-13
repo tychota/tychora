@@ -611,6 +611,8 @@ class InspectionService:
             (self.owner.workspace_id, request.id),
         ).fetchall()
         if not rows:
+            if request.subject == "revisions":
+                _deny()
             raise TychoraError("NOT_FOUND", "Retained identity is unavailable.")
         members = tuple(
             SnapshotMember(source_id=s, revision_id=r, extraction_id=e)

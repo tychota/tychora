@@ -38,7 +38,7 @@ jobs:
             test "$(uname -m)" = x86_64
           fi
       - name: Install locked full environment
-        run: uv sync --locked --all-extras
+        run: uv sync --locked --all-extras --group test-fixtures
       - name: Provision pinned public test assets
         run: python packaging/provision_ci_assets.py --cache "$RUNNER_TEMP/tychora-public-models" --workspace "$RUNNER_TEMP/tychora-asset-setup" --github-env "$GITHUB_ENV"
       - name: Record Python, SQLite, package versions, and installed wheel tags
@@ -52,7 +52,7 @@ jobs:
             grep '^Tag:' "$wheel"
           done
       - name: Run native and SDK qualification gates
-        run: uv run --locked pytest -m qualification tests/qualification -q
+        run: uv run --locked --all-extras --group test-fixtures pytest -m qualification tests/qualification -q
       - name: Verify minimal base installation
         shell: bash
         run: |
