@@ -1,0 +1,294 @@
+/** Browser DTOs mirror tychora.contracts and the captured HTTP contracts. */
+export type Json =
+  | null
+  | boolean
+  | number
+  | string
+  | Json[]
+  | { [key: string]: Json };
+export interface Scope {
+  principal_id: string;
+  collection_ids: string[];
+  access_ceiling: number;
+  uses: string[];
+  capabilities: string[];
+  upload_providers: string[];
+}
+export interface Handshake {
+  schema_version: string;
+  protocol_version: number;
+  workspace_id: string;
+  instance_id: string;
+  scope: Scope;
+  default_collection_id: string | null;
+}
+export interface Definition {
+  id: string;
+  version: string;
+  label: string;
+  definition: Record<string, Json>;
+  schema_digest: string;
+}
+export interface Discovery {
+  subject: string;
+  definitions: Definition[];
+  counts: { name: string; count: number }[];
+  capabilities: string[];
+  capability_status: {
+    name: string;
+    installed: boolean;
+    required: boolean;
+    version: string | null;
+  }[];
+  next_cursor: string | null;
+}
+export interface Settings {
+  profile: string;
+  values: {
+    providers: Record<
+      string,
+      {
+        provider: string;
+        model?: string | null;
+        enabled?: boolean;
+        [key: string]: Json | undefined;
+      }
+    >;
+    [key: string]: Json | Record<string, { [key: string]: Json | undefined }>;
+  };
+  origins?: Record<string, Json>;
+}
+export interface Geometry {
+  domain: "pixels" | "points" | "normalized";
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+interface LocatorBase {
+  artifact_ref: string;
+  native_ref: string;
+}
+export type Locator = LocatorBase &
+  (
+    | { type: "text"; char_start: number; char_end: number }
+    | {
+        type: "document";
+        char_start: number;
+        char_end: number;
+        char_domain?: "unit";
+        physical_page: number | null;
+        printed_page: string | null;
+        geometry: Geometry | null;
+      }
+    | {
+        type: "code";
+        char_start: number;
+        char_end: number;
+        relative_path: string;
+        byte_start: number;
+        byte_end: number;
+        line_start: number;
+        line_end: number;
+      }
+    | {
+        type: "image";
+        physical_page: number | null;
+        printed_page: string | null;
+        geometry: Geometry | null;
+      }
+  );
+export interface Citation {
+  unit_id: string | null;
+  asset_id: string | null;
+  source_id: string | null;
+  revision_id: string | null;
+  source_ref: string | null;
+  physical_page: number | null;
+  printed_page: string | null;
+  locators: Locator[];
+}
+export interface Excerpt {
+  unit_id: string;
+  char_start: number;
+  char_end: number;
+  text: string;
+}
+export interface EvidenceUnit {
+  unit_id: string;
+  extraction_id: string;
+  parent_id: string | null;
+  ordinal: number;
+  unit_type: string;
+  native_ref: string;
+  boundary_key: string;
+  heading_path: string[];
+  text: string;
+  text_sha: string;
+  text_origin: "source" | "ocr" | "derived";
+  citable: boolean;
+  review_state: string;
+  locators: Locator[];
+  attributes: Record<string, Json>;
+}
+export interface StructuredRecord {
+  record_id: string;
+  unit_id: string;
+  record_type: string;
+  schema_id: string;
+  value: Record<string, Json>;
+  dependencies: string[];
+}
+export interface Segment {
+  segment_id: string;
+  source_id: string;
+  revision_id: string;
+  extraction_id: string;
+  kind: string;
+  role: string;
+  lane: string;
+  text: string;
+  excerpts: Excerpt[];
+  context_excerpts: Excerpt[];
+  matched_unit_ids: string[];
+  context_only_unit_ids: string[];
+  anchors: {
+    unit_id: string;
+    origin: string;
+    indexed_window_id: string | null;
+    char_start: number;
+    char_end: number;
+  }[];
+  signals: string[];
+  citations: Citation[];
+  complete: boolean;
+  truncated: boolean;
+  omissions: { reason: string; unit_ids: string[]; count: number }[];
+  structured_records: StructuredRecord[];
+}
+export interface RelationPath {
+  unit_ids: string[];
+  assertion_ids: string[];
+  predicates: string[];
+  support_unit_ids: string[];
+  provenance: Record<string, Json>;
+}
+export interface RelationResult {
+  paths: RelationPath[];
+  truncated: boolean;
+  next_cursor: string | null;
+}
+export interface VisualEvidence {
+  asset_id: string;
+  source_id: string;
+  revision_id: string;
+  asset_ref: string;
+  locator: Locator;
+  caption: string | null;
+  proxies: {
+    proxy_id: string;
+    label: string;
+    text: string;
+    origin: string;
+    dependencies: string[];
+    review_state: string;
+  }[];
+  selection_reasons: string[];
+  citations: Citation[];
+}
+export interface QueryResult {
+  schema_version: string;
+  run_id: string;
+  snapshot_id: string;
+  applied_scope: Scope;
+  segments: Segment[];
+  citations: Citation[];
+  visuals: VisualEvidence[];
+  relations: RelationPath[];
+  coverage: {
+    status: "complete" | "partial" | "unavailable";
+    completed_channels: string[];
+    unavailable_channels: string[];
+    warnings: string[];
+  };
+  coverage_gaps: { code: string; message: string; channel: string | null }[];
+  decision_requirements: {
+    requirement_id: string;
+    reason: string;
+    unit_ids: string[];
+    assertion_ids: string[];
+  }[];
+  checks: {
+    status: string;
+    predicates: string[];
+    assertion_ids: string[];
+    assertions: RelationPath[];
+    decisions: {
+      requirement_id: string;
+      reason: string;
+      unit_ids: string[];
+      assertion_ids: string[];
+    }[];
+    truncated: boolean;
+  };
+  warnings: string[];
+  budget_contract: {
+    max_tokens: number;
+    tokenizer_id: string;
+    max_response_bytes: number;
+    render_targets: {
+      renderer: string;
+      profile_digest: string;
+      schema_digest: string;
+      serialization: string;
+    }[];
+  };
+  trace: Record<string, Json> | null;
+}
+export interface Inspection {
+  subject: string;
+  id: string;
+  evidence: EvidenceUnit | null;
+  partial_evidence: {
+    unit_id: string;
+    extraction_id: string;
+    unit_type: string;
+    canonical_text_sha: string | null;
+    canonical_text_length: number | null;
+  } | null;
+  excerpts: Excerpt[];
+  records: {
+    id: string;
+    record_type: string;
+    schema_id: string;
+    value: Record<string, Json>;
+  }[];
+  original_ref: string | null;
+  payload: string | null;
+  media_type: string | null;
+  truncated: boolean;
+}
+export type Filter =
+  | { op: "eq"; field: string; value: string | number | boolean | null }
+  | { op: "in"; field: string; values: (string | number | boolean | null)[] }
+  | {
+      op: "range";
+      field: string;
+      lower?: string | number;
+      upper?: string | number;
+      include_lower: boolean;
+      include_upper: boolean;
+    }
+  | { op: "and" | "or"; children: Filter[] };
+export interface QueryRequest {
+  input: { type: "question"; text: string };
+  mode?: string;
+  filters?: Filter;
+  revision_selector: "current" | "all";
+  revision_ids: string[];
+  as_of?: string;
+  cutoff?: string;
+  unknown_dates: "strict" | "permissive";
+  limit: number;
+  trace: boolean;
+}
