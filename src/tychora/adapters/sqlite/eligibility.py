@@ -6,6 +6,7 @@ import json
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
+from tychora.application.collection_policy import collection_is_active
 from tychora.configuration.global_facets import (
     ROLE as GLOBAL_FACET_ROLE,
 )
@@ -239,7 +240,7 @@ def read_eligibility_facts(
             row = db.execute(
                 "SELECT r.kind_id,r.access_rank,r.allowed_uses_json,r.published_on,"
                 "r.effective_from,r.effective_until,c.collection_id,c.access_floor,"
-                "s.access_floor,s.withdrawn_at,c.workspace_id,k.definition_json,k.definition_hash,r.metadata_json,r.metadata_sha "
+                "s.access_floor,s.withdrawn_at,c.workspace_id,k.definition_json,k.definition_hash,r.metadata_json,r.metadata_sha,c.policy_json "
                 "FROM revisions r JOIN sources s USING(source_id) "
                 "JOIN collections c USING(collection_id) JOIN kinds k USING(kind_id) "
                 "JOIN extractions e USING(revision_id) "
@@ -313,6 +314,7 @@ def read_eligibility_facts(
                     revision_id=member.revision_id,
                     extraction_id=member.extraction_id,
                     collection_id=row[6],
+                    collection_archived=not collection_is_active(row[15]),
                     kind_id=row[0],
                     access_rank=row[1],
                     source_floor=row[8],

@@ -14,6 +14,7 @@ from contextlib import nullcontext
 from datetime import UTC, datetime
 from functools import wraps
 
+from tychora.application.collection_policy import require_active_collection
 from tychora.application.runtime import private_directory
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes, digest
@@ -231,7 +232,7 @@ class PdfIntakeService:
                 self._write(record)
                 self._unlink(record)
 
-    def _grant(self, descriptor, scope):
+    def _grant(self, descriptor, scope, *, active=True):
         granted = self.owner.scope.narrow(scope)
         cid = str(descriptor.collection_id)
         if "write" not in granted.capabilities or cid not in granted.collection_ids:
@@ -239,7 +240,7 @@ class PdfIntakeService:
                 "FORBIDDEN_SCOPE", "PDF destination is outside the grant."
             )
         row = self.owner.db.execute(
-            "SELECT workspace_id,access_floor FROM collections WHERE collection_id=?",
+            "SELECT workspace_id,access_floor,policy_json FROM collections WHERE collection_id=?",
             (cid,),
         ).fetchone()
         if (
@@ -248,6 +249,8 @@ class PdfIntakeService:
             or row[1] > granted.access_ceiling
         ):
             raise TychoraError("FORBIDDEN_SCOPE", "PDF destination is unavailable.")
+        if active:
+            require_active_collection(row[2])
         self.owner.store.registry.validate_metadata(
             descriptor.kind, descriptor.metadata
         )
@@ -259,7 +262,7 @@ class PdfIntakeService:
         descriptor = PdfIntakeDescriptor.model_validate_json(
             canonical_bytes(record["descriptor"])
         )
-        granted = self._grant(descriptor, scope)
+        granted = self._grant(descriptor, scope, active=current)
         if record["workspace_id"] != self.owner.workspace_id or record[
             "grant"
         ] != digest("pdf-grant-v1", canonical_scope_projection(granted)):

@@ -180,7 +180,7 @@ async def test_code_source_discovery_uses_retained_scoped_resolution_rates(tmp_p
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
         await owner.run_blocking(
             lambda: owner.db.execute(
-                "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,'{}')",
+                'INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
                 (collection, owner.workspace_id, "code", "Code"),
             ),
             ExecutionContext(),

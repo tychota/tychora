@@ -68,6 +68,7 @@ from tychora.ports.vision import (
     pixel_identity,
 )
 
+from .collection_policy import require_active_collection
 from .consent import enabled_upload_providers, parse_upload_policy
 from .leases import LeaseSet
 from .runtime import (
@@ -120,6 +121,7 @@ class WorkspaceOwner:
         self.config = config
         self.scope = scope
         self.managed_default_owner = False
+        self._managed_scope_listeners = []
         self.leases = LeaseSet()
         self.comparison_admission = ComparisonAdmission()
         self._worker = BoundedWorker()
@@ -852,6 +854,7 @@ class CanonicalUploadPolicy:
 
     def _collection_permits(self, raw: str, provider: str) -> None:
         try:
+            require_active_collection(raw)
             collection, installation_owner = parse_upload_policy(
                 raw,
                 allow_injected_provider_ids=not self._owner.managed_default_owner,
@@ -914,7 +917,7 @@ class CanonicalUploadPolicy:
         try:
             self._check_epoch(policy_epoch)
             collection = owner.db.execute(
-                "SELECT workspace_id,access_floor FROM collections WHERE collection_id=?",
+                "SELECT workspace_id,access_floor,policy_json FROM collections WHERE collection_id=?",
                 (source.collection_id,),
             ).fetchone()
             if (
@@ -923,6 +926,7 @@ class CanonicalUploadPolicy:
                 or max(collection[1], source.access_floor) > granted.access_ceiling
             ):
                 _deny()
+            require_active_collection(collection[2])
             definitions = owner.store.registry.historical_definitions()
             if registration.kind_id not in definitions:
                 _deny()
@@ -1404,6 +1408,10 @@ class CanonicalUploadPolicy:
             or max(row[2:5]) > scope.access_ceiling
             or row[5] is not None
         ):
+            _deny()
+        try:
+            require_active_collection(row[6])
+        except TychoraError:
             _deny()
         if provider is None:
             try:

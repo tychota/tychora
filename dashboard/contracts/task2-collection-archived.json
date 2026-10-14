@@ -1,0 +1,13 @@
+{
+  "collection_id": "7046379b-eee3-4fe4-a9a9-dd38296a1d98",
+  "workspace_id": "84fbdaeb-da55-4091-aff1-1dc9d627a7b3",
+  "slug": "synthetic-library",
+  "title": "Synthetic library",
+  "archived_at": "2026-10-14T11:25:23.246467Z",
+  "default_kind_id": "document@1",
+  "effective_default_kind_id": "document@1",
+  "access_floor": 0,
+  "policy_epoch": 2,
+  "document_count": null,
+  "summary_complete": false
+}

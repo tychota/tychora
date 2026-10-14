@@ -40,7 +40,9 @@ async def serve(
             token = owner._runtime.record["token"]
             if not isinstance(token, str):
                 raise TypeError("Owner runtime token is invalid")
-            auth = LocalAuth({token: owner.scope}, authority=authority)
+            auth = LocalAuth(
+                {token: owner.scope}, authority=authority, managed_owner_token=token
+            )
             app = create_app(owner, services, auth)
             owner._runtime.publish_endpoint(authority)
             uvicorn_config = uvicorn.Config(

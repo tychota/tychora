@@ -15,6 +15,8 @@ export interface Scope {
   upload_providers: string[];
 }
 export interface Handshake {
+  managed_workspace_owner: boolean;
+  policy_epoch: number;
   schema_version: string;
   protocol_version: number;
   workspace_id: string;
@@ -291,4 +293,72 @@ export interface QueryRequest {
   unknown_dates: "strict" | "permissive";
   limit: number;
   trace: boolean;
+}
+
+export interface CollectionSummary {
+  collection_id: string;
+  workspace_id: string;
+  slug: string;
+  title: string;
+  archived_at: string | null;
+  default_kind_id: string | null;
+  effective_default_kind_id: string | null;
+  access_floor: number;
+  policy_epoch: number;
+  document_count: number | null;
+  summary_complete: boolean;
+}
+export interface CollectionPage {
+  collections: CollectionSummary[];
+  next_cursor: string | null;
+  policy_epoch: number;
+}
+export interface CollectionInput {
+  title: string;
+  slug: string;
+  default_kind_id?: string | null;
+}
+export interface CollectionConsentView {
+  collection_id: string;
+  collection_upload_providers: string[];
+  owner_upload_providers: string[];
+  caller_upload_providers: string[];
+  enabled_upload_providers: string[];
+  policy_epoch: number;
+  managed_grant_refresh_available: boolean;
+}
+export interface DocumentSummary {
+  source_id: string;
+  source_key: string;
+  title: string;
+  collection_id: string;
+  collection_title: string;
+  source_type: string;
+  revision_id: string | null;
+  extraction_id: string | null;
+  original_media_type: string | null;
+  original_size_bytes: number | null;
+  created_at: string | null;
+  captured_at: string | null;
+  processing_state: "unknown";
+  published_content_state: "published" | "not_observed";
+  channel_readiness: string[];
+  channel_observations: { family_id: string; channel: string; state: string }[];
+  channel_observations_complete: boolean;
+  latest_job: null;
+  job_observations_complete: boolean;
+  unit_count: number | null;
+  window_count: number | null;
+  counts_complete: boolean;
+  counts_unavailable_reason: "bounded_exact_authorization_unavailable";
+  jobs_unavailable_reason: "bounded_subject_lineage_unavailable";
+}
+export interface DocumentPage {
+  documents: DocumentSummary[];
+  next_cursor: string | null;
+  policy_epoch: number;
+  candidate_record_limit: 5000;
+  channel_record_limit: 400;
+  job_record_limit: 100;
+  job_metadata_byte_limit: 1048576;
 }

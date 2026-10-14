@@ -30,6 +30,7 @@ from tychora.adapters.code.syntax import base_syntax_result
 from tychora.adapters.docling.parser import DoclingParser
 from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.adapters.sqlite.publication import PublicationReceipts
+from tychora.application.collection_policy import require_active_collection
 from tychora.configuration.global_facets import (
     ROLE as GLOBAL_FACET_ROLE,
 )
@@ -476,6 +477,19 @@ class SourceService:
         config_ref = await self._config_ref(ctx)
 
         def accept():
+            row = self.owner.db.execute(
+                "SELECT workspace_id,access_floor,policy_json FROM collections WHERE collection_id=?",
+                (str(source.root.collection_id),),
+            ).fetchone()
+            if (
+                row is None
+                or row[0] != self.owner.workspace_id
+                or row[1] > granted.access_ceiling
+            ):
+                raise TychoraError(
+                    "FORBIDDEN_SCOPE", "Source collection is unavailable."
+                )
+            require_active_collection(row[2])
             if acquired is not None:
                 assert self.owner.pdf_intakes is not None
                 self.owner.pdf_intakes.validate_acquired(acquired, scope)
@@ -1240,6 +1254,7 @@ class SourceService:
             or row[4] > scope.access_ceiling
         ):
             raise TychoraError("FORBIDDEN_SCOPE", "Source collection is unavailable")
+        require_active_collection(row[5])
         collection = CollectionRow(
             collection_id=row[0],
             workspace_id=row[1],

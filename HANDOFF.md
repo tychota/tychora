@@ -90,7 +90,7 @@ SHA-256 provides standard-library availability, checksum interoperability and a 
 
 ### Multiple independent RAGs and their locations
 
-One workspace directory owns one corpus: `corpus.sqlite3`, `artifacts/`, and the configured `indexes/text/`, `indexes/image/`, and `indexes/graph/` projections. Pass its path to Python, CLI or a one-workspace server. The CLI defaults to the current directory; there is no implicit home-directory corpus, global workspace catalog or federated query. Choose directories in a project or under a user-managed home directory. `TYCHORA_MODEL_CACHE` can share model assets, not corpus data. Collections partition a workspace logically but do not create separate database directories, and public collection lifecycle/discovery is incomplete. See [workspaces](docs/workspaces.md).
+One workspace directory owns one corpus: `corpus.sqlite3`, `artifacts/`, and the configured `indexes/text/`, `indexes/image/`, and `indexes/graph/` projections. Pass its path to Python, CLI or a one-workspace server. The CLI defaults to the current directory; there is no implicit home-directory corpus, global workspace catalog or federated query. Choose directories in a project or under a user-managed home directory. `TYCHORA_MODEL_CACHE` can share model assets, not corpus data. Collections partition a workspace logically but do not create separate database directories, and named collection HTTP lifecycle and scoped discovery are available; the redesigned collection/document UI remains subsequent work. See [workspaces](docs/workspaces.md).
 
 ### Document kinds and configurable relations
 
@@ -149,3 +149,9 @@ uv run --project packaging/docs --locked mkdocs serve
 See [documentation maintenance and publication](docs/documentation.md). The docs workflow builds on pushes/PRs. GitHub Pages publication is a separate manual workflow action, with Pages configured to use GitHub Actions. Pushing the repository does not publish a package or deliberately deploy Pages. Runtime, native qualification and executable workflows also run on relevant pushes; inspect their actual results and do not weaken failing gates merely to obtain a green badge.
 
 Keep examples runnable, prerequisites explicit, current limits next to affected features, and tutorials/how-to/reference/explanation distinct. The local documentation previews are not a dashboard prototype. Any future handoff should update this file's baseline, remaining defects and verification evidence together.
+
+## Named collection backend (2026-10-14)
+
+CollectionService and HTTP collection/document endpoints now provide stable UUIDs, managed-owner-only creation, idempotent archive/reactivate, strict v1/v2 policy projection and lifecycle-preserving consent. Static grants never expand. Managed future-call grants refresh in the attached workspace, job facade and explicit LocalAuth slot; accepted job scopes stay immutable. Archive gates new source/PDF/provider/publication work and ordinary retrieval while retaining authorized exact inspection and history.
+
+Inventory is bounded and conservative: selected readable publication metadata and up to 400 canonical channel observations, with null unit/window counts and unknown latest-job state because current exact ownership/job lineage cannot be established inside the summary budget. No corpus artifacts are decoded for summaries. Actual synthetic HTTP fixtures are in `dashboard/contracts/task2-*.json`. Session refresh supports these backend operations; this delivery does not claim redesigned pages, guided settings, OCR or explicit PDF-policy execution.
