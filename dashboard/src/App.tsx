@@ -9,6 +9,7 @@ import { SessionProvider, useSession } from "./session";
 import { publicError } from "./api/client";
 import { ErrorNotice } from "./components/Status";
 import { Search } from "./pages/Search";
+import { OperationsRouter } from "./pages/OperationsRouter";
 
 export const destinations = [
   "Search",
@@ -97,7 +98,7 @@ export function useRoute() {
   };
   return { path, navigate };
 }
-/** Task 3 supplies the remaining connected pages through this route renderer. */
+/** Optional route override for embedding the workbench. */
 export interface AppProps {
   renderRoute?: (path: string) => ReactNode;
 }
@@ -184,19 +185,7 @@ function Shell({ renderRoute }: AppProps) {
           ) : renderRoute ? (
             renderRoute(path)
           ) : (
-            <>
-              <header className="page-heading">
-                <p className="eyebrow">Workbench development</p>
-                <h1>
-                  {destinations.find(
-                    (destination) => destination.toLowerCase() === page,
-                  ) ?? "Page unavailable"}
-                </h1>
-              </header>
-              <p>
-                This destination is being connected in the next delivery task.
-              </p>
-            </>
+            <OperationsRouter path={path} />
           )}
         </div>
       </main>
