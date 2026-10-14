@@ -62,6 +62,7 @@ from tychora.contracts.publication import PublicationPlan
 from tychora.contracts.requests import (
     RequestScope,
     SourceInput,
+    UploadSource,
     VisionSelection,
     source_registration_descriptor,
 )
@@ -74,6 +75,7 @@ from tychora.ingestion.vision import planned_vision_proxy
 from tychora.ports.acquisition import UrlReader
 from tychora.ports.execution import ExecutionContext
 
+from .acquired_source import AcquiredSource
 from .jobs import source_intent
 from .owner import WorkspaceOwner
 
@@ -313,9 +315,15 @@ class SourceService:
         idempotency_key: str | None = None,
         *,
         ctx: ExecutionContext | None = None,
+        acquired: AcquiredSource | None = None,
     ) -> JobHandle:
         return await self._accept(
-            "add", source, scope, idempotency_key, ctx or ExecutionContext()
+            "add",
+            source,
+            scope,
+            idempotency_key,
+            ctx or ExecutionContext(),
+            acquired=acquired,
         )
 
     async def accept_sync(
@@ -418,8 +426,26 @@ class SourceService:
         scope: RequestScope,
         key: str | None,
         ctx: ExecutionContext,
+        acquired: AcquiredSource | None = None,
     ) -> JobHandle:
         granted = self.owner.scope.narrow(scope)
+        if (
+            isinstance(source.root, UploadSource)
+            and acquired is None
+            and operation != "sync"
+        ):
+            raise TychoraError(
+                "FORBIDDEN_SCOPE", "Upload requires a trusted receipt binding."
+            )
+        if acquired is not None:
+            if self.owner.pdf_intakes is None:
+                raise TychoraError(
+                    "FORBIDDEN_SCOPE", "Trusted PDF intake service is unavailable."
+                )
+            intakes = self.owner.pdf_intakes
+            await self.owner.run_blocking(
+                lambda: intakes.validate_acquired(acquired, scope), ctx
+            )
         if source.root.vision:
             value = source.root
             selected_format = (
@@ -443,14 +469,54 @@ class SourceService:
             raise TychoraError(
                 "FORBIDDEN_SCOPE", "Source collection is outside the grant"
             )
-        jobs, _ = await self._ports(ctx)
+        jobs, acquirer = await self._ports(ctx)
         config_ref = await self._config_ref(ctx)
-        return await self.owner.run_blocking(
-            lambda: jobs.accept(
+
+        def accept():
+            if acquired is not None:
+                assert self.owner.pdf_intakes is not None
+                self.owner.pdf_intakes.validate_acquired(acquired, scope)
+            if operation == "add" and isinstance(source.root, UploadSource):
+                sid = source_id(source.root.collection_id, source.root.source_key)
+                registered = self.owner.db.execute(
+                    "SELECT 1 FROM sources WHERE source_id=?", (sid,)
+                ).fetchone()
+                repeated = (
+                    self.owner.db.execute(
+                        "SELECT 1 FROM jobs WHERE principal_id=? AND operation='add' AND idempotency_key=?",
+                        (granted.principal_id, key),
+                    ).fetchone()
+                    if key is not None
+                    else None
+                )
+                if registered is not None and repeated is None:
+                    raise TychoraError(
+                        "IDEMPOTENCY_CONFLICT",
+                        "A source already uses this logical key; choose a new key for a new upload.",
+                    )
+            handle = jobs.accept(
                 operation, granted, key, source_intent(source), config_ref
-            ),
-            ctx,
-        )
+            )
+            if (
+                isinstance(source.root, UploadSource)
+                and jobs.get(handle.id).captured_inputs is None
+            ):
+                from dataclasses import replace
+
+                trusted = (
+                    acquired
+                    if acquired is not None
+                    else self._registered_upload(source, granted)
+                )
+                canonical = self._canonical_source(source)
+                capture = acquirer.capture_acquired(
+                    canonical, replace(trusted, source=canonical), ctx
+                )
+                self._validate_upload_capture(canonical, capture)
+                jobs.capture(handle.id, capture.manifest_ref)
+            return handle
+
+        return await self.owner.run_blocking(accept, ctx)
 
     async def execute_accepted(
         self,
@@ -460,6 +526,7 @@ class SourceService:
         *,
         ctx: ExecutionContext | None = None,
         retained_capture_sha: str | None = None,
+        acquired: AcquiredSource | None = None,
     ) -> JobHandle:
         """Resume exact accepted intent or its verified retained retry capture."""
         context = ctx or ExecutionContext()
@@ -522,6 +589,10 @@ class SourceService:
             else:
                 capture = await self.owner.run_blocking(
                     lambda: self._committed_capture(captured_ref), ctx
+                )
+            if isinstance(captured_source.root, UploadSource):
+                await self.owner.run_blocking(
+                    lambda: self._validate_upload_capture(captured_source, capture), ctx
                 )
             await self.owner.run_blocking(lambda: jobs.stage(handle.id, "parse"), ctx)
             registration = await self.owner.run_blocking(
@@ -1051,6 +1122,79 @@ class SourceService:
             return capture
         return None
 
+    def _registered_upload(self, source, scope):
+        """Sync resolves only a currently authorized registered immutable original."""
+        from tychora.contracts.artifacts import ArtifactRef
+
+        sid = source_id(source.root.collection_id, source.root.source_key)
+        registered = self._source_for_sync(sid, scope)
+        if registered != source or source.root.pdf_processing is None:
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Registered upload descriptor differs."
+            )
+        row = self.owner.db.execute(
+            "SELECT a.artifact_sha,a.size_bytes,a.media_type,a.storage_key FROM revisions r "
+            "JOIN revision_artifacts ra USING(revision_id) JOIN artifacts a ON a.artifact_sha=ra.artifact_sha "
+            "WHERE r.source_id=? AND r.original_sha=? AND ra.role='original' AND a.payload_state='present' LIMIT 1",
+            (sid, source.root.content_sha256),
+        ).fetchone()
+        if row is None:
+            raise TychoraError(
+                "REPLAY_UNAVAILABLE", "Registered upload original is unavailable."
+            )
+        ref = ArtifactRef(
+            sha256=row[0], size_bytes=row[1], media_type=row[2], storage_key=row[3]
+        )
+        return AcquiredSource(
+            workspace_id=self.owner.workspace_id,
+            scope=scope,
+            source=source,
+            original_ref=ref,
+            receipt_binding_sha256=digest("registered-upload-v1", sid, ref.sha256),
+            policy=source.root.pdf_processing,
+        )
+
+    def _validate_upload_capture(self, source, capture):
+        from tychora.application.pdf_processing import revalidate_pdf_policy
+        from tychora.contracts.pdf_intake import PdfIntakeDescriptor
+
+        value = source.root
+        policy = value.pdf_processing
+        if (
+            policy is None
+            or capture.original_sha != value.content_sha256
+            or capture.original_ref.size_bytes != value.size_bytes
+            or canonical_bytes(capture.source.get("pdf_processing"))
+            != canonical_bytes(policy.model_dump(mode="json"))
+        ):
+            raise TychoraError(
+                "INTEGRITY_ERROR",
+                "Retained upload capture differs from policy or original.",
+            )
+        facts = {
+            "page_count": len(policy.native_pages)
+            + len(policy.ocr_pages)
+            + len(policy.blank_pages),
+            "native_text_pages": policy.native_pages,
+            "image_only_pages": policy.ocr_pages,
+            "blank_pages": policy.blank_pages,
+            "unknown_pages": (),
+            "requires_ocr": bool(policy.ocr_pages),
+        }
+        descriptor = PdfIntakeDescriptor(
+            source_key=value.source_key,
+            collection_id=value.collection_id,
+            kind=value.kind,
+            metadata=value.metadata,
+            expected_size_bytes=value.size_bytes,
+        )
+        if self.owner.service_runtime is not None:
+            services = self.owner.service_runtime.services
+        else:
+            assert self.owner.pdf_intakes is not None
+            services = self.owner.pdf_intakes.services
+        revalidate_pdf_policy(self.owner, services, descriptor, facts, policy)
+
     def _canonical_source(self, source: SourceInput) -> SourceInput:
         metadata = source.root.metadata
         kind = source.root.kind
@@ -1104,6 +1248,13 @@ class SourceService:
             (sid,),
         ).fetchone()
         if old is not None:
+            if isinstance(value, UploadSource) and canonical_bytes(
+                json.loads(old[4])
+            ) != canonical_bytes(source_registration_descriptor(source)):
+                raise TychoraError(
+                    "IDEMPOTENCY_CONFLICT",
+                    "Registered upload identity differs; use a new logical source key.",
+                )
             source_row = SourceRow(
                 source_id=old[0],
                 collection_id=old[1],

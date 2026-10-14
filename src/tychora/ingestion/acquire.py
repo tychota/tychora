@@ -25,6 +25,7 @@ from tychora.contracts.requests import (
     FolderSource,
     RepositorySource,
     TextSource,
+    UploadSource,
 )
 from tychora.ports.acquisition import UrlReader
 from tychora.ports.execution import ExecutionContext
@@ -234,10 +235,51 @@ class Acquirer:
                     )
         return sorted(files, key=lambda file: str(file.relative_to(folder))), stamps
 
+    def capture_acquired(self, source, acquired, ctx) -> CaptureManifest:
+        """Capture only a service-authorized immutable upload binding."""
+        ctx.checkpoint()
+        value = source.root
+        original = acquired.original_ref
+        if (
+            not isinstance(value, UploadSource)
+            or value.content_sha256 != original.sha256
+            or value.size_bytes != original.size_bytes
+            or value.pdf_processing != acquired.policy
+            or source != acquired.source
+        ):
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Acquired original and source intent differ."
+            )
+        limits = self._limits(source)
+        if original.size_bytes > min(limits.max_file_bytes, limits.max_total_bytes):
+            raise _limit()
+        captured = CaptureManifest(
+            source_key=value.source_key,
+            original_ref=original,
+            original_sha=original.sha256,
+            captured_at=datetime.now(UTC),
+            acquire_fingerprint=digest(
+                "acquired-pdf-v1",
+                self.config.acquire_fingerprint,
+                acquired.receipt_binding_sha256,
+                value.pdf_processing.model_dump(mode="json"),
+            ),
+            config_sha=self.config.config_sha,
+            manifest_ref=original,
+            source=FrozenJsonMap(value.model_dump(mode="json")),
+        )
+        return captured.model_copy(
+            update={"manifest_ref": self._manifest(captured, [original])}
+        )
+
     def capture(self, source: SourceInput, ctx: ExecutionContext) -> CaptureManifest:
         ctx.checkpoint()
         limits = self._limits(source)
         value = source.root
+        if isinstance(value, UploadSource):
+            raise TychoraError(
+                "FORBIDDEN_SCOPE", "Upload requires a trusted receipt binding."
+            )
         if value.type == "url" and (
             self.config.values.offline
             or not self.config.values.acquisition.url.enabled

@@ -7,7 +7,14 @@ from datetime import date
 from typing import Annotated, Any, Literal, Self
 from uuid import UUID
 
-from pydantic import ConfigDict, Field, RootModel, field_validator, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    RootModel,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 
 from .acquisition import AcquisitionLimits
 from .base import (
@@ -21,6 +28,7 @@ from .base import (
 )
 from .errors import TychoraError
 from .identity import canonical_bytes, digest, normalize_source_key
+from .pdf_policy import PdfProcessingPolicy
 
 
 class RequestScope(Contract):
@@ -189,6 +197,15 @@ class VisionSelection(Contract):
 
 
 class SourceBase(Contract):
+    pdf_processing: PdfProcessingPolicy | None = None
+
+    @model_serializer(mode="wrap")
+    def serialize_without_absent_policy(self, handler):
+        value = handler(self)
+        if self.pdf_processing is None:
+            value.pop("pdf_processing", None)
+        return value
+
     source_key: NonEmptyStr
     collection_id: UUID
     kind: NonEmptyStr
@@ -257,13 +274,25 @@ class BytesSource(SourceBase):
     data: bytes
 
 
+class UploadSource(SourceBase):
+    type: Literal["upload"] = "upload"
+    content_sha256: Sha256
+    size_bytes: PositiveInt
+
+
 class UrlSource(SourceBase):
     type: Literal["url"] = "url"
     url: Annotated[str, Field(pattern=r"^https?://[^/\s]+(?:/[^\s]*)?$")]
 
 
 type SourceVariant = Annotated[
-    FileSource | FolderSource | RepositorySource | TextSource | BytesSource | UrlSource,
+    FileSource
+    | FolderSource
+    | RepositorySource
+    | TextSource
+    | BytesSource
+    | UrlSource
+    | UploadSource,
     Field(discriminator="type"),
 ]
 
