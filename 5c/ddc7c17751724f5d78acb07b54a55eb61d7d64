@@ -1,0 +1,86 @@
+tests/ingestion/test_ocr_origin.py
+  s_346481235fa7eb::t_0b2db7dbd181de 1-67
+  s_346481235fa7eb::t_76354443f8966c 68-122
+tests/ingestion/test_pdf_batches.py
+  s_346481235fa7eb::t_f1b5d1a3ef03be 1-38
+  s_346481235fa7eb::t_ec742352c22dd3 39-126
+src/tychora/adapters/docling/ocr_evidence.py
+  s_346481235fa7eb::t_38ab1451369718 1-85
+  s_346481235fa7eb::t_4a7dc1e79a2bde 86-378
+src/tychora/adapters/docling/pdf_batches.py
+  s_346481235fa7eb::t_966e76b1df6af7 1-103
+  s_346481235fa7eb::t_0ae4559ed581f0 104-450
+tests/runtime/test_parser_bounds.py
+  s_346481235fa7eb::t_f1b5d1a3ef03be 1-68
+  s_346481235fa7eb::t_cc84d95ec1d55d 69-177
+pyproject.toml
+  s_346481235fa7eb::t_738f7a78313e59 14,25
+src/tychora/adapters/docling/parser.py
+  s_346481235fa7eb::t_147f35e9bbe551 29,310-315,401-402,409-415,421,453-494,543-554,570-581,591-695,726-743,745-746,757-765,767-779,782-783,785-802,891-894,916-982,984-985,988
+src/tychora/adapters/vision/local.py
+  s_346481235fa7eb::t_335c580123fac7 198-201,205-263
+src/tychora/application/discovery.py
+  s_346481235fa7eb::t_dd216d6b449fdf 570-581
+src/tychora/application/inspection.py
+  s_346481235fa7eb::t_dbf8fd1f4909ea 326-353
+src/tychora/application/owner.py
+  s_346481235fa7eb::t_99b9cdc12aff04 76,394-395,406-426,444-446,467-468,471-472,481-483,504-505,508-511
+src/tychora/application/pdf_intake.py
+  s_346481235fa7eb::t_4f793cbd4c93db 643-647,762-767
+src/tychora/application/pdf_processing.py
+  s_346481235fa7eb::t_37e892799edfe2 1,19-26,31-114,131-132,136,138-139,141-158,160
+src/tychora/application/restore.py
+  s_346481235fa7eb::t_1fba134dda2d44 363-367,383-390,417-428,430-432,437-443
+src/tychora/application/runtime.py
+  s_346481235fa7eb::t_43d2a2dd61fa3e 6,11,15,19,202-237,239-260,266-270,272,274-308,310-320,323-398,403-405,408-413
+src/tychora/application/sources.py
+  s_346481235fa7eb::t_1146fc41eddc33 9,115-117,591-600,657-661,694-700,1062-1073,1644-1662,1683,1689-1695,1704-1711,1729
+src/tychora/application/vision_selection.py
+  s_346481235fa7eb::t_9d636254f27f22 120-125
+src/tychora/contracts/composition.py
+  s_346481235fa7eb::t_5a286c38197dc6 5,262-288,292-306,316,327-328,337-339
+src/tychora/contracts/documents.py
+  s_346481235fa7eb::t_ba6683ba280909 5,123-171,490-491,519-538,583-587
+src/tychora/contracts/extraction.py
+  s_346481235fa7eb::t_30dab8f5b1b12d 5,20,23,133-154,195-196,198-208,316-320
+src/tychora/contracts/pdf_intake.py
+  s_346481235fa7eb::t_7a4c2b0aea6de5 7,43-50
+src/tychora/ingestion/composition.py
+  s_346481235fa7eb::t_012c22ae5d1828 14,173,391-411,415-417,420,425-475,600-601,688-693,704-715,732-733,736-745,767-772,827-849
+src/tychora/ingestion/document_parts.py
+  s_346481235fa7eb::t_691cda377216d1 7,263-266,426-429
+src/tychora/ingestion/document_records.py
+  s_346481235fa7eb::t_e6549f97466584 9,336
+src/tychora/ingestion/document_views.py
+  s_346481235fa7eb::t_5ea96291dee9e8 8,38
+src/tychora/ingestion/documents.py
+  s_346481235fa7eb::t_3499ddc5e8ad15 8,22,67,218-222,224-231,241,245-246,271-275,319,339,348-373
+tests/application/test_inspection.py
+  s_346481235fa7eb::t_11f3deeb8896ad 61-68
+tests/ingestion/test_docling_mapping.py
+  s_346481235fa7eb::t_8071e573ad5d77 131-136,544-650
+tests/qualification/test_scanned_pdf.py
+  s_346481235fa7eb::t_6479653a376352 1-361
+tests/transports/test_pdf_intake.py
+  s_346481235fa7eb::t_bc115b1ecd4e40 170-172,176,192
+tests/transports/test_pdf_policy_confirmation.py
+  s_346481235fa7eb::t_a182f7dcb5f4d1 1-156
+uv.lock
+  s_346481235fa7eb::t_53f9fa983d595d 3213,3226,3303-3304
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5cddc7c17751724f5d78acb07b54a55eb61d7d64",
+  "prompts": {},
+  "sessions": {
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
