@@ -137,8 +137,10 @@ async def raw_request(app, path, headers, receive):
         [(b"authorization", b"Bearer bad")],
         [(b"authorization", b"Bearer reader")],
         [(b"origin", b"http://hostile")],
+        [(b"host", b"hostile:8765")],
         [(b"content-length", b"104857601")],
         [(b"content-length", b"1"), (b"content-length", b"2")],
+        [(b"content-length", b"1"), (b"content-length", b"1")],
     ],
 )
 async def test_binary_denied_before_receive(tmp_path, extra):
@@ -148,7 +150,9 @@ async def test_binary_denied_before_receive(tmp_path, extra):
             prepared = await client.post("/v1/pdf-intakes", json=descriptor(kb, 2048))
             assert prepared.status_code == 201, prepared.text
             path = f"/v1/pdf-intakes/{prepared.json()['intake_id']}/content"
-            headers = [(b"host", b"127.0.0.1:8765")]
+            headers = []
+            if not any(k == b"host" for k, _ in extra):
+                headers.append((b"host", b"127.0.0.1:8765"))
             if not any(k == b"authorization" for k, _ in extra):
                 headers.append((b"authorization", b"Bearer writer"))
 
