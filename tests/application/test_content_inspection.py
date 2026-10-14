@@ -441,3 +441,155 @@ async def test_cursor_cannot_move_to_other_retained_lineage_or_resource(long_con
             ExecutionContext(),
         )
     assert error.value.code == "NOT_FOUND"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("denied_dependency", ["source", "asset"])
+async def test_proxy_window_preserves_image_locator_only_with_readable_dependencies(
+    published, denied_dependency
+):
+    import json
+    from hashlib import sha256
+    from io import BytesIO
+
+    from PIL import Image
+
+    from tychora.contracts.evidence import ImageLocator
+    from tychora.contracts.identity import chunk_id, digest, unit_id
+
+    owner, scope, source_uid = published
+    request = await content_request(owner)
+
+    def install_proxy():
+        image_stream = BytesIO()
+        Image.new("RGB", (1, 1), (40, 80, 120)).save(image_stream, format="PNG")
+        image = owner.artifacts.put_stream(
+            BytesIO(image_stream.getvalue()), "image/png"
+        )
+        derivation = owner.artifacts.put_stream(
+            BytesIO(b'{"task":"synthetic-caption-copy"}'), "application/json"
+        )
+        for ref in (image, derivation):
+            owner.db.execute(
+                "INSERT INTO artifacts(artifact_sha,size_bytes,media_type,storage_key,created_at) "
+                "VALUES (?,?,?,?,?)",
+                (
+                    ref.sha256,
+                    ref.size_bytes,
+                    ref.media_type,
+                    ref.storage_key,
+                    "2026-01-01T00:00:00Z",
+                ),
+            )
+        locator = ImageLocator.from_mapping(
+            {
+                "type": "image",
+                "artifact_ref": image.sha256,
+                "native_ref": "synthetic-figure",
+                "physical_page": 2,
+                "printed_page": "iv",
+                "geometry": {
+                    "domain": "normalized",
+                    "x0": 0.1,
+                    "y0": 0.2,
+                    "x1": 0.8,
+                    "y1": 0.9,
+                },
+            }
+        )
+        text = owner.store._hydrate((source_uid,))[0].text
+        asset_id = "synthetic-caption-asset"
+        owner.db.execute(
+            "INSERT INTO assets(asset_id,extraction_id,artifact_sha,asset_type,native_ref,"
+            "locator_json,caption,declared_review_state) VALUES (?,?,?,?,?,?,?,'unreviewed')",
+            (
+                asset_id,
+                request.extraction_id,
+                image.sha256,
+                "image",
+                locator.native_ref,
+                locator.model_dump_json(),
+                text,
+            ),
+        )
+        owner.db.execute(
+            "INSERT INTO unit_assets(unit_id,asset_id,role) VALUES (?,?,'caption')",
+            (source_uid, asset_id),
+        )
+        native_ref = "asset-proxy:" + digest(
+            "asset-proxy-input-v1",
+            asset_id,
+            "caption_copy",
+            text,
+            [source_uid],
+            derivation.sha256,
+        )
+        text_sha = sha256(text.encode()).hexdigest()
+        proxy_uid = unit_id(request.extraction_id, native_ref, 100, text_sha)
+        owner.db.execute(
+            "INSERT INTO evidence_units(unit_id,extraction_id,parent_id,ordinal,unit_type,"
+            "native_ref,boundary_key,heading_path_json,text,text_sha,text_origin,citable,"
+            "declared_review_state,attributes_json) VALUES (?,?,NULL,100,'asset_proxy',?,?,'[]',"
+            "?,?,'source',0,'unreviewed',?)",
+            (
+                proxy_uid,
+                request.extraction_id,
+                native_ref,
+                native_ref,
+                text,
+                text_sha,
+                json.dumps({"asset_id": asset_id, "proxy_kind": "caption_copy"}),
+            ),
+        )
+        owner.db.execute(
+            "INSERT INTO locators(locator_id,unit_id,fragment_ordinal,locator_type,artifact_sha,"
+            "source_ref,details_json) VALUES (?,?,0,'image',?,?,?)",
+            (
+                "synthetic-proxy-locator",
+                proxy_uid,
+                image.sha256,
+                locator.native_ref,
+                locator.model_dump_json(),
+            ),
+        )
+        owner.db.execute(
+            "INSERT INTO asset_proxies(proxy_unit_id,asset_id,origin_type,derivation_sha) "
+            "VALUES (?,?,'caption_copy',?)",
+            (proxy_uid, asset_id, derivation.sha256),
+        )
+        owner.db.execute(
+            "INSERT INTO asset_proxy_dependencies(proxy_unit_id,required_unit_id) VALUES (?,?)",
+            (proxy_uid, source_uid),
+        )
+        window_id = chunk_id(proxy_uid, 0, len(text), "retained-proxy-fixture")
+        owner.db.execute(
+            "INSERT INTO chunks(chunk_id,unit_id,extraction_id,ordinal_in_unit,char_start,char_end,"
+            "context_group_key,chunker_fingerprint,token_count) VALUES (?,?,?,0,0,?,'fixture','retained-proxy-fixture',3)",
+            (window_id, proxy_uid, request.extraction_id, len(text)),
+        )
+        return window_id, locator, asset_id
+
+    window_id, locator, asset_id = await owner.run_blocking(
+        install_proxy, ExecutionContext()
+    )
+    service = InspectionService(owner)
+    request = request.model_copy(update={"chunk_id": window_id})
+    allowed = await service.extraction_windows(request, scope, ExecutionContext())
+    assert len(allowed.windows) == 1
+    assert allowed.windows[0].text == "Exact source evidence."
+    assert allowed.windows[0].locators == (locator,)
+    target = (
+        ReviewTarget(unit_id=source_uid)
+        if denied_dependency == "source"
+        else ReviewTarget(asset_id=asset_id)
+    )
+    await owner.run_blocking(
+        lambda: owner.store.record_review(target, "rejected", "reviewer"),
+        ExecutionContext(),
+    )
+    denied = await service.extraction_windows(request, scope, ExecutionContext())
+    assert denied.windows == ()
+    assert denied.scope_limited
+    assert window_id not in denied.model_dump_json()
+    assert locator.artifact_ref not in denied.model_dump_json()
+    assert locator.native_ref not in denied.model_dump_json()

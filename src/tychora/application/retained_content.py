@@ -13,7 +13,12 @@ from tychora.adapters.sqlite.eligibility import _retained_rows
 from tychora.contracts.base import CodepointRange
 from tychora.contracts.corpus import ChunkRow
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.evidence import CodeLocator, DocumentLocator, TextLocator
+from tychora.contracts.evidence import (
+    CodeLocator,
+    DocumentLocator,
+    ImageLocator,
+    TextLocator,
+)
 from tychora.contracts.identity import chunk_id, digest
 from tychora.contracts.operations import (
     ExtractionUnitsPage,
@@ -41,7 +46,11 @@ MAX_CANDIDATES = 500
 def _locators(rows, unit, start, end):
     projected = []
     for locator in unit.locators:
-        if isinstance(locator, CodeLocator):
+        if isinstance(locator, ImageLocator):
+            # Range ownership has already authorized the asset and its sources.
+            # Image provenance has no unit-local text interval to clip.
+            projected.append(locator)
+        elif isinstance(locator, CodeLocator):
             projected.append(
                 project_code_excerpt_locator(rows, unit.unit_id, start, end)
             )
