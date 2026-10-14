@@ -264,21 +264,35 @@ async def test_pinned_vector_family_survives_credential_rotation_and_new_add(tmp
             )
             assert "text" in new_result.coverage.completed_channels
             assert new_result.segments
+            from tychora.ports.execution import ExecutionContext
+
+            current_config = owner.config
+            snapshot_id = await owner.run_blocking(
+                owner.store.active_snapshot_id, ExecutionContext()
+            )
             policy = rotated + "\n[configuration.limits]\nlimit=4\n"
             changed_policy = await client.put(
                 "/v1/settings", json={"profile": "test", "workspace_toml": policy}
             )
-            assert changed_policy.status_code == 200, changed_policy.text
-            with pytest.raises(TychoraError) as incompatible:
-                await asyncio.to_thread(
-                    kb.search,
-                    {
-                        "question": "verification",
-                        "limit": 1,
-                        "modalities": ["lexical", "text"],
-                    },
+            assert changed_policy.status_code == 409, changed_policy.text
+            assert changed_policy.json()["code"] == "PROFILE_INCOMPATIBLE"
+            assert settings.read_text() == rotated and owner.config is current_config
+            assert (
+                await owner.run_blocking(
+                    owner.store.active_snapshot_id, ExecutionContext()
                 )
-            assert incompatible.value.code == "PROFILE_INCOMPATIBLE"
+                == snapshot_id
+            )
+            preserved = await asyncio.to_thread(
+                kb.search,
+                {
+                    "question": "verification",
+                    "limit": 1,
+                    "modalities": ["lexical", "text"],
+                },
+            )
+            assert "text" in preserved.coverage.completed_channels
+            assert preserved.segments
         await app.state.runtime.services.source_jobs.aclose()
 
 

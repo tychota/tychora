@@ -97,8 +97,16 @@ inspection never resolves secrets or probes a remote provider.
 
 Preview does not activate, provision or rebuild anything. It reports candidate
 and base digests, redacted changes and compatibility blockers. Populated index
-generations retain their representation identity; incompatible edits return
-`PROFILE_INCOMPATIBLE`, with no rebuild queued. Apply recomputes the draft under
-exclusive admission and the existing atomic activation path. Refresh on
+generations retain their representation identity and snapshot configuration.
+Query defaults, limits and network policy edits can also be incompatible with
+that retained configuration. Preview reports `PROFILE_INCOMPATIBLE`, with no
+rebuild queued; guided and expert activation reject the change without altering
+the current settings or index. Such changes require a fresh workspace or a
+separately qualified publication/migration path. Configure a fresh remote-provider
+workspace before indexing; ordinary per-query controls still respect its current
+limits. Credential/reranker changes, monotonic policy tightening and qualified
+additive pack upgrades remain available when retained compatibility permits them.
+Apply recomputes the draft under exclusive admission and the existing atomic
+activation path. Refresh on
 `IDEMPOTENCY_CONFLICT`; retry `WORKSPACE_BUSY` after accepted work settles.
 Runtime preparation may still fail after a successful preview.

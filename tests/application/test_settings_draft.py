@@ -496,3 +496,163 @@ async def test_remote_prerequisite_types_are_strict(tmp_path, path, value):
             assert (
                 result.status_code == 400 and result.json()["code"] == "INVALID_REQUEST"
             )
+
+
+async def _populate_settings_workspace(client, app):
+    added = await client.post(
+        "/v1/sources",
+        json={
+            "type": "text",
+            "source_key": "retained",
+            "collection_id": "default",
+            "kind": "document@1",
+            "format": "markdown",
+            "text": "Synthetic verification evidence.",
+            "metadata": {"title": "Verification"},
+        },
+    )
+    assert added.status_code == 202, added.text
+    job = await app.state.runtime.services.jobs.wait(
+        added.json()["id"], ExecutionContext(), timeout=5
+    )
+    assert job.state == "succeeded"
+
+
+async def _assert_settings_workspace_searchable(client):
+    result = await client.post(
+        "/v1/queries",
+        json={"question": "verification", "modalities": ["lexical"], "limit": 1},
+    )
+    assert result.status_code == 200, result.text
+    assert result.json()["segments"]
+
+
+async def _retained_settings_state(owner):
+    return await owner.run_blocking(
+        lambda: (
+            owner.store.policy_epoch(owner.workspace_id),
+            owner.store.resolve_snapshot(None),
+            owner.db.execute("SELECT * FROM index_families ORDER BY 1").fetchall(),
+        ),
+        ExecutionContext(),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("leaf", "value"), [("limits.limit", 12), ("offline", False)])
+async def test_populated_settings_reject_edits_that_strand_pinned_queries(
+    tmp_path, leaf, value
+):
+    import tomlkit
+
+    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+        owner = kb._workspace.owner
+        app = create_app(
+            owner,
+            kb._workspace.services,
+            LocalAuth({"owner": kb.scope}, authority="127.0.0.1:8765"),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://127.0.0.1:8765",
+            headers={"Authorization": "Bearer owner"},
+        ) as client:
+            await _populate_settings_workspace(client, app)
+            await _assert_settings_workspace_searchable(client)
+            path = owner.path / "workspace.toml"
+            rotated = path.read_text() + (
+                '\n[configuration.providers.text]\ncredential_ref="env:UNRESOLVED_ROTATION"\n'
+            )
+            changed = await client.put(
+                "/v1/settings", json={"profile": "local", "workspace_toml": rotated}
+            )
+            assert changed.status_code == 200, changed.text
+            retained = await owner.run_blocking(
+                lambda: owner.store.retained_config(owner.store.resolve_snapshot(None)),
+                ExecutionContext(),
+            )
+            assert retained.config_sha != owner.config.config_sha
+            await _assert_settings_workspace_searchable(client)
+            fields = await client.get("/v1/settings/fields")
+            assert fields.status_code == 200, fields.text
+            patch = {
+                "base_workspace_sha256": fields.json()["base_workspace_sha256"],
+                "changes": [{"path": leaf, "action": "set", "value": value}],
+            }
+            original = path.read_bytes()
+            config, services = owner.config, app.state.runtime.services
+            state = await _retained_settings_state(owner)
+            preview = await client.post("/v1/settings/preview", json=patch)
+            assert preview.status_code == 200, preview.text
+            assert preview.json()["blockers"] == ["PROFILE_INCOMPATIBLE"]
+            assert not preview.json()["activation_allowed"]
+            assert not preview.json()["rebuild_queued"]
+            denied = await client.patch("/v1/settings", json=patch)
+            assert denied.status_code == 409, denied.text
+            assert denied.json()["code"] == "PROFILE_INCOMPATIBLE"
+            document = tomlkit.parse(original.decode())
+            node = document["configuration"]
+            for segment in leaf.split(".")[:-1]:
+                if segment not in node:
+                    node[segment] = tomlkit.table()
+                node = node[segment]
+            node[leaf.split(".")[-1]] = value
+            expert = await client.put(
+                "/v1/settings",
+                json={"profile": "local", "workspace_toml": tomlkit.dumps(document)},
+            )
+            assert expert.status_code == 409, expert.text
+            assert expert.json()["code"] == "PROFILE_INCOMPATIBLE"
+            assert path.read_bytes() == original and owner.config is config
+            assert app.state.runtime.services is services
+            assert await _retained_settings_state(owner) == state
+            await _assert_settings_workspace_searchable(client)
+
+
+@pytest.mark.asyncio
+async def test_settings_compatibility_uses_snapshot_origin_after_offline_tightening(
+    tmp_path,
+):
+    root = tmp_path / "workspace"
+    root.mkdir()
+    (root / "workspace.toml").write_text(
+        'schema_version=1\n[profiles.local]\nbuiltin="general-documents@1"\n'
+        '[defaults]\nprofile="local"\n[configuration]\noffline=false\n'
+    )
+    with Tychora.open(root, token_counter=Counter()) as kb:
+        owner = kb._workspace.owner
+        app = create_app(
+            owner,
+            kb._workspace.services,
+            LocalAuth({"owner": kb.scope}, authority="127.0.0.1:8765"),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://127.0.0.1:8765",
+            headers={"Authorization": "Bearer owner"},
+        ) as client:
+            await _populate_settings_workspace(client, app)
+            await _assert_settings_workspace_searchable(client)
+            _, snapshot, families = await _retained_settings_state(owner)
+            origin = await owner.run_blocking(
+                lambda: owner.store.retained_config(snapshot), ExecutionContext()
+            )
+            assert not origin.values.offline
+            for offline in (True, False):
+                fields = (await client.get("/v1/settings/fields")).json()
+                patch = {
+                    "base_workspace_sha256": fields["base_workspace_sha256"],
+                    "changes": [{"path": "offline", "action": "set", "value": offline}],
+                }
+                preview = await client.post("/v1/settings/preview", json=patch)
+                assert preview.status_code == 200, preview.text
+                assert preview.json()["activation_allowed"]
+                assert not preview.json()["rebuild_queued"]
+                applied = await client.patch("/v1/settings", json=patch)
+                assert applied.status_code == 200, applied.text
+                assert owner.config.values.offline is offline
+                _, current_snapshot, current_families = await _retained_settings_state(
+                    owner
+                )
+                assert current_snapshot == snapshot and current_families == families
+                await _assert_settings_workspace_searchable(client)

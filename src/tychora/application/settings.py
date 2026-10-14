@@ -11,7 +11,10 @@ from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.configuration.additive_compatibility import (
     qualified_additive_registry_extension,
 )
-from tychora.configuration.indexed_representation import indexed_representation_identity
+from tychora.configuration.indexed_representation import (
+    indexed_representation_identity,
+    pinned_runtime_compatible,
+)
 from tychora.configuration.registry import Registry
 from tychora.configuration.resolve import resolve_config, selected_workspace_profile
 from tychora.contracts.errors import TychoraError
@@ -62,8 +65,9 @@ class SettingsService:
                 )
             retained[kind] = value
         registry.validate_activation(frozenset(retained), retained)
+        has_snapshot = self.owner.store.active_snapshot_id() is not None
         if (
-            self.owner.store.active_snapshot_id() is not None
+            has_snapshot
             and indexed_representation_identity(candidate)
             != indexed_representation_identity(self.owner.config)
             and not qualified_additive_registry_extension(self.owner.config, candidate)
@@ -72,6 +76,14 @@ class SettingsService:
                 "PROFILE_INCOMPATIBLE",
                 "Existing index generations require their original configuration.",
             )
+        if has_snapshot:
+            snapshot = self.owner.store.resolve_snapshot(None)
+            retained_config = self.owner.store.retained_config(snapshot)
+            if not pinned_runtime_compatible(retained_config, candidate):
+                raise TychoraError(
+                    "PROFILE_INCOMPATIBLE",
+                    "Pinned snapshot requires publication under current settings.",
+                )
         return registry
 
     async def activate(self, request: SettingsActivation, scope=None):
