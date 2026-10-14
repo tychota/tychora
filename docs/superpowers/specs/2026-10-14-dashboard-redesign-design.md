@@ -42,6 +42,8 @@ Collection scope supports one, several, or all granted active collections. Searc
 
 Each operation has one canonical home: collection editors live in Collections, provider/model editors in Models, and Settings links to them. Explore is a deep-linked shared relationship inspector rather than a second relation implementation. Documents and Search reuse evidence and chunk readers. Inventory filters/sorting must apply to the server result set or be explicitly labeled as applying only to loaded rows; bounded/partial counts and continuation stay visible.
 
+The initial inventory may report unit/window counts as unknown even for a small document when the existing authorization evaluator cannot establish an exact count within the listing budget. It must not scan whole extraction artifacts or introduce a second authorization implementation just to populate a summary. Content and Chunks remain the exact paginated inspection surfaces; an unknown inventory count does not mean no content was indexed.
+
 ## Required administration operations
 
 The new collection/grant/lifecycle and guided settings/readiness contracts are required backend work. Existing maintenance services are reused.
