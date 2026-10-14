@@ -1,0 +1,32 @@
+.impeccable.md
+  s_346481235fa7eb::t_f048f518568472 6-7,20-22
+docs/superpowers/plans/2026-10-14-dashboard-redesign.md
+  s_346481235fa7eb::t_9f1f988f824f57 43,59-60
+  s_346481235fa7eb::t_00134fc29c1067 269,274,276,287
+  s_346481235fa7eb::t_c260446aba8507 291
+  s_346481235fa7eb::t_a53f1faee38970 1-12,15-39,252,254,256,258,260,262-264,266-268,270-273,275,277-278,280-282,284-286,288-290,292-294,296-298,300-306,308-314
+  s_346481235fa7eb::t_bb6bf0a95edccb 13-14,40-42,44-58,61-251,253,255,257,259,261,265,279,283,295,299,307
+docs/superpowers/plans/2026-10-14-pdf-intake.md
+  s_346481235fa7eb::t_228eff195f62ec 231
+docs/superpowers/specs/2026-10-14-dashboard-redesign-design.md
+  s_346481235fa7eb::t_e38e0115d99a80 1-31,34-41,61,64-66,69-73,76-81,84-94
+  s_346481235fa7eb::t_00134fc29c1067 32-33,42-60,62-63,67-68,74-75,82-83,95-96
+docs/superpowers/specs/2026-10-14-pdf-intake-design.md
+  s_346481235fa7eb::t_228eff195f62ec 67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5a870766ff0be61261fca205738e7bdac5b0900a",
+  "prompts": {},
+  "sessions": {
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
