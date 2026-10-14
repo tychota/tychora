@@ -28,9 +28,16 @@ it("refreshes the credential grant without a stale scope and disposes selected r
           : path === "/v1/collections" && init.method === "POST"
             ? ((created = true), { collection_id: added })
             : path.startsWith("/v1/collections/")
-              ? { collection_id: added, archived_at: null }
+              ? { collection_id: path.split("/").at(-1), archived_at: null }
               : {
-                  collections: [{ collection_id: added, archived_at: null }],
+                  collections: [
+                    {
+                      collection_id: created
+                        ? added
+                        : handshake.default_collection_id,
+                      archived_at: null,
+                    },
+                  ],
                   next_cursor: null,
                   policy_epoch: 1,
                 };
@@ -98,6 +105,7 @@ it("static refresh cannot gain ungranted collections", async () => {
 
 it("refresh drops an archived selection even outside the first collection page", async () => {
   const fallback = "11111111-1111-4111-8111-111111111111";
+  let archived = false;
   vi.stubGlobal(
     "fetch",
     vi.fn(
@@ -125,7 +133,7 @@ it("refresh drops an archived selection even outside the first collection page",
                   }
                 : {
                     collection_id: handshake.default_collection_id,
-                    archived_at: "2026-01-01T00:00:00Z",
+                    archived_at: archived ? "2026-01-01T00:00:00Z" : null,
                   },
           ),
         ),
@@ -136,7 +144,121 @@ it("refresh drops an archived selection even outside the first collection page",
     await hook.result.current.connect("managed");
   });
   await act(async () => {
+    archived = true;
     await hook.result.current.refreshGrant();
   });
   expect(hook.result.current.selectedCollections).toEqual([fallback]);
+});
+
+it.each([true, false])(
+  "connect selects an active granted collection with archived default=%s",
+  async (archived) => {
+    const fallback = "11111111-1111-4111-8111-111111111111";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async (path: string) =>
+          new Response(
+            JSON.stringify(
+              path === "/v1/handshake"
+                ? {
+                    ...handshake,
+                    scope: {
+                      ...handshake.scope,
+                      collection_ids: [
+                        ...handshake.scope.collection_ids,
+                        fallback,
+                      ],
+                    },
+                  }
+                : path.startsWith("/v1/collections?")
+                  ? {
+                      collections: [
+                        { collection_id: fallback, archived_at: null },
+                      ],
+                      next_cursor: null,
+                    }
+                  : {
+                      collection_id: handshake.default_collection_id,
+                      archived_at: archived ? "2026-01-01T00:00:00Z" : null,
+                    },
+            ),
+          ),
+      ),
+    );
+    const hook = renderHook(() => useSession(), { wrapper: SessionProvider });
+    await act(async () => {
+      await hook.result.current.connect("managed");
+    });
+    expect(hook.result.current.selectedCollections).toEqual([
+      archived ? fallback : handshake.default_collection_id,
+    ]);
+  },
+);
+
+it("connect keeps administration available when all granted collections are archived", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async (path: string) =>
+        new Response(
+          JSON.stringify(
+            path === "/v1/handshake"
+              ? handshake
+              : path.startsWith("/v1/collections?")
+                ? { collections: [], next_cursor: null }
+                : {
+                    collection_id: handshake.default_collection_id,
+                    archived_at: "2026-01-01T00:00:00Z",
+                  },
+          ),
+        ),
+    ),
+  );
+  const hook = renderHook(() => useSession(), { wrapper: SessionProvider });
+  await act(async () => {
+    await hook.result.current.connect("managed");
+  });
+  expect(hook.result.current.selectedCollections).toEqual([]);
+  expect(hook.result.current.adminClient).not.toBeNull();
+  expect(hook.result.current.handshake).toEqual(handshake);
+});
+
+it("disconnect cancels initial lifecycle reads without restoring the session", async () => {
+  let release!: () => void;
+  let started!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string) => {
+      if (path === "/v1/handshake")
+        return new Response(JSON.stringify(handshake));
+      started();
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return new Response(
+        JSON.stringify({ collections: [], next_cursor: null }),
+      );
+    }),
+  );
+  const hook = renderHook(() => useSession(), { wrapper: SessionProvider });
+  let connecting!: Promise<void>;
+  await act(async () => {
+    connecting = hook.result.current.connect("managed");
+    // Bound the regression before lifecycle reads exist in connect().
+    await Promise.race([reading, connecting]);
+  });
+  expect(release).toBeDefined();
+  act(() => {
+    hook.result.current.disconnect();
+  });
+  await act(async () => {
+    release();
+    await expect(connecting).rejects.toMatchObject({ name: "AbortError" });
+  });
+  expect(hook.result.current.client).toBeNull();
+  expect(hook.result.current.selectedCollections).toEqual([]);
 });
