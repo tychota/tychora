@@ -1,0 +1,25 @@
+dashboard/src/pages/sources/submission.ts
+  s_346481235fa7eb::t_b33349fdd1e2bc 65
+dashboard/src/test/operations.test.tsx
+  s_346481235fa7eb::t_ff857fc341f223 927-959
+src/tychora/resources/dashboard/assets/index-BpY_-R12.js
+  s_346481235fa7eb::t_d5329de9d2de8c 9
+src/tychora/resources/dashboard/index.html
+  s_346481235fa7eb::t_aa43f8ca28694c 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "10979850765a1ae6ce782a922e6eece60ac434a5",
+  "prompts": {},
+  "sessions": {
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
