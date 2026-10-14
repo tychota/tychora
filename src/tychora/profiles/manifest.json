@@ -10,5 +10,9 @@
   "verified@1": {
     "path": "verified",
     "digest": "aa915d13093e240c8fe2dd06edfaef838107878a894f70966d1da3e4e12df58b"
+  },
+  "general-documents@1": {
+    "path": "general-documents",
+    "digest": "ac34ef9de8c081321cebbbbd1e26cbc8af9cff285f686d6a9413bc876b6a8be3"
   }
 }

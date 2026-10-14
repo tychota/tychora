@@ -8,6 +8,9 @@ import os
 from uuid import uuid4
 
 from tychora.adapters.sqlite.corpus import CorpusStore
+from tychora.configuration.additive_compatibility import (
+    qualified_additive_registry_extension,
+)
 from tychora.configuration.indexed_representation import indexed_representation_identity
 from tychora.configuration.registry import Registry
 from tychora.configuration.resolve import resolve_config, selected_workspace_profile
@@ -108,6 +111,9 @@ class SettingsService:
                     owner.store.active_snapshot_id() is not None
                     and indexed_representation_identity(candidate)
                     != indexed_representation_identity(owner.config)
+                    and not qualified_additive_registry_extension(
+                        owner.config, candidate
+                    )
                 ):
                     raise TychoraError(
                         "PROFILE_INCOMPATIBLE",

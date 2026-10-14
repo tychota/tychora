@@ -63,6 +63,25 @@ class DefinitionEntry(Contract):
     schema_digest: Identifier
 
 
+class KindMetadataField(Contract):
+    name: NonEmptyStr
+    required: bool
+    value_types: tuple[str, ...]
+    description: str
+    constraints: FrozenJsonMap | bool
+    advanced: bool = False
+
+
+class KindMetadataForm(Contract):
+    kind_id: Identifier
+    schema_id: Identifier
+    schema_digests: FrozenJsonMap
+    fields: tuple[KindMetadataField, ...]
+    schemas: FrozenJsonMap
+    schema_reference_bindings: FrozenJsonMap
+    advanced: bool = False
+
+
 class SourceExtractionCoverage(Contract):
     extraction_id: Identifier
     stages: FrozenJsonMap

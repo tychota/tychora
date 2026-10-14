@@ -245,6 +245,15 @@ def register_routes(app: FastAPI) -> None:
         )
         return _source_json(result) if parsed.subject == "sources" else _json(result)
 
+    @app.get("/v1/discovery/kinds/{kind_id}/metadata-schema")
+    async def kind_metadata_schema(kind_id: str, request: Request):
+        _require(request, "read")
+        return _json(
+            await _services(request).discovery.kind_metadata_schema(
+                kind_id, _scope(request), ExecutionContext()
+            )
+        )
+
     @app.get("/v1/sources")
     async def list_sources(
         request: Request, cursor: str | None = None, limit: int = 100
