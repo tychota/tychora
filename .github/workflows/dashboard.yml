@@ -43,5 +43,5 @@ jobs:
         env:
           TYCHORA_E2E_PYTHON: ../.venv/bin/python
         run: npm run e2e
-      - name: Verify built wheel and sdist resources
-        run: uv run --locked pytest tests/transports/test_dashboard_distribution.py -q
+      - name: Verify bounded fixture controls and distribution resources
+        run: uv run --locked pytest dashboard/e2e/test_server.py tests/transports/test_dashboard_distribution.py -q

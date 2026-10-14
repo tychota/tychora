@@ -95,8 +95,22 @@ test("real ingestion, durable jobs, provenance, coverage, history and evaluation
   const accepted = await acceptedPromise;
   expect(accepted.status()).toBe(202);
   const receipt = await accepted.json();
+  const queued = await context.request.get(`/v1/jobs/${receipt.id}`, {
+    headers: { Authorization: `Bearer ${owner}` },
+  });
+  expect((await queued.json()).state).toBe("queued");
+  const streamPromise = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === `/v1/jobs/${receipt.id}/events`,
+  );
   await page.getByRole("link", { name: "Follow job", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/dashboard/jobs/${receipt.id}$`));
+  const stream = await streamPromise;
+  expect(stream.status()).toBe(200);
+  expect(stream.headers()["content-type"]).toContain("text/event-stream");
+  await expect(
+    page.locator(".compact-list li").filter({ hasText: "succeeded" }).first(),
+  ).toBeVisible();
   await expect(
     page.getByText("succeeded", { exact: true }).first(),
   ).toBeVisible();
@@ -287,6 +301,39 @@ test("real ingestion, durable jobs, provenance, coverage, history and evaluation
   await expect(
     page.getByRole("columnheader", { name: "Common numeric metric" }),
   ).toBeVisible();
+  const detailResponses = await Promise.all(
+    [evaluation.id, second.id].map((id: string) =>
+      context.request.get(`/v1/evaluations/${id}`, {
+        headers: { Authorization: `Bearer ${owner}` },
+      }),
+    ),
+  );
+  const details = await Promise.all(
+    detailResponses.map(async (response) => {
+      expect(response.status()).toBe(200);
+      return response.json();
+    }),
+  );
+  const recall = details.map(
+    (detail) =>
+      detail.report.aggregate.metrics.find(
+        (metric: { name: string; value: unknown }) =>
+          metric.name === "source_recall",
+      ).value,
+  );
+  expect(typeof recall[0]).toBe("number");
+  expect(typeof recall[1]).toBe("number");
+  const recallRow = page
+    .getByRole("row")
+    .filter({
+      has: page.getByRole("cell", { name: "source_recall", exact: true }),
+    });
+  await expect(recallRow.getByRole("cell")).toHaveText([
+    "source_recall",
+    String(recall[0]),
+    String(recall[1]),
+    String(recall[1] - recall[0]),
+  ]);
   await screenshot(page, "desktop-evaluations");
   await page.getByRole("link", { name: evaluation.id, exact: true }).click();
   await expect(

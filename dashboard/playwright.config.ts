@@ -1,6 +1,8 @@
 import { defineConfig } from "@playwright/test";
 
 // Optional executable override supports a preinstalled browser without machine-specific paths.
+// Playwright sets FORCE_COLOR for workers; remove a conflicting inherited setting.
+delete process.env.NO_COLOR;
 const port = Number(process.env.TYCHORA_E2E_PORT ?? 8765);
 export default defineConfig({
   testDir: "./e2e",
