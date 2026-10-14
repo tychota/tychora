@@ -80,7 +80,7 @@ class PdfIntakeService:
         self._ready = True
         self._reap()
 
-    def _reconcile_handoff(self, record):
+    def _reconcile_handoff(self, record, *, reject_conflict=False):
         """An accepted retained capture outranks the unsubmitted receipt TTL."""
         if (
             record.get("submission") is None
@@ -103,9 +103,9 @@ class PdfIntakeService:
             else self.services
         )
         status = services.jobs.repository.get(row[0])
-        if status.captured_inputs is None:
-            return record
-        source = self._acquired(record, self.owner.scope).source
+        # Intent exists before CAS promotion. Its identity must not depend on a
+        # trusted AcquiredSource or an original_ref that may not exist yet.
+        source = self._source(record)
         if status.request_digest != digest(
             "request-v1",
             self.owner.workspace_id,
@@ -113,9 +113,14 @@ class PdfIntakeService:
             "add",
             source_intent(source),
         ):
-            raise TychoraError(
-                "IDEMPOTENCY_CONFLICT", "PDF handoff is bound to different job input."
-            )
+            if reject_conflict:
+                raise TychoraError(
+                    "IDEMPOTENCY_CONFLICT",
+                    "PDF handoff is bound to different job input.",
+                )
+            return record
+        if status.captured_inputs is None:
+            return record
         capture = services.sources._committed_capture(
             status.captured_inputs, historical=True
         )
@@ -125,9 +130,14 @@ class PdfIntakeService:
             or canonical_bytes(capture.source.get("pdf_processing"))
             != canonical_bytes(record["analysis"]["proposed_policy"])
         ):
-            raise TychoraError("INTEGRITY_ERROR", "PDF handoff capture differs.")
+            if reject_conflict:
+                raise TychoraError(
+                    "IDEMPOTENCY_CONFLICT", "PDF handoff capture differs."
+                )
+            return record
         record.update(
             state="submitted",
+            original_ref=capture.original_ref.model_dump(mode="json"),
             job={"id": status.id, "operation": status.operation, "state": status.state},
         )
         self._write(record)
@@ -382,14 +392,26 @@ class PdfIntakeService:
 
         hasher = hashlib.sha256()
         received = 0
+
+        def remaining(current):
+            seconds = current["expires"] - time.time()
+            if seconds <= 0:
+                raise TychoraError("SCOPE_CHANGED", "PDF intake expired during upload.")
+            return seconds
+
         try:
             record, fd = await self.owner.run_blocking(begin, ctx)
             iterator = aiter(chunks)
             while True:
                 try:
-                    chunk = await asyncio.wait_for(anext(iterator), timeout=60)
+                    chunk = await asyncio.wait_for(
+                        anext(iterator), timeout=min(60, remaining(record))
+                    )
                 except StopAsyncIteration:
                     break
+                except TimeoutError:
+                    remaining(record)  # Distinguish absolute expiry from idle timeout.
+                    raise
                 received += len(chunk)
                 if received > min(record["byte_ceiling"], self.byte_ceiling):
                     raise TychoraError(
@@ -397,10 +419,13 @@ class PdfIntakeService:
                     )
 
                 def write(chunk=chunk):
-                    self._authorized(intake_id, scope)
+                    current = self._authorized(intake_id, scope)
+                    remaining(current)
                     ctx.checkpoint()
                     view = memoryview(chunk)
                     while view:
+                        remaining(current)
+                        ctx.checkpoint()
                         written = os.write(fd, view)
                         view = view[written:]
                     hasher.update(chunk)
@@ -411,10 +436,7 @@ class PdfIntakeService:
                 nonlocal fd
                 assert record is not None
                 current = self._authorized(intake_id, scope)
-                if current["expires"] < time.time():
-                    raise TychoraError(
-                        "SCOPE_CHANGED", "PDF intake expired during upload."
-                    )
+                remaining(current)
                 if received != record["descriptor"]["expected_size_bytes"]:
                     raise TychoraError(
                         "INVALID_REQUEST",
@@ -638,14 +660,11 @@ class PdfIntakeService:
 
         return await self.owner.run_blocking(analyse, ctx)
 
-    def _acquired(self, record, scope):
-        from tychora.application.acquired_source import AcquiredSource
-        from tychora.contracts.artifacts import ArtifactRef
-        from tychora.contracts.pdf_policy import PdfProcessingPolicy
+    def _source(self, record):
         from tychora.contracts.requests import SourceInput
 
         descriptor = record["descriptor"]
-        source = SourceInput.from_mapping(
+        return SourceInput.from_mapping(
             {
                 key: descriptor[key]
                 for key in ("source_key", "collection_id", "kind", "metadata", "format")
@@ -657,11 +676,17 @@ class PdfIntakeService:
                 "pdf_processing": record["analysis"]["proposed_policy"],
             }
         )
+
+    def _acquired(self, record, scope):
+        from tychora.application.acquired_source import AcquiredSource
+        from tychora.contracts.artifacts import ArtifactRef
+        from tychora.contracts.pdf_policy import PdfProcessingPolicy
+
         self._bindings[record["binding"]] = record["intake_id"]
         return AcquiredSource(
             workspace_id=self.owner.workspace_id,
             scope=self.owner.scope.narrow(scope),
-            source=source,
+            source=self._source(record),
             original_ref=ArtifactRef.model_validate_json(
                 canonical_bytes(record["original_ref"])
             ),
@@ -755,6 +780,7 @@ class PdfIntakeService:
 
         def promote():
             record = self._authorized(intake_id, scope)
+            record = self._reconcile_handoff(record, reject_conflict=True)
             if record["state"] not in {"analysed", "submitted"}:
                 raise TychoraError(
                     "IDEMPOTENCY_CONFLICT", "PDF intake is not analysed."
