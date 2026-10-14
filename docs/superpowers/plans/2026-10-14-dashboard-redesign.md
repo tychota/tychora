@@ -10,7 +10,7 @@
 
 **Related required specifications:** `2026-10-14-indexed-content-inspection-design.md` and `2026-10-14-pdf-intake-design.md` in the same specs directory.
 
-**Execution environment:** use the existing Python 3.12 environment from this worktree: `PYTHONPATH=src ../ci-fixes/.venv/bin/python -m pytest ...`. Commands below written as `uv run pytest` describe test selection; do not install or resolve dependencies merely to run them. Use the existing environment for Ruff/typing. The only planned new direct dependency is already-locked TOMLKit for safe configuration editing; declare it in the relevant extras and update the lock without changing unrelated resolutions. Check actual test paths before invocation.
+**Execution environment:** use the existing Python 3.12 environment from this worktree: `PYTHONPATH=/Users/tychota/Documents/Code/openSource/tychora/.worktrees/dashboard/src ../ci-fixes/.venv/bin/python -m pytest ...`. The absolute import path keeps subprocesses in temporary working directories on this checkout. Commands below written as `uv run pytest` describe test selection; do not install or resolve dependencies merely to run them. Use the existing environment for Ruff/typing. The only planned new direct dependency is already-locked TOMLKit for safe configuration editing; declare it in the relevant extras and update the lock without changing unrelated resolutions. Check actual test paths before invocation.
 
 ## Global Constraints
 
@@ -182,7 +182,7 @@ Snapshot publication retains unchanged prior members from archived collections. 
 
 ### Task 3: Guided configuration, qualified model inventory and workspace operations authority
 
-**Consumes Tasks 1–2:** qualified additive compatibility predicate; managed request-identity marker, full-workspace authority helper and managed grant refresh; collection consent view and policy parser. Existing `SettingsService.activate(SettingsActivation)` continues to own file/runtime commit. Existing `SetupService.plan/apply` and POST jobs setup own provisioning; MaintenanceService remains the operation dispatcher.
+**Consumes Tasks 1–2:** qualified additive compatibility predicate; managed request-identity marker and managed grant refresh; collection consent view and policy parser. Task 2's `workspace_authority.py` currently provides refresh only; extract the canonical full-workspace proof from `MaintenanceService._authorize_workspace` into the shared module as part of this task. Collection creation separately requires the exact managed owner grant and retains that stricter condition. Existing `SettingsService.activate(SettingsActivation)` continues to own file/runtime commit. Existing `SetupService.plan/apply` and POST jobs setup own provisioning; MaintenanceService remains the operation dispatcher.
 
 **Files to create:**
 
