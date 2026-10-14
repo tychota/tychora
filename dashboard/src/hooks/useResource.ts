@@ -1,61 +1,109 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSession } from "../session";
-import { publicError } from "../api/client";
+import { ApiClient, publicError } from "../api/client";
 import { pagePath } from "../api/operations";
-export function useResource<T>(path: string | null) {
-  const { client } = useSession();
-  const [value, setValue] = useState<T | null>(null);
-  const [error, setError] = useState<unknown>(null);
-  const [busy, setBusy] = useState(false);
+/** The owner chooses selected knowledge or full-grant administration explicitly. */
+export function useResource<T>(path: string | null, owner?: ApiClient | null) {
+  const session = useSession();
+  const client = owner === undefined ? session.client : owner;
+  const [state, setState] = useState<{
+    client: ApiClient | null;
+    path: string | null;
+    value: T | null;
+    error: unknown;
+    busy: boolean;
+  }>({ client, path, value: null, error: null, busy: !!client && !!path });
   const controller = useRef<AbortController | null>(null);
   const load = useCallback(async () => {
-    if (!client || !path) return;
     controller.current?.abort();
     const next = new AbortController();
     controller.current = next;
-    setBusy(true);
-    setError(null);
+    setState({
+      client,
+      path,
+      value: null,
+      error: null,
+      busy: !!client && !!path,
+    });
+    if (!client || !path) return;
     try {
-      const result = await client.request<T>(path, { signal: next.signal });
-      if (!next.signal.aborted) setValue(result);
+      const value = await client.request<T>(path, { signal: next.signal });
+      if (!next.signal.aborted)
+        setState({ client, path, value, error: null, busy: false });
     } catch (e) {
-      if (!next.signal.aborted) setError(publicError(e));
-    } finally {
-      if (!next.signal.aborted) setBusy(false);
+      if (!next.signal.aborted)
+        setState({
+          client,
+          path,
+          value: null,
+          error: publicError(e),
+          busy: false,
+        });
     }
   }, [client, path]);
   useEffect(() => {
-    setValue(null);
     void load();
     return () => controller.current?.abort();
   }, [load]);
-  return { value, setValue, error, setError, busy, load };
+  const current = state.client === client && state.path === path;
+  const setValue = (value: T | null) =>
+    setState((s) => ({ ...s, client, path, value }));
+  const setError = (error: unknown) =>
+    setState((s) => ({ ...s, client, path, error }));
+  return {
+    value: current ? state.value : null,
+    error: current ? state.error : null,
+    busy: current ? state.busy : !!client && !!path,
+    setValue,
+    setError,
+    load,
+  };
 }
 export function usePages<T extends { next_cursor: string | null }>(
-  path: string,
+  path: string | null,
+  owner?: ApiClient | null,
 ) {
-  const resource = useResource<T>(pagePath(path));
-  const { client } = useSession();
-  const [pages, setPages] = useState<T[]>([]);
+  const session = useSession();
+  const client = owner === undefined ? session.client : owner;
+  const resource = useResource<T>(path ? pagePath(path) : null, client);
+  const [stored, setStored] = useState<{
+    client: ApiClient | null;
+    path: string | null;
+    first: T | null;
+    pages: T[];
+  }>({ client, path, first: null, pages: [] });
   const [moreBusy, setMoreBusy] = useState(false);
   const lifetime = useRef(new AbortController());
   useEffect(() => {
-    if (resource.value) setPages([resource.value]);
-  }, [resource.value]);
-  useEffect(() => {
     lifetime.current = new AbortController();
+    setMoreBusy(false);
+    setStored({ client, path, first: null, pages: [] });
     return () => lifetime.current.abort();
   }, [client, path]);
+  const pages =
+    stored.client === client &&
+    stored.path === path &&
+    stored.first === resource.value
+      ? stored.pages
+      : resource.value
+        ? [resource.value]
+        : [];
   const more = async () => {
     const cursor = pages.at(-1)?.next_cursor;
-    if (!client || !cursor || moreBusy) return;
+    if (!client || !path || !cursor || moreBusy) return;
     setMoreBusy(true);
     const signal = lifetime.current.signal;
     try {
       const result = await client.request<T>(pagePath(path, cursor), {
         signal,
       });
-      if (!signal.aborted) setPages((old) => [...old, result]);
+      if (!signal.aborted)
+        setStored({
+          client,
+          path,
+          first: resource.value,
+          pages: [...pages, result],
+        });
     } catch (e) {
       if (!signal.aborted) resource.setError(publicError(e));
     } finally {

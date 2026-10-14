@@ -61,18 +61,20 @@ test("real ingestion, durable jobs, provenance, coverage, history and evaluation
   await page.getByLabel("Bearer token").fill("");
   await screenshot(page, "connection-error");
   await connect(page);
-  await page.getByRole("link", { name: "Sources", exact: true }).click();
-  await expect(
-    page.getByText("No registered sources in this scope."),
-  ).toBeVisible();
+  await page.getByRole("link", { name: "Documents", exact: true }).click();
+  await expect(page.getByText("Add a document to start reading")).toBeVisible();
   await screenshot(page, "sources-empty");
-  await page.getByRole("button", { name: "Add source", exact: true }).click();
+  await page.getByRole("link", { name: "Add documents", exact: true }).click();
+  await page
+    .getByLabel("Destination", { exact: true })
+    .selectOption({ label: "Default" });
+  await page.getByText("Advanced source options", { exact: true }).click();
   await page
     .getByLabel("Source key", { exact: true })
     .fill("synthetic-browser-manual");
   await page.getByLabel("Kind", { exact: true }).fill("manual@1");
   await page
-    .getByLabel("Source text", { exact: true })
+    .getByLabel("Content", { exact: true })
     .fill(
       "Synthetic browser verification: record cedar inspection outcomes and retain their exact provenance.",
     );
@@ -189,10 +191,9 @@ test("real ingestion, durable jobs, provenance, coverage, history and evaluation
     "INDEX_INCOMPLETE",
   );
   await screenshot(page, "desktop-search");
-  await page.getByRole("link", { name: "Sources", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Inspect revisions", exact: true })
-    .click();
+  await page.getByRole("link", { name: "Documents", exact: true }).click();
+  await page.getByRole("button", { name: /Synthetic browser manual/ }).click();
+  await page.getByRole("tab", { name: "History", exact: true }).click();
   await page
     .getByRole("button", { name: "Inspect coverage", exact: true })
     .click();
@@ -323,11 +324,9 @@ test("real ingestion, durable jobs, provenance, coverage, history and evaluation
   );
   expect(typeof recall[0]).toBe("number");
   expect(typeof recall[1]).toBe("number");
-  const recallRow = page
-    .getByRole("row")
-    .filter({
-      has: page.getByRole("cell", { name: "source_recall", exact: true }),
-    });
+  const recallRow = page.getByRole("row").filter({
+    has: page.getByRole("cell", { name: "source_recall", exact: true }),
+  });
   await expect(recallRow.getByRole("cell")).toHaveText([
     "source_recall",
     String(recall[0]),
@@ -388,9 +387,9 @@ test("real ingestion, durable jobs, provenance, coverage, history and evaluation
       return forbidden.status();
     })
     .toBe(403);
-  await page.getByRole("link", { name: "Sources", exact: true }).click();
+  await page.getByRole("link", { name: "Documents", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Add source", exact: true }),
+    page.getByRole("link", { name: "Add documents", exact: true }),
   ).toHaveCount(0);
   await page.getByRole("link", { name: "Evaluations", exact: true }).click();
   await expect(
@@ -439,6 +438,8 @@ test("narrow-screen keyboard, empty query and reconnect", async ({
   await page.keyboard.press("Tab");
   await expect(page.getByLabel("Bearer token")).toBeFocused();
   await connect(page, reader);
+  await page.getByRole("button", { name: "Navigation", exact: true }).click();
+  await page.getByRole("link", { name: "Search", exact: true }).click();
   await page
     .getByLabel("Question", { exact: true })
     .fill("zzznosyntheticmatchzzz");
@@ -481,3 +482,140 @@ test("narrow-screen keyboard, empty query and reconnect", async ({
   await connect(page, reader);
   await expect(page.getByLabel("Question", { exact: true })).toHaveValue("");
 });
+
+for (const mobile of [false, true]) {
+  test(`named collection → simple text → exact content/chunks ${mobile ? "mobile" : "desktop"}`, async ({
+    page,
+    context,
+  }) => {
+    const title = mobile ? "Mobile field notes" : "Cedar field notes";
+    const text =
+      "Cedar verification 😀 <strong>remains inert</strong>.\nRetain the complete original passage.";
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
+    if (mobile) await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/dashboard/collections");
+    await connect(page);
+    await page
+      .getByRole("button", { name: "Create collection", exact: true })
+      .click();
+    await page.getByLabel("Collection name", { exact: true }).fill(title);
+    await page
+      .getByLabel("Slug", { exact: true })
+      .fill(mobile ? "mobile-field-notes" : "cedar-field-notes");
+    const createdResponse = page.waitForResponse(
+      (r) =>
+        new URL(r.url()).pathname === "/v1/collections" &&
+        r.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "Create", exact: true }).click();
+    const created = await createdResponse;
+    expect(created.status()).toBe(201);
+    const collection = await created.json();
+    await expect(
+      page.getByRole("heading", { name: title, exact: true }),
+    ).toBeVisible();
+    await expect(page.locator(".scope-selector summary")).toContainText(title);
+    await screenshot(
+      page,
+      `task4-${mobile ? "mobile" : "desktop"}-collections`,
+    );
+    const row = page
+      .getByRole("row")
+      .filter({ has: page.getByRole("link", { name: title, exact: true }) });
+    await row.getByRole("button", { name: "Documents", exact: true }).click();
+    await page
+      .getByRole("link", { name: "Add documents", exact: true })
+      .click();
+    await page.getByLabel("Title", { exact: true }).fill(`${title} document`);
+    await page.getByLabel("Content", { exact: true }).fill(text);
+    await expect(
+      page.getByRole("button", { name: "Index text", exact: true }),
+    ).toBeDisabled();
+    await page
+      .getByLabel("Destination", { exact: true })
+      .selectOption(collection.collection_id);
+    await screenshot(page, `task4-${mobile ? "mobile" : "desktop"}-add-text`);
+    await page.getByLabel("Content", { exact: true }).press("Tab");
+    const acceptedResponse = page.waitForResponse(
+      (r) =>
+        new URL(r.url()).pathname === "/v1/sources" &&
+        r.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "Index text", exact: true }).click();
+    const accepted = await acceptedResponse;
+    expect(accepted.status()).toBe(202);
+    const receipt = await accepted.json();
+    await expect
+      .poll(async () => {
+        const response = await context.request.get(`/v1/jobs/${receipt.id}`, {
+          headers: { Authorization: `Bearer ${owner}` },
+        });
+        return (await response.json()).state;
+      })
+      .toBe("succeeded");
+    await page
+      .getByRole("link", { name: "Open documents", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: new RegExp(`${title} document`) })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: `${title} document`, exact: true }),
+    ).toBeFocused();
+    await page.getByRole("tab", { name: "Content", exact: true }).click();
+    await expect(
+      page.locator(".content-unit .evidence-text").first(),
+    ).toContainText("Cedar verification 😀 <strong>remains inert</strong>.");
+    expect(
+      await page.locator(".content-unit .evidence-text strong").count(),
+    ).toBe(0);
+    await screenshot(page, `task4-${mobile ? "mobile" : "desktop"}-content`);
+    await page
+      .getByRole("tab", { name: "Content", exact: true })
+      .press("ArrowRight");
+    await expect(
+      page.getByRole("tab", { name: "Chunks", exact: true }),
+    ).toBeFocused();
+    const chunks = page.locator(".content-unit .evidence-text");
+    await expect(chunks.first()).toContainText(
+      "Cedar verification 😀 <strong>remains inert</strong>.",
+    );
+    await screenshot(page, `task4-${mobile ? "mobile" : "desktop"}-documents`);
+    await page
+      .getByRole("button", { name: "Full unit", exact: true })
+      .first()
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Exact evidence", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator(".evidence-reader .evidence-text")).toContainText(
+      "Cedar verification 😀",
+    );
+    await screenshot(page, `task4-${mobile ? "mobile" : "desktop"}-full-unit`);
+    if (mobile) {
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBe(390);
+      await page
+        .getByRole("button", { name: "Back to documents", exact: true })
+        .click();
+      await expect(
+        page.getByRole("button", { name: new RegExp(`${title} document`) }),
+      ).toBeFocused();
+      await page
+        .getByRole("button", { name: "Navigation", exact: true })
+        .click();
+      await expect(
+        page.getByRole("link", { name: "Models", exact: true }),
+      ).toBeVisible();
+    }
+    expect(errors).toEqual([]);
+    expect(
+      await page.evaluate(() => ({
+        local: localStorage.length,
+        session: sessionStorage.length,
+      })),
+    ).toEqual({ local: 0, session: 0 });
+  });
+}

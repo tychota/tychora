@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -13,8 +14,9 @@ from tychora.contracts.errors import TychoraError
 DASHBOARD_ROOT = Path(__file__).parents[2] / "resources" / "dashboard"
 _ID = r"[A-Za-z0-9_-]{1,128}"
 _PAGES = re.compile(
-    rf"/dashboard/(?:|search|sources|sources/{_ID}/revisions/{_ID}|"
-    rf"jobs(?:/{_ID})?|evaluations(?:/{_ID})?|activity|runs/{_ID}|settings)"
+    rf"/dashboard(?:|/(?:|search|explore|models|collections(?:/{_ID})?|"
+    rf"documents(?:/add|/{_ID}(?:/revisions/{_ID})?)?|sources(?:/{_ID}(?:/revisions/{_ID})?)?|"
+    rf"jobs(?:/{_ID})?|evaluations(?:/{_ID})?|activity|runs/{_ID}|settings))"
 )
 _ASSETS = re.compile(
     r"/dashboard/assets/(?:[A-Za-z0-9_-][A-Za-z0-9_.-]*/)*[A-Za-z0-9_-][A-Za-z0-9_.-]*"
@@ -32,7 +34,7 @@ SECURITY_HEADERS = {
 }
 
 
-def is_dashboard_static_request(scope: dict) -> bool:
+def is_dashboard_static_request(scope: Mapping) -> bool:
     """Only known app route shapes or safe asset names may omit a credential."""
     return scope.get("method") in {"GET", "HEAD"} and bool(
         _PAGES.fullmatch(scope.get("path", ""))
@@ -58,8 +60,9 @@ def _contained_file(root: Path, relative: str, *, directory: str = "") -> Path |
 def register_dashboard(app: FastAPI) -> None:
     app.state.dashboard_root = DASHBOARD_ROOT
 
+    @app.api_route("/dashboard", methods=["GET", "HEAD"])
     @app.api_route("/dashboard/{path:path}", methods=["GET", "HEAD"])
-    async def dashboard(request: Request, path: str):
+    async def dashboard(request: Request, path: str = ""):
         if not is_dashboard_static_request(request.scope):
             raise TychoraError("NOT_FOUND", "Dashboard resource is unavailable.")
         root = Path(request.app.state.dashboard_root)

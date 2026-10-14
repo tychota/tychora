@@ -262,3 +262,127 @@ it("disconnect cancels initial lifecycle reads without restoring the session", a
   expect(hook.result.current.client).toBeNull();
   expect(hook.result.current.selectedCollections).toEqual([]);
 });
+
+it("does not expose a full-grant knowledge client with no active collection", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async (path: string) =>
+        new Response(
+          JSON.stringify(
+            path === "/v1/handshake"
+              ? handshake
+              : path.startsWith("/v1/collections?")
+                ? { collections: [], next_cursor: null }
+                : {
+                    collection_id: handshake.default_collection_id,
+                    archived_at: "2026-01-01T00:00:00Z",
+                  },
+          ),
+        ),
+    ),
+  );
+  const hook = renderHook(() => useSession(), { wrapper: SessionProvider });
+  await act(async () => {
+    await hook.result.current.connect("managed");
+  });
+  expect(hook.result.current.client).toBeNull();
+  expect(hook.result.current.adminClient).not.toBeNull();
+});
+
+it("selection cancels knowledge but preserves the administration client and grant epoch", async () => {
+  const second = "11111111-1111-4111-8111-111111111111";
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async (path: string) =>
+        new Response(
+          JSON.stringify(
+            path === "/v1/handshake"
+              ? {
+                  ...handshake,
+                  scope: {
+                    ...handshake.scope,
+                    collection_ids: [handshake.default_collection_id, second],
+                  },
+                }
+              : path.startsWith("/v1/collections?")
+                ? {
+                    collections: [handshake.default_collection_id, second].map(
+                      (id) => ({ collection_id: id, archived_at: null }),
+                    ),
+                    next_cursor: null,
+                  }
+                : { collection_id: path.split("/").at(-1), archived_at: null },
+          ),
+        ),
+    ),
+  );
+  const hook = renderHook(() => useSession(), { wrapper: SessionProvider });
+  await act(async () => {
+    await hook.result.current.connect("managed");
+  });
+  const admin = hook.result.current.adminClient!;
+  const epoch = hook.result.current.sessionKey;
+  act(() => hook.result.current.selectCollections([second]));
+  expect(hook.result.current.adminClient).toBe(admin);
+  expect(hook.result.current.sessionKey).toBe(epoch);
+  await expect(admin.request("/v1/settings")).resolves.toBeDefined();
+});
+
+it("workspace health and backup use the full granted client while keeping the selected collection", async () => {
+  const requests: { path: string; headers: Headers; body: unknown }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (path: string, init: RequestInit = {}) => {
+      requests.push({
+        path,
+        headers: new Headers(init.headers),
+        body: init.body ? JSON.parse(init.body as string) : null,
+      });
+      return new Response(
+        JSON.stringify(
+          path === "/v1/handshake"
+            ? handshake
+            : path.startsWith("/v1/collections?")
+              ? {
+                  collections: [
+                    {
+                      collection_id: handshake.default_collection_id,
+                      archived_at: null,
+                    },
+                  ],
+                  next_cursor: null,
+                }
+              : {
+                  collection_id: handshake.default_collection_id,
+                  archived_at: null,
+                },
+        ),
+      );
+    }),
+  );
+  const hook = renderHook(() => useSession(), { wrapper: SessionProvider });
+  await act(async () => {
+    await hook.result.current.connect("managed");
+  });
+  await hook.result.current.adminClient!.request("/v1/jobs", {
+    method: "POST",
+    body: JSON.stringify({ operation: "health" }),
+  });
+  await hook.result.current.adminClient!.request("/v1/jobs", {
+    method: "POST",
+    body: JSON.stringify({
+      operation: "export",
+      destination: "synthetic-backup",
+    }),
+  });
+  expect(
+    requests
+      .filter((r) => r.path === "/v1/jobs")
+      .every((r) => !r.headers.has("X-Tychora-Scope")),
+  ).toBe(true);
+  expect(hook.result.current.selectedCollections).toEqual([
+    handshake.default_collection_id,
+  ]);
+});

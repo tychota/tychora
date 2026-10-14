@@ -19,8 +19,8 @@ import {
 } from "../components/Operations";
 import { JsonDetails } from "../components/JsonDetails";
 function JobDetail({ id }: { id: string }) {
-  const { client, handshake } = useSession();
-  const data = useResource<JobStatus>(`/v1/jobs/${objectPath(id)}`);
+  const { adminClient: client, handshake } = useSession();
+  const data = useResource<JobStatus>(`/v1/jobs/${objectPath(id)}`, client);
   const [events, setEvents] = useState<JobEvent[]>([]);
   const [streamError, setStreamError] = useState<unknown>(null);
   const [streamEpoch, setStreamEpoch] = useState(0);
@@ -239,7 +239,8 @@ export function Jobs({ id }: { id?: string }) {
   return id ? <JobDetail key={id} id={id} /> : <JobList />;
 }
 function JobList() {
-  const data = usePages<JobPage>("/v1/jobs");
+  const { adminClient } = useSession();
+  const data = usePages<JobPage>("/v1/jobs", adminClient);
   return (
     <>
       <PageHeading title="Jobs">

@@ -126,6 +126,7 @@ def main() -> None:
                         "synthetic-dashboard-reader": reader,
                     },
                     authority=f"127.0.0.1:{args.port}",
+                    managed_owner_token="synthetic-dashboard-owner",
                 ),
             )
             app.add_middleware(ObserveStream, gate=gate)

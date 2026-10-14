@@ -35,9 +35,19 @@ async def test_public_shell_assets_and_exact_application_routes(dashboard_app):
         transport=ASGITransport(app=dashboard_app), base_url="http://127.0.0.1:8765"
     ) as client:
         for path in (
+            "/dashboard",
             "/dashboard/",
             "/dashboard/search",
+            "/dashboard/collections",
+            "/dashboard/collections/collection-1",
+            "/dashboard/documents",
+            "/dashboard/documents/add",
+            "/dashboard/documents/source-1",
+            "/dashboard/documents/source-1/revisions/revision-1",
+            "/dashboard/explore",
+            "/dashboard/models",
             "/dashboard/sources",
+            "/dashboard/sources/source-1",
             "/dashboard/sources/source-1/revisions/revision-1",
             "/dashboard/jobs",
             "/dashboard/jobs/job-1",
@@ -123,6 +133,10 @@ async def test_dashboard_admission_cannot_serve_arbitrary_or_escaping_files(
             "/dashboard/assets/%2e%2e/index.html",
             "/dashboard/assets/app.js/extra",
             "/dashboard/sources/x/extra",
+            "/dashboard/collections/x/extra",
+            "/dashboard/documents/x/extra",
+            "/dashboard/models/x",
+            "/dashboard/explore/x",
         ):
             response = await client.get(path)
             assert response.status_code in {403, 404}

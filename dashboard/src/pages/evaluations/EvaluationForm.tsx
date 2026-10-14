@@ -6,7 +6,7 @@ import { encodedBody, REQUEST_LIMIT } from "../sources/submission";
 import { ErrorNotice, Status } from "../../components/Status";
 import { RouteLink } from "../../components/Operations";
 export function EvaluationForm() {
-  const { client } = useSession();
+  const { adminClient: client } = useSession();
   const [dataset, setDataset] = useState("");
   const [split, setSplit] = useState("test");
   const [snapshot, setSnapshot] = useState("");

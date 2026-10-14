@@ -8,6 +8,11 @@ import {
 import { beforeEach, expect, it, vi } from "vitest";
 import handshake from "../../contracts/handshake.json";
 import sources from "../../contracts/sources.json";
+import documents from "../../contracts/task2-documents.json";
+import documentSchema from "../../contracts/task4-document-metadata-schema.json";
+import manualSchema from "../../contracts/task4-manual-metadata-schema.json";
+import models from "../../contracts/task3-models.json";
+import readiness from "../../contracts/task3-model-readiness.json";
 import revisions from "../../contracts/source-revisions.json";
 import receipt from "../../contracts/source-add.json";
 import jobFixture from "../../contracts/job-status.json";
@@ -36,6 +41,7 @@ beforeEach(() => {
               collections: [
                 {
                   collection_id: handshake.default_collection_id,
+                  title: "Default collection",
                   archived_at: null,
                 },
               ],
@@ -43,24 +49,38 @@ beforeEach(() => {
             }
           : path.startsWith("/v1/collections/")
             ? { collection_id: path.split("/").at(-1), archived_at: null }
-            : path.startsWith("/v1/discovery")
-              ? {
-                  definitions: [],
-                  counts: [],
-                  capabilities: [],
-                  capability_status: [],
-                  next_cursor: null,
-                }
-              : path === "/v1/settings"
-                ? {
-                    profile: "local",
-                    values: { providers: { text: { provider: "none" } } },
-                  }
-                : path.startsWith("/v1/sources")
-                  ? sources
-                  : path.startsWith("/v1/jobs")
-                    ? { jobs: [job], next_cursor: null }
-                    : historyPage,
+            : path.endsWith("metadata-schema")
+              ? path.includes("manual")
+                ? manualSchema
+                : documentSchema
+              : path === "/v1/models"
+                ? models
+                : path.startsWith("/v1/models/readiness")
+                  ? readiness
+                  : path.startsWith("/v1/documents")
+                    ? documents
+                    : path.startsWith("/v1/discovery")
+                      ? {
+                          definitions: [],
+                          counts: [],
+                          capabilities: [],
+                          capability_status: [],
+                          next_cursor: null,
+                        }
+                      : path === "/v1/settings"
+                        ? {
+                            profile: "local",
+                            values: {
+                              providers: { text: { provider: "none" } },
+                            },
+                          }
+                        : path.includes("/revisions")
+                          ? revisions
+                          : path.startsWith("/v1/sources")
+                            ? sources
+                            : path.startsWith("/v1/jobs")
+                              ? { jobs: [job], next_cursor: null }
+                              : historyPage,
     );
   vi.stubGlobal("fetch", async (path: string, init: RequestInit = {}) => {
     requests.push({ path, init });
@@ -173,15 +193,15 @@ it("paginates sources, revisions and channels without claiming a current revisio
               ...revisions,
               next_cursor: path.includes("cursor=") ? null : "revisions-more",
             })
-          : path.startsWith("/v1/sources?")
+          : path.startsWith("/v1/documents?")
             ? json({
-                ...sources,
+                ...documents,
                 next_cursor: path.includes("cursor=") ? null : "sources-more",
               })
             : fallback(path, init);
   await open("/dashboard/sources");
   fireEvent.click(
-    await screen.findByRole("button", { name: "Load more sources" }),
+    await screen.findByRole("button", { name: "Load more documents" }),
   );
   await waitFor(() =>
     expect(requests.some((r) => r.path.includes("cursor=sources-more"))).toBe(
@@ -189,8 +209,11 @@ it("paginates sources, revisions and channels without claiming a current revisio
     ),
   );
   fireEvent.click(
-    (await screen.findAllByRole("button", { name: "Inspect revisions" }))[0],
+    (
+      await screen.findAllByRole("button", { name: /Calibration reference/ })
+    )[0],
   );
+  fireEvent.click(await screen.findByRole("tab", { name: "History" }));
   fireEvent.click(
     await screen.findByRole("button", { name: "Load more revisions" }),
   );
@@ -217,14 +240,14 @@ it("requires confirmation, retains immutable source retry key, and links the dur
         : json(receipt, 202)
       : fallback(path, init);
   await open("/dashboard/sources");
-  fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+  await beginAdd();
   fireEvent.change(screen.getByLabelText("Source key"), {
     target: { value: "manual" },
   });
   fireEvent.change(screen.getByLabelText("Kind"), {
     target: { value: "manual@1" },
   });
-  fireEvent.change(screen.getByLabelText("Source text"), {
+  fireEvent.change(screen.getByLabelText("Content"), {
     target: { value: "héllo" },
   });
   expect(screen.getByRole("button", { name: "Submit source" })).toBeDisabled();
@@ -251,14 +274,14 @@ it("requires confirmation, retains immutable source retry key, and links the dur
 });
 it("rejects encoded source requests at the byte limit before fetch", async () => {
   await open("/dashboard/sources");
-  fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+  await beginAdd();
   fireEvent.change(screen.getByLabelText("Source key"), {
     target: { value: "large" },
   });
   fireEvent.change(screen.getByLabelText("Kind"), {
     target: { value: "manual@1" },
   });
-  fireEvent.change(screen.getByLabelText("Source text"), {
+  fireEvent.change(screen.getByLabelText("Content"), {
     target: { value: "é".repeat(530000) },
   });
   await screen.findByText(/exceeds the 1 MiB/i);
@@ -355,7 +378,7 @@ it("encodes selected file bytes and gives changed source intent a new key", asyn
       ? json({ code: "WORKSPACE_BUSY", message: "Busy", retryable: true }, 409)
       : fallback(path, init);
   await open("/dashboard/sources");
-  fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+  await beginAdd();
   fireEvent.change(screen.getByLabelText("Source key"), {
     target: { value: "bytes" },
   });
@@ -414,7 +437,7 @@ it("encodes selected file bytes and gives changed source intent a new key", asyn
 });
 it("rejects oversized file bytes before reading or sending them", async () => {
   await open("/dashboard/sources");
-  fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+  await beginAdd();
   fireEvent.change(screen.getByLabelText("Input type"), {
     target: { value: "bytes" },
   });
@@ -550,11 +573,11 @@ it("blocks manager and writer forms for reader scope without issuing evaluation 
   expect(requests.some((r) => r.path.startsWith("/v1/evaluations"))).toBe(
     false,
   );
-  fireEvent.click(screen.getByRole("link", { name: "Sources" }));
+  fireEvent.click(screen.getByRole("link", { name: "Documents" }));
   await screen.findByText(
     "Adding and syncing sources requires write capability.",
   );
-  expect(screen.queryByRole("button", { name: "Add source" })).toBeNull();
+  expect(screen.queryByRole("link", { name: "Add documents" })).toBeNull();
 });
 it("renders real evaluation details and compares mismatched runs with case drilldown", async () => {
   const fallback = respond;
@@ -734,14 +757,14 @@ it("preserves ambiguous source retry identity after formatting-only metadata edi
         : json(receipt, 202)
       : fallback(path, init);
   await open("/dashboard/sources");
-  fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+  await beginAdd();
   fireEvent.change(screen.getByLabelText("Source key"), {
     target: { value: "ambiguous" },
   });
   fireEvent.change(screen.getByLabelText("Kind"), {
     target: { value: "manual@1" },
   });
-  fireEvent.change(screen.getByLabelText("Source text"), {
+  fireEvent.change(screen.getByLabelText("Content"), {
     target: { value: "same text" },
   });
   fireEvent.click(
@@ -753,7 +776,10 @@ it("preserves ambiguous source retry identity after formatting-only metadata edi
   fireEvent.click(screen.getByRole("button", { name: "Submit source" }));
   await screen.findByText("CONNECTION_FAILED");
   fireEvent.change(screen.getByLabelText("Metadata JSON"), {
-    target: { value: "{ }" },
+    target: {
+      value:
+        '{ "title": "Synthetic source", "publisher": "Synthetic fixture", "edition": "1" }',
+    },
   });
   expect(screen.getByRole("button", { name: "Submit source" })).toBeDisabled();
   fireEvent.click(
@@ -852,14 +878,14 @@ it("sends a usable explicit default format for extensionless pasted text", async
       ? json(receipt, 202)
       : fallback(path, init);
   await open("/dashboard/sources");
-  fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+  await beginAdd();
   fireEvent.change(screen.getByLabelText("Source key"), {
     target: { value: "no-extension" },
   });
   fireEvent.change(screen.getByLabelText("Kind"), {
     target: { value: "manual@1" },
   });
-  fireEvent.change(screen.getByLabelText("Source text"), {
+  fireEvent.change(screen.getByLabelText("Content"), {
     target: { value: "Plain source text" },
   });
   fireEvent.click(
@@ -889,7 +915,7 @@ it.each([
       ? json(receipt, 202)
       : fallback(path, init);
   await open("/dashboard/sources");
-  fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+  await beginAdd();
   fireEvent.change(screen.getByLabelText("Source key"), {
     target: { value: "no-extension" },
   });
@@ -924,7 +950,7 @@ it.each([
 });
 it("requires an explicit bytes format for unrecognized filenames and preserves deliberate overrides", async () => {
   await open("/dashboard/sources");
-  fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+  await beginAdd();
   fireEvent.change(screen.getByLabelText("Input type"), {
     target: { value: "bytes" },
   });
@@ -953,7 +979,7 @@ it.each(["file.constructor", "file.__proto__"])(
   "keeps %s bytes behind the explicit format guard without rendering a nonstring",
   async (filename) => {
     await open("/dashboard/sources");
-    fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+    await beginAdd();
     fireEvent.change(screen.getByLabelText("Input type"), {
       target: { value: "bytes" },
     });
@@ -976,19 +1002,37 @@ it.each(["file.constructor", "file.__proto__"])(
   },
 );
 
+async function beginAdd() {
+  fireEvent.click(screen.getByRole("link", { name: "Add documents" }));
+  await screen.findByRole("option", { name: "Default collection" });
+  fireEvent.change(screen.getByLabelText("Destination"), {
+    target: { value: handshake.default_collection_id },
+  });
+  fireEvent.click(screen.getByText("Advanced source options"));
+  fireEvent.change(screen.getByLabelText("Metadata JSON"), {
+    target: {
+      value: JSON.stringify({
+        title: "Synthetic source",
+        publisher: "Synthetic fixture",
+        edition: "1",
+      }),
+    },
+  });
+}
 async function openSourceDraft() {
   await open("/dashboard/sources");
-  fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+  await beginAdd();
   fireEvent.change(screen.getByLabelText("Source key"), {
     target: { value: "manual" },
   });
   fireEvent.change(screen.getByLabelText("Kind"), {
     target: { value: "manual@1" },
   });
-  fireEvent.change(screen.getByLabelText("Source text"), {
+  fireEvent.change(screen.getByLabelText("Content"), {
     target: { value: "Preserved source text" },
   });
   await screen.findByText("Active profile: local");
+  await screen.findByLabelText("Publisher");
 }
 function changeSourceType(value: string) {
   fireEvent.change(screen.getByLabelText("Input type"), { target: { value } });
@@ -1022,9 +1066,7 @@ it("accepts preserved pasted text after rejecting a 50 MiB selected PDF", async 
   await screen.findByText("INPUT_BUDGET_EXCEEDED");
   changeSourceType("text");
   expect(screen.queryByText("INPUT_BUDGET_EXCEEDED")).toBeNull();
-  expect(screen.getByLabelText("Source text")).toHaveValue(
-    "Preserved source text",
-  );
+  expect(screen.getByLabelText("Content")).toHaveValue("Preserved source text");
   confirmSource();
   expect(screen.getByRole("button", { name: "Submit source" })).toBeEnabled();
   fireEvent.click(screen.getByRole("button", { name: "Submit source" }));
@@ -1115,7 +1157,7 @@ it.each([
           )
         : fallback(path, init);
     await open("/dashboard/sources");
-    fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+    await beginAdd();
     fireEvent.change(screen.getByLabelText("Source key"), {
       target: { value: "manual" },
     });
@@ -1146,6 +1188,8 @@ it.each([
       target: { value: "[" },
     });
   }
+  if (invalid === "missing key")
+    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "" } });
   confirmSource();
   const button = screen.getByRole("button", { name: "Submit source" });
   expect(button).toBeDisabled();

@@ -47,7 +47,18 @@ beforeEach(() => {
             }
           : path.startsWith("/v1/collections?")
             ? {
-                collections: [{ collection_id: collection, archived_at: null }],
+                collections: [
+                  {
+                    collection_id: collection,
+                    title: "Default collection",
+                    archived_at: null,
+                  },
+                  {
+                    collection_id: second,
+                    title: "Second collection",
+                    archived_at: null,
+                  },
+                ],
                 next_cursor: null,
               }
             : path.startsWith("/v1/collections/")
@@ -191,7 +202,7 @@ describe("connected workbench", () => {
     }
     render(<App renderRoute={() => <OtherPage />} />);
     await connect();
-    fireEvent.click(screen.getByRole("link", { name: "Sources" }));
+    fireEvent.click(screen.getByRole("link", { name: "Documents" }));
     fireEvent.click(screen.getByRole("button", { name: "Open persisted job" }));
     expect(screen.getByRole("link", { name: "Jobs" })).toHaveAttribute(
       "aria-current",
@@ -312,7 +323,7 @@ describe("connected workbench", () => {
         : fetch(path, init),
     );
     await search();
-    fireEvent.click(screen.getByLabelText(second));
+    fireEvent.click(await screen.findByLabelText("Second collection"));
     await act(async () => resolve(new Response(JSON.stringify(query))));
     expect(
       screen.queryByRole("button", { name: /Record synthetic/ }),
@@ -356,11 +367,13 @@ describe("connected workbench", () => {
     );
     expect(screen.queryByText(handshake.workspace_id)).not.toBeInTheDocument();
   });
-  it("connects, clears token form, shows authorized collection IDs and disconnects", async () => {
+  it("connects, clears token form, shows named granted collections and disconnects", async () => {
     render(<App />);
     await connect();
     expect(screen.queryByLabelText("Bearer token")).not.toBeInTheDocument();
-    expect(screen.getByLabelText(second)).toBeInTheDocument();
+    expect(
+      await screen.findByLabelText("Second collection"),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
     expect(screen.getByLabelText("Bearer token")).toHaveValue("");
     expect(screen.queryByText(handshake.workspace_id)).not.toBeInTheDocument();
@@ -370,7 +383,7 @@ describe("connected workbench", () => {
     await connect();
     await search();
     await screen.findByRole("button", { name: /Record synthetic/ });
-    fireEvent.click(screen.getByLabelText(second));
+    fireEvent.click(await screen.findByLabelText("Second collection"));
     expect(
       screen.queryByRole("button", { name: /Record synthetic/ }),
     ).not.toBeInTheDocument();

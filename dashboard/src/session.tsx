@@ -47,6 +47,8 @@ interface Session {
   handshake: Handshake | null;
   selectedCollections: string[];
   sessionKey: number;
+  selectionKey: number;
+  connectionKey: number;
   connect: (token: string) => Promise<void>;
   refreshGrant: (selectCreatedId?: string) => Promise<void>;
   createCollection: (value: CollectionInput) => Promise<CollectionSummary>;
@@ -61,19 +63,27 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     handshake: Handshake | null;
     selectedCollections: string[];
     sessionKey: number;
+    selectionKey: number;
+    connectionKey: number;
   }>({
     client: null,
     adminClient: null,
     handshake: null,
     selectedCollections: [],
     sessionKey: 0,
+    selectionKey: 0,
+    connectionKey: 0,
   });
   const active = useRef<ApiClient | null>(null);
   const pending = useRef<ApiClient | null>(null);
   const grant = useRef<ApiClient | null>(null);
   const epoch = useRef(0);
+  const selectedRef = useRef<string[]>([]);
+  const selectionEpoch = useRef(0);
   const disconnect = () => {
     epoch.current++;
+    selectionEpoch.current++;
+    selectedRef.current = [];
     active.current?.dispose();
     pending.current?.dispose();
     grant.current?.dispose();
@@ -84,6 +94,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       handshake: null,
       selectedCollections: [],
       sessionKey: epoch.current,
+      selectionKey: epoch.current,
+      connectionKey: epoch.current,
     });
   };
   const connect = async (token: string) => {
@@ -94,11 +106,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try {
       const handshake = await candidate.request<Handshake>("/v1/handshake");
       if (generation !== epoch.current) return;
-      if (!handshake.scope.collection_ids.length)
-        throw new ApiError(
-          "FORBIDDEN_SCOPE",
-          "No readable collections were granted.",
-        );
       const collections = await selectActiveCollections(
         candidate,
         handshake,
@@ -107,13 +114,17 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (generation !== epoch.current) return;
       grant.current = new ApiClient(token);
       const scoped = grant.current.withGrant(handshake.scope);
-      active.current = collections.length ? scoped.narrow(collections) : scoped;
+      active.current = collections.length ? scoped.narrow(collections) : null;
+      scoped.dispose();
+      selectedRef.current = collections;
       setState({
         client: active.current,
         adminClient: grant.current,
         handshake,
         selectedCollections: collections,
         sessionKey: epoch.current,
+        selectionKey: epoch.current,
+        connectionKey: epoch.current,
       });
     } finally {
       candidate.dispose();
@@ -124,17 +135,24 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const full = grant.current;
     if (!full) return;
     const generation = epoch.current;
+    const selectionGeneration = selectionEpoch.current;
     // This credential-only client deliberately carries no stale scope header.
     const handshake = await full.handshake();
     const selected = await selectActiveCollections(
       full,
       handshake,
-      selectCreatedId ? [selectCreatedId] : state.selectedCollections,
+      selectCreatedId ? [selectCreatedId] : selectedRef.current,
     );
     if (generation !== epoch.current || grant.current !== full) return;
+    if (selectionGeneration !== selectionEpoch.current) {
+      await refreshGrant();
+      return;
+    }
     const freshFull = full.credentialOnly();
     const fresh = freshFull.withGrant(handshake.scope);
-    const client = selected.length ? fresh.narrow(selected) : fresh;
+    const client = selected.length ? fresh.narrow(selected) : null;
+    fresh.dispose();
+    selectedRef.current = selected;
     active.current?.dispose();
     pending.current?.dispose();
     full.dispose();
@@ -147,6 +165,8 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       handshake,
       selectedCollections: selected,
       sessionKey: epoch.current,
+      selectionKey: state.selectionKey + 1,
+      connectionKey: state.connectionKey,
     });
   };
   const createCollection = async (value: CollectionInput) => {
@@ -159,15 +179,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const selectCollections = (ids: string[]) => {
     if (!grant.current) return;
     if (!state.handshake) return;
-    const client = grant.current.withGrant(state.handshake.scope).narrow(ids);
+    const unique = [...new Set(ids)];
+    if (
+      unique.some((id) => !state.handshake!.scope.collection_ids.includes(id))
+    )
+      throw new ApiError("FORBIDDEN_SCOPE", "Select only granted collections.");
+    const scoped = grant.current.withGrant(state.handshake.scope);
+    const client = unique.length ? scoped.narrow(unique) : null;
+    scoped.dispose();
     active.current?.dispose();
     active.current = client;
-    epoch.current++;
+    selectedRef.current = unique;
+    selectionEpoch.current++;
     setState((previous) => ({
       ...previous,
       client,
-      selectedCollections: ids,
-      sessionKey: epoch.current,
+      selectedCollections: unique,
+      selectionKey: previous.selectionKey + 1,
     }));
   };
   useEffect(
