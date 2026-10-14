@@ -1,0 +1,27 @@
+src/tychora/application/settings.py
+  s_346481235fa7eb::t_b2b4c60dc3693e 14-17,68,70,79-80,83-86
+  s_346481235fa7eb::t_ac5d52eebded02 81-82
+docs/configuration.md
+  s_346481235fa7eb::t_ac5d52eebded02 109-110
+  s_346481235fa7eb::t_4a20ceb49b6857 100-108
+tests/api/test_scope.py
+  s_346481235fa7eb::t_3bccf698f36c01 267-272,277-282,284-295
+tests/application/test_settings_draft.py
+  s_346481235fa7eb::t_9462d4c8815466 499-658
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7946fdda8f4d9b16f325c25197a1910695459cfd",
+  "prompts": {},
+  "sessions": {
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
