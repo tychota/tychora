@@ -3195,6 +3195,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "rich" },
     { name = "tiktoken" },
+    { name = "tomlkit" },
     { name = "typer" },
 ]
 
@@ -3301,6 +3302,7 @@ requires-dist = [
     { name = "pypdf", marker = "extra == 'full'", specifier = "==6.19.0" },
     { name = "rich" },
     { name = "tiktoken" },
+    { name = "tomlkit", specifier = "==0.15.1" },
     { name = "tree-sitter", marker = "extra == 'code'" },
     { name = "tree-sitter", marker = "extra == 'full'" },
     { name = "tree-sitter-javascript", marker = "extra == 'code'" },

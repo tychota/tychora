@@ -26,6 +26,7 @@ def backup_case(tmp_path):
         principal_id="owner",
         collection_ids=frozenset({"collection-one"}),
         access_ceiling=3,
+        uses=frozenset({"compose", "audit", "lookup"}),
         capabilities=frozenset({"manage"}),
     )
     with WorkspaceOwner.open(tmp_path / "source", settings, scope) as owner:
@@ -385,7 +386,12 @@ def test_backup_survives_source_workspace_removal(tmp_path):
         'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
     )
     settings = resolve_config(settings_path, "test", {})
-    scope = RequestScope(principal_id="owner", capabilities=frozenset({"manage"}))
+    scope = RequestScope(
+        principal_id="owner",
+        collection_ids=frozenset({"collection-one"}),
+        uses=frozenset({"compose", "audit", "lookup"}),
+        capabilities=frozenset({"manage"}),
+    )
     source = tmp_path / "source"
     destination = tmp_path / "backup"
     with WorkspaceOwner.open(source, settings, scope) as owner:

@@ -77,7 +77,7 @@ class RawBoundary:
                     r"/v1/pdf-intakes/(" + ID_PATTERN + r")/content",
                     scope.get("path", ""),
                 )
-                if scope.get("method") == "PUT"
+                if scope.get("method") in {"PUT", "PATCH"}
                 else None
             )
             request_scope, declared = checked_headers(
@@ -158,9 +158,9 @@ class RawBoundary:
                     }
                 return await receive()
 
-            activation = (
-                scope.get("path") == "/v1/settings" and scope.get("method") == "PUT"
-            )
+            activation = scope.get("path") == "/v1/settings" and scope.get(
+                "method"
+            ) in {"PUT", "PATCH"}
             is_mcp = scope.get("path", "").startswith("/mcp/")
             if not is_mcp:
                 self.runtime.admit(activation=activation)
@@ -212,6 +212,12 @@ def create_app(owner: WorkspaceOwner, services: Services, auth: LocalAuth) -> Fa
         )
     app.state.runtime = runtime
     app.state.settings = SettingsService(owner, app.state.runtime)
+    from tychora.application.settings_draft import SettingsDraftService
+
+    app.state.settings_draft = SettingsDraftService(app.state.settings)
+    from tychora.application.model_inventory import ModelInventoryService
+
+    app.state.models = ModelInventoryService(owner, services.maintenance.repository)
     app.state.auth = auth
     from tychora.interfaces.mcp.server import build_mcp
 

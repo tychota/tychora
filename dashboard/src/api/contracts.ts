@@ -362,3 +362,120 @@ export interface DocumentPage {
   job_record_limit: 100;
   job_metadata_byte_limit: 1048576;
 }
+
+export type SettingsFieldChange =
+  | { path: string; action: "set"; value: Exclude<Json, null> }
+  | { path: string; action: "inherit" };
+export interface SettingsPatch {
+  base_workspace_sha256: string;
+  changes: SettingsFieldChange[];
+}
+export interface SettingsFieldView {
+  active_profile: string;
+  base_workspace_sha256: string;
+  fields: {
+    path: string;
+    effective_value: Json;
+    override_value: Json;
+    overridden: boolean;
+    origin: Record<string, Json>;
+    value_schema: Record<string, Json>;
+    choices: Json[];
+  }[];
+  blockers: string[];
+  credential_readiness: "not_checked";
+}
+export interface SettingsPreview {
+  base_workspace_sha256: string;
+  candidate_workspace_sha256: string;
+  changes: { path: string; before: Json; after: Json }[];
+  activation_allowed: boolean;
+  blockers: string[];
+  rebuild_queued: false;
+}
+export interface ModelCatalog {
+  providers: {
+    slot: "text" | "image" | "rerank" | "vision";
+    configured_provider: string;
+    configured_model: string | null;
+    qualified_models: string[];
+    model_qualification:
+      | "qualified"
+      | "unsupported"
+      | "explicit_identifier"
+      | "disabled";
+    package_available: boolean;
+    credential_readiness: "not_checked";
+    upload_allowed_collection_ids: string[];
+    asset_state: "not_checked";
+  }[];
+  selections: string[];
+  selection_capabilities: {
+    selection: string;
+    required_modules: string[];
+    packages_available: boolean;
+    asset_state: "not_checked";
+  }[];
+  manifest_sha256: string;
+  offline: boolean;
+  pdf_ocr_policy: "per_intake";
+}
+export interface ModelAssetPlan {
+  manifest_sha256: string;
+  selection: string[];
+  assets: {
+    id: string;
+    selection: string;
+    path: string;
+    sha256: string;
+    size_bytes: number;
+    url: string;
+    license: string;
+    owner: string;
+    revision: string;
+    notice_url: string;
+  }[];
+  notices: {
+    selection: string;
+    attribution: string;
+    license: string;
+    notice_url: string;
+    model_card_url: string;
+  }[];
+  total_size_bytes: number;
+}
+export type ModelAssetState =
+  | "installed"
+  | "missing"
+  | "corrupt"
+  | "not_checked";
+export interface ModelReadiness {
+  manifest_sha256: string;
+  assets: {
+    asset_id: string;
+    selection: string;
+    sha256: string;
+    size_bytes: number;
+    state: ModelAssetState;
+    checked_bytes: number;
+    verification: "current_full_hash" | "none";
+    reason: string | null;
+  }[];
+  selections: {
+    selection: string;
+    state: ModelAssetState;
+    complete: boolean;
+  }[];
+  total_size_bytes: number;
+  checked_bytes: number;
+  complete: boolean;
+  receipts: {
+    job_id: string;
+    manifest_sha256: string;
+    verified_at: string;
+    asset_ids: string[];
+    verification: "durable_setup_result";
+  }[];
+  receipt_search_complete: boolean;
+  receipt_checked_bytes: number;
+}

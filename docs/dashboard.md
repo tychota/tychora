@@ -57,3 +57,13 @@ TYCHORA_E2E_PYTHON=../.venv/bin/python npm run e2e
 `build` writes deterministic production dependency notices and compiled resources into `src/tychora/resources/dashboard`. Commit rebuilt resources with source changes; `check:build` rejects drift, including new untracked resources. Playwright serves the ordinary `create_app` and compiled bundle from a disposable offline synthetic workspace, without browser API mocks or live providers. Browser screenshots and failure records live in ignored verification artifacts; traces are disabled to keep authorization headers out of recordings. An optional `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` supports an existing local browser; CI installs the pinned revision. Python packaging regression builds a wheel and sdist and checks resources, notices, frontend sources and exclusions. Executable resources use the existing `collect_data_files("tychora")`; this wheel check does not qualify platform executables.
 
 The session layer retains a credential-only administrative client separately from the selected collection client. After creation or consent, `refreshGrant` obtains a fresh handshake without a stale scope header, replaces selected clients and cancels their requests/streams. Selection survives when still granted and active; creation selects its returned UUID. Static sessions retain their original token limits. Tokens stay only in session memory. Synthetic server-generated collection and inventory examples are in `dashboard/contracts/task2-*.json`; unknown counts and job status must remain explicit in future UI work.
+
+The administration API now provides guided settings fields/preview/apply and
+qualified Models inventory/setup-plan/readiness DTOs. Captured synthetic HTTP
+responses live in `dashboard/contracts/task3-*`; TypeScript mirrors are in
+`src/api/contracts.ts`. Models/Settings page wiring is a separate dashboard task.
+Forms must preserve the server base digest, distinguish inheritance from setting
+null, and display preview blockers without suggesting a queued rebuild. Model
+pages must distinguish optional packages, consent, current asset hashes and
+historical setup receipts; `not_checked` calls for deliberate full verification,
+not an automatic download loop. Credential checks remain explicitly unchecked.

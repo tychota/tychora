@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -45,54 +44,13 @@ class MaintenanceService:
         self.evaluations = evaluations
 
     def _authorize_workspace(self, grant: RequestScope) -> None:
-        """Global recovery inventory requires the complete workspace policy scope.
+        from .workspace_authority import authorize_workspace
 
-        This proves authority from canonical rows, including hidden/withdrawn
-        sources and historical kinds, rather than an already narrowed owner.
-        """
-        db = self.owner.db
-        collections = db.execute(
-            "SELECT collection_id,access_floor FROM collections WHERE workspace_id=?",
-            (self.owner.workspace_id,),
-        ).fetchall()
-        floors = db.execute(
-            "SELECT s.access_floor,r.access_rank FROM sources s "
-            "JOIN collections c USING(collection_id) LEFT JOIN revisions r USING(source_id) "
-            "WHERE c.workspace_id=?",
-            (self.owner.workspace_id,),
-        ).fetchall()
-        uses = set()
-        for definitions in (
-            self.owner.store.registry.kinds,
-            self.owner.store.registry.modes,
-        ):
-            for definition in definitions.values():
-                uses.update(definition.get("allowed_uses", ()))
-        for raw, definition in db.execute(
-            "SELECT r.allowed_uses_json,k.definition_json FROM revisions r "
-            "JOIN kinds k USING(kind_id) JOIN sources s USING(source_id) "
-            "JOIN collections c USING(collection_id) WHERE c.workspace_id=?",
-            (self.owner.workspace_id,),
-        ):
-            uses.update(json.loads(raw))
-            uses.update(json.loads(definition)["kind"].get("allowed_uses", ()))
-        if (
-            not grant.collection_ids
-            or any(
-                cid not in grant.collection_ids or floor > grant.access_ceiling
-                for cid, floor in collections
-            )
-            or any(
-                floor is not None and floor > grant.access_ceiling
-                for row in floors
-                for floor in row
-            )
-            or not uses <= grant.uses
-        ):
-            raise TychoraError(
-                "FORBIDDEN_SCOPE",
-                "Detailed health requires whole-workspace access and uses.",
-            )
+        authorize_workspace(
+            self.owner,
+            grant,
+            capability="manage" if "manage" in grant.capabilities else "read",
+        )
 
     def _workspace_recovery(self, grant, operation):
         self._authorize_workspace(grant)
@@ -129,6 +87,12 @@ class MaintenanceService:
         )
         if required not in grant.capabilities:
             raise TychoraError("FORBIDDEN_SCOPE", "Maintenance is outside the grant")
+        if operation.operation in {"export", "import", "rebuild", "migrate"}:
+            from .workspace_authority import authorize_workspace
+
+            await self.owner.run_blocking(
+                lambda: authorize_workspace(self.owner, grant), ctx
+            )
         if isinstance(operation, EvaluateMaintenance):
             if self.evaluations is None:
                 raise TychoraError(

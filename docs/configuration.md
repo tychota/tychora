@@ -62,3 +62,36 @@ tychora --workspace ./knowledge --offline add ./manual.md --kind manual@1 --meta
 Source metadata `scope.project` projects into the registered project facet. A missing source project value matches a project filter only if that source explicitly declares `scope.global_facets=["project"]`, the facet allows global matching, and the request sets `include_global`. Children can narrow source values. Global matching never widens collection, revision, date, review, or access eligibility. Dates are strict ISO calendar dates and effective periods are half-open `[start, end)`; missing dates remain unknown. Distinct editions can coexist, while an update of the same edition replaces that edition's active member. The latest explicit publication is the default current edition; `all`, `exact`, `as_of`, and cutoff selections remain distinct.
 
 Settings `GET /v1/settings` returns redacted effective values. `PUT /v1/settings` takes exactly `{ "profile": "name", "workspace_toml": "..." }` and requires management scope. Activation can return `WORKSPACE_BUSY` while work is active. It changes the effective policy epoch without rebuilding indexes; an incompatible pinned representation may return `PROFILE_INCOMPATIBLE` until a compatible snapshot is published. Credentials are `env:NAME` or API-resolved `secret:NAME` references, never secret values in the TOML. The current config archive is a versioned field projection containing reference names; a non-null query default cannot be exported.
+
+## Guided workspace edits
+
+Full workspace managers can inspect `GET /v1/settings/fields`, preview a
+`SettingsPatch` at `POST /v1/settings/preview`, and resubmit it with
+`PATCH /v1/settings`. The server supplies `base_workspace_sha256` for the exact
+current `workspace.toml` bytes. A patch contains 1–32 unique leaf changes with
+`action: "set"` and a typed non-null `value`, or `action: "inherit"` without a
+value. Inherit removes the workspace override and restores profile resolution.
+Comments, registered profiles, defaults and unrelated configuration survive AST
+editing. Neither profile switching nor arbitrary nested JSON is supported here.
+
+The fields response supplies actual value schemas, origins, override values and
+qualified choices. Guided settings cover provider/model/reference configuration,
+qualified embedding limits, parser selection, existing retrieval options and
+bounded graph/query inspection limits. Reranking uses `providers.rerank`; there is
+no `retrieval.rerank` setting. Offline policy remains on the expert TOML route.
+PDF OCR remains an explicit intake choice, not a global configuration switch.
+
+Credential references use the existing `env:NAME` or `secret:NAME` syntax; names
+must match `[A-Za-z_][A-Za-z0-9_.-]*`. Set the named environment variable in the
+server process or supply the embedded secret resolver. The manager-only fields
+response exposes reference strings, never secret values. Ordinary settings and
+preview changes redact references. Credential readiness is `not_checked`:
+inspection never resolves secrets or probes a remote provider.
+
+Preview does not activate, provision or rebuild anything. It reports candidate
+and base digests, redacted changes and compatibility blockers. Populated index
+generations retain their representation identity; incompatible edits return
+`PROFILE_INCOMPATIBLE`, with no rebuild queued. Apply recomputes the draft under
+exclusive admission and the existing atomic activation path. Refresh on
+`IDEMPOTENCY_CONFLICT`; retry `WORKSPACE_BUSY` after accepted work settles.
+Runtime preparation may still fail after a successful preview.

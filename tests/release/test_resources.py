@@ -12,6 +12,10 @@ import pytest
 @pytest.mark.release
 def test_installed_package_contains_schema_and_generic_profiles(installed_base):
     code = """from importlib.resources import files
+import tomlkit
+from importlib.metadata import requires, version
+assert version("tomlkit") == "0.15.1"
+assert any(item.startswith("tomlkit==0.15.1") for item in requires("tychora"))
 root = files("tychora")
 assert root.joinpath("resources/migrations/0001.sql").is_file()
 assert root.joinpath("profiles/documents/profile.toml").is_file()

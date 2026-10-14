@@ -896,7 +896,6 @@ async def test_settings_post_commit_cancellation_finishes_cleanup_and_returns_su
             await original_close()
 
         monkeypatch.setattr(old_services.source_jobs, "aclose", held_close)
-        app.state.runtime.admit(activation=True)
         try:
             activation = asyncio.create_task(
                 app.state.settings.activate(
@@ -911,7 +910,7 @@ async def test_settings_post_commit_cancellation_finishes_cleanup_and_returns_su
             assert (root / "workspace.toml").read_text() == candidate
             assert app.state.runtime.services is not old_services
         finally:
-            app.state.runtime.release(activation=True)
+            release.set()
         await app.state.runtime.services.source_jobs.aclose()
 
 
@@ -948,7 +947,6 @@ async def test_settings_cancellation_during_cleanup_fallback_is_committed_succes
 
         monkeypatch.setattr(old_services.source_jobs, "aclose", failed_async_close)
         monkeypatch.setattr(old_services.source_jobs, "close", held_sync_close)
-        app.state.runtime.admit(activation=True)
         try:
             activation = asyncio.create_task(
                 app.state.settings.activate(
@@ -964,7 +962,6 @@ async def test_settings_cancellation_during_cleanup_fallback_is_committed_succes
             assert (root / "workspace.toml").read_text() == candidate
         finally:
             release.set()
-            app.state.runtime.release(activation=True)
         await app.state.runtime.services.source_jobs.aclose()
 
 
@@ -1027,6 +1024,20 @@ async def test_indexed_settings_allow_credential_and_rerank_but_reject_represent
                 )
                 assert incompatible.status_code == 409, incompatible.text
                 assert incompatible.json()["code"] == "PROFILE_INCOMPATIBLE"
+            from hashlib import sha256
+
+            guided = {
+                "base_workspace_sha256": sha256(safe.encode()).hexdigest(),
+                "changes": [
+                    {"path": "extraction.parser", "action": "set", "value": "code"}
+                ],
+            }
+            preview = await client.post("/v1/settings/preview", json=guided)
+            assert preview.status_code == 200, preview.text
+            assert not preview.json()["activation_allowed"]
+            assert preview.json()["blockers"] == ["PROFILE_INCOMPATIBLE"]
+            denied = await client.patch("/v1/settings", json=guided)
+            assert denied.json()["code"] == "PROFILE_INCOMPATIBLE"
             assert (root / "workspace.toml").read_text() == safe
         await app.state.runtime.services.source_jobs.aclose()
 
@@ -1082,6 +1093,20 @@ async def test_settings_activation_rejects_active_accepted_job(tmp_path):
                 assert added.status_code == 202
                 assert await asyncio.to_thread(started.wait, 3)
                 previous = (root / "workspace.toml").read_text()
+                from hashlib import sha256
+
+                patch = {
+                    "base_workspace_sha256": sha256(previous.encode()).hexdigest(),
+                    "changes": [{"path": "limits.limit", "action": "set", "value": 12}],
+                }
+                preview = await client.post("/v1/settings/preview", json=patch)
+                assert preview.status_code == 200, preview.text
+                assert preview.json()["activation_allowed"]
+                guided = await client.patch("/v1/settings", json=patch)
+                assert (
+                    guided.status_code == 409
+                    and guided.json()["code"] == "WORKSPACE_BUSY"
+                )
                 busy = await client.put(
                     "/v1/settings",
                     json={"profile": "local", "workspace_toml": previous},

@@ -1,0 +1,115 @@
+{
+  "providers": [
+    {
+      "slot": "text",
+      "configured_provider": "disabled",
+      "configured_model": null,
+      "qualified_models": [
+        "voyage-context-4",
+        "voyage-code-4",
+        "voyage-code-3"
+      ],
+      "model_qualification": "disabled",
+      "package_available": true,
+      "credential_readiness": "not_checked",
+      "upload_allowed_collection_ids": [],
+      "asset_state": "not_checked"
+    },
+    {
+      "slot": "image",
+      "configured_provider": "disabled",
+      "configured_model": null,
+      "qualified_models": ["voyage-multimodal-3.5"],
+      "model_qualification": "disabled",
+      "package_available": true,
+      "credential_readiness": "not_checked",
+      "upload_allowed_collection_ids": [],
+      "asset_state": "not_checked"
+    },
+    {
+      "slot": "rerank",
+      "configured_provider": "disabled",
+      "configured_model": null,
+      "qualified_models": ["rerank-2.5"],
+      "model_qualification": "disabled",
+      "package_available": true,
+      "credential_readiness": "not_checked",
+      "upload_allowed_collection_ids": [],
+      "asset_state": "not_checked"
+    },
+    {
+      "slot": "vision",
+      "configured_provider": "disabled",
+      "configured_model": null,
+      "qualified_models": [],
+      "model_qualification": "disabled",
+      "package_available": true,
+      "credential_readiness": "not_checked",
+      "upload_allowed_collection_ids": [],
+      "asset_state": "not_checked"
+    }
+  ],
+  "selections": [
+    "documents",
+    "ocr",
+    "output-tokenizer",
+    "rerank-2.5",
+    "voyage-code-3",
+    "voyage-code-4",
+    "voyage-context-4",
+    "voyage-multimodal-3.5"
+  ],
+  "selection_capabilities": [
+    {
+      "selection": "documents",
+      "required_modules": ["docling"],
+      "packages_available": true,
+      "asset_state": "not_checked"
+    },
+    {
+      "selection": "ocr",
+      "required_modules": ["rapidocr"],
+      "packages_available": true,
+      "asset_state": "not_checked"
+    },
+    {
+      "selection": "output-tokenizer",
+      "required_modules": ["tiktoken"],
+      "packages_available": true,
+      "asset_state": "not_checked"
+    },
+    {
+      "selection": "rerank-2.5",
+      "required_modules": ["tokenizers", "httpx"],
+      "packages_available": true,
+      "asset_state": "not_checked"
+    },
+    {
+      "selection": "voyage-code-3",
+      "required_modules": ["tokenizers", "httpx"],
+      "packages_available": true,
+      "asset_state": "not_checked"
+    },
+    {
+      "selection": "voyage-code-4",
+      "required_modules": ["tokenizers", "httpx"],
+      "packages_available": true,
+      "asset_state": "not_checked"
+    },
+    {
+      "selection": "voyage-context-4",
+      "required_modules": ["tokenizers", "httpx"],
+      "packages_available": true,
+      "asset_state": "not_checked"
+    },
+    {
+      "selection": "voyage-multimodal-3.5",
+      "required_modules": ["tokenizers", "httpx"],
+      "packages_available": true,
+      "asset_state": "not_checked"
+    }
+  ],
+  "manifest_sha256": "9ae89433d165632de488dc55883ec560baf4ed93530416848b0e1ab4f408a530",
+  "offline": true,
+  "pdf_ocr_policy": "per_intake"
+}

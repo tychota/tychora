@@ -23,7 +23,12 @@ def _legacy_empty_archive(tmp_path):
     settings = tmp_path / "settings.toml"
     settings.write_text('schema_version=1\n[profiles.custom]\nbuiltin="documents@1"\n')
     config = resolve_config(settings, "custom", {})
-    scope = RequestScope(principal_id="owner", capabilities=frozenset({"manage"}))
+    scope = RequestScope(
+        principal_id="owner",
+        collection_ids=frozenset({"collection-one"}),
+        uses=frozenset({"compose", "audit", "lookup"}),
+        capabilities=frozenset({"manage"}),
+    )
     source, archive = tmp_path / "source", tmp_path / "archive"
     with WorkspaceOwner.open(source, config, scope) as owner:
         BackupService(owner).export(archive, scope, ctx=ExecutionContext())
@@ -118,6 +123,7 @@ def test_restore_preserves_identity_and_marks_native_pending(tmp_path):
         principal_id="owner",
         collection_ids=frozenset({"collection-one"}),
         access_ceiling=3,
+        uses=frozenset({"compose", "audit", "lookup"}),
         capabilities=frozenset({"manage"}),
     )
     source = tmp_path / "source"
@@ -219,6 +225,7 @@ def test_restored_pending_deletion_is_suspended_before_owner_reconciliation(tmp_
         principal_id="owner",
         collection_ids=frozenset({"collection-one"}),
         access_ceiling=3,
+        uses=frozenset({"compose", "audit", "lookup"}),
         capabilities=frozenset({"manage"}),
     )
     source, backup, destination = (
@@ -292,8 +299,9 @@ def test_restore_activates_verified_profile_without_original_settings(tmp_path):
     config = resolve_config(settings, "custom", {})
     scope = RequestScope(
         principal_id="owner",
-        collection_ids=frozenset(),
+        collection_ids=frozenset({"collection-one"}),
         access_ceiling=3,
+        uses=frozenset({"compose", "audit", "lookup"}),
         capabilities=frozenset({"manage"}),
     )
     with WorkspaceOwner.open(tmp_path / "source", config, scope) as owner:
@@ -325,8 +333,9 @@ def test_empty_custom_profile_reopens_from_bound_backup_configuration(tmp_path):
     config = resolve_config(settings, "custom", {})
     scope = RequestScope(
         principal_id="owner",
-        collection_ids=frozenset(),
+        collection_ids=frozenset({"collection-one"}),
         access_ceiling=3,
+        uses=frozenset({"compose", "audit", "lookup"}),
         capabilities=frozenset({"manage", "read"}),
     )
     with WorkspaceOwner.open(tmp_path / "source", config, scope) as owner:
@@ -359,8 +368,9 @@ def test_selected_config_export_contains_reference_not_credential_value(
     config = resolve_config(settings, "custom", {})
     scope = RequestScope(
         principal_id="owner",
-        collection_ids=frozenset(),
+        collection_ids=frozenset({"collection-one"}),
         access_ceiling=3,
+        uses=frozenset({"compose", "audit", "lookup"}),
         capabilities=frozenset({"manage"}),
     )
     with WorkspaceOwner.open(tmp_path / "source", config, scope) as owner:
@@ -393,6 +403,7 @@ def test_local_owner_restore_factory_needs_no_source_or_control_workspace(tmp_pa
         principal_id="original-owner",
         collection_ids=frozenset({collection_id}),
         access_ceiling=3,
+        uses=frozenset({"compose", "audit", "lookup"}),
         capabilities=frozenset({"read", "manage"}),
     )
     source = tmp_path / "source"
@@ -433,8 +444,9 @@ async def test_async_restore_cancellation_drains_private_staging(tmp_path, monke
     config = resolve_config(settings, "test", {})
     scope = RequestScope(
         principal_id="owner",
-        collection_ids=frozenset(),
+        collection_ids=frozenset({"collection-one"}),
         access_ceiling=0,
+        uses=frozenset({"compose", "audit", "lookup"}),
         capabilities=frozenset({"manage"}),
     )
     with WorkspaceOwner.open(tmp_path / "source", config, scope) as owner:

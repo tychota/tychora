@@ -99,39 +99,9 @@ class BackupService:
         )
 
     def _authorize(self, scope: RequestScope) -> None:
-        grant = self.owner.scope.narrow(scope)
-        if "manage" not in grant.capabilities:
-            raise TychoraError(
-                "FORBIDDEN_SCOPE", "Workspace backup requires management grant"
-            )
-        collections = self.owner.db.execute(
-            "SELECT collection_id,access_floor FROM collections WHERE workspace_id=?",
-            (self.owner.workspace_id,),
-        ).fetchall()
-        source_floor = self.owner.db.execute(
-            "SELECT MAX(s.access_floor) FROM sources s JOIN collections c USING(collection_id) "
-            "WHERE c.workspace_id=?",
-            (self.owner.workspace_id,),
-        ).fetchone()[0]
-        revision_rank = self.owner.db.execute(
-            "SELECT MAX(r.access_rank) FROM revisions r JOIN sources s USING(source_id) "
-            "JOIN collections c USING(collection_id) WHERE c.workspace_id=?",
-            (self.owner.workspace_id,),
-        ).fetchone()[0]
-        if (
-            grant.access_ceiling != self.owner.scope.access_ceiling
-            or grant.uses != self.owner.scope.uses
-            or any(
-                collection_id not in grant.collection_ids
-                or floor > grant.access_ceiling
-                for collection_id, floor in collections
-            )
-            or (source_floor is not None and source_floor > grant.access_ceiling)
-            or (revision_rank is not None and revision_rank > grant.access_ceiling)
-        ):
-            raise TychoraError(
-                "FORBIDDEN_SCOPE", "Backup requires whole-workspace authority"
-            )
+        from .workspace_authority import authorize_workspace
+
+        authorize_workspace(self.owner, scope)
 
     def _export_on_owner(
         self, destination: Path, scope: RequestScope, ctx: ExecutionContext
