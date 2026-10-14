@@ -1,8 +1,4 @@
-"""Owner-resolved PDF policy preflight shared by intake and retained replay.
-
-Task 2 qualifies explicit policy execution here; current preflight never reports
-that the legacy adapter can execute a policy it does not yet consume.
-"""
+"""Owner-resolved qualified PDF policy shared by intake and retained replay."""
 
 from importlib.metadata import PackageNotFoundError, version
 
@@ -20,8 +16,100 @@ PDF_LIMITS = FrozenJsonMap(
         "max_child_output_bytes": 268435456,
         "max_metadata_bytes": 268435456,
         "max_extraction_bytes": 16777216,
+        "wall_seconds": 5400,
+        "sdk_batch_seconds": 120,
+        "batch_seconds": 180,
+        "rss_bytes": 4294967296,
+        "rss_poll_milliseconds": 250,
+        "batch_pages": 16,
+        "stage_batch_size": 1,
+        "queue_size": 2,
     }
 )
+
+
+def qualified_pdf_runtime(model_root, scan):
+    """Verify local inventories; durable identities never contain cache paths."""
+    from hashlib import sha256
+    from importlib.resources import files
+    from pathlib import Path
+
+    from tychora.adapters.docling.parser import validate_models
+    from tychora.adapters.vision.local import (
+        _MODELS,
+        _qualified_runtime_versions,
+        _verify_models,
+    )
+
+    root = Path(model_root)
+    runtime = {
+        name: version(name)
+        for name in (
+            "docling",
+            "docling-core",
+            "docling-ibm-models",
+            "pypdf",
+            "pypdfium2",
+            "psutil",
+        )
+    }
+    if runtime != {
+        "docling": "2.132.0",
+        "docling-core": "2.101.1",
+        "docling-ibm-models": "4.0.2",
+        "pypdf": "6.19.0",
+        "pypdfium2": "5.13.0",
+        "psutil": "7.2.2",
+    }:
+        raise TychoraError(
+            "CAPABILITY_MISSING", "PDF runtime versions are not qualified"
+        )
+    inventory = {"docling": validate_models(root)}
+    options = {
+        "device": "cpu",
+        "threads": 2,
+        "native_image_scale": 1.0,
+        "remote_services": False,
+        "plugins": False,
+        "telemetry": False,
+        "stage_batch_size": 1,
+        "queue_size": 2,
+    }
+    if scan:
+        runtime.update(_qualified_runtime_versions())
+        _verify_models(root / "rapidocr/3.9.2")
+        inventory["ocr"] = [
+            {"path": name, "size_bytes": size, "sha256": hashed}
+            for name, size, hashed in _MODELS
+        ]
+        options.update(
+            ocr_scale=3.0,
+            ocr_mode="full_page",
+            ocr_backend="onnxruntime",
+            use_det=True,
+            use_cls=True,
+            use_rec=True,
+            text_score=0.5,
+            inter_op_threads=1,
+            rapidocr_config_sha256=sha256(
+                files("rapidocr").joinpath("config.yaml").read_bytes()
+            ).hexdigest(),
+            input_channels="pdfium-rgb-array-rapidocr-ndarray-no-channel-swap",
+            renderer_intermediate_scale=4.5,
+            renderer_resize="rounded-crop-dimensions",
+        )
+    return (
+        FrozenJsonMap(runtime),
+        digest("pdf-model-inventory-v1", inventory),
+        FrozenJsonMap(
+            {
+                "parser": "docling",
+                "native": "ThreadedDoclingParseDocumentBackend",
+                "ocr": "PyPdfiumDocumentBackend" if scan else None,
+            }
+        ),
+        FrozenJsonMap(options),
+    )
 
 
 def resolve_pdf_policy(owner, services, descriptor, facts, *, max_retained_bytes):
@@ -40,70 +128,36 @@ def resolve_pdf_policy(owner, services, descriptor, facts, *, max_retained_bytes
         blockers.append("INVALID_REQUEST: PDF has pages of unknown content.")
     if not facts["native_text_pages"] and not facts["image_only_pages"]:
         blockers.append("INDEX_INCOMPLETE: PDF has no usable text or scanned pages.")
-    runtime = {}
-    for package in (
-        "docling",
-        "docling-core",
-        "docling-ibm-models",
-        "pypdf",
-        "pypdfium2",
-        "rapidocr",
-        "onnxruntime",
-    ):
-        try:
-            runtime[package] = version(package)
-        except PackageNotFoundError:
-            blockers.append(
-                "CAPABILITY_MISSING: PDF runtime dependency is unavailable."
-            )
-    model_sha = None
+    policy = None
+    scan = bool(facts["image_only_pages"])
     try:
-        from tychora.adapters.docling.parser import validate_models
-
         if services.sources.docling_models is None:
             raise TychoraError(
-                "CAPABILITY_MISSING", "Local model bundle is unavailable."
+                "CAPABILITY_MISSING", "Local model bundle is unavailable"
             )
-        model_sha = digest(
-            "pdf-model-inventory-v1", validate_models(services.sources.docling_models)
+        runtime, model_sha, backend, options = qualified_pdf_runtime(
+            services.sources.docling_models, scan
         )
-    except TychoraError:
+        if not facts["unknown_pages"]:
+            policy = PdfProcessingPolicy(
+                mode="local_ocr" if scan else "native",
+                native_pages=tuple(facts["native_text_pages"]),
+                ocr_pages=tuple(facts["image_only_pages"]),
+                blank_pages=tuple(facts["blank_pages"]),
+                backend_identity=backend,
+                runtime_inventory=runtime,
+                model_inventory_sha256=model_sha,
+                options=options,
+                limits=FrozenJsonMap(
+                    {
+                        **PDF_LIMITS,
+                        "max_retained_bytes": min(1073741824, max_retained_bytes),
+                    }
+                ),
+            )
+    except (TychoraError, PackageNotFoundError, ImportError):
         blockers.append(
-            "CAPABILITY_MISSING: Verified local PDF model inventory is unavailable."
-        )
-    # Explicit policy execution and OCR provenance are implemented and qualified by
-    # the runtime adapter task. Preparing/analyzing never starts that adapter.
-    blockers.append(
-        "CAPABILITY_MISSING: Explicit PDF policy execution is not yet qualified."
-    )
-    policy = None
-    if model_sha is not None and not facts["unknown_pages"]:
-        scan = bool(facts["image_only_pages"])
-        policy = PdfProcessingPolicy(
-            mode="local_ocr" if scan else "native",
-            native_pages=tuple(facts["native_text_pages"]),
-            ocr_pages=tuple(facts["image_only_pages"]),
-            blank_pages=tuple(facts["blank_pages"]),
-            backend_identity=FrozenJsonMap(
-                {"parser": "docling", "native": "default", "ocr": "pdfium"}
-            ),
-            runtime_inventory=FrozenJsonMap(runtime),
-            model_inventory_sha256=model_sha,
-            options=FrozenJsonMap(
-                {
-                    "device": "cpu",
-                    "threads": 2,
-                    "native_image_scale": 1.0,
-                    "ocr_scale": 3.0,
-                    "ocr_mode": "full_page",
-                    "ocr_backend": "onnxruntime",
-                    "remote_services": False,
-                    "plugins": False,
-                }
-            ),
-            limits=FrozenJsonMap(
-                {**PDF_LIMITS, "max_retained_bytes": max_retained_bytes}
-            ),
+            "CAPABILITY_MISSING: Verified local PDF runtime or models are unavailable."
         )
     return policy, tuple(dict.fromkeys(blockers))
 

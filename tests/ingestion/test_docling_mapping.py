@@ -128,6 +128,12 @@ import pytest
 
 from tests.qualification import test_docling as qualification
 
+
+@pytest.fixture
+def document_kind():
+    return "manual@1"
+
+
 execution = qualification.execution
 rich_capture = qualification.rich_capture
 
@@ -535,3 +541,110 @@ def test_rehashed_replay_rejects_invalid_native_coordinate_semantics(
         map_document(document, artifact.original_ref)
     with pytest.raises(ValueError, match="page identity|coordinate origin"):
         replay_document(root, raw, root_ref)
+
+
+def test_legacy_fingerprint_and_serialization_are_unchanged(retained_case):
+    import json
+    from importlib.metadata import version
+
+    from tychora.adapters.docling.parser import INVENTORY
+    from tychora.contracts.identity import digest
+
+    artifact, execution, _ = retained_case
+    assert artifact.parser_fingerprint == digest(
+        "docling-parser-v2",
+        {
+            name: version(name)
+            for name in ("docling", "docling-core", "docling-ibm-models")
+        },
+        json.loads(INVENTORY.read_text()),
+        execution.format,
+        execution.config.values.extraction.model_dump(mode="json"),
+        {"ocr": False, "image_scale": 1.0, "tables": "accurate", "device": "cpu"},
+    )
+    data = artifact.model_dump(mode="json")
+    assert "pdf_processing" not in data
+    assert all("text_origin" not in unit for unit in data["units"])
+
+
+@pytest.mark.parametrize("change", ["missing_version", "undeclared", "different_uri"])
+def test_external_image_requires_explicit_declared_identity(retained_case, change):
+    from tychora.contracts.base import FrozenJsonMap
+    from tychora.contracts.documents import (
+        DocumentImageBinding,
+        validate_document_assets,
+    )
+
+    artifact, _, _ = retained_case
+    import json
+
+    from tychora.contracts.identity import canonical_bytes
+
+    document = json.loads(canonical_bytes(artifact.document_json))
+    asset = artifact.assets[0]
+    document["pictures"][0]["image"]["uri"] = (
+        "urn:tychora:artifact:sha256:" + asset.artifact_ref.sha256
+    )
+    bindings = (
+        DocumentImageBinding(
+            native_ref=asset.native_ref, artifact_ref=asset.artifact_ref
+        ),
+    )
+    version = "scan-external-images@1"
+    if change == "missing_version":
+        version = None
+    elif change == "undeclared":
+        bindings = ()
+    else:
+        document["pictures"][0]["image"]["uri"] = (
+            "urn:tychora:artifact:sha256:" + "a" * 64
+        )
+    with pytest.raises(ValueError, match="Undeclared"):
+        validate_document_assets(
+            FrozenJsonMap(document),
+            artifact.units,
+            artifact.assets,
+            artifact.original_ref,
+            artifact.registration.source.source_key,
+            image_representation=version,
+            image_bindings=bindings,
+        )
+
+
+@pytest.mark.parametrize("failure", ["corrupt", "different_png", "undeclared"])
+def test_external_image_payload_verification_is_independent(retained_case, failure):
+    from types import SimpleNamespace
+
+    from tychora.adapters.docling.ocr_evidence import validate_external_images
+    from tychora.contracts.documents import DocumentImageBinding
+
+    artifact, _, _ = retained_case
+    asset = artifact.assets[0]
+    parsed = SimpleNamespace(
+        image_representation="scan-external-images@1",
+        assets=(asset,),
+        ocr_pages=(),
+        image_bindings=(
+            DocumentImageBinding(
+                native_ref=asset.native_ref, artifact_ref=asset.artifact_ref
+            ),
+        ),
+    )
+    if failure == "undeclared":
+        parsed.image_bindings = ()
+
+    def read(ref):
+        if failure == "undeclared":
+            pytest.fail("Undeclared images must not be opened")
+        if failure == "corrupt":
+            return b"corrupt"
+        from io import BytesIO
+
+        from PIL import Image
+
+        output = BytesIO()
+        Image.new("RGB", (1, 1), "white").save(output, format="PNG")
+        return output.getvalue()
+
+    with pytest.raises(ValueError):
+        validate_external_images(parsed, read)

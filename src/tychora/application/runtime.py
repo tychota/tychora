@@ -3,17 +3,20 @@
 import asyncio
 import fcntl
 import json
+import math
 import multiprocessing
 import os
 import secrets
 import stat
+import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
+from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from pathlib import Path
 from threading import Lock
-from typing import cast
+from typing import Any, cast
 from uuid import uuid4
 
 from tychora.contracts.errors import TychoraError
@@ -196,40 +199,218 @@ class RuntimeIdentity:
                 self._fd = None
 
 
-def _parser_entry(call: Callable, paths: tuple[Path, ...], output: Connection) -> None:
+@dataclass(frozen=True)
+class ParserExecutionLimits:
+    page_count: int
+    wall_seconds: float
+    rss_bytes: int
+    output_bytes: int
+    context: ExecutionContext
+    batch_seconds: float = 180.0
+
+    def __post_init__(self):
+        if (
+            not 0 < self.page_count <= 1000
+            or not 0 < self.rss_bytes <= 4294967296
+            or not 0 < self.output_bytes <= 1073741824
+            or not math.isfinite(self.wall_seconds)
+            or not 0 < self.wall_seconds <= 5400
+            or not math.isfinite(self.batch_seconds)
+            or not 0 < self.batch_seconds <= 180
+        ):
+            raise ValueError("Invalid parser execution limits")
+
+
+@dataclass(frozen=True)
+class ParserOutputBatch:
+    outputs: tuple
+    pages: tuple[int, ...]
+
+
+def _parser_entry(
+    call: Callable, paths: tuple[Path, ...], output: Connection, bounded=False
+) -> None:
+    def report(batch):
+        output.send(("batch", batch))
+        if output.recv() != "ack":
+            raise ValueError("Parser batch was not acknowledged")
+
     try:
-        output.send((True, call(paths)))
-    except Exception:  # noqa: BLE001 - sanitize arbitrary parser failures at the process boundary
-        output.send((False, None))
+        result = (
+            cast(Any, call).run(paths, report)
+            if bounded and hasattr(call, "run")
+            else call(paths)
+        )
+        output.send(("done", result))
+    except Exception as exc:  # noqa: BLE001 - never disclose parser paths or text
+        code = (
+            exc.code
+            if isinstance(exc, TychoraError)
+            and exc.code
+            in {
+                "LIMIT_EXCEEDED",
+                "INDEX_INCOMPLETE",
+                "CAPABILITY_MISSING",
+                "INTEGRITY_ERROR",
+                "DEADLINE_EXCEEDED",
+                "INVALID_REQUEST",
+            }
+            else "INVALID_REQUEST"
+        )
+        output.send(("error", code if bounded else "INVALID_REQUEST"))
     finally:
         output.close()
 
 
 def parser_process[T](
-    call: Callable[[tuple[Path, ...]], T], paths: tuple[Path, ...]
+    call: Callable[[tuple[Path, ...]], T],
+    paths: tuple[Path, ...],
+    *,
+    limits: ParserExecutionLimits | None = None,
+    progress: Callable | None = None,
 ) -> T:
-    """Spawn with only independent copies; always reap before removing staging."""
+    """Spawn independent copies; poll bounds through collection; reap before cleanup."""
     context = multiprocessing.get_context("spawn")
-    receiver, sender = context.Pipe(duplex=False)
-    child = context.Process(target=_parser_entry, args=(call, paths, sender))
+    receiver, sender = context.Pipe(duplex=True)
+    child = context.Process(
+        target=_parser_entry, args=(call, paths, sender, limits is not None)
+    )
+    started = batch_started = time.monotonic()
+    pending = None
+    monitor = None
+    total = 0
+    pages = []
+
+    def checkpoint():
+        if limits is None:
+            return
+        limits.context.checkpoint()
+        now = time.monotonic()
+        if (
+            now - started >= limits.wall_seconds
+            or now - batch_started >= limits.batch_seconds
+        ):
+            raise TychoraError("DEADLINE_EXCEEDED", "PDF parser deadline exceeded")
+        try:
+            assert monitor is not None
+            rss = monitor.memory_info().rss
+        except Exception:  # noqa: BLE001 - unavailable platform/process inspection
+            # macOS can retire its task port just before multiprocessing observes
+            # the process sentinel. Reap that exit; never continue an unmonitored child.
+            child.join(0.05)
+            if not child.is_alive():
+                return
+            raise TychoraError(
+                "CAPABILITY_MISSING", "Parser RSS monitoring is unavailable"
+            ) from None
+        if rss > limits.rss_bytes:
+            raise TychoraError("LIMIT_EXCEEDED", "Parser RSS threshold exceeded")
+
     try:
+        if limits is not None:
+            limits.context.checkpoint()
+            try:
+                import psutil
+
+                if psutil.__version__ != "7.2.2":
+                    raise ImportError
+            except ImportError:
+                raise TychoraError(
+                    "CAPABILITY_MISSING", "Qualified RSS monitoring is unavailable"
+                ) from None
         child.start()
         sender.close()
-        try:
-            succeeded, result = receiver.recv()
-        except EOFError:
-            succeeded, result = False, None
-        child.join()
-        if not succeeded or child.exitcode != 0:
-            raise TychoraError("INVALID_REQUEST", "Parser process failed")
-        return cast(T, result)
+        if limits is not None:
+            monitor = psutil.Process(child.pid)
+        while True:
+            checkpoint()
+            if not receiver.poll(0.05):
+                if not child.is_alive():
+                    raise TychoraError(
+                        "INVALID_REQUEST", "Parser process exited without completion"
+                    )
+                continue
+            try:
+                kind, result = receiver.recv()
+            except (EOFError, ValueError):
+                raise TychoraError("INVALID_REQUEST", "Parser process failed") from None
+            if kind == "error":
+                raise TychoraError(result, "Parser process failed")
+            if kind == "done":
+                while child.is_alive():
+                    checkpoint()
+                    child.join(0.05)
+                if child.exitcode != 0:
+                    raise TychoraError("INVALID_REQUEST", "Parser process failed")
+                if (
+                    limits
+                    and hasattr(call, "run")
+                    and tuple(pages) != tuple(range(1, limits.page_count + 1))
+                ):
+                    raise TychoraError(
+                        "INDEX_INCOMPLETE", "Parser batch coverage differs"
+                    )
+                return cast(T, result)
+            if (
+                kind != "batch"
+                or limits is None
+                or progress is None
+                or not isinstance(result, ParserOutputBatch)
+            ):
+                raise TychoraError("INTEGRITY_ERROR", "Invalid parser output message")
+            from .owner import StagedOutput
+
+            if (
+                not isinstance(result.outputs, tuple)
+                or len(result.outputs) > 4096
+                or not isinstance(result.pages, tuple)
+                or not 0 < len(result.pages) <= 16
+                or any(type(page) is not int for page in result.pages)
+                or result.pages
+                != tuple(range(len(pages) + 1, len(pages) + 1 + len(result.pages)))
+                or result.pages[-1] > limits.page_count
+                or any(
+                    not isinstance(entry, StagedOutput)
+                    or type(entry.size_bytes) is not int
+                    or entry.size_bytes < 0
+                    for entry in result.outputs
+                )
+            ):
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Invalid parser batch descriptors"
+                )
+            size = sum(entry.size_bytes for entry in result.outputs)
+            total += size
+            if size > 268435456 or total > limits.output_bytes:
+                raise TychoraError(
+                    "LIMIT_EXCEEDED", "Parser output exceeds processing capacity"
+                )
+            pending = progress(result)
+            if isinstance(pending, Future):
+                while not pending.done():
+                    checkpoint()
+                    time.sleep(0.05)
+                pending.result()
+            pending = None
+            checkpoint()
+            pages.extend(result.pages)
+            receiver.send("ack")
+            batch_started = time.monotonic()
     finally:
         if child.pid is not None:
-            # Unexpected supervisor failure fences a child before staged cleanup.
             if child.is_alive():
                 child.terminate()
+                child.join(1)
+            if child.is_alive():
+                child.kill()
             child.join()
             child.close()
+        # An owner collector may still hold staged descriptors. Drain before cleanup.
+        if isinstance(pending, Future):
+            try:
+                pending.result()
+            except Exception:  # noqa: BLE001, S110 - preserve the primary supervisor error
+                pass
         receiver.close()
         sender.close()
 

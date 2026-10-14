@@ -640,6 +640,11 @@ class PdfIntakeService:
                     else None,
                     "blockers": blockers,
                 }
+                from tychora.application.pdf_processing import policy_sha256
+
+                data["policy_sha256"] = (
+                    policy_sha256(policy) if policy is not None else None
+                )
                 data["analysis_sha256"] = digest(
                     "pdf-analysis-v1",
                     record["config_sha"],
@@ -754,6 +759,12 @@ class PdfIntakeService:
         policy = PdfProcessingPolicy.model_validate_json(
             canonical_bytes(analysis["proposed_policy"])
         )
+        if "policy_sha256" in analysis and analysis["policy_sha256"] != policy_sha256(
+            policy
+        ):
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Advertised PDF policy identity differs."
+            )
         if policy_sha256(policy) != submission["policy_sha256"]:
             raise TychoraError("IDEMPOTENCY_CONFLICT", "PDF processing policy differs.")
         if (

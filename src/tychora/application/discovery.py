@@ -567,7 +567,18 @@ class DiscoveryService:
                     raise TychoraError(
                         "INTEGRITY_ERROR", "Vision capability diagnostic differs."
                     ) from None
-                vision_status = {"vision": "incomplete"}
+                if diagnostic.gaps:
+                    vision_status["vision"] = "incomplete"
+                if diagnostic.pdf_coverage is not None:
+                    coverage = diagnostic.pdf_coverage
+                    vision_status["pdf_processing"] = (
+                        "indexed_with_gaps"
+                        if coverage.no_text_detected_pages
+                        else "processed"
+                    )
+                    if coverage.ocr_pages:
+                        vision_status["ocr"] = "needs_review"
+                    vision_status["pdf_coverage"] = coverage.model_dump(mode="json")
         channel_rows = self.owner.db.execute(
             "SELECT f.channel,b.state FROM index_batches b "
             "JOIN index_families f USING(family_id) "

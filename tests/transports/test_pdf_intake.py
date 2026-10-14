@@ -167,10 +167,13 @@ async def test_binary_denied_before_receive(tmp_path, extra):
 
 
 @pytest.mark.asyncio
-async def test_analysis_is_local_all_page_and_does_not_mutate_configuration(tmp_path):
+async def test_analysis_is_local_all_page_and_does_not_mutate_configuration(
+    tmp_path, monkeypatch
+):
     with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
         app = app_for(kb)
         original_config = kb._workspace.owner.config.config_sha
+        monkeypatch.setattr(kb._workspace.services.sources, "docling_models", None)
         async with client_for(app) as client:
             data = make_pdf(tmp_path, scanned=True)
             prepared = await client.post(
@@ -186,7 +189,7 @@ async def test_analysis_is_local_all_page_and_does_not_mutate_configuration(tmp_
             assert analysis["requires_ocr"] is True
             assert analysis["original_sha256"] == hashlib.sha256(data).hexdigest()
             assert response.json()["job"] is None
-            assert analysis["blockers"]  # Runtime qualification belongs to Task 2.
+            assert analysis["blockers"]  # Explicitly unavailable verified local bundle.
             assert kb._workspace.owner.config.config_sha == original_config
             denied = await client.get(path, headers={"Authorization": "Bearer reader"})
             assert denied.status_code == 403

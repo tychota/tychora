@@ -73,6 +73,7 @@ from .consent import enabled_upload_providers, parse_upload_policy
 from .leases import LeaseSet
 from .runtime import (
     BoundedWorker,
+    ParserExecutionLimits,
     RuntimeIdentity,
     ServiceRuntime,
     drain_result,
@@ -390,6 +391,8 @@ class WorkspaceOwner:
         inputs: tuple[ArtifactRef, ...],
         ctx: ExecutionContext,
         collector: Callable[[tuple[tuple[StagedOutput, BinaryIO], ...]], T] | None,
+        limits: ParserExecutionLimits | None = None,
+        batch_collector: Callable | None = None,
     ) -> Future[T]:
         ctx.checkpoint()
 
@@ -400,7 +403,27 @@ class WorkspaceOwner:
             ).result()
             try:
                 ctx.checkpoint()
-                result = parser_process(call, copies)
+
+                def accept(batch):
+                    assert batch_collector is not None
+                    return self._worker.submit(
+                        lambda: self._collect_outputs(
+                            directory,
+                            batch.outputs,
+                            lambda outputs: batch_collector(outputs, batch.pages),
+                        )
+                    )
+
+                result = (
+                    parser_process(call, copies)
+                    if limits is None
+                    else parser_process(
+                        call,
+                        copies,
+                        limits=limits,
+                        progress=accept if batch_collector else None,
+                    )
+                )
                 if collector is not None:
                     # The child has been reaped; collect before deleting its files.
                     result = self._worker.submit(
@@ -418,6 +441,9 @@ class WorkspaceOwner:
         call: Callable[[tuple[Path, ...]], T],
         inputs: tuple[ArtifactRef, ...],
         ctx: ExecutionContext,
+        *,
+        limits: ParserExecutionLimits | None = None,
+        batch_collector: Callable | None = None,
     ) -> T: ...
 
     @overload
@@ -438,9 +464,12 @@ class WorkspaceOwner:
         *,
         collector: Callable[[tuple[tuple[StagedOutput, BinaryIO], ...]], T]
         | None = None,
+        limits: ParserExecutionLimits | None = None,
+        batch_collector: Callable | None = None,
     ) -> T:
         return await drain_result(
-            self._parser_future(call, inputs, ctx, collector), ctx
+            self._parser_future(call, inputs, ctx, collector, limits, batch_collector),
+            ctx,
         )
 
     @overload
@@ -449,6 +478,9 @@ class WorkspaceOwner:
         call: Callable[[tuple[Path, ...]], T],
         inputs: tuple[ArtifactRef, ...],
         ctx: ExecutionContext,
+        *,
+        limits: ParserExecutionLimits | None = None,
+        batch_collector: Callable | None = None,
     ) -> T: ...
 
     @overload
@@ -469,9 +501,14 @@ class WorkspaceOwner:
         *,
         collector: Callable[[tuple[tuple[StagedOutput, BinaryIO], ...]], T]
         | None = None,
+        limits: ParserExecutionLimits | None = None,
+        batch_collector: Callable | None = None,
     ) -> T:
         self._sync_thread()
-        return _sync_result(self._parser_future(call, inputs, ctx, collector), ctx)
+        return _sync_result(
+            self._parser_future(call, inputs, ctx, collector, limits, batch_collector),
+            ctx,
+        )
 
     async def run_provider[T](
         self,
