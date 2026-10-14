@@ -619,3 +619,89 @@ for (const mobile of [false, true]) {
     ).toEqual({ local: 0, session: 0 });
   });
 }
+
+test("mobile source-only links continue the real inventory and preserve document identity", async ({
+  page,
+  context,
+}) => {
+  for (let i = 0; i < 21; i++) {
+    const added = await context.request.post("/v1/sources", {
+      headers: { Authorization: `Bearer ${owner}` },
+      data: {
+        type: "text",
+        source_key: `synthetic-fix1-pagination-${i}`,
+        collection_id: "default",
+        kind: "document@1",
+        format: "text",
+        text: `Synthetic pagination record ${i}.`,
+        metadata: { title: `Pagination fixture ${i}` },
+      },
+    });
+    expect(added.status()).toBe(202);
+    const receipt = await added.json();
+    await expect
+      .poll(async () => {
+        const status = await context.request.get(`/v1/jobs/${receipt.id}`, {
+          headers: { Authorization: `Bearer ${owner}` },
+        });
+        return (await status.json()).state;
+      })
+      .toBe("succeeded");
+  }
+  const headers = { Authorization: `Bearer ${reader}` };
+  const inventoryResponse = await context.request.get(
+    "/v1/documents?limit=100",
+    { headers },
+  );
+  expect(inventoryResponse.status()).toBe(200);
+  const inventory = await inventoryResponse.json();
+  const target = inventory.documents.at(-1);
+  const firstResponse = await context.request.get("/v1/documents?limit=20", {
+    headers,
+  });
+  expect(firstResponse.status()).toBe(200);
+  const first = await firstResponse.json();
+  expect(first.next_cursor).not.toBeNull();
+  expect(
+    first.documents.some(
+      (d: { source_id: string }) => d.source_id === target.source_id,
+    ),
+  ).toBe(false);
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const route of ["documents", "sources"]) {
+    const path = `/dashboard/${route}/${target.source_id}`;
+    await page.goto(path);
+    await connect(page, reader);
+    const detail = page.getByRole("region", {
+      name: "Selected document",
+      exact: true,
+    });
+    await expect(
+      page.getByRole("region", { name: "Document inventory", exact: true }),
+    ).toBeHidden();
+    await expect(
+      detail.getByRole("button", { name: "Load more documents", exact: true }),
+    ).toBeVisible();
+    await expect(
+      detail.getByRole("button", {
+        name: "Refresh document inventory",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await detail
+      .getByRole("button", { name: "Load more documents", exact: true })
+      .click();
+    await expect(
+      detail.getByRole("heading", { name: target.title, exact: true }),
+    ).toBeFocused();
+    expect(new URL(page.url()).pathname).toBe(path);
+    await detail.getByRole("tab", { name: "Chunks", exact: true }).click();
+    await expect(
+      detail.locator(".content-unit .evidence-text").first(),
+    ).not.toBeEmpty();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBe(390);
+    await screenshot(page, `task4-fix1-mobile-${route}-continued-detail`);
+  }
+});
