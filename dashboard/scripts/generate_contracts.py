@@ -103,6 +103,14 @@ async def capture(output: Path) -> None:
                 "source-revisions", "GET", f"/v1/sources/{source['id']}/revisions"
             )
             revision_id = revisions["revisions"][0]["revision_id"]
+            extraction_id = revisions["revisions"][0]["extractions"][0]["extraction_id"]
+            content_path = (
+                f"/v1/sources/{source['id']}/revisions/{revision_id}"
+                f"/extractions/{extraction_id}"
+            )
+            await request("extraction-units", "GET", content_path + "/units")
+            await request("extraction-windows", "GET", content_path + "/windows")
+
             query = await request(
                 "query",
                 "POST",

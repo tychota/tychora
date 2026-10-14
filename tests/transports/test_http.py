@@ -1932,3 +1932,92 @@ async def test_health_requires_proven_whole_workspace_read(
         assert response.status_code == 403
         assert "verified_payloads" not in response.text
         assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_retained_content_routes_return_exact_windows_and_gate_read(tmp_path):
+    from tychora.ports.execution import ExecutionContext
+
+    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+        owner = kb._workspace.owner
+        app = create_app(
+            owner,
+            kb._workspace.services,
+            LocalAuth(
+                {
+                    "owner": kb.scope,
+                    "writer": kb.scope.model_copy(
+                        update={"capabilities": frozenset({"write"})}
+                    ),
+                },
+                authority="127.0.0.1:8765",
+            ),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://127.0.0.1:8765",
+            headers={"Authorization": "Bearer owner"},
+        ) as client:
+            added = await client.post(
+                "/v1/sources",
+                json={
+                    "type": "text",
+                    "source_key": "content",
+                    "collection_id": "default",
+                    "kind": "manual@1",
+                    "format": "text",
+                    "text": "Exact 😀 e\u0301 <script> content. " * 80,
+                    "metadata": {
+                        "title": "Content",
+                        "publisher": "Fixture",
+                        "edition": "1",
+                    },
+                },
+            )
+            status = await app.state.runtime.services.jobs.wait(
+                added.json()["id"], ExecutionContext(), timeout=5
+            )
+            assert status.state == "succeeded"
+            (
+                source,
+                revision,
+                extraction,
+                uid,
+                start,
+                end,
+                text,
+            ) = await owner.run_blocking(
+                lambda: owner.db.execute(
+                    "SELECT r.source_id,e.revision_id,e.extraction_id,c.unit_id,c.char_start,c.char_end,u.text "
+                    "FROM chunks c JOIN evidence_units u USING(unit_id) JOIN extractions e ON e.extraction_id=c.extraction_id "
+                    "JOIN revisions r USING(revision_id) ORDER BY u.ordinal,c.char_start LIMIT 1"
+                ).fetchone(),
+                ExecutionContext(),
+            )
+            path = f"/v1/sources/{source}/revisions/{revision}/extractions/{extraction}"
+            response = await client.get(path + "/windows", params={"limit": 1})
+            assert response.status_code == 200, response.text
+            first = response.json()
+            assert first["windows"][0]["text"] == text[start:end]
+            assert first["next_cursor"]
+            assert response.headers["cache-control"] == "no-store"
+            units = await client.get(path + "/units")
+            assert units.status_code == 200
+            assert units.json()["units"][0]["id"] == uid
+            for suffix in ("/units", "/windows"):
+                denied = await client.get(
+                    path + suffix, headers={"Authorization": "Bearer writer"}
+                )
+                assert denied.status_code == 403
+                invalid = await client.get(path + suffix, params={"limit": 51})
+                assert invalid.status_code == 400
+            resolved = await client.get(
+                path + "/windows", params={"chunk_id": first["windows"][0]["id"]}
+            )
+            assert resolved.json()["windows"] == first["windows"]
+            continued = await client.get(
+                path + "/windows", params={"limit": 1, "cursor": first["next_cursor"]}
+            )
+            assert continued.status_code == 200
+            assert continued.json()["windows"][0]["id"] != first["windows"][0]["id"]
+        await app.state.runtime.services.source_jobs.aclose()

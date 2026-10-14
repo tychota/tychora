@@ -19,6 +19,7 @@ from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.operations import (
     DiscoverRequest,
     EvaluationRequest,
+    ExtractionContentRequest,
     InspectRequest,
     MaintenanceRequest,
     RelationRequest,
@@ -345,6 +346,62 @@ def register_routes(app: FastAPI) -> None:
             limit=limit,
         )
         return _source_json(result)
+
+    @app.get(
+        "/v1/sources/{source_id}/revisions/{revision_id}/extractions/{extraction_id}/units"
+    )
+    async def list_extraction_units(
+        source_id: str,
+        revision_id: str,
+        extraction_id: str,
+        request: Request,
+        cursor: str | None = None,
+        limit: int = 20,
+        unit_id: str | None = None,
+    ):
+        _require(request, "read")
+        parsed = ExtractionContentRequest(
+            source_id=source_id,
+            revision_id=revision_id,
+            extraction_id=extraction_id,
+            cursor=cursor,
+            limit=limit,
+            unit_id=unit_id,
+        )
+        return _source_json(
+            await _services(request).inspection.extraction_units(
+                parsed, _scope(request), ExecutionContext()
+            )
+        )
+
+    @app.get(
+        "/v1/sources/{source_id}/revisions/{revision_id}/extractions/{extraction_id}/windows"
+    )
+    async def list_extraction_windows(
+        source_id: str,
+        revision_id: str,
+        extraction_id: str,
+        request: Request,
+        cursor: str | None = None,
+        limit: int = 20,
+        unit_id: str | None = None,
+        chunk_id: str | None = None,
+    ):
+        _require(request, "read")
+        parsed = ExtractionContentRequest(
+            source_id=source_id,
+            revision_id=revision_id,
+            extraction_id=extraction_id,
+            cursor=cursor,
+            limit=limit,
+            unit_id=unit_id,
+            chunk_id=chunk_id,
+        )
+        return _source_json(
+            await _services(request).inspection.extraction_windows(
+                parsed, _scope(request), ExecutionContext()
+            )
+        )
 
     @app.get("/v1/evidence/{unit_id}")
     async def get_evidence(

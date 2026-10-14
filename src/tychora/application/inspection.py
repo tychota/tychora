@@ -21,6 +21,9 @@ from tychora.contracts.evidence import Excerpt, RelationPath
 from tychora.contracts.graph import GraphBudget
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.operations import (
+    ExtractionContentRequest,
+    ExtractionUnitsPage,
+    ExtractionWindowsPage,
     InspectionItem,
     InspectionResult,
     InspectRequest,
@@ -71,6 +74,8 @@ class InspectionService:
         self.owner = owner
         self.graph = graph
         self.compiler = EligibilityCompiler(owner.store)
+        # Opaque continuations never disclose excluded row IDs or positions.
+        self._content_cursors: dict[str, tuple[str, int]] = {}
 
     def _attempt(self, snapshot, scope: RequestScope):
         preferred = (
@@ -332,7 +337,7 @@ class InspectionService:
             ),
         )
 
-    def _inspect_evidence(self, request, snapshot, attempt):
+    def _inspect_evidence(self, request, snapshot, attempt, *, prepared=None):
         owner = self.owner
         row = owner.db.execute(
             "SELECT e.extraction_id,x.revision_id FROM evidence_units e "
@@ -372,7 +377,8 @@ class InspectionService:
         else:
             # The retained representation validator reconstructs exact per-range
             # ownership from canonical locators/source parts, never from originals.
-            prepared = prepare_extraction(_retained_rows(owner.store, member))
+            if prepared is None:
+                prepared = prepare_extraction(_retained_rows(owner.store, member))
             representation = next(
                 (item for item in prepared.units if item.unit.unit_id == request.id),
                 None,
@@ -715,6 +721,30 @@ class InspectionService:
     ) -> InspectionResult:
         return await self.owner.run_blocking(
             lambda: self._inspect_sync(request, scope, ctx), ctx
+        )
+
+    async def extraction_units(
+        self,
+        request: ExtractionContentRequest,
+        scope: RequestScope,
+        ctx: ExecutionContext,
+    ) -> ExtractionUnitsPage:
+        from tychora.application.retained_content import content_page
+
+        return await self.owner.run_blocking(
+            lambda: content_page(self, request, scope, ctx, windows=False), ctx
+        )
+
+    async def extraction_windows(
+        self,
+        request: ExtractionContentRequest,
+        scope: RequestScope,
+        ctx: ExecutionContext,
+    ) -> ExtractionWindowsPage:
+        from tychora.application.retained_content import content_page
+
+        return await self.owner.run_blocking(
+            lambda: content_page(self, request, scope, ctx, windows=True), ctx
         )
 
     async def relations(
