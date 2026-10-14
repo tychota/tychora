@@ -209,16 +209,24 @@ class CollectionService:
                 raise TychoraError(
                     "INVALID_REQUEST", "The default collection slug is reserved."
                 )
-            policy = parse_collection_policy(row[5])
+            policy = parse_collection_policy(
+                row[5],
+                allow_injected_provider_ids=not self.owner.managed_default_owner,
+            )
+            original_policy = policy
             if "default_kind_id" in request.model_fields_set:
                 self._kind(request.default_kind_id)
                 policy = policy.model_copy(
                     update={"default_kind_id": request.default_kind_id}
                 )
-            changed = row[2:4] != (
-                request.slug,
-                request.title,
-            ) or policy != parse_collection_policy(row[5])
+            changed = (
+                row[2:4]
+                != (
+                    request.slug,
+                    request.title,
+                )
+                or policy != original_policy
+            )
             if changed:
                 self.owner.db.execute(
                     "UPDATE collections SET slug=?,title=?,policy_json=? WHERE collection_id=?",
@@ -236,7 +244,10 @@ class CollectionService:
     async def set_archived(self, collection_id, archived, scope, ctx):
         def archive(grant):
             row = self._row(collection_id, grant)
-            policy = parse_collection_policy(row[5])
+            policy = parse_collection_policy(
+                row[5],
+                allow_injected_provider_ids=not self.owner.managed_default_owner,
+            )
             changed = (policy.archived_at is not None) != archived
             if changed:
                 policy = policy.model_copy(

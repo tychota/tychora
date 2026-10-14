@@ -45,20 +45,27 @@ beforeEach(() => {
                 collection_ids: [collection, second],
               },
             }
-          : path.startsWith("/v1/discovery")
-            ? { ...kinds, next_cursor: null }
-            : path === "/v1/settings"
-              ? {
-                  profile: "local",
-                  values: { providers: { text: { provider: "none" } } },
-                }
-              : path === "/v1/queries"
-                ? queryResponse
-                : path.startsWith("/v1/evidence/")
-                  ? evidence
-                  : path === "/v1/inspect"
-                    ? original
-                    : { paths: [], truncated: false, next_cursor: null };
+          : path.startsWith("/v1/collections?")
+            ? {
+                collections: [{ collection_id: collection, archived_at: null }],
+                next_cursor: null,
+              }
+            : path.startsWith("/v1/collections/")
+              ? { collection_id: path.split("/").at(-1), archived_at: null }
+              : path.startsWith("/v1/discovery")
+                ? { ...kinds, next_cursor: null }
+                : path === "/v1/settings"
+                  ? {
+                      profile: "local",
+                      values: { providers: { text: { provider: "none" } } },
+                    }
+                  : path === "/v1/queries"
+                    ? queryResponse
+                    : path.startsWith("/v1/evidence/")
+                      ? evidence
+                      : path === "/v1/inspect"
+                        ? original
+                        : { paths: [], truncated: false, next_cursor: null };
       return new Response(
         JSON.stringify(
           failConnect && path === "/v1/handshake"

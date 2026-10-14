@@ -31,24 +31,36 @@ beforeEach(() => {
     json(
       path === "/v1/handshake"
         ? handshake
-        : path.startsWith("/v1/discovery")
+        : path.startsWith("/v1/collections?")
           ? {
-              definitions: [],
-              counts: [],
-              capabilities: [],
-              capability_status: [],
+              collections: [
+                {
+                  collection_id: handshake.default_collection_id,
+                  archived_at: null,
+                },
+              ],
               next_cursor: null,
             }
-          : path === "/v1/settings"
-            ? {
-                profile: "local",
-                values: { providers: { text: { provider: "none" } } },
-              }
-            : path.startsWith("/v1/sources")
-              ? sources
-              : path.startsWith("/v1/jobs")
-                ? { jobs: [job], next_cursor: null }
-                : historyPage,
+          : path.startsWith("/v1/collections/")
+            ? { collection_id: path.split("/").at(-1), archived_at: null }
+            : path.startsWith("/v1/discovery")
+              ? {
+                  definitions: [],
+                  counts: [],
+                  capabilities: [],
+                  capability_status: [],
+                  next_cursor: null,
+                }
+              : path === "/v1/settings"
+                ? {
+                    profile: "local",
+                    values: { providers: { text: { provider: "none" } } },
+                  }
+                : path.startsWith("/v1/sources")
+                  ? sources
+                  : path.startsWith("/v1/jobs")
+                    ? { jobs: [job], next_cursor: null }
+                    : historyPage,
     );
   vi.stubGlobal("fetch", async (path: string, init: RequestInit = {}) => {
     requests.push({ path, init });

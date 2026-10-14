@@ -13,6 +13,34 @@ import type {
   CollectionSummary,
 } from "./api/contracts";
 
+async function selectActiveCollections(
+  client: ApiClient,
+  handshake: Handshake,
+  preferredIds: string[],
+): Promise<string[]> {
+  const granted = (id: string) => handshake.scope.collection_ids.includes(id);
+  const page = await client.collections();
+  const current = await Promise.all(
+    preferredIds.filter(granted).map((id) => client.getCollection(id)),
+  );
+  const selected = current
+    .filter((c) => !c.archived_at)
+    .map((c) => c.collection_id);
+  if (selected.length) return selected;
+  const defaultId = handshake.default_collection_id;
+  if (defaultId && granted(defaultId)) {
+    const defaultCollection =
+      current.find((c) => c.collection_id === defaultId) ??
+      page.collections.find((c) => c.collection_id === defaultId) ??
+      (await client.getCollection(defaultId));
+    if (!defaultCollection.archived_at) return [defaultId];
+  }
+  const fallback = page.collections.find(
+    (c) => !c.archived_at && granted(c.collection_id),
+  );
+  return fallback ? [fallback.collection_id] : [];
+}
+
 interface Session {
   client: ApiClient | null;
   adminClient: ApiClient | null;
@@ -66,20 +94,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     try {
       const handshake = await candidate.request<Handshake>("/v1/handshake");
       if (generation !== epoch.current) return;
-      const collections =
-        handshake.default_collection_id &&
-        handshake.scope.collection_ids.includes(handshake.default_collection_id)
-          ? [handshake.default_collection_id]
-          : handshake.scope.collection_ids;
-      if (!collections.length)
+      if (!handshake.scope.collection_ids.length)
         throw new ApiError(
           "FORBIDDEN_SCOPE",
           "No readable collections were granted.",
         );
+      const collections = await selectActiveCollections(
+        candidate,
+        handshake,
+        [],
+      );
+      if (generation !== epoch.current) return;
       grant.current = new ApiClient(token);
-      active.current = grant.current
-        .withGrant(handshake.scope)
-        .narrow(collections);
+      const scoped = grant.current.withGrant(handshake.scope);
+      active.current = collections.length ? scoped.narrow(collections) : scoped;
       setState({
         client: active.current,
         adminClient: grant.current,
@@ -98,26 +126,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const generation = epoch.current;
     // This credential-only client deliberately carries no stale scope header.
     const handshake = await full.handshake();
-    const page = await full.collections();
-    const candidates = (
-      selectCreatedId ? [selectCreatedId] : state.selectedCollections
-    ).filter((id) => handshake.scope.collection_ids.includes(id));
-    const current = await Promise.all(
-      candidates.map((id) => full.getCollection(id)),
+    const selected = await selectActiveCollections(
+      full,
+      handshake,
+      selectCreatedId ? [selectCreatedId] : state.selectedCollections,
     );
     if (generation !== epoch.current || grant.current !== full) return;
-    let selected = current
-      .filter((c) => !c.archived_at)
-      .map((c) => c.collection_id);
-    if (!selected.length) {
-      const fallback =
-        page.collections.find(
-          (c) =>
-            !c.archived_at &&
-            c.collection_id === handshake.default_collection_id,
-        ) ?? page.collections.find((c) => !c.archived_at);
-      selected = fallback ? [fallback.collection_id] : [];
-    }
     const freshFull = full.credentialOnly();
     const fresh = freshFull.withGrant(handshake.scope);
     const client = selected.length ? fresh.narrow(selected) : fresh;

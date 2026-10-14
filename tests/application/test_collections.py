@@ -253,3 +253,74 @@ async def test_source_page_filters_hidden_rows_before_sql_limit(tmp_path):
         assert page.next_cursor is None
         assert page.documents[0].extraction_id is None
         assert page.documents[0].unit_count is None
+
+
+@pytest.mark.asyncio
+async def test_injected_provider_collection_mutations_preserve_consent(tmp_path):
+    from tests.runtime.test_upload_policy import install, prepared
+    from tychora.application.collections import CollectionService
+    from tychora.ports.execution import ExecutionContext
+
+    with prepared(tmp_path) as (owner, original_scope):
+        scope = original_scope.model_copy(
+            update={"capabilities": frozenset({"read", "manage"})}
+        )
+        owner.scope = scope
+        bundle = await owner.run_blocking(lambda: install(owner), ExecutionContext())
+        service = CollectionService(owner)
+        cid = bundle.collection.collection_id
+        page = await service.list(scope, ExecutionContext())
+        assert len(page.collections) == 1
+        request = CollectionEdit(title="Renamed", slug=bundle.collection.slug)
+        edited = await service.edit(cid, request, scope, ExecutionContext())
+        assert edited.title == "Renamed"
+        epoch = edited.policy_epoch
+        unchanged = await service.edit(cid, request, scope, ExecutionContext())
+        assert unchanged.policy_epoch == epoch
+        archived = await service.set_archived(cid, True, scope, ExecutionContext())
+        assert archived.archived_at is not None
+        active = await service.set_archived(cid, False, scope, ExecutionContext())
+        assert active.archived_at is None
+        consent = await service.consent(cid, scope, ExecutionContext())
+        assert consent.collection_upload_providers == ("synthetic",)
+        raw = await owner.run_blocking(
+            lambda: owner.db.execute(
+                "SELECT policy_json FROM collections WHERE collection_id=?", (cid,)
+            ).fetchone()[0],
+            ExecutionContext(),
+        )
+        policy = parse_collection_policy(raw, allow_injected_provider_ids=True)
+        assert policy.schema_version == 2
+        assert policy.upload_providers == ("synthetic",)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["edit", "archive"])
+async def test_managed_collection_mutations_reject_injected_provider(
+    tmp_path, operation
+):
+    from tests.runtime.test_upload_policy import install, prepared
+    from tychora.application.collections import CollectionService
+    from tychora.ports.execution import ExecutionContext
+
+    with prepared(tmp_path) as (owner, original_scope):
+        scope = original_scope.model_copy(
+            update={"capabilities": frozenset({"read", "manage"})}
+        )
+        owner.scope = scope
+        bundle = await owner.run_blocking(lambda: install(owner), ExecutionContext())
+        owner.managed_default_owner = True
+        service = CollectionService(owner)
+        with pytest.raises(TychoraError) as error:
+            if operation == "edit":
+                await service.edit(
+                    bundle.collection.collection_id,
+                    CollectionEdit(title="Renamed", slug=bundle.collection.slug),
+                    scope,
+                    ExecutionContext(),
+                )
+            else:
+                await service.set_archived(
+                    bundle.collection.collection_id, True, scope, ExecutionContext()
+                )
+        assert error.value.code == "INTEGRITY_ERROR"
