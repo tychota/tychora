@@ -1,0 +1,33 @@
+dashboard/src/session.tsx
+  s_346481235fa7eb::t_c82c57dae248c0 16-43,97,102-107,109-110,129-132
+dashboard/src/test/operations.test.tsx
+  s_346481235fa7eb::t_1dc24755e8a2ba 34,36-41,44-63
+dashboard/src/test/session.test.tsx
+  s_346481235fa7eb::t_c32e36c902fc2a 31,33-40,108,136,147,152-264
+dashboard/src/test/workbench.test.tsx
+  s_346481235fa7eb::t_e6cd14ceee28d7 48-68
+src/tychora/application/collections.py
+  s_346481235fa7eb::t_87861f596d46dc 212-216,222-229,247-250
+src/tychora/resources/dashboard/assets/index-CEZ94783.js
+  s_346481235fa7eb::t_1334956d5a92d7 1,3,8-12
+src/tychora/resources/dashboard/index.html
+  s_346481235fa7eb::t_3af1b459b0ec4a 9
+tests/application/test_collections.py
+  s_346481235fa7eb::t_3b2b1396420173 256-326
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "26fa1a2aa7ca9d625728fb3ff037629e5844bd07",
+  "prompts": {},
+  "sessions": {
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
