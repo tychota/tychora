@@ -4,6 +4,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import handshakeFixture from "../../contracts/task2-handshake.json";
@@ -20,6 +21,8 @@ import models from "../../contracts/task3-models.json";
 import readiness from "../../contracts/task3-model-readiness.json";
 import evidence from "../../contracts/evidence.json";
 import receipt from "../../contracts/source-add.json";
+import assetManifest from "../../../src/tychora/resources/model-assets.json";
+import type { ModelCatalog, ModelReadiness, Handshake } from "../api/contracts";
 import { App } from "../App";
 import { ingestionPrerequisites } from "../pages/sources/readiness";
 const second = "00000000-0000-4000-8000-000000000099";
@@ -475,4 +478,306 @@ it("saving a collection refreshes its heading and named scope from the server", 
   expect(
     screen.getByText(`Collection scope · ${renamed.title}`),
   ).toBeInTheDocument();
+});
+
+it("keeps one sync key after an ambiguous failure and retries the accepted intent", async () => {
+  const fallback = respond;
+  const accepted = { ...receipt, operation: "sync" };
+  let attempts = 0;
+  respond = (p, i) =>
+    p.endsWith("/sync")
+      ? ++attempts === 1
+        ? Promise.reject(new Error("accepted response lost"))
+        : json(accepted, 202)
+      : fallback(p, i);
+  await open(`/dashboard/documents/${document.source_id}`);
+  fireEvent.click(await screen.findByText("Processing and lifecycle"));
+  fireEvent.click(screen.getByRole("button", { name: "Sync source" }));
+  await screen.findByText("CONNECTION_FAILED");
+  fireEvent.click(screen.getByRole("button", { name: "Sync source" }));
+  await waitFor(() =>
+    expect(screen.getByRole("link", { name: "Follow job" })).toHaveAttribute(
+      "href",
+      `/dashboard/jobs/${accepted.id}`,
+    ),
+  );
+  const posts = requests.filter((r) => r.path.endsWith("/sync"));
+  expect(posts).toHaveLength(2);
+  expect(
+    new Headers(posts[0].init.headers).get("Idempotency-Key"),
+  ).toBeTruthy();
+  expect(new Headers(posts[1].init.headers).get("Idempotency-Key")).toBe(
+    new Headers(posts[0].init.headers).get("Idempotency-Key"),
+  );
+});
+
+it("starts a fresh sync intent and follows a fresh job after successful acceptance", async () => {
+  const fallback = respond;
+  const jobs = new Map<string, typeof receipt>();
+  const nextId = "11111111-1111-4111-8111-111111111111";
+  respond = (p, i) => {
+    if (!p.endsWith("/sync")) return fallback(p, i);
+    const key = new Headers(i.headers).get("Idempotency-Key")!;
+    if (!jobs.has(key))
+      jobs.set(key, {
+        ...receipt,
+        id: jobs.size ? nextId : receipt.id,
+        operation: "sync",
+      });
+    return json(jobs.get(key), 202);
+  };
+  await open(`/dashboard/documents/${document.source_id}`);
+  fireEvent.click(await screen.findByText("Processing and lifecycle"));
+  fireEvent.click(screen.getByRole("button", { name: "Sync source" }));
+  await waitFor(() =>
+    expect(screen.getByRole("link", { name: "Follow job" })).toHaveAttribute(
+      "href",
+      `/dashboard/jobs/${receipt.id}`,
+    ),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Sync source" }));
+  await waitFor(() =>
+    expect(screen.getByRole("link", { name: "Follow job" })).toHaveAttribute(
+      "href",
+      `/dashboard/jobs/${nextId}`,
+    ),
+  );
+  const posts = requests.filter((r) => r.path.endsWith("/sync"));
+  expect(posts).toHaveLength(2);
+  expect(new Headers(posts[0].init.headers).get("Idempotency-Key")).not.toBe(
+    new Headers(posts[1].init.headers).get("Idempotency-Key"),
+  );
+  expect(jobs.size).toBe(2);
+});
+
+it.each(["documents", "sources"])(
+  "continues an unresolved /%s source-only link through an empty first inventory page in its detail pane",
+  async (route) => {
+    const fallback = respond;
+    respond = (p, i) =>
+      p.startsWith("/v1/documents")
+        ? json(
+            p.includes("cursor=")
+              ? documentFixture
+              : {
+                  ...documentFixture,
+                  documents: [],
+                  next_cursor: "continue-documents",
+                },
+          )
+        : fallback(p, i);
+    const path = `/dashboard/${route}/${document.source_id}`;
+    await open(path);
+    const detail = within(
+      screen.getByRole("region", { name: "Selected document" }),
+    );
+    fireEvent.click(
+      await detail.findByRole("button", { name: "Load more documents" }),
+    );
+    await detail.findByRole("heading", { name: document.title });
+    expect(window.location.pathname).toBe(path);
+    const continued = requests.find((r) =>
+      r.path.includes("cursor=continue-documents"),
+    )!;
+    expect(
+      JSON.parse(new Headers(continued.init.headers).get("X-Tychora-Scope")!)
+        .collection_ids,
+    ).toEqual([collection.collection_id]);
+  },
+);
+
+it("retries an unresolved document inventory load from the detail pane without changing the link", async () => {
+  const fallback = respond;
+  let loads = 0;
+  respond = (p, i) =>
+    p.startsWith("/v1/documents")
+      ? ++loads === 1
+        ? json(
+            {
+              code: "WORKSPACE_BUSY",
+              message: "Inventory temporarily unavailable",
+              retryable: true,
+            },
+            503,
+          )
+        : json(documentFixture)
+      : fallback(p, i);
+  const path = `/dashboard/documents/${document.source_id}`;
+  await open(path);
+  const detail = within(
+    screen.getByRole("region", { name: "Selected document" }),
+  );
+  await detail.findByRole("alert");
+  fireEvent.click(detail.getByRole("button", { name: "Retry" }));
+  await detail.findByRole("heading", { name: document.title });
+  expect(window.location.pathname).toBe(path);
+});
+
+function boundedDocumentReadiness(failure?: "missing" | "corrupt") {
+  const assets = assetManifest.assets
+    .filter((a) => a.selection === "documents")
+    .map((a) => {
+      const unchecked = a.id === "docling-table-weights";
+      const bad = failure && a.id === "docling-layout-config";
+      return {
+        asset_id: a.id,
+        selection: a.selection,
+        sha256: a.sha256,
+        size_bytes: a.size_bytes,
+        state: bad
+          ? failure
+          : unchecked
+            ? ("not_checked" as const)
+            : ("installed" as const),
+        checked_bytes: bad || unchecked ? 0 : a.size_bytes,
+        verification:
+          bad || unchecked ? ("none" as const) : ("current_full_hash" as const),
+        reason: unchecked
+          ? "needs_full_verification"
+          : bad && failure === "corrupt"
+            ? "invalid_file"
+            : null,
+      };
+    });
+  return {
+    ...readiness,
+    assets,
+    selections: [
+      {
+        selection: "documents",
+        state: "not_checked" as const,
+        complete: false,
+      },
+    ],
+    total_size_bytes: assets.reduce((total, a) => total + a.size_bytes, 0),
+    checked_bytes: assets.reduce((total, a) => total + a.checked_bytes, 0),
+    complete: false,
+  };
+}
+
+it("keeps incomplete bounded document verification nonblocking without calling assets ready", () => {
+  const result = ingestionPrerequisites(
+    models as ModelCatalog,
+    boundedDocumentReadiness() as ModelReadiness,
+    handshake as Handshake,
+    collection.collection_id,
+    ["documents"],
+  );
+  expect(result.some((p) => p.blocking)).toBe(false);
+  expect(
+    result.some(
+      (p) =>
+        p.message.includes("not checked") &&
+        p.message.includes("server will fully verify"),
+    ),
+  ).toBe(true);
+});
+
+it.each(["missing", "corrupt"] as const)(
+  "preserves known %s asset evidence masked by an incomplete aggregate",
+  (state) => {
+    const result = ingestionPrerequisites(
+      models as ModelCatalog,
+      boundedDocumentReadiness(state) as ModelReadiness,
+      handshake as Handshake,
+      collection.collection_id,
+      ["documents"],
+    );
+    expect(
+      result.some(
+        (p) =>
+          p.blocking &&
+          p.message.includes("docling-layout-config") &&
+          p.message.includes(state),
+      ),
+    ).toBe(true);
+  },
+);
+
+it.each([undefined, "missing", "corrupt"] as const)(
+  "document file intake with bounded asset failure=%s reaches the server only without known failure",
+  async (state) => {
+    const fallback = respond;
+    respond = (p, i) =>
+      p.startsWith("/v1/models/readiness")
+        ? json(boundedDocumentReadiness(state))
+        : p === "/v1/sources" && i.method === "POST"
+          ? json(
+              {
+                code: "CAPABILITY_UNAVAILABLE",
+                message: "Server asset verification rejected this input",
+                retryable: false,
+              },
+              503,
+            )
+          : fallback(p, i);
+    await open("/dashboard/documents/add");
+    fireEvent.change(screen.getByLabelText("Title"), {
+      target: { value: "Synthetic document asset review" },
+    });
+    await screen.findByRole("option", { name: collection.title });
+    fireEvent.change(screen.getByLabelText("Destination"), {
+      target: { value: collection.collection_id },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Files" }));
+    const file = new File(["synthetic bytes"], "review.docx");
+    Object.defineProperty(file, "arrayBuffer", {
+      value: async () => new TextEncoder().encode("synthetic bytes").buffer,
+    });
+    fireEvent.change(screen.getByLabelText("Source file"), {
+      target: { files: [file] },
+    });
+    await screen.findByText(/server will fully verify/);
+    await waitFor(() =>
+      expect(screen.queryByText("Reading selected file…")).toBeNull(),
+    );
+    fireEvent.click(
+      screen.getByLabelText(
+        "I confirm this source and processing destination.",
+      ),
+    );
+    const submit = screen.getByRole("button", { name: "Submit source" });
+    if (state) {
+      expect(submit).toBeDisabled();
+      fireEvent.submit(submit.closest("form")!);
+      expect(
+        requests.some(
+          (r) => r.path === "/v1/sources" && r.init.method === "POST",
+        ),
+      ).toBe(false);
+    } else {
+      await waitFor(() => expect(submit).toBeEnabled());
+      fireEvent.click(submit);
+      await screen.findByText(/Server asset verification rejected this input/);
+      const posted = requests.find(
+        (r) => r.path === "/v1/sources" && r.init.method === "POST",
+      )!;
+      expect(JSON.parse(posted.init.body as string)).toMatchObject({
+        type: "bytes",
+        format: "docx",
+        kind: "document@1",
+        collection_id: collection.collection_id,
+      });
+      expect(screen.queryByText(/Indexing accepted/)).toBeNull();
+    }
+  },
+);
+
+it("keeps missing document packages blocking when bounded assets remain unknown", () => {
+  const catalog = {
+    ...models,
+    selection_capabilities: models.selection_capabilities.map((c) =>
+      c.selection === "documents" ? { ...c, packages_available: false } : c,
+    ),
+  };
+  const result = ingestionPrerequisites(
+    catalog as ModelCatalog,
+    boundedDocumentReadiness() as ModelReadiness,
+    handshake as Handshake,
+    collection.collection_id,
+    ["documents"],
+  );
+  expect(
+    result.some((p) => p.blocking && p.message.includes("Required packages")),
+  ).toBe(true);
 });

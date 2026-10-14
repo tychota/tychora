@@ -175,13 +175,24 @@ export function Documents({
                   <SourceRevisions sourceId={sourceId} client={adminClient} />
                 </>
               ) : (
-                <p>
-                  {data.busy
-                    ? "Loading document inventory…"
-                    : data.next
-                      ? "This identity has not been returned in the loaded inventory. Load more documents to continue."
-                      : "This document is unavailable in the selected scope."}
-                </p>
+                <>
+                  <p>
+                    {data.busy
+                      ? "Loading document inventory…"
+                      : data.next
+                        ? "This identity has not been returned in the loaded inventory. Load more documents to continue."
+                        : "This document is unavailable in the selected scope."}
+                  </p>
+                  <LoadState {...data} retry={() => void data.load()} />
+                  <More
+                    {...data}
+                    onClick={() => void data.more()}
+                    label="Load more documents"
+                  />
+                  <button disabled={data.busy} onClick={() => void data.load()}>
+                    Refresh document inventory
+                  </button>
+                </>
               )}
             </>
           ) : (
@@ -256,7 +267,10 @@ function DocumentDetail({
       );
       if (!lifetime.current.signal.aborted) {
         if (withdraw) setReceipt(result);
-        else setSyncReceipt(result as JobHandle);
+        else {
+          setSyncReceipt(result as JobHandle);
+          intent.current = new SubmissionIntent();
+        }
         setConfirmWithdraw(false);
       }
     } catch (e) {

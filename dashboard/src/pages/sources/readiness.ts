@@ -29,11 +29,34 @@ export function ingestionPrerequisites(
         blocking: true,
       });
     const checked = readiness?.selections.find((c) => c.selection === s);
-    if (checked && (checked.state !== "installed" || !checked.complete))
+    const assets = readiness?.assets.filter((a) => a.selection === s) ?? [];
+    const failures = assets.filter(
+      (a) => a.state === "missing" || a.state === "corrupt",
+    );
+    for (const asset of failures)
       result.push({
-        message: `${s} assets: ${checked.state}${checked.complete ? "" : " · verification incomplete"}.`,
+        message: `${s} asset ${asset.asset_id}: ${asset.state}.`,
         route: "/dashboard/models",
         blocking: true,
+      });
+    if (
+      checked &&
+      ["missing", "corrupt"].includes(checked.state) &&
+      !failures.length
+    )
+      result.push({
+        message: `${s} assets: ${checked.state}.`,
+        route: "/dashboard/models",
+        blocking: true,
+      });
+    if (
+      (checked && (checked.state === "not_checked" || !checked.complete)) ||
+      assets.some((a) => a.state === "not_checked")
+    )
+      result.push({
+        message: `${s} assets are not checked completely. The server will fully verify assets before processing.`,
+        route: "/dashboard/models",
+        blocking: false,
       });
   }
   const text = catalog.providers.find((p) => p.slot === "text");
