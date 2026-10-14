@@ -1,0 +1,21 @@
+src/tychora/application/discovery.py
+  s_219afc08798c44::t_2254de5b63fc63 1172-1187,1189-1192
+tests/application/test_discovery.py
+  s_219afc08798c44::t_b91f27aff0b43a 406-463
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "63eeb18f3956bbd62e2c98ebe7de6fa8554cca0c",
+  "prompts": {},
+  "sessions": {
+    "s_219afc08798c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
