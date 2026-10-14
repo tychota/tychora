@@ -69,6 +69,12 @@ async def capture(output: Path) -> None:
 
             await request("handshake", "GET", "/v1/handshake")
             await request("discovery-kinds", "GET", "/v1/discovery/kinds?limit=4")
+            for kind in ("document", "manual"):
+                await request(
+                    f"task4-{kind}-metadata-schema",
+                    "GET",
+                    f"/v1/discovery/kinds/{kind}@1/metadata-schema",
+                )
             receipt = await request(
                 "source-add",
                 "POST",

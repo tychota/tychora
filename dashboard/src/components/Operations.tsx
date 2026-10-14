@@ -1,27 +1,6 @@
 import type { ReactNode } from "react";
-import { useRoute } from "../App";
 import { ErrorNotice, Status } from "./Status";
-export function RouteLink({
-  to,
-  children,
-}: {
-  to: string;
-  children: ReactNode;
-}) {
-  const { navigate } = useRoute();
-  return (
-    <a
-      href={to}
-      onClick={(e) => {
-        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-        e.preventDefault();
-        navigate(to);
-      }}
-    >
-      {children}
-    </a>
-  );
-}
+export { RouteLink } from "../routing";
 export function PageHeading({
   title,
   children,
@@ -31,7 +10,6 @@ export function PageHeading({
 }) {
   return (
     <header className="page-heading">
-      <p className="eyebrow">Local workspace</p>
       <h1>{title}</h1>
       {children}
     </header>

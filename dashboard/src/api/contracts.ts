@@ -479,3 +479,59 @@ export interface ModelReadiness {
   receipt_search_complete: boolean;
   receipt_checked_bytes: number;
 }
+
+export interface ExtractionUnitSummary {
+  id: string;
+  ordinal: number;
+  unit_type: string;
+  heading_path: string[];
+  text_origin: string;
+  review_state: string;
+  citable: boolean;
+  locators: Locator[];
+  preview: string;
+}
+export interface ExtractionWindow {
+  id: string;
+  unit_id: string;
+  extraction_id: string;
+  char_start: number;
+  char_end: number;
+  text: string;
+  token_count: number;
+  chunker_fingerprint: string;
+  context_group_key: string;
+  locators: Locator[];
+}
+export interface ExtractionUnitsPage {
+  source_id: string;
+  revision_id: string;
+  extraction_id: string;
+  units: ExtractionUnitSummary[];
+  next_cursor: string | null;
+  scope_limited: boolean;
+}
+export interface ExtractionWindowsPage {
+  source_id: string;
+  revision_id: string;
+  extraction_id: string;
+  windows: ExtractionWindow[];
+  next_cursor: string | null;
+  scope_limited: boolean;
+}
+export interface KindMetadataForm {
+  kind_id: string;
+  schema_id: string;
+  schema_digests: Record<string, Json>;
+  fields: {
+    name: string;
+    required: boolean;
+    value_types: string[];
+    description: string;
+    constraints: Record<string, Json> | boolean;
+    advanced: boolean;
+  }[];
+  schemas: Record<string, Json>;
+  schema_reference_bindings: Record<string, Json>;
+  advanced: boolean;
+}

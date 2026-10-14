@@ -8,11 +8,12 @@ import { PageHeading, LoadState, More } from "../components/Operations";
 import { JsonDetails } from "../components/JsonDetails";
 import { ErrorNotice, Status } from "../components/Status";
 export function Settings() {
-  const { client, handshake } = useSession();
-  const data = useResource<SettingsValue>("/v1/settings");
-  const kinds = usePages<Discovery>("/v1/discovery?subject=kinds");
+  const { adminClient: client, handshake } = useSession();
+  const data = useResource<SettingsValue>("/v1/settings", client);
+  const kinds = usePages<Discovery>("/v1/discovery?subject=kinds", client);
   const capabilities = useResource<Discovery>(
     "/v1/discovery?subject=settings&limit=100",
+    client,
   );
   const [profile, setProfile] = useState("");
   const [toml, setToml] = useState("");

@@ -10,11 +10,18 @@ import { publicError } from "./api/client";
 import { ErrorNotice } from "./components/Status";
 import { Search } from "./pages/Search";
 import { OperationsRouter } from "./pages/OperationsRouter";
+import { useRoute, RouteLink } from "./routing";
+import { WorkspaceScope } from "./components/WorkspaceScope";
+import { AddDocumentDraftProvider } from "./pages/documents/draft";
+export { useRoute } from "./routing";
 
 export const destinations = [
+  "Collections",
+  "Documents",
   "Search",
-  "Sources",
+  "Explore",
   "Jobs",
+  "Models",
   "Evaluations",
   "Activity",
   "Settings",
@@ -85,111 +92,133 @@ function Connection() {
     </main>
   );
 }
-export function useRoute() {
-  const [path, setPath] = useState(window.location.pathname);
-  useEffect(() => {
-    const update = () => setPath(window.location.pathname);
-    window.addEventListener("popstate", update);
-    return () => window.removeEventListener("popstate", update);
-  }, []);
-  const navigate = (next: string) => {
-    history.pushState({}, "", next);
-    window.dispatchEvent(new PopStateEvent("popstate"));
-  };
-  return { path, navigate };
-}
 /** Optional route override for embedding the workbench. */
 export interface AppProps {
   renderRoute?: (path: string) => ReactNode;
 }
 function Shell({ renderRoute }: AppProps) {
   const session = useSession();
-  const { path, navigate } = useRoute();
-  const page = path.replace(/^\/dashboard\/?/, "").split("/")[0] || "search";
-  if (!session.client || !session.handshake) return <Connection />;
+  const { path } = useRoute();
+  const rawPage =
+    path.replace(/^\/dashboard\/?/, "").split("/")[0] || "collections";
+  const page =
+    rawPage === "sources"
+      ? "documents"
+      : rawPage === "runs"
+        ? "activity"
+        : rawPage;
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  useEffect(() => setNavigationOpen(false), [path]);
+  if (!session.adminClient || !session.handshake) return <Connection />;
+  const administration = ["jobs", "models", "evaluations", "settings"].includes(
+    page,
+  );
+  const routeKey =
+    page === "documents" && path !== "/dashboard/documents/add"
+      ? "documents"
+      : path;
+  const noScope =
+    !session.client &&
+    ["documents", "search", "explore", "activity"].includes(page) &&
+    path !== "/dashboard/documents/add" &&
+    !/^\/dashboard\/(?:documents|sources)\/[^/]+\/revisions\/[^/]+$/.test(path);
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <a
-          className="wordmark"
-          href="/dashboard/search"
-          onClick={(event) => {
-            event.preventDefault();
-            navigate("/dashboard/search");
-          }}
-        >
-          tychora<span>Evidence workbench</span>
-        </a>
-        <nav aria-label="Workbench">
-          {destinations.map((destination) => (
-            <a
-              key={destination}
-              href={`/dashboard/${destination.toLowerCase()}`}
-              aria-current={
-                page === destination.toLowerCase() ? "page" : undefined
-              }
-              onClick={(event) => {
-                if (
-                  event.metaKey ||
-                  event.ctrlKey ||
-                  event.shiftKey ||
-                  event.altKey
-                )
-                  return;
-                event.preventDefault();
-                navigate(`/dashboard/${destination.toLowerCase()}`);
-              }}
-            >
-              {destination}
-            </a>
-          ))}
-        </nav>
-        <div className="workspace-context">
-          <p className="eyebrow">Workspace</p>
-          <p className="workspace-id">{session.handshake.workspace_id}</p>
-          <fieldset>
-            <legend>Granted collections</legend>
-            {session.handshake.scope.collection_ids.map((id) => (
-              <label key={id} className="collection-option">
-                <input
-                  type="checkbox"
-                  checked={session.selectedCollections.includes(id)}
-                  disabled={
-                    session.selectedCollections.length === 1 &&
-                    session.selectedCollections.includes(id)
-                  }
-                  onChange={(e) =>
-                    session.selectCollections(
-                      e.target.checked
-                        ? [...session.selectedCollections, id]
-                        : session.selectedCollections.filter(
-                            (value) => value !== id,
-                          ),
-                    )
-                  }
-                />
-                <span>{id}</span>
-              </label>
-            ))}
-          </fieldset>
-          <button type="button" onClick={session.disconnect}>
-            Disconnect
+    <AddDocumentDraftProvider key={session.connectionKey}>
+      <div className="app-shell">
+        <aside className="sidebar">
+          <RouteLink className="wordmark" to="/dashboard/collections">
+            tychora<span>Evidence workbench</span>
+          </RouteLink>
+          <button
+            className="navigation-toggle"
+            type="button"
+            aria-expanded={navigationOpen}
+            aria-controls="workbench-navigation"
+            onClick={() => setNavigationOpen((v) => !v)}
+          >
+            Navigation
           </button>
+          <nav
+            id="workbench-navigation"
+            className={navigationOpen ? "navigation-open" : ""}
+            aria-label="Workbench"
+          >
+            {[
+              { label: "Knowledge", pages: destinations.slice(0, 4) },
+              { label: "Administration", pages: destinations.slice(4) },
+            ].map((group) => (
+              <div className="navigation-group" key={group.label}>
+                <p className="eyebrow">{group.label}</p>
+                {group.pages.map((destination) => (
+                  <RouteLink
+                    key={destination}
+                    to={`/dashboard/${destination.toLowerCase()}`}
+                    aria-current={
+                      page === destination.toLowerCase() ? "page" : undefined
+                    }
+                  >
+                    {destination}
+                  </RouteLink>
+                ))}
+              </div>
+            ))}
+          </nav>
+          <div className="workspace-context">
+            <p className="eyebrow">Connected workspace</p>
+            <details>
+              <summary>Workspace identity</summary>
+              <p className="workspace-id">{session.handshake.workspace_id}</p>
+            </details>
+            <button type="button" onClick={session.disconnect}>
+              Disconnect
+            </button>
+          </div>
+          <p className="sidebar-footer">Evidence before conclusions.</p>
+        </aside>
+        <div className="workspace-body">
+          <header className="workspace-bar">
+            <span>Local workspace</span>
+            <WorkspaceScope key={session.sessionKey} />
+            {administration && (
+              <p className="authority-context">
+                {page === "jobs"
+                  ? "All jobs within your full granted scope"
+                  : "Entire workspace · server authorization applies"}
+              </p>
+            )}
+            {page === "activity" && (
+              <p className="authority-context">
+                History for this exact selected query scope
+              </p>
+            )}
+          </header>
+          <main id="main" className="main-content" tabIndex={-1}>
+            <div
+              key={`${session.sessionKey}-${administration ? "admin" : session.selectionKey}-${routeKey}`}
+            >
+              {noScope ? (
+                <section className="empty-state">
+                  <h1>No active collection selected</h1>
+                  <p>
+                    Select a granted active collection, or create or reactivate
+                    one in Collections.
+                  </p>
+                  <RouteLink to="/dashboard/collections">
+                    Open Collections
+                  </RouteLink>
+                </section>
+              ) : page === "search" ? (
+                <Search />
+              ) : renderRoute ? (
+                renderRoute(path)
+              ) : (
+                <OperationsRouter path={path} />
+              )}
+            </div>
+          </main>
         </div>
-        <p className="sidebar-footer">Evidence before conclusions.</p>
-      </aside>
-      <main id="main" className="main-content" tabIndex={-1}>
-        <div key={`${session.sessionKey}-${path}`}>
-          {page === "search" ? (
-            <Search />
-          ) : renderRoute ? (
-            renderRoute(path)
-          ) : (
-            <OperationsRouter path={path} />
-          )}
-        </div>
-      </main>
-    </div>
+      </div>
+    </AddDocumentDraftProvider>
   );
 }
 export function App(props: AppProps) {

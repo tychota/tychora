@@ -10,8 +10,32 @@ import { LoadState, More, RouteLink } from "../../components/Operations";
 import { JsonDetails } from "../../components/JsonDetails";
 import { OriginalInspection } from "../../components/EvidenceReader";
 import { useSession } from "../../session";
-export function Channels({ path }: { path: string }) {
-  const data = usePages<ChannelPage>(`${path}/channels`);
+import type { ApiClient } from "../../api/client";
+import type { Json } from "../../api/contracts";
+function StageSummary({ stages }: { stages: Record<string, Json> }) {
+  return (
+    <dl className="identity">
+      {Object.entries(stages)
+        .filter(
+          ([, value]) => typeof value === "string" || typeof value === "number",
+        )
+        .map(([name, value]) => (
+          <div key={name}>
+            <dt>{name}</dt>
+            <dd>{String(value)}</dd>
+          </div>
+        ))}
+    </dl>
+  );
+}
+export function Channels({
+  path,
+  client,
+}: {
+  path: string;
+  client?: ApiClient | null;
+}) {
+  const data = usePages<ChannelPage>(`${path}/channels`, client);
   return (
     <section>
       <h4>Retrieval channels</h4>
@@ -42,13 +66,16 @@ export function Channels({ path }: { path: string }) {
 export function RevisionCoverage({
   sourceId,
   revisionId,
+  client: owner,
 }: {
   sourceId: string;
   revisionId: string;
+  client?: ApiClient | null;
 }) {
-  const { client } = useSession();
+  const session = useSession();
+  const client = owner === undefined ? session.client : owner;
   const path = `/v1/sources/${objectPath(sourceId)}/revisions/${objectPath(revisionId)}`;
-  const data = usePages<ExtractionPage>(`${path}/extractions`);
+  const data = usePages<ExtractionPage>(`${path}/extractions`, client);
   return (
     <section className="operation-panel">
       <h2>Selected revision</h2>
@@ -67,6 +94,7 @@ export function RevisionCoverage({
         .map((e, i) => (
           <article key={`${e.extraction_id}-${i}`}>
             <h4 className="object-id">{e.extraction_id}</h4>
+            <StageSummary stages={e.stages} />
             <JsonDetails
               value={e.stages}
               label="Extraction stages and counts"
@@ -84,6 +112,7 @@ export function RevisionCoverage({
               </p>
             )}
             <Channels
+              client={client}
               path={`${path}/extractions/${objectPath(e.extraction_id)}`}
             />
           </article>
@@ -101,9 +130,16 @@ export function RevisionCoverage({
     </section>
   );
 }
-export function SourceRevisions({ sourceId }: { sourceId: string }) {
+export function SourceRevisions({
+  sourceId,
+  client,
+}: {
+  sourceId: string;
+  client?: ApiClient | null;
+}) {
   const data = usePages<RevisionPage>(
     `/v1/sources/${objectPath(sourceId)}/revisions`,
+    client,
   );
   const [selected, setSelected] = useState<string | null>(null);
   return (
@@ -123,6 +159,7 @@ export function SourceRevisions({ sourceId }: { sourceId: string }) {
           <article key={`${r.revision_id}-${i}`}>
             <h3 className="object-id">{r.revision_id}</h3>
             <p>{r.kind_id}</p>
+            <StageSummary stages={r.stages} />
             <JsonDetails
               value={r.stages}
               label="Revision capture diagnostics"
@@ -155,6 +192,7 @@ export function SourceRevisions({ sourceId }: { sourceId: string }) {
           key={selected}
           sourceId={sourceId}
           revisionId={selected}
+          client={client}
         />
       )}
     </section>

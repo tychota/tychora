@@ -28,7 +28,8 @@ export function Evaluations({ id }: { id?: string }) {
   return id ? <EvaluationDetail id={id} /> : <EvaluationList />;
 }
 function EvaluationList() {
-  const data = useResource<EvaluationSummary[]>("/v1/evaluations");
+  const { adminClient } = useSession();
+  const data = useResource<EvaluationSummary[]>("/v1/evaluations", adminClient);
   const [selected, setSelected] = useState<string[]>([]);
   const [showForm, setShowForm] = useState(false);
   return (
@@ -109,7 +110,11 @@ function EvaluationList() {
   );
 }
 function EvaluationDetail({ id }: { id: string }) {
-  const data = useResource<Evaluation>(`/v1/evaluations/${objectPath(id)}`);
+  const { adminClient } = useSession();
+  const data = useResource<Evaluation>(
+    `/v1/evaluations/${objectPath(id)}`,
+    adminClient,
+  );
   const run = data.value;
   return (
     <>
@@ -179,9 +184,14 @@ function EvaluationContent({ run }: { run: Evaluation }) {
   );
 }
 function Comparison({ leftId, rightId }: { leftId: string; rightId: string }) {
-  const left = useResource<Evaluation>(`/v1/evaluations/${objectPath(leftId)}`);
+  const { adminClient } = useSession();
+  const left = useResource<Evaluation>(
+    `/v1/evaluations/${objectPath(leftId)}`,
+    adminClient,
+  );
   const right = useResource<Evaluation>(
     `/v1/evaluations/${objectPath(rightId)}`,
+    adminClient,
   );
   const comparison =
     left.value && right.value
