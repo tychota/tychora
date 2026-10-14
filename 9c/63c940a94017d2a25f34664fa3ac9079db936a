@@ -1,0 +1,73 @@
+dashboard/contracts/README.md
+  s_346481235fa7eb::t_bb98575e84d018 1-19
+dashboard/contracts/discovery-kinds.json
+  s_219afc08798c44::t_73cef819d6e956 1-179
+dashboard/contracts/evaluation-dataset.json
+  s_219afc08798c44::t_53eafab000c552 1-72
+dashboard/contracts/evaluation-detail.json
+  s_219afc08798c44::t_d9e2670f7bbb8a 1-667
+dashboard/contracts/evaluation-list.json
+  s_219afc08798c44::t_1c8a9d93399928 1-9
+dashboard/contracts/evaluation-receipt.json
+  s_219afc08798c44::t_9f52011a547ce5 1-5
+dashboard/contracts/evidence.json
+  s_219afc08798c44::t_57f3c2f5900ff0 1-41
+dashboard/contracts/handshake.json
+  s_219afc08798c44::t_cb59422908ada9 1-26
+dashboard/contracts/job-events.json
+  s_219afc08798c44::t_af1c04d4ddc8b9 1-92
+dashboard/contracts/job-status.json
+  s_219afc08798c44::t_a4790bd7272fd9 1-26
+dashboard/contracts/original.json
+  s_219afc08798c44::t_0b8fd444e75e91 1-12
+dashboard/contracts/query-history.json
+  s_219afc08798c44::t_837d6f72c74cc5 1-22
+dashboard/contracts/query-run.json
+  s_219afc08798c44::t_4b38dc307dac25 1-25
+dashboard/contracts/query.json
+  s_219afc08798c44::t_d85ec43a72c2f6 1-141
+dashboard/contracts/source-add.json
+  s_219afc08798c44::t_bf1a5afe1f3081 1-5
+dashboard/contracts/source-revisions.json
+  s_219afc08798c44::t_3c5b551914abbf 1-26
+dashboard/contracts/sources.json
+  s_219afc08798c44::t_9c92d2ddb5cf3b 1-45
+dashboard/scripts/generate_contracts.py
+  s_346481235fa7eb::t_e5eded14411517 1-185
+src/tychora/interfaces/http/app.py
+  s_219afc08798c44::t_73412cee3de814 19-20,47-57,59-62,99,105,180
+src/tychora/interfaces/http/auth.py
+  s_219afc08798c44::t_1c2408dcf3a8be 62-64,74,82-83,86-87,100-120
+src/tychora/interfaces/http/dashboard.py
+  s_346481235fa7eb::t_262969636cc273 1-79
+src/tychora/interfaces/http/routes.py
+  s_219afc08798c44::t_52c8dd8329b1de 516,525
+tests/evaluation/test_evaluation_http.py
+  s_219afc08798c44::t_39734ea07787a0 41-101
+tests/transports/test_dashboard.py
+  s_346481235fa7eb::t_a2822e7e7a0395 1-182
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9c63c940a94017d2a25f34664fa3ac9079db936a",
+  "prompts": {},
+  "sessions": {
+    "s_219afc08798c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    },
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
