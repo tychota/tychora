@@ -1,6 +1,6 @@
 # Dashboard backend contract review
 
-Reviewed 2026-10-14 in `/Users/tychota/Documents/Code/openSource/tychora`. Read HANDOFF.md, architecture, assessment, dashboard draft, HTTP handlers, DTOs, application services and relevant tests. No product files changed.
+Reviewed 2026-10-14 against the repository at `700df65`. Read HANDOFF.md, architecture, assessment, dashboard draft, HTTP handlers, DTOs, application services and relevant tests. No product files changed during the audit.
 
 **Evidence labels:** Verified = inspected code plus named tests; reproduced = fresh bounded probe; limited = endpoint exists but cannot fulfill the draft as written; missing = no public contract/implementation found. Test references below are source references, not claims that the whole suite was rerun.
 
