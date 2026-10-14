@@ -1,0 +1,30 @@
+dashboard/src/test/operations.test.tsx
+  s_346481235fa7eb::t_5280b03b5bf2ad 1
+  s_346481235fa7eb::t_867f3ef609be0b 966-1139
+  s_346481235fa7eb::t_198de429fc7f95 2-7,1140-1170
+dashboard/src/pages/sources/SourceForm.tsx
+  s_346481235fa7eb::t_efe308bc004968 31,67-70,72-85,90-102,105,132-133,140-141,143-144,161-166,282-296,364-365,369-371
+  s_346481235fa7eb::t_710c0dd38d6caa 380
+dashboard/src/pages/sources/submission.ts
+  s_346481235fa7eb::t_efe308bc004968 40
+src/tychora/resources/dashboard/assets/index-BGoaxAhi.js
+  s_346481235fa7eb::t_86187eff1d89b7 1,3,6,8-12
+src/tychora/resources/dashboard/index.html
+  s_346481235fa7eb::t_3a2eff5197540f 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f2061a3e1ceab57495cb1aaf0fb6d60d2866e631",
+  "prompts": {},
+  "sessions": {
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
