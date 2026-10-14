@@ -195,7 +195,7 @@ Snapshot publication retains unchanged prior members from archived collections. 
 
 **Files to modify:**
 
-- `pyproject.toml`, `uv.lock`; `application/settings.py` extract shared noncommitting preflight, `application/setup.py` safe bounded verifier facade, `application/maintenance.py` workspace-mutating full-scope enforcement, `application/workspace_authority.py` shared checks.
+- `pyproject.toml`, `uv.lock`; `application/settings.py` extract shared noncommitting preflight, `application/setup.py` safe bounded verifier facade, `application/maintenance.py` workspace-mutating full-scope enforcement, `application/backup.py` direct-export canonical authority, `application/workspace_authority.py` shared checks. Standalone restore retains its archive-specific authorization; the maintenance dispatcher checks current-workspace authority before importing.
 - `interfaces/http/routes.py`, `app.py`, `server.py`; `configuration/models.py` only if needed to expose qualified supported field types; do not change provider support claims.
 - `dashboard/src/api/contracts.ts` and captured HTTP fixtures; frontend Models/Settings forms belong to root UI task.
 - Existing settings activation HTTP tests in `tests/transports/test_http.py`, setup/backup/recovery tests in `tests/operations/`, the managed-versus-static selected-vision consent regression in `tests/api/test_public_vision.py`, packaging dependency/resource checks, `docs/configuration.md`, `docs/operations.md`, `docs/http.md`, `docs/dashboard.md`.
