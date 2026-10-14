@@ -811,3 +811,96 @@ summary {
     transition: none !important;
   }
 }
+/* Compact operations inventories and deliberate, open inspection surfaces. */
+.operation-panel {
+  margin: 1.5rem 0;
+  padding: 1.25rem;
+  background: var(--paper, #faf8f2);
+  border: 1px solid var(--border, #dddcd1);
+  border-radius: 0.4rem;
+}
+.operation-panel article {
+  padding: 1rem 0;
+  border-top: 1px solid var(--border, #dddcd1);
+}
+.operation-panel form > fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.operation-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 0.9rem;
+}
+.operation-panel label.collection-option {
+  flex-direction: row;
+  align-items: center;
+}
+.operation-panel textarea {
+  width: 100%;
+  resize: vertical;
+}
+.operation-panel form {
+  max-width: 64rem;
+}
+.table-scroll {
+  overflow-x: auto;
+  margin: 1rem 0;
+}
+.table-scroll table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 0.875rem;
+}
+.table-scroll th {
+  font-size: 0.75rem;
+  color: var(--muted, #5c655d);
+  font-weight: 600;
+}
+.table-scroll th,
+.table-scroll td {
+  padding: 0.7rem 0.65rem;
+  border-bottom: 1px solid var(--border, #dddcd1);
+  vertical-align: top;
+}
+.table-scroll td:first-child {
+  max-width: 24rem;
+  overflow-wrap: anywhere;
+}
+.table-scroll button {
+  margin: 0.1rem 0.3rem 0.3rem 0;
+}
+.object-id {
+  display: block;
+  font-family: var(--mono, monospace);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+  color: var(--muted, #5c655d);
+}
+.compact-list {
+  padding-left: 1.4rem;
+}
+.compact-list li {
+  padding: 0.5rem 0;
+  overflow-wrap: anywhere;
+}
+.compact-list li > span {
+  display: block;
+}
+.operation-panel summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+@media (max-width: 720px) {
+  .operation-panel {
+    padding: 0.9rem;
+  }
+  .table-scroll td,
+  .table-scroll th {
+    padding: 0.6rem 0.4rem;
+  }
+}

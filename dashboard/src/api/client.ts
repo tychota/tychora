@@ -47,7 +47,7 @@ export class ApiClient {
   private async fetch<T>(
     path: string,
     init: RequestInit = {},
-    consume: (response: Response) => Promise<T>,
+    consume: (response: Response, signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
     if (!path.startsWith("/v1/") || path.includes("\\") || /[\r\n]/.test(path))
       throw new ApiError(
@@ -58,7 +58,7 @@ export class ApiClient {
       throw new DOMException("Session ended", "AbortError");
     const headers = new Headers(init.headers);
     headers.set("Authorization", `Bearer ${this.token}`);
-    headers.set("Accept", "application/json");
+    if (!headers.has("Accept")) headers.set("Accept", "application/json");
     if (this.scope) headers.set("X-Tychora-Scope", JSON.stringify(this.scope));
     if (init.body && !headers.has("Content-Type"))
       headers.set("Content-Type", "application/json");
@@ -90,7 +90,7 @@ export class ApiClient {
           error?.retryable === true,
         );
       }
-      const value = await consume(response);
+      const value = await consume(response, controller.signal);
       if (controller.signal.aborted)
         throw new DOMException("Request ended", "AbortError");
       return value;
@@ -103,6 +103,22 @@ export class ApiClient {
       this.lifetime.signal.removeEventListener("abort", abort);
       init.signal?.removeEventListener("abort", abort);
     }
+  }
+  async stream(
+    path: string,
+    init: RequestInit,
+    consume: (
+      body: ReadableStream<Uint8Array>,
+      signal: AbortSignal,
+    ) => Promise<void>,
+  ): Promise<void> {
+    const headers = new Headers(init.headers);
+    headers.set("Accept", "text/event-stream");
+    return this.fetch(path, { ...init, headers }, async (response, signal) => {
+      if (!response.body)
+        throw new ApiError("INVALID_RESPONSE", "Job event stream has no body.");
+      await consume(response.body, signal);
+    });
   }
   async request<T>(path: string, init?: RequestInit): Promise<T> {
     return this.fetch(path, init, (response) => response.json() as Promise<T>);
