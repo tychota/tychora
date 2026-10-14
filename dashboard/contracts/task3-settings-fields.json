@@ -1,0 +1,695 @@
+{
+  "active_profile": "local",
+  "base_workspace_sha256": "dc0da08ac40d94bc0fb31ac37bd71d2f2723fe3035aa042a4ed3df509e8a0b6a",
+  "fields": [
+    {
+      "path": "providers.text.provider",
+      "effective_value": "disabled",
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.text.provider",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "enum": ["disabled", "voyage"],
+        "type": "string"
+      },
+      "choices": ["disabled", "voyage"]
+    },
+    {
+      "path": "providers.text.model",
+      "effective_value": null,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.text.model",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "anyOf": [
+          {
+            "minLength": 1,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "choices": ["voyage-context-4", "voyage-code-4", "voyage-code-3"]
+    },
+    {
+      "path": "providers.text.credential_ref",
+      "effective_value": null,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.text.credential_ref",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "anyOf": [
+          {
+            "pattern": "^(env|secret):[A-Za-z_][A-Za-z0-9_.-]*$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "choices": []
+    },
+    {
+      "path": "providers.image.provider",
+      "effective_value": "disabled",
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.image.provider",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "enum": ["disabled", "voyage"],
+        "type": "string"
+      },
+      "choices": ["disabled", "voyage"]
+    },
+    {
+      "path": "providers.image.model",
+      "effective_value": null,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.image.model",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "anyOf": [
+          {
+            "minLength": 1,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "choices": ["voyage-multimodal-3.5"]
+    },
+    {
+      "path": "providers.image.credential_ref",
+      "effective_value": null,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.image.credential_ref",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "anyOf": [
+          {
+            "pattern": "^(env|secret):[A-Za-z_][A-Za-z0-9_.-]*$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "choices": []
+    },
+    {
+      "path": "providers.rerank.provider",
+      "effective_value": "disabled",
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.rerank.provider",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "enum": ["disabled", "voyage"],
+        "type": "string"
+      },
+      "choices": ["disabled", "voyage"]
+    },
+    {
+      "path": "providers.rerank.model",
+      "effective_value": null,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.rerank.model",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "anyOf": [
+          {
+            "enum": ["rerank-2.5", "rerank-3"],
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "choices": ["rerank-2.5"]
+    },
+    {
+      "path": "providers.rerank.credential_ref",
+      "effective_value": null,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.rerank.credential_ref",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "anyOf": [
+          {
+            "pattern": "^(env|secret):[A-Za-z_][A-Za-z0-9_.-]*$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "choices": []
+    },
+    {
+      "path": "providers.vision.provider",
+      "effective_value": "disabled",
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.vision.provider",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "enum": ["disabled", "anthropic"],
+        "type": "string"
+      },
+      "choices": ["disabled", "anthropic"]
+    },
+    {
+      "path": "providers.vision.model",
+      "effective_value": null,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.vision.model",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "anyOf": [
+          {
+            "minLength": 1,
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "choices": []
+    },
+    {
+      "path": "providers.vision.credential_ref",
+      "effective_value": null,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.vision.credential_ref",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "anyOf": [
+          {
+            "pattern": "^(env|secret):[A-Za-z_][A-Za-z0-9_.-]*$",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ]
+      },
+      "choices": []
+    },
+    {
+      "path": "providers.text.dimensions",
+      "effective_value": 1024,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.text.dimensions",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "exclusiveMinimum": 0,
+        "type": "integer"
+      },
+      "choices": [1024]
+    },
+    {
+      "path": "providers.text.max_group_tokens",
+      "effective_value": 24000,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.text.max_group_tokens",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "exclusiveMinimum": 0,
+        "maximum": 24000,
+        "type": "integer"
+      },
+      "choices": []
+    },
+    {
+      "path": "providers.text.max_request_tokens",
+      "effective_value": 28000,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.text.max_request_tokens",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "exclusiveMinimum": 0,
+        "maximum": 28000,
+        "type": "integer"
+      },
+      "choices": []
+    },
+    {
+      "path": "providers.text.max_assets",
+      "effective_value": 32,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.text.max_assets",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "exclusiveMinimum": 0,
+        "maximum": 32,
+        "type": "integer"
+      },
+      "choices": []
+    },
+    {
+      "path": "providers.text.max_multimodal_tokens",
+      "effective_value": 100000,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.text.max_multimodal_tokens",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "exclusiveMinimum": 0,
+        "maximum": 100000,
+        "type": "integer"
+      },
+      "choices": []
+    },
+    {
+      "path": "providers.image.dimensions",
+      "effective_value": 1024,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.image.dimensions",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "exclusiveMinimum": 0,
+        "type": "integer"
+      },
+      "choices": [1024]
+    },
+    {
+      "path": "providers.image.max_group_tokens",
+      "effective_value": 24000,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.image.max_group_tokens",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "exclusiveMinimum": 0,
+        "maximum": 24000,
+        "type": "integer"
+      },
+      "choices": []
+    },
+    {
+      "path": "providers.image.max_request_tokens",
+      "effective_value": 28000,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.image.max_request_tokens",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "exclusiveMinimum": 0,
+        "maximum": 28000,
+        "type": "integer"
+      },
+      "choices": []
+    },
+    {
+      "path": "providers.image.max_assets",
+      "effective_value": 32,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.image.max_assets",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "exclusiveMinimum": 0,
+        "maximum": 32,
+        "type": "integer"
+      },
+      "choices": []
+    },
+    {
+      "path": "providers.image.max_multimodal_tokens",
+      "effective_value": 100000,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "providers.image.max_multimodal_tokens",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "exclusiveMinimum": 0,
+        "maximum": 100000,
+        "type": "integer"
+      },
+      "choices": []
+    },
+    {
+      "path": "extraction.parser",
+      "effective_value": "markdown",
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "extraction.parser",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "enum": ["markdown", "docling", "code"],
+        "type": "string"
+      },
+      "choices": ["markdown", "docling", "code"]
+    },
+    {
+      "path": "retrieval.table_continuations",
+      "effective_value": "derived",
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "retrieval.table_continuations",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "enum": ["derived", "confirmed_only", "none"],
+        "type": "string"
+      },
+      "choices": ["derived", "confirmed_only", "none"]
+    },
+    {
+      "path": "retrieval.scoped_rrf_bonus",
+      "effective_value": 0.0,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "retrieval.scoped_rrf_bonus",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "maximum": 0.01,
+        "minimum": 0,
+        "type": "number"
+      },
+      "choices": []
+    },
+    {
+      "path": "retrieval.allow_degraded",
+      "effective_value": false,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "retrieval.allow_degraded",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "type": "boolean"
+      },
+      "choices": []
+    },
+    {
+      "path": "retrieval.graph.structural",
+      "effective_value": "none",
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "retrieval.graph.structural",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "enum": ["none", "code_context@1"],
+        "type": "string"
+      },
+      "choices": ["none", "code_context@1"]
+    },
+    {
+      "path": "retrieval.graph.semantic",
+      "effective_value": false,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "retrieval.graph.semantic",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "type": "boolean"
+      },
+      "choices": []
+    },
+    {
+      "path": "retrieval.graph.predicates",
+      "effective_value": [],
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "retrieval.graph.predicates",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "items": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "choices": []
+    },
+    {
+      "path": "retrieval.graph.directions",
+      "effective_value": ["outgoing"],
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "retrieval.graph.directions",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "items": {
+          "enum": ["outgoing", "incoming"],
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "choices": []
+    },
+    {
+      "path": "retrieval.graph.statuses",
+      "effective_value": ["recorded", "confirmed"],
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "retrieval.graph.statuses",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "items": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "choices": []
+    },
+    {
+      "path": "limits.limit",
+      "effective_value": 8,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "limits.limit",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "maximum": 1000,
+        "minimum": 1,
+        "type": "integer"
+      },
+      "choices": []
+    },
+    {
+      "path": "limits.graph_seed_limit",
+      "effective_value": 5,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "limits.graph_seed_limit",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "maximum": 5,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "choices": []
+    },
+    {
+      "path": "limits.graph_candidate_limit",
+      "effective_value": 32,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "limits.graph_candidate_limit",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "maximum": 32,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "choices": []
+    },
+    {
+      "path": "limits.graph_work_limit",
+      "effective_value": 2000,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "limits.graph_work_limit",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "maximum": 2000,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "choices": []
+    },
+    {
+      "path": "limits.semantic_hops",
+      "effective_value": 1,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "limits.semantic_hops",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "maximum": 1,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "choices": []
+    },
+    {
+      "path": "limits.inspection_hops",
+      "effective_value": 2,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "limits.inspection_hops",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "maximum": 2,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "choices": []
+    },
+    {
+      "path": "limits.inspection_edges",
+      "effective_value": 100,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "limits.inspection_edges",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "maximum": 100,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "choices": []
+    }
+  ],
+  "blockers": [],
+  "credential_readiness": "not_checked"
+}

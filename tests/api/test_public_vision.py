@@ -162,6 +162,7 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
                 }
             ],
         }
+        captured_static_scope = kb.scope
         denied = kb.sources.add(selected)
         assert kb.jobs.wait(denied.id).state == "failed"
         assert sent == []
@@ -173,8 +174,19 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
                 "action": "grant",
             }
         )
-        still_denied = kb.sources.add(selected)
-        assert kb.jobs.wait(still_denied.id).state == "failed"
+        # Managed future calls refresh immediately; a captured static grant stays capped.
+        assert "anthropic" in kb.scope.upload_providers
+        assert "anthropic" not in captured_static_scope.upload_providers
+        from tychora.contracts.requests import SourceInput
+
+        restricted_source = {**selected, "collection_id": str(kb.default_collection_id)}
+        with pytest.raises(TychoraError) as restricted:
+            kb._workspace.bridge.call(
+                kb._workspace.services.sources.add(
+                    SourceInput.from_mapping(restricted_source), captured_static_scope
+                )
+            )
+        assert restricted.value.code == "FORBIDDEN_SCOPE"
         assert sent == []
     with Tychora.open(workspace, config=config, token_counter=Counter()) as kb:
         fail_next[0] = True

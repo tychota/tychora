@@ -1,0 +1,28 @@
+{
+  "manifest_sha256": "9ae89433d165632de488dc55883ec560baf4ed93530416848b0e1ab4f408a530",
+  "assets": [
+    {
+      "asset_id": "cl100k-base-ranks",
+      "selection": "output-tokenizer",
+      "sha256": "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7",
+      "size_bytes": 1681126,
+      "state": "missing",
+      "checked_bytes": 0,
+      "verification": "none",
+      "reason": null
+    }
+  ],
+  "selections": [
+    {
+      "selection": "output-tokenizer",
+      "state": "missing",
+      "complete": true
+    }
+  ],
+  "total_size_bytes": 1681126,
+  "checked_bytes": 0,
+  "complete": true,
+  "receipts": [],
+  "receipt_search_complete": true,
+  "receipt_checked_bytes": 0
+}

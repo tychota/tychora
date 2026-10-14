@@ -118,6 +118,7 @@ def test_verified_local_tokenizer_loaders_do_not_use_sdk_download_helpers(
     )
 
     source = Path(root_value)
+    full_cache = __import__("os").environ.get("TYCHORA_TEST_MODEL_CACHE")
     cache = tmp_path / "cache"
     service = SetupService(cache, offline=True)
     for selection in ("output-tokenizer", "voyage-context-4", "voyage-code-4"):
@@ -127,6 +128,8 @@ def test_verified_local_tokenizer_loaders_do_not_use_sdk_download_helpers(
                 if selection == "output-tokenizer"
                 else source / selection / Path(asset.path).name
             )
+            if full_cache:
+                origin = Path(full_cache) / asset.path
             target = cache / asset.path
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(origin, target)

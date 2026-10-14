@@ -9,8 +9,9 @@ import math
 import time
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response
 
 from tychora.api import DEFAULT_COLLECTION_ID
@@ -694,8 +695,60 @@ def register_routes(app: FastAPI) -> None:
     async def put_settings(request: Request):
         _require(request, "manage")
         parsed = SettingsActivation.from_mapping(await _body_map(request))
-        config = await request.app.state.settings.activate(parsed)
+        config = await request.app.state.settings._activate_admitted(
+            parsed, _scope(request)
+        )
         return Response(
             content=canonical_bytes(config.inspect(owner_authorized=False)),
             media_type="application/json",
+        )
+
+    @app.get("/v1/settings/fields")
+    async def settings_fields(request: Request):
+        return await request.app.state.settings_draft.fields(
+            _scope(request), ExecutionContext()
+        )
+
+    @app.post("/v1/settings/preview")
+    async def settings_preview(request: Request):
+        from tychora.contracts.administration import SettingsPatch
+
+        patch = SettingsPatch.from_mapping(await _body_map(request))
+        return await request.app.state.settings_draft.preview(
+            patch, _scope(request), ExecutionContext()
+        )
+
+    @app.patch("/v1/settings")
+    async def settings_apply(request: Request):
+        from tychora.contracts.administration import SettingsPatch
+
+        patch = SettingsPatch.from_mapping(await _body_map(request))
+        return await request.app.state.settings_draft._apply_admitted(
+            patch, _scope(request), ExecutionContext()
+        )
+
+    @app.get("/v1/models")
+    async def models_catalog(request: Request):
+        return await request.app.state.models.catalog(
+            _scope(request), ExecutionContext()
+        )
+
+    @app.post("/v1/models/setup-plan")
+    async def models_plan(request: Request):
+        from tychora.contracts.administration import ModelSelections
+
+        selected = ModelSelections.from_mapping(await _body_map(request))
+        return await request.app.state.models.setup_plan(
+            selected.selections, _scope(request), ExecutionContext()
+        )
+
+    @app.get("/v1/models/readiness")
+    async def models_readiness(
+        request: Request, selection: Annotated[list[str], Query()]
+    ):
+        from tychora.contracts.administration import ModelSelections
+
+        selected = ModelSelections(selections=tuple(selection))
+        return await request.app.state.models.readiness(
+            selected.selections, _scope(request), ExecutionContext()
         )

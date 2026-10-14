@@ -28,3 +28,49 @@ Removal has separate effects. `manage remove SOURCE_ID` withdraws a registered s
 **Current retention limitation:** `manage purge-cache NAMESPACE` and `manage purge-history BEFORE_ISO_TIMESTAMP` are advertised by the CLI but have no maintenance handler and return `CAPABILITY_MISSING`. History records carry a default 30-day expiry, but automatic history and job-diagnostic deletion is not wired into the application. Do not rely on that timestamp as an enforced retention period. Closing the owner clears its in-memory query caches; it does not delete stored history or canonical artifacts. Full request-payload retention is not exposed through normal configuration, so exact replay generally returns `REPLAY_UNAVAILABLE` (HTTP 409). See the [review assessment](review-assessment.md) for the implementation work still needed.
 
 Provision each optional model or tokenizer asset explicitly. `--offline manage setup --asset output-tokenizer --bundle BUNDLE` imports a verified local bundle and never fetches a missing file. Documents, code, and visual paths need their own extras/assets. Provider configuration does not grant upload permission; `manage provider-upload-consent COLLECTION PROVIDER grant|revoke` changes owner and collection policy, and the default owner refreshes its scope on reopen. A narrower caller or token remains narrowed.
+
+## Model inventory and bounded readiness
+
+`GET /v1/models` separates configured provider identities, qualified model choices,
+optional package availability, unchecked assets and collection upload consent.
+A package being installed does not prove that pinned model assets are ready.
+`rerank-2.5` is qualified; the parseable `rerank-3` is not offered by the guided
+surface. Vision accepts an explicit model identifier under the existing adapter
+contract; the inventory does not invent a pinned vision model list.
+
+`POST /v1/models/setup-plan` accepts `{"selections":["output-tokenizer"]}` and
+returns the bundled, hash-pinned asset plan, declared bytes and license notices.
+`GET /v1/models/readiness?selection=output-tokenizer` performs a local read-only
+check. Requests allow at most four unique selections and 64 assets, at most
+256 MiB of actual reads, and a cooperative five-second deadline. Each read is
+bounded and the deadline is checked between reads; a blocked filesystem syscall
+cannot be forcibly interrupted. No cache directory is created and no download
+occurs. Missing, corrupt and `not_checked` are different results. Large assets
+report `needs_full_verification`, not missing; interrupted/changed-file reads
+remain unknown. `complete` means all requested asset states were checked, not
+that every asset is installed.
+
+Explicit `POST /v1/jobs` setup remains the full verification/provisioning path;
+verified files are reused. Offer this action deliberately for deferred checks,
+without automatic setup loops or a misleading download recommendation. Setup
+currently waits and can return a succeeded durable job in its 202 response.
+New durable setup results record `verified_at`, manifest and asset hashes.
+Readiness exposes matching historical receipts separately: these never upgrade
+a deferred current check to installed. Receipt lookup considers the latest 32
+successful setup jobs and at most 1 MiB of receipt bytes within the same total
+read/deadline budget; `receipt_search_complete` records truncation.
+`checked_bytes` counts asset reads and `receipt_checked_bytes` counts receipt
+reads. Legacy receipts without a verification timestamp are not asserted as
+historical verification evidence.
+
+Settings activation, setup, export, import dispatch, rebuild and migration require
+manage capability plus canonical authority over every workspace collection,
+access floor and registered/retained use. A full fixed manager grant can perform
+these operations without being a managed installation owner, but it never grows
+after collection creation or consent changes. Settings activation refreshes only
+managed future-call upload authority from committed provider settings and consent.
+Accepted scopes stay unchanged. Health requires read plus the same whole-workspace
+proof; resuming deletions requires manage. Source withdrawal, original purge and
+collection consent retain their narrower authority. Standalone restore separately
+checks the archive's authority; the HTTP import dispatcher additionally checks the
+current workspace.

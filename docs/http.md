@@ -37,3 +37,23 @@ Collection names are trimmed and validated; duplicate slugs return a canonical c
 `LocalAuth(..., managed_owner_token=...)` is an explicit trusted composition boundary, used by `serve`. Composition requires a managed owner and its exact initial scope, and permits one managed slot per owner. No hidden runtime credential comparison establishes this status. Static tokens never expand, including identical owner clones. The handshake boolean is descriptive and cannot authorize a request; server request state derives identity from authentication. Refresh through a credential-only handshake without an old `X-Tychora-Scope` header after create or consent changes.
 
 Document inventory uses one source page, one selected-revision batch and one channel batch (maximum 400 channel observations). Channel readiness is the canonical recorded batch state, not a new native health probe. Unit/window counts are null with `counts_complete=false`: current exact eligibility requires broader retained ownership/artifact work than this endpoint permits. Recent job lineage is not safely indexed, so `latest_job=null`, `processing_state="unknown"`, and `job_observations_complete=false`. DTOs report the ceilings (5,000 candidate records, 100 jobs, 1 MiB decoded job metadata); this initial implementation performs no unit/job scan and no artifact decoding. Unknown processing state can coexist with published content. Hidden revisions disclose neither their title, media nor size; unavailable size is null. Exact paginated content inspection remains separate.
+
+## Guided administration endpoints
+
+All of the following require full canonical workspace management authority, even
+when an `X-Tychora-Scope` header selects fewer collections:
+
+| Method | Path | Body / result |
+| --- | --- | --- |
+| GET | `/v1/settings/fields` | `SettingsFieldView` with exact base digest |
+| POST | `/v1/settings/preview` | `SettingsPatch` → redacted `SettingsPreview` |
+| PATCH | `/v1/settings` | `SettingsPatch` → refreshed `SettingsFieldView` |
+| GET | `/v1/models` | `ModelCatalog` |
+| POST | `/v1/models/setup-plan` | `{selections: string[]}` → existing `ModelAssetPlan` |
+| GET | `/v1/models/readiness?selection=...` | Repeat selection for up to four assets selections → `ModelReadiness` |
+
+PATCH and expert PUT settings use exclusive admission; preview is read-only.
+Ordinary GET settings remains redacted. There is no new model activation,
+download, backup or rebuild executor: explicit setup uses POST jobs as before.
+See configuration and operations documentation for field validation, historical
+verification evidence, request budgets and compatibility failures.

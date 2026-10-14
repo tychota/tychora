@@ -34,3 +34,63 @@ def refresh_managed_owner(owner) -> RequestScope:
     for callback in tuple(owner._managed_scope_listeners):
         callback(owner.scope)
     return owner.scope
+
+
+def authorize_workspace(
+    owner, scope: RequestScope, *, capability: str = "manage"
+) -> RequestScope:
+    """Prove canonical complete collection, access and use authority."""
+    import json
+
+    from tychora.contracts.errors import TychoraError
+
+    grant = owner.scope.narrow(scope)
+    if capability not in grant.capabilities:
+        raise TychoraError(
+            "FORBIDDEN_SCOPE", "Workspace operation is outside the grant."
+        )
+    db = owner.db
+    collections = db.execute(
+        "SELECT collection_id,access_floor FROM collections WHERE workspace_id=?",
+        (owner.workspace_id,),
+    ).fetchall()
+    floors = db.execute(
+        "SELECT s.access_floor,r.access_rank FROM sources s "
+        "JOIN collections c USING(collection_id) LEFT JOIN revisions r USING(source_id) "
+        "WHERE c.workspace_id=?",
+        (owner.workspace_id,),
+    ).fetchall()
+    uses = set()
+    for definitions in (
+        owner.store.registry.kinds,
+        owner.store.registry.modes,
+    ):
+        for definition in definitions.values():
+            uses.update(definition.get("allowed_uses", ()))
+    for raw, definition in db.execute(
+        "SELECT r.allowed_uses_json,k.definition_json FROM revisions r "
+        "JOIN kinds k USING(kind_id) JOIN sources s USING(source_id) "
+        "JOIN collections c USING(collection_id) WHERE c.workspace_id=?",
+        (owner.workspace_id,),
+    ):
+        uses.update(json.loads(raw))
+        uses.update(json.loads(definition)["kind"].get("allowed_uses", ()))
+    if (
+        not grant.collection_ids
+        or any(
+            cid not in grant.collection_ids or floor > grant.access_ceiling
+            for cid, floor in collections
+        )
+        or any(
+            floor is not None and floor > grant.access_ceiling
+            for row in floors
+            for floor in row
+        )
+        or not uses <= grant.uses
+    ):
+        raise TychoraError(
+            "FORBIDDEN_SCOPE",
+            "Workspace administration requires whole-workspace access and uses.",
+        )
+
+    return grant
