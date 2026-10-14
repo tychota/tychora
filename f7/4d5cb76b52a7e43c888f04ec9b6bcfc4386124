@@ -1,0 +1,61 @@
+docs/configuration.md
+  s_346481235fa7eb::t_fae20969099a87 3-25
+src/tychora/api.py
+  s_346481235fa7eb::t_9dc18b4c0ac8a3 36
+src/tychora/application/discovery.py
+  s_346481235fa7eb::t_d36257eb8e7bce 25-26,1082-1183
+src/tychora/application/query.py
+  s_346481235fa7eb::t_df890648414eec 257-258,260,272-274,287-289,515-548
+src/tychora/application/settings.py
+  s_346481235fa7eb::t_2ceceb3fbaa41c 11-13,114-116
+src/tychora/application/sources.py
+  s_346481235fa7eb::t_c1f6880cde8021 45-47,885-886,888-892,895-896,899-928,930-938,997-1003,1027-1030,1032,1039,1042,1046,1054,1073-1076,1078-1084,1088
+src/tychora/configuration/additive_compatibility.py
+  s_219afc08798c44::t_ded76358886a24 1-89
+src/tychora/configuration/indexed_representation.py
+  s_346481235fa7eb::t_ec2b4374816ad2 27-30
+src/tychora/contracts/operations.py
+  s_219afc08798c44::t_1680966095ed96 66-84
+src/tychora/interfaces/http/routes.py
+  s_346481235fa7eb::t_dff49cfb3d05bd 248-256
+src/tychora/profiles/general-documents/kinds/document.toml
+  s_346481235fa7eb::t_ae535bffad19b3 1-11
+src/tychora/profiles/general-documents/profile.toml
+  s_346481235fa7eb::t_93bec2a0b704b1 1-9
+src/tychora/profiles/general-documents/schemas/document-metadata.json
+  s_346481235fa7eb::t_aa87668c56647b 1-137
+src/tychora/profiles/manifest.json
+  s_346481235fa7eb::t_2ba64f075a0b49 13-16
+tests/acceptance/test_document_kind_compatibility.py
+  s_219afc08798c44::t_091b95dae2083a 1-387
+tests/application/test_discovery.py
+  s_346481235fa7eb::t_082bb64ac50258 297-405
+tests/configuration/test_additive_registry.py
+  s_346481235fa7eb::t_2a7f0574089e77 1-158
+tests/qualification/test_docling.py
+  s_346481235fa7eb::t_9196a0d3bdd2be 23-27,29,35-39,58,65-66,81,96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f74d5cb76b52a7e43c888f04ec9b6bcfc4386124",
+  "prompts": {},
+  "sessions": {
+    "s_219afc08798c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    },
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
