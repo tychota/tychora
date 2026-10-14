@@ -1,0 +1,179 @@
+{
+  "subject": "kinds",
+  "definitions": [
+    {
+      "id": "architecture_decision@1",
+      "version": "1",
+      "label": "Architecture Decision",
+      "definition": {
+        "allowed_uses": [
+          "compose",
+          "audit",
+          "lookup"
+        ],
+        "default_lane": "maintenance",
+        "description": "A recorded design decision with context, status and alternatives.",
+        "examples": [
+          "Find the recorded reason for the storage design."
+        ],
+        "id": "architecture_decision@1",
+        "key": "architecture_decision",
+        "label": "Architecture Decision",
+        "metadata_schema": "schemas/architecture_decision-metadata.json",
+        "normalizer": "structured_sections@1",
+        "normalizer_capabilities": {
+          "description": "Original headings, paragraphs, steps, tables and figures.",
+          "unit_types": [
+            "section",
+            "paragraph",
+            "step",
+            "table",
+            "figure"
+          ]
+        },
+        "role": "maintenance_context",
+        "schema_ids": {
+          "metadata_schema": "architecture_decision-metadata@1"
+        },
+        "schema_version": 1
+      },
+      "schema_digest": "83774904bcabffd9caf5e5d40f57073d17db6645f18721a6f3c8295f235c2078"
+    },
+    {
+      "id": "code_file@1",
+      "version": "1",
+      "label": "Code File",
+      "definition": {
+        "allowed_uses": [
+          "compose",
+          "audit",
+          "lookup"
+        ],
+        "default_lane": "evidence",
+        "description": "Implementation source with exact definition ranges and original source provenance.",
+        "examples": [
+          "Find the implementation of the parser function."
+        ],
+        "id": "code_file@1",
+        "key": "code_file",
+        "label": "Code File",
+        "metadata_schema": "schemas/code_file-metadata.json",
+        "normalizer": "code_symbols@1",
+        "normalizer_capabilities": {
+          "description": "Original definitions with exact source and context ranges.",
+          "unit_types": [
+            "symbol",
+            "code_file"
+          ]
+        },
+        "record_schema": "schemas/code-symbol.json",
+        "role": "implementation_evidence",
+        "schema_ids": {
+          "metadata_schema": "code_file-metadata@1",
+          "record_schema": "code-symbol@1"
+        },
+        "schema_version": 1
+      },
+      "schema_digest": "e7133f0dc9fb92a0ff32abd0c18021e064cc4254838badfbaf6606f2f7290662"
+    },
+    {
+      "id": "decision@1",
+      "version": "1",
+      "label": "Decision",
+      "definition": {
+        "allowed_uses": [
+          "compose",
+          "audit",
+          "lookup"
+        ],
+        "default_lane": "authority",
+        "description": "Published decision retaining original passages and separately supplied findings.",
+        "examples": [
+          "Find the passage explaining the published decision."
+        ],
+        "id": "decision@1",
+        "key": "decision",
+        "label": "Decision",
+        "metadata_schema": "schemas/decision-metadata.json",
+        "normalizer": "structured_sections@1",
+        "normalizer_capabilities": {
+          "description": "Original headings, paragraphs, steps, tables and figures.",
+          "unit_types": [
+            "section",
+            "paragraph",
+            "step",
+            "table",
+            "figure"
+          ]
+        },
+        "role": "primary_authority",
+        "schema_ids": {
+          "metadata_schema": "decision-metadata@1"
+        },
+        "schema_version": 1
+      },
+      "schema_digest": "b89522c19b948cb35af88dae41ef653d1d63c2a1d4a2e1855f2b361906d67967"
+    },
+    {
+      "id": "evidence@1",
+      "version": "1",
+      "label": "Evidence",
+      "definition": {
+        "allowed_uses": [
+          "compose",
+          "audit",
+          "lookup"
+        ],
+        "default_lane": "evidence",
+        "description": "Facts, measurements or claims with declared original provenance.",
+        "examples": [
+          "Find the recorded measurement and its provenance."
+        ],
+        "id": "evidence@1",
+        "key": "evidence",
+        "label": "Evidence",
+        "metadata_schema": "schemas/evidence-metadata.json",
+        "normalizer": "structured_sections@1",
+        "normalizer_capabilities": {
+          "description": "Original headings, paragraphs, steps, tables and figures.",
+          "unit_types": [
+            "section",
+            "paragraph",
+            "step",
+            "table",
+            "figure"
+          ]
+        },
+        "record_schema": "schemas/evidence-record.json",
+        "role": "supporting_evidence",
+        "schema_ids": {
+          "metadata_schema": "evidence-metadata@1",
+          "record_schema": "evidence-record@1"
+        },
+        "schema_version": 1
+      },
+      "schema_digest": "4c60cc8b0cb2f8a1517646e014a64015eefb94c1f08162bc871fa535c7f8e8fc"
+    }
+  ],
+  "counts": [
+    {
+      "name": "architecture_decision@1",
+      "count": 0
+    },
+    {
+      "name": "code_file@1",
+      "count": 0
+    },
+    {
+      "name": "decision@1",
+      "count": 0
+    },
+    {
+      "name": "evidence@1",
+      "count": 0
+    }
+  ],
+  "capabilities": [],
+  "capability_status": [],
+  "next_cursor": "WyJraW5kcyIsImV2aWRlbmNlQDEiXQ"
+}

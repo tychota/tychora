@@ -1,0 +1,141 @@
+{
+  "applied_scope": {
+    "access_ceiling": 0,
+    "capabilities": [
+      "manage",
+      "vision",
+      "read",
+      "write"
+    ],
+    "collection_ids": [
+      "00000000-0000-4000-8000-000000000001"
+    ],
+    "principal_id": "local-owner",
+    "upload_providers": [],
+    "uses": [
+      "compose",
+      "audit",
+      "lookup"
+    ]
+  },
+  "budget_contract": {
+    "max_response_bytes": 1048576,
+    "max_tokens": 6000,
+    "render_targets": [
+      {
+        "profile_digest": "674de1ffb3131f1b740058883d66c7a2020000265dfe6e3586ba9f979d11c562",
+        "renderer": "canonical-json@1",
+        "schema_digest": "282f343a6cd3180439fab75e289cf38d07c21dc17d43bbe68071839bdf27c774",
+        "serialization": "canonical-json-utf8"
+      }
+    ],
+    "tokenizer_id": "cl100k_base"
+  },
+  "checks": {
+    "assertion_ids": [],
+    "assertions": [],
+    "decisions": [],
+    "predicates": [],
+    "status": "not_evaluated",
+    "truncated": false
+  },
+  "citations": [
+    {
+      "asset_id": null,
+      "locators": [
+        {
+          "artifact_ref": "d38fe702c11b5c85cba31924f58998f827851c135e2d787c03458f44f8c87640",
+          "char_end": 65,
+          "char_start": 0,
+          "native_ref": "dashboard-synthetic-manual",
+          "type": "text"
+        }
+      ],
+      "physical_page": null,
+      "printed_page": null,
+      "revision_id": "1121a973d0f6aadedfecd9437c9ba61aaccca93a681cf6543e12c7a42cba2bf0",
+      "source_id": "5372b6c3-0e49-56f1-b6fb-777656679103",
+      "source_ref": "dashboard-synthetic-manual",
+      "unit_id": "6207a5f14d3b1268f762e5be37dc46890c50d61433e2102550b53d6c77cc1bf0"
+    }
+  ],
+  "coverage": {
+    "completed_channels": [
+      "exact",
+      "lexical"
+    ],
+    "status": "complete",
+    "unavailable_channels": [],
+    "warnings": []
+  },
+  "coverage_gaps": [],
+  "decision_requirements": [],
+  "relations": [],
+  "run_id": "bf819be5-e180-474c-90de-877a780769e5",
+  "schema_version": "1",
+  "segments": [
+    {
+      "anchors": [
+        {
+          "char_end": 65,
+          "char_start": 0,
+          "indexed_window_id": "afd42b050908e0d7d3067ccb7c0c2e77580fb258e3d3ac0e113161498451fd8f",
+          "origin": "lexical",
+          "unit_id": "6207a5f14d3b1268f762e5be37dc46890c50d61433e2102550b53d6c77cc1bf0"
+        }
+      ],
+      "citations": [
+        {
+          "asset_id": null,
+          "locators": [
+            {
+              "artifact_ref": "d38fe702c11b5c85cba31924f58998f827851c135e2d787c03458f44f8c87640",
+              "char_end": 65,
+              "char_start": 0,
+              "native_ref": "dashboard-synthetic-manual",
+              "type": "text"
+            }
+          ],
+          "physical_page": null,
+          "printed_page": null,
+          "revision_id": "1121a973d0f6aadedfecd9437c9ba61aaccca93a681cf6543e12c7a42cba2bf0",
+          "source_id": "5372b6c3-0e49-56f1-b6fb-777656679103",
+          "source_ref": "dashboard-synthetic-manual",
+          "unit_id": "6207a5f14d3b1268f762e5be37dc46890c50d61433e2102550b53d6c77cc1bf0"
+        }
+      ],
+      "complete": true,
+      "context_excerpts": [],
+      "context_only_unit_ids": [],
+      "excerpts": [
+        {
+          "char_end": 65,
+          "char_start": 0,
+          "text": "Record synthetic verification outcomes for the dashboard fixture.",
+          "unit_id": "6207a5f14d3b1268f762e5be37dc46890c50d61433e2102550b53d6c77cc1bf0"
+        }
+      ],
+      "extraction_id": "841db554ddb6ee67617c75a031bb57ee1b775db409b3e35e4fe4f5d9a254d83a",
+      "kind": "manual@1",
+      "lane": "standard",
+      "matched_unit_ids": [
+        "6207a5f14d3b1268f762e5be37dc46890c50d61433e2102550b53d6c77cc1bf0"
+      ],
+      "omissions": [],
+      "revision_id": "1121a973d0f6aadedfecd9437c9ba61aaccca93a681cf6543e12c7a42cba2bf0",
+      "role": "explanatory_reference",
+      "segment_id": "767cf6b4f7382c3922760f35c55ca231ca896d62f659ff77cae9de94dd5e7356",
+      "signals": [
+        "lexical"
+      ],
+      "source_id": "5372b6c3-0e49-56f1-b6fb-777656679103",
+      "structured_records": [],
+      "text": "Record synthetic verification outcomes for the dashboard fixture.",
+      "truncated": false
+    }
+  ],
+  "snapshot_id": "fc22b030ae7b780dfeb1c48d27d8f213c63c9be25fc91a8651d74fa121f29d23",
+  "trace": null,
+  "visuals": [],
+  "warnings": []
+}

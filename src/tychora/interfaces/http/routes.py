@@ -513,7 +513,7 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/v1/evaluations")
     async def list_evaluations(request: Request):
         _require(request, "manage")
-        return _json(
+        return JSONResponse(
             await _services(request).evaluations.list_runs(
                 _scope(request), ExecutionContext()
             )
@@ -522,7 +522,7 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/v1/evaluations/{evaluation_id}")
     async def get_evaluation(evaluation_id: str, request: Request):
         _require(request, "manage")
-        return _json(
+        return JSONResponse(
             await _services(request).evaluations.get(
                 evaluation_id, _scope(request), ExecutionContext()
             )

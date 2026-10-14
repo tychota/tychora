@@ -1,0 +1,25 @@
+{
+  "subject": "runs",
+  "id": "bf819be5-e180-474c-90de-877a780769e5",
+  "evidence": null,
+  "partial_evidence": null,
+  "excerpts": [],
+  "records": [
+    {
+      "id": "bf819be5-e180-474c-90de-877a780769e5",
+      "record_type": "run_summary",
+      "schema_id": "run-summary@1",
+      "value": {
+        "created_at": "2026-10-14T01:11:17.407055+00:00",
+        "request_retained": false,
+        "scope_limited": true,
+        "snapshot_id": "fc22b030ae7b780dfeb1c48d27d8f213c63c9be25fc91a8651d74fa121f29d23",
+        "state": "complete"
+      }
+    }
+  ],
+  "original_ref": null,
+  "payload": null,
+  "media_type": null,
+  "truncated": false
+}

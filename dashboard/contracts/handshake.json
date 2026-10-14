@@ -1,0 +1,26 @@
+{
+  "schema_version": "1",
+  "protocol_version": 1,
+  "workspace_id": "3816da79-1b37-4c86-8e33-c433cc3d9ffb",
+  "instance_id": "1241d843-101d-4c70-afb6-ddf4c7d33c6a",
+  "scope": {
+    "principal_id": "local-owner",
+    "collection_ids": [
+      "00000000-0000-4000-8000-000000000001"
+    ],
+    "access_ceiling": 0,
+    "uses": [
+      "compose",
+      "audit",
+      "lookup"
+    ],
+    "capabilities": [
+      "manage",
+      "vision",
+      "read",
+      "write"
+    ],
+    "upload_providers": []
+  },
+  "default_collection_id": "00000000-0000-4000-8000-000000000001"
+}
