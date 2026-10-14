@@ -1,0 +1,89 @@
+dashboard/contracts/task3-model-readiness.json
+  s_346481235fa7eb::t_c7794ba9c1ec89 1-28
+dashboard/contracts/task3-model-setup-plan.json
+  s_346481235fa7eb::t_b6b4684b579ecb 1-28
+dashboard/contracts/task3-models.json
+  s_346481235fa7eb::t_1387650e7a85d7 1-115
+dashboard/contracts/task3-settings-applied.json
+  s_346481235fa7eb::t_91ef3ccdadb250 1-695
+dashboard/contracts/task3-settings-fields.json
+  s_346481235fa7eb::t_82cb48cdefddbf 1-695
+dashboard/contracts/task3-settings-preview.json
+  s_346481235fa7eb::t_e30eace447287e 1-14
+dashboard/src/api/contracts.ts
+  s_219afc08798c44::t_69624575c7ae33 365-481
+docs/configuration.md
+  s_346481235fa7eb::t_c4d71af70d5b0e 65-97
+docs/dashboard.md
+  s_346481235fa7eb::t_a286de19220cf8 60-69
+docs/http.md
+  s_346481235fa7eb::t_159d5627f5d2ec 40-59
+docs/operations.md
+  s_346481235fa7eb::t_3b46b273973935 31-76
+pyproject.toml
+  s_346481235fa7eb::t_8322f10463de00 11
+src/tychora/application/backup.py
+  s_219afc08798c44::t_ed92f9e3cadbc8 102-104
+src/tychora/application/maintenance.py
+  s_219afc08798c44::t_294a1fd6748f9c 47,49-53,90-95
+src/tychora/application/model_inventory.py
+  s_346481235fa7eb::t_4e48ec948b9328 1-251
+src/tychora/application/settings.py
+  s_219afc08798c44::t_bf9dec65a2df52 47-85,88-92,138,222-229
+src/tychora/application/settings_draft.py
+  s_346481235fa7eb::t_57245b5b52ff77 1-293
+src/tychora/application/setup.py
+  s_219afc08798c44::t_8abfdc31a8943b 8,210-378,433,764-766
+src/tychora/application/workspace_authority.py
+  s_219afc08798c44::t_706906ee38ddad 37-96
+src/tychora/contracts/administration.py
+  s_219afc08798c44::t_9077d91eae53ec 1-146
+src/tychora/interfaces/http/app.py
+  s_219afc08798c44::t_058b2d04e19b77 80,161-163,215-220
+src/tychora/interfaces/http/routes.py
+  s_219afc08798c44::t_c48dcc238fda55 12,14,698-700,705-754
+tests/api/test_public_vision.py
+  s_346481235fa7eb::t_15014b652cefb9 165,177-189
+tests/application/test_settings_draft.py
+  s_219afc08798c44::t_64d3f523520285 1-307
+tests/operations/test_backup.py
+  s_346481235fa7eb::t_1c2b7e2765e88e 29,389-394
+tests/operations/test_restore.py
+  s_346481235fa7eb::t_ca233bb4b196a1 26-31,126,228,302,304,336,338,371,373,406,447,449
+tests/operations/test_setup.py
+  s_346481235fa7eb::t_e1c82cad38787e 121,131-132
+tests/release/test_resources.py
+  s_346481235fa7eb::t_fb652fd9880bb5 15-18
+tests/security/test_workspace_admin.py
+  s_219afc08798c44::t_de24dd2afbc458 1-153
+tests/transports/test_admin_models_http.py
+  s_346481235fa7eb::t_c94a6b7441f0f8 1-225
+tests/transports/test_http.py
+  s_346481235fa7eb::t_9ec43009c326c2 913,1027-1040,1096-1109
+uv.lock
+  s_346481235fa7eb::t_3789a1ababd0c2 3198,3305
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "20be099dc648b1698237564e7eb372e59e2d1687",
+  "prompts": {},
+  "sessions": {
+    "s_219afc08798c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    },
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
