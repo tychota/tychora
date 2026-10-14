@@ -1,0 +1,21 @@
+src/tychora/application/retained_content.py
+  s_346481235fa7eb::t_cc2a4ae7d56348 16-21,49-53
+tests/application/test_content_inspection.py
+  s_346481235fa7eb::t_d2b6665f33a621 444-595
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c8ecfdd987f881bb3a68f382b191d7c14119d787",
+  "prompts": {},
+  "sessions": {
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
