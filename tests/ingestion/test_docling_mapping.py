@@ -648,3 +648,23 @@ def test_external_image_payload_verification_is_independent(retained_case, failu
 
     with pytest.raises(ValueError):
         validate_external_images(parsed, read)
+||||||| parent of dd07ae0 (fix: accept unenriched Docling formula spans over original text)
+
+
+def test_mapping_accepts_unenriched_formula_span_over_original_text():
+    # Without formula enrichment Docling leaves `text` empty and spans `orig`.
+    export, original = mapping_case()
+    formula = "net = declared - quality cost"
+    export["texts"][0].update(
+        label="formula",
+        text="",
+        orig=formula,
+        prov=[{**export["texts"][0]["prov"][0], "charspan": [0, len(formula)]}],
+    )
+    mapped = map_document(export, original)
+    unit = mapped.units[0]
+    assert unit.unit_type == "formula"
+    assert unit.text == ""
+    assert unit.provenance[0].char_domain == "docling_orig_text_item"
+    assert unit.provenance[0].charspan == (0, len(formula))
+    assert unit.locators == ()

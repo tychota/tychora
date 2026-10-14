@@ -275,6 +275,9 @@ def document_text_domain(
     if not isinstance(text, str):
         return "docling_nontext_item", 0, 0
     original, marker = item.get("orig"), item.get("marker")
+    if not text and isinstance(original, str) and original:
+        # Unenriched formula/code: spans address `orig`; the text projection is empty.
+        return "docling_orig_text_item", len(original), len(original)
     if item.get("label") == "list_item" and marker and original != text:
         if not isinstance(original, str) or not isinstance(marker, str) or not text:
             raise ValueError("Unsupported Docling list original/text relationship")
