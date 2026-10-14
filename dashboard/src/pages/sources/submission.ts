@@ -37,7 +37,7 @@ export async function fileBase64(file: File): Promise<string> {
   if (file.size > (REQUEST_LIMIT * 3) / 4)
     throw new ApiError(
       "INPUT_BUDGET_EXCEEDED",
-      "The encoded request exceeds the 1 MiB limit. Choose a smaller file.",
+      "This file is too large for the 1 MiB encoded request limit; base64 adds size. Choose a smaller file or use a registered-root file path for a file already on the server.",
     );
   const buffer = await file.arrayBuffer();
   let binary = "";

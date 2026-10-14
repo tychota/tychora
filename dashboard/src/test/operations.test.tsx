@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import handshake from "../../contracts/handshake.json";
 import sources from "../../contracts/sources.json";
@@ -957,3 +963,208 @@ it.each(["file.constructor", "file.__proto__"])(
     ).toBe(false);
   },
 );
+
+async function openSourceDraft() {
+  await open("/dashboard/sources");
+  fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+  fireEvent.change(screen.getByLabelText("Source key"), {
+    target: { value: "manual" },
+  });
+  fireEvent.change(screen.getByLabelText("Kind"), {
+    target: { value: "manual@1" },
+  });
+  fireEvent.change(screen.getByLabelText("Source text"), {
+    target: { value: "Preserved source text" },
+  });
+  await screen.findByText("Active profile: local");
+}
+function changeSourceType(value: string) {
+  fireEvent.change(screen.getByLabelText("Input type"), { target: { value } });
+}
+function confirmSource() {
+  fireEvent.click(
+    screen.getByLabelText("I confirm this source and processing destination."),
+  );
+}
+function selectedPdf(size: number) {
+  const file = new File(["sample"], "large.pdf");
+  Object.defineProperty(file, "size", { value: size });
+  return file;
+}
+function sourcePosts() {
+  return requests.filter(
+    (r) => r.path === "/v1/sources" && r.init.method === "POST",
+  );
+}
+it("accepts preserved pasted text after rejecting a 50 MiB selected PDF", async () => {
+  const fallback = respond;
+  respond = (path, init) =>
+    path === "/v1/sources" && init.method === "POST"
+      ? json(receipt, 202)
+      : fallback(path, init);
+  await openSourceDraft();
+  changeSourceType("bytes");
+  fireEvent.change(screen.getByLabelText("Source file"), {
+    target: { files: [selectedPdf(52428800)] },
+  });
+  await screen.findByText("INPUT_BUDGET_EXCEEDED");
+  changeSourceType("text");
+  expect(screen.queryByText("INPUT_BUDGET_EXCEEDED")).toBeNull();
+  expect(screen.getByLabelText("Source text")).toHaveValue(
+    "Preserved source text",
+  );
+  confirmSource();
+  expect(screen.getByRole("button", { name: "Submit source" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Submit source" }));
+  await screen.findByRole("link", { name: "Follow job" });
+  expect(JSON.parse(sourcePosts()[0].init.body as string)).toMatchObject({
+    type: "text",
+    format: "text",
+    text: "Preserved source text",
+  });
+});
+it("shows rejected file size without presenting an empty payload as the encoded request", async () => {
+  await openSourceDraft();
+  changeSourceType("bytes");
+  fireEvent.change(screen.getByLabelText("Source file"), {
+    target: { files: [selectedPdf(52428800)] },
+  });
+  await screen.findByText("INPUT_BUDGET_EXCEEDED");
+  expect(screen.getByText(/Selected file:.*52,428,800 bytes/)).toBeVisible();
+  expect(screen.getByText(/Encoded request: Unknown/)).toBeVisible();
+  expect(
+    screen.getByText(/smaller file.*registered-root file path/i),
+  ).toBeVisible();
+});
+it.each(["success", "error"])(
+  "ignores a deferred file read %s after changing the input type",
+  async (outcome) => {
+    const fallback = respond;
+    respond = (path, init) =>
+      path === "/v1/sources" && init.method === "POST"
+        ? json(receipt, 202)
+        : fallback(path, init);
+    await openSourceDraft();
+    let resolve!: (buffer: ArrayBuffer) => void;
+    let reject!: (error: Error) => void;
+    const pending = new Promise<ArrayBuffer>((yes, no) => {
+      resolve = yes;
+      reject = no;
+    });
+    const file = selectedPdf(6);
+    Object.defineProperty(file, "arrayBuffer", { value: () => pending });
+    changeSourceType("bytes");
+    fireEvent.change(screen.getByLabelText("Format"), {
+      target: { value: "pdf" },
+    });
+    fireEvent.change(screen.getByLabelText("Source file"), {
+      target: { files: [file] },
+    });
+    changeSourceType("text");
+    confirmSource();
+    expect(screen.getByRole("button", { name: "Submit source" })).toBeEnabled();
+    changeSourceType("bytes");
+    confirmSource();
+    await act(async () => {
+      if (outcome === "success") resolve(Uint8Array.of(0, 255, 128).buffer);
+      else reject(new Error("file read failed"));
+      await pending.catch(() => {});
+    });
+    expect(screen.queryByText("CONNECTION_FAILED")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Submit source" }),
+    ).toBeDisabled();
+    fireEvent.submit(
+      screen.getByRole("button", { name: "Submit source" }).closest("form")!,
+    );
+    expect(sourcePosts()).toHaveLength(0);
+    changeSourceType("text");
+    confirmSource();
+    fireEvent.click(screen.getByRole("button", { name: "Submit source" }));
+    await screen.findByRole("link", { name: "Follow job" });
+    expect(JSON.parse(sourcePosts()[0].init.body as string).type).toBe("text");
+  },
+);
+it.each([
+  "missing file",
+  "rejected file",
+  "missing key",
+  "missing kind",
+  "invalid metadata",
+  "unavailable settings",
+])("guards programmatic source submission with %s", async (invalid) => {
+  if (invalid === "unavailable settings") {
+    const fallback = respond;
+    respond = (path, init) =>
+      path === "/v1/settings"
+        ? json(
+            { code: "WORKSPACE_BUSY", message: "Busy", retryable: true },
+            409,
+          )
+        : fallback(path, init);
+    await open("/dashboard/sources");
+    fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+    fireEvent.change(screen.getByLabelText("Source key"), {
+      target: { value: "manual" },
+    });
+    fireEvent.change(screen.getByLabelText("Kind"), {
+      target: { value: "manual@1" },
+    });
+    await screen.findByText("WORKSPACE_BUSY");
+  } else {
+    await openSourceDraft();
+  }
+  if (invalid === "missing file" || invalid === "rejected file") {
+    changeSourceType("bytes");
+    if (invalid === "rejected file") {
+      fireEvent.change(screen.getByLabelText("Source file"), {
+        target: { files: [selectedPdf(52428800)] },
+      });
+      await screen.findByText("INPUT_BUDGET_EXCEEDED");
+    }
+  } else if (invalid === "missing key" || invalid === "missing kind") {
+    fireEvent.change(
+      screen.getByLabelText(invalid === "missing key" ? "Source key" : "Kind"),
+      {
+        target: { value: "" },
+      },
+    );
+  } else if (invalid === "invalid metadata") {
+    fireEvent.change(screen.getByLabelText("Metadata JSON"), {
+      target: { value: "[" },
+    });
+  }
+  confirmSource();
+  const button = screen.getByRole("button", { name: "Submit source" });
+  expect(button).toBeDisabled();
+  fireEvent.submit(button.closest("form")!);
+  expect(sourcePosts()).toHaveLength(0);
+});
+it("preserves exact-body retry identity after a rejected file and returning to unchanged text", async () => {
+  const fallback = respond;
+  let adds = 0;
+  respond = (path, init) =>
+    path === "/v1/sources" && init.method === "POST"
+      ? ++adds === 1
+        ? Promise.reject(new Error("response lost"))
+        : json(receipt, 202)
+      : fallback(path, init);
+  await openSourceDraft();
+  confirmSource();
+  fireEvent.click(screen.getByRole("button", { name: "Submit source" }));
+  await screen.findByText("CONNECTION_FAILED");
+  changeSourceType("bytes");
+  fireEvent.change(screen.getByLabelText("Source file"), {
+    target: { files: [selectedPdf(52428800)] },
+  });
+  await screen.findByText("INPUT_BUDGET_EXCEEDED");
+  changeSourceType("text");
+  confirmSource();
+  fireEvent.click(screen.getByRole("button", { name: "Submit source" }));
+  await screen.findByRole("link", { name: "Follow job" });
+  const sent = sourcePosts();
+  expect(sent[0].init.body).toBe(sent[1].init.body);
+  expect(new Headers(sent[0].init.headers).get("Idempotency-Key")).toBe(
+    new Headers(sent[1].init.headers).get("Idempotency-Key"),
+  );
+});

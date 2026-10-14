@@ -28,6 +28,7 @@ export function SourceForm() {
   const [path, setPath] = useState("");
   const [bytes, setBytes] = useState<string | null>(null);
   const [fileName, setFileName] = useState("");
+  const [fileSize, setFileSize] = useState<number | null>(null);
   const [metadata, setMetadata] = useState("{}");
   const [title, setTitle] = useState("");
   const [publisher, setPublisher] = useState("");
@@ -63,27 +64,45 @@ export function SourceForm() {
         "INVALID_REQUEST",
         "Choose an explicit format for this file; its filename has no recognized parser format.",
       );
-    encoded = encodedBody({
-      type,
-      source_key: key,
-      collection_id: collection,
-      kind,
-      metadata: parseMetadata(metadata, { title, publisher, edition }),
-      ...(resolvedFormat ? { format: resolvedFormat } : {}),
-      ...(type === "text"
-        ? { text }
-        : type === "bytes"
-          ? { data: bytes ?? "" }
-          : { path }),
+    const parsedMetadata = parseMetadata(metadata, {
+      title,
+      publisher,
+      edition,
     });
+    if (type !== "bytes" || bytes !== null)
+      encoded = encodedBody({
+        type,
+        source_key: key,
+        collection_id: collection,
+        kind,
+        metadata: parsedMetadata,
+        ...(resolvedFormat ? { format: resolvedFormat } : {}),
+        ...(type === "text"
+          ? { text }
+          : type === "bytes"
+            ? { data: bytes ?? "" }
+            : { path }),
+      });
   } catch (e) {
     validation = e;
   }
   const tooLarge = (encoded?.size ?? 0) >= REQUEST_LIMIT;
+  const canSubmit =
+    !!client &&
+    confirmed &&
+    encoded !== null &&
+    validation === null &&
+    !tooLarge &&
+    !!key &&
+    !!kind &&
+    !busy &&
+    (type !== "bytes" || (!fileBusy && fileError === null && bytes !== null)) &&
+    !settings.busy &&
+    settings.value !== null &&
+    settings.error === null;
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!client || !encoded || !confirmed || tooLarge || busy || fileBusy)
-      return;
+    if (!canSubmit || !client || !encoded) return;
     const body = encoded.body;
     setBusy(true);
     setError(null);
@@ -110,16 +129,19 @@ export function SourceForm() {
     setBytes(null);
     setFileError(null);
     setFileName(file?.name ?? "");
+    setFileSize(file?.size ?? null);
+    setFileBusy(!!file);
     if (!file) return;
-    setFileBusy(true);
     try {
       const data = await fileBase64(file);
       if (version === fileVersion.current && !lifetime.current.signal.aborted)
         setBytes(data);
     } catch (e) {
-      if (version === fileVersion.current) setFileError(publicError(e));
+      if (version === fileVersion.current && !lifetime.current.signal.aborted)
+        setFileError(publicError(e));
     } finally {
-      if (version === fileVersion.current) setFileBusy(false);
+      if (version === fileVersion.current && !lifetime.current.signal.aborted)
+        setFileBusy(false);
     }
   };
   const definitions = kinds.pages.flatMap((p) => p.definitions);
@@ -136,6 +158,12 @@ export function SourceForm() {
                 value={type}
                 onChange={(e) => {
                   changed();
+                  fileVersion.current++;
+                  setBytes(null);
+                  setFileError(null);
+                  setFileBusy(false);
+                  setFileName("");
+                  setFileSize(null);
                   setType(e.target.value);
                 }}
               >
@@ -251,14 +279,21 @@ export function SourceForm() {
               />
             </label>
           ) : type === "bytes" ? (
-            <label>
-              Source file
-              <input
-                type="file"
-                onChange={(e) => void readFile(e.target.files?.[0])}
-              />
-              {fileName && <span>{fileName}</span>}
-            </label>
+            <>
+              <label>
+                Source file
+                <input
+                  type="file"
+                  onChange={(e) => void readFile(e.target.files?.[0])}
+                />
+              </label>
+              {fileSize !== null && (
+                <p>
+                  Selected file: {fileName} · {fileSize.toLocaleString("en-US")}{" "}
+                  bytes.
+                </p>
+              )}
+            </>
           ) : (
             <>
               <label>
@@ -326,11 +361,14 @@ export function SourceForm() {
           </p>
           {tooLarge && (
             <Status tone="warning">
-              The encoded request exceeds the 1 MiB limit. Reduce the input.
+              The encoded request exceeds the 1 MiB limit. Reduce the input or
+              use a registered-root file path for a file already on the server.
             </Status>
           )}
           {validation !== null && <ErrorNotice error={validation} />}{" "}
-          {fileError !== null && <ErrorNotice error={fileError} />}
+          {type === "bytes" && fileError !== null && (
+            <ErrorNotice error={fileError} />
+          )}
           <label className="collection-option">
             <input
               type="checkbox"
@@ -339,24 +377,7 @@ export function SourceForm() {
             />
             I confirm this source and processing destination.
           </label>
-          <button
-            className="primary"
-            disabled={
-              !confirmed ||
-              !encoded ||
-              tooLarge ||
-              !key ||
-              !kind ||
-              busy ||
-              fileBusy ||
-              !!fileError ||
-              (type === "bytes" && bytes === null) ||
-              settings.busy ||
-              settings.value === null ||
-              settings.error !== null
-            }
-            type="submit"
-          >
+          <button className="primary" disabled={!canSubmit} type="submit">
             {busy ? "Submitting source…" : "Submit source"}
           </button>
           <p className="muted">
