@@ -529,3 +529,18 @@ async def test_restart_with_unknown_analysis_copy_blocks_new_admission(tmp_path)
             assert response.json()["code"] == "WORKSPACE_BUSY"
             assert (await client.post(path + "/analyse")).status_code == 409
             assert orphan.is_dir()
+
+
+@pytest.mark.asyncio
+async def test_unsupported_content_patch_uses_ordinary_body_limit(tmp_path):
+    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+        app = app_for(kb)
+        async with client_for(app) as client:
+            # A nonexistent receipt must not be inspected before the ordinary
+            # one-MiB boundary rejects this unsupported binary method.
+            response = await client.patch(
+                "/v1/pdf-intakes/" + "0" * 64 + "/content",
+                content=b" " * (1048576 + 1),
+            )
+            assert response.status_code == 400
+            assert response.json()["code"] == "BUDGET_TOO_SMALL"

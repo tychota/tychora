@@ -11,12 +11,14 @@ import tomlkit
 from pydantic import TypeAdapter, ValidationError
 
 from tychora.configuration.models import (
+    ConfigurationValues,
     EmbeddingSettings,
     ExtractionSettings,
     GraphSettings,
     RerankerSettings,
     ResourceLimits,
     RetrievalSettings,
+    VectorSettings,
     VisionSettings,
 )
 from tychora.configuration.resolve import resolve_config, selected_workspace_profile
@@ -36,7 +38,9 @@ from tychora.ports.execution import ExecutionContext
 from .workspace_authority import authorize_workspace
 
 # This is an explicit leaf allowlist, never an arbitrary nested configuration editor.
-_FIELDS = {}
+_FIELDS = {"offline": ConfigurationValues.model_fields["offline"]}
+for _slot in ("text", "image"):
+    _FIELDS[f"index.{_slot}.backend"] = VectorSettings.model_fields["backend"]
 for _slot, _model in [
     ("text", EmbeddingSettings),
     ("image", EmbeddingSettings),

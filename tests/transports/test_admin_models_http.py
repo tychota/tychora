@@ -223,3 +223,33 @@ async def test_explicit_setup_receipt_is_historical_not_current_readiness(
                 )
             ).json()
             assert body["assets"][0]["state"] == "corrupt" and body["receipts"]
+
+
+def test_shrinking_asset_remains_unknown_after_partial_hash(tmp_path, monkeypatch):
+    import os
+
+    payload = manifest(tmp_path, monkeypatch, b"A" * (2 * 1024 * 1024))
+    cache = tmp_path / "cache"
+    target = cache / "synthetic" / "asset"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(payload)
+    service = SetupService(cache, offline=True)
+    plan = service.plan(("output-tokenizer",))
+    original_read = os.read
+    reads = []
+
+    def shrinking_read(fd, count):
+        block = original_read(fd, count)
+        reads.append(len(block))
+        if len(reads) == 1:
+            with target.open("r+b") as stream:
+                stream.truncate(len(block))
+        return block
+
+    monkeypatch.setattr(os, "read", shrinking_read)
+    result = service.verify_bounded(plan, ExecutionContext())
+    assert result.assets[0].state == "not_checked"
+    assert result.assets[0].reason == "file_changed"
+    assert result.assets[0].verification == "none"
+    assert result.checked_bytes == sum(reads) == 1024 * 1024
+    assert not result.complete and not result.selections[0].complete

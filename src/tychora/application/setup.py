@@ -292,7 +292,7 @@ class SetupService:
                                 measured += len(block)
                                 checked += len(block)
                                 if not block:
-                                    state, reason = "corrupt", "size_changed"
+                                    state, reason = "not_checked", "file_changed"
                                     break
                                 hasher.update(block)
                             else:

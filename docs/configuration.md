@@ -76,9 +76,16 @@ editing. Neither profile switching nor arbitrary nested JSON is supported here.
 
 The fields response supplies actual value schemas, origins, override values and
 qualified choices. Guided settings cover provider/model/reference configuration,
-qualified embedding limits, parser selection, existing retrieval options and
-bounded graph/query inspection limits. Reranking uses `providers.rerank`; there is
-no `retrieval.rerank` setting. Offline policy remains on the expert TOML route.
+qualified embedding limits, parser selection, existing retrieval options,
+bounded graph/query inspection limits, the strict `offline` boolean and the
+`index.text.backend` / `index.image.backend` choices (`disabled` or `chroma`).
+Reranking uses `providers.rerank`; there is no `retrieval.rerank` setting. Fresh
+workspaces can preview/apply online Voyage text/rerank settings and a Chroma text
+index together before ingestion. Setting `offline=false` permits
+network operation but does not grant collection upload consent. Preview and
+activation do not resolve credential references, contact providers, or download
+models; explicit setup and collection consent remain separate actions. Existing
+indexed representations still reject incompatible backend/embedding changes.
 PDF OCR remains an explicit intake choice, not a global configuration switch.
 
 Credential references use the existing `env:NAME` or `secret:NAME` syntax; names
