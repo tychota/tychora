@@ -1,0 +1,26 @@
+src/tychora/application/pdf_intake.py
+  s_346481235fa7eb::t_9c901216edfeb2 83,106-108,116-123,133-137,140,395-401,407-409,412-414,422-423,427-428,439,663,667,679-683
+  s_346481235fa7eb::t_7c2ae2cc7ea98c 684,689,783
+tests/transports/test_pdf_intake_recovery.py
+  s_346481235fa7eb::t_fd926f7b2efa3a 1-15,17,20-46,50,54-62,66-86,90-92,96-101,104-123,127-146,150-169,173-175,179-180,184-186,190-198
+  s_346481235fa7eb::t_563438833f5e09 16,47-49,51-53,63-65,87-89,93-95,102-103,124-126,147-149,170-172,176-178,181-183,187-189,202,215-217,228-230,235-260,291-294,296-297
+  s_346481235fa7eb::t_fc336056c9c3c0 18-19,199-201,203-214,218-227,231-234,261-290,295,298-310
+tests/transports/test_pdf_intake.py
+  s_346481235fa7eb::t_fc336056c9c3c0 140,143,153-155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3cf074983abbd55c8c9e66d266794bd611f1bc9e",
+  "prompts": {},
+  "sessions": {
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
