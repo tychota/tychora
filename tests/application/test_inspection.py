@@ -58,8 +58,14 @@ async def published(tmp_path: Path):
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
         await owner.run_blocking(
             lambda: owner.db.execute(
-                "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,'{}')",
-                (COLLECTION, owner.workspace_id, "manuals", "Manuals"),
+                "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,?)",
+                (
+                    COLLECTION,
+                    owner.workspace_id,
+                    "manuals",
+                    "Manuals",
+                    json.dumps({"schema_version": 1, "upload_providers": []}),
+                ),
             ),
             ExecutionContext(),
         )

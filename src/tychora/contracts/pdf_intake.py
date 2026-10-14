@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_serializer
 
 from .base import Contract, FrozenJsonMap, NonEmptyStr, Sha256
 from .errors import ErrorEnvelope
@@ -40,6 +40,14 @@ class PdfAnalysis(Contract):
     blockers: tuple[NonEmptyStr, ...]
     proposed_policy: PdfProcessingPolicy | None
     analysis_sha256: Sha256
+    policy_sha256: Sha256 | None = None
+
+    @model_serializer(mode="wrap")
+    def preserve_legacy_analysis(self, handler):
+        data = handler(self)
+        if "policy_sha256" not in self.model_fields_set:
+            data.pop("policy_sha256", None)
+        return data
 
 
 class PdfIntakeSubmission(Contract):

@@ -323,6 +323,34 @@ class InspectionService:
                         )
                     )
                 summary["scope_limited"] = limited
+            elif (
+                isinstance(parsed, dict)
+                and parsed.get("type") == "document_vision_capability"
+            ):
+                from tychora.contracts.composition import VisionCapabilityDiagnostics
+
+                try:
+                    diagnostic = VisionCapabilityDiagnostics.model_validate_json(
+                        payload
+                    )
+                    from tychora.contracts.identity import canonical_bytes
+
+                    if canonical_bytes(diagnostic.model_dump(mode="json")) != payload:
+                        raise ValueError
+                except (ValueError, TypeError):
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Retained PDF diagnostics are invalid."
+                    ) from None
+                if diagnostic.pdf_coverage is not None:
+                    summary["pdf_coverage"] = diagnostic.pdf_coverage.model_dump(
+                        mode="json"
+                    )
+                    if diagnostic.pdf_coverage.ocr_pages:
+                        summary["ocr_review_state"] = "needs_review"
+                    summary["detection_note"] = (
+                        "No-text-detected is detector-relative, not a blank-page assertion."
+                    )
+                    summary["scope_limited"] = False
             else:
                 summary["unavailable_fields"] = ["resolution_records", "rates"]
         return InspectionResult(

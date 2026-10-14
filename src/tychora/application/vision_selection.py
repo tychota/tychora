@@ -117,7 +117,12 @@ def _verified_selected_extraction(
                 _invalid()
             with owner.artifacts.open_verified(doc_ref) as stream:
                 document = stream.read(doc_ref.size_bytes + 1)
-            old = replay_document(raw, document, raw_ref)
+
+            def read_declared(image_ref):
+                with owner.artifacts.open_verified(image_ref) as stream:
+                    return stream.read(image_ref.size_bytes + 1)
+
+            old = replay_document(raw, document, raw_ref, read_declared=read_declared)
             return (
                 old.original_ref.sha256 == parsed.original_ref.sha256
                 and old.parser_fingerprint == parsed.parser_fingerprint

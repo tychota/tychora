@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 from collections.abc import Callable, Mapping
+from contextvars import ContextVar
 from datetime import date
 from functools import partial
 from hashlib import sha256
@@ -109,6 +110,9 @@ def _parse_code_file(
         options=options,
         root_type="unsupported_file",
     )
+
+
+_pdf_job_id: ContextVar[str | None] = ContextVar("pdf_job_id", default=None)
 
 
 class SourceService:
@@ -584,6 +588,16 @@ class SourceService:
         if handle.state != "queued":
             return handle
         operation = handle.operation
+        if source.root.pdf_processing is not None:
+            import time
+
+            deadline = time.monotonic() + 5400
+            context = ExecutionContext(
+                deadline=min(context.deadline, deadline)
+                if context.deadline is not None
+                else deadline,
+                cancelled=context.cancelled,
+            )
         ctx = context
         await self.owner.run_blocking(lambda: jobs.start(handle.id), ctx)
         try:
@@ -640,7 +654,11 @@ class SourceService:
                 except TychoraError as error:
                     if error.code != "WORKSPACE_BUSY":
                         raise
-            if base is not None and not source.root.vision:
+            if (
+                base is not None
+                and not source.root.vision
+                and source.root.pdf_processing is None
+            ):
                 selected_base = base
                 can_reuse = await self.owner.run_blocking(
                     lambda: self._selected_revision(selected_base, registration, ctx),
@@ -673,9 +691,13 @@ class SourceService:
                 )
             )
             if bundle is None:
-                bundle = await self._extract(
-                    registration, capture, ctx, source, granted
-                )
+                token = _pdf_job_id.set(handle.id)
+                try:
+                    bundle = await self._extract(
+                        registration, capture, ctx, source, granted
+                    )
+                finally:
+                    _pdf_job_id.reset(token)
             bundle = await self.owner.run_blocking(
                 lambda: self._bind_source_metadata(bundle), ctx
             )
@@ -1037,7 +1059,18 @@ class SourceService:
                 doc_ref = ArtifactRef.model_validate(parsed_data["docling_json_ref"])
                 with self.owner.artifacts.open_verified(doc_ref) as stream:
                     doc_payload = stream.read(doc_ref.size_bytes + 1)
-                parsed = replay_document(parsed_payload, doc_payload, parsed_ref)
+
+                def read_declared(ref):
+                    with self.owner.artifacts.open_verified(ref) as stream:
+                        return stream.read(ref.size_bytes + 1)
+
+                parsed = replay_document(
+                    parsed_payload, doc_payload, parsed_ref, read_declared=read_declared
+                )
+                if parsed.pdf_processing != registration.capture.source.get(
+                    "pdf_processing"
+                ):
+                    continue
                 retained_config = self._retained_extraction_config(
                     parsed.registration.capture, extraction_id
                 )
@@ -1608,6 +1641,25 @@ class SourceService:
             }
         )
 
+    def _pdf_progress(self, job_id, pages):
+        from datetime import UTC, datetime
+
+        from tychora.contracts.operations import JobEvent, NamedCount
+
+        assert self._jobs is not None
+        status = self._jobs.get(job_id)
+        self._jobs.append_event(
+            job_id,
+            JobEvent(
+                job_id=job_id,
+                sequence=status.latest_sequence + 1,
+                timestamp=datetime.now(UTC),
+                stage="parse",
+                state=status.state,
+                counters=(NamedCount(name="accepted_pdf_pages", count=pages[-1]),),
+            ),
+        )
+
     async def _extract(
         self,
         registration: NativeRegistration | DocumentRegistration | CodeRegistration,
@@ -1628,12 +1680,19 @@ class SourceService:
                 ctx,
             )
         if isinstance(registration, DocumentRegistration):
+            job_id = _pdf_job_id.get()
             if self.docling_models is None:
                 raise TychoraError(
                     "CAPABILITY_MISSING", "Docling model path is not provisioned"
                 )
             parsed = await DoclingParser(
-                self.owner, registration, self.docling_models
+                self.owner,
+                registration,
+                self.docling_models,
+                policy=source.root.pdf_processing,
+                progress=(lambda pages: self._pdf_progress(job_id, pages))
+                if job_id
+                else None,
             ).aextract(capture.original_ref, self.owner.config, ctx)
             if source.root.vision and canonical_bytes(
                 capture.source.get("vision")
@@ -1642,6 +1701,14 @@ class SourceService:
             ):
                 raise TychoraError("INTEGRITY_ERROR", "Captured vision intent differs.")
             proxies = []
+            pixel_regions = ()
+            if parsed.pdf_processing is not None:
+                from tychora.adapters.docling.ocr_evidence import plan_pdf_ocr
+
+                initial_proxies, pixel_regions = await self.owner.run_blocking(
+                    lambda: plan_pdf_ocr(self.owner, parsed, ctx), ctx
+                )
+                proxies.extend(initial_proxies)
             gaps = []
             for selected in source.root.vision:
                 proxy, gap = await self._selected_vision_proxy(
@@ -1659,6 +1726,7 @@ class SourceService:
                         DocumentCompositionPlan(
                             base_normalizer_fingerprint=parsed.normalizer_fingerprint,
                             proxies=tuple(proxies),
+                            pixel_regions=pixel_regions,
                             vision_gaps=tuple(gaps),
                         ),
                         self.owner.artifacts,

@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from hashlib import sha256
 from typing import Any, cast
 
+from tychora.adapters.docling.ocr_evidence import normalize_native_document_units
 from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
@@ -18,7 +19,7 @@ from tychora.contracts.corpus import (
     StructuredRecordRow,
     UnitAssetRow,
 )
-from tychora.contracts.documents import DocumentRegistration, DocumentUnit
+from tychora.contracts.documents import DocumentRegistration
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.extraction import ExtractionArtifact
@@ -63,7 +64,7 @@ def normalize_document(
     eid = extraction_id(
         revision_id, parsed.parser_fingerprint, parsed.normalizer_fingerprint
     )
-    document_units = cast(tuple[DocumentUnit, ...], parsed.units)
+    document_units = normalize_native_document_units(parsed)
     ids = {
         u.native_ref: unit_id(
             eid, u.native_ref, u.ordinal, sha256(u.text.encode()).hexdigest()
@@ -214,7 +215,20 @@ def assemble_document_bundle(
     eid = extraction_id(revision_id, parsed.parser_fingerprint, fingerprint)
     assets = []
     unit_assets = []
+    ocr_refs = {
+        unit.native_ref
+        for unit in parsed.units
+        if getattr(unit, "text_origin", "source") == "ocr"
+    }
     for asset in parsed.assets:
+        caption = asset.caption
+        if ocr_refs.intersection(asset.source_units):
+            caption = "\n".join(
+                unit.text
+                for unit in normalize_native_document_units(parsed)
+                if unit.native_ref in asset.source_units
+                and unit.native_ref != asset.native_ref
+            )
         aid = digest("asset-v1", eid, asset.native_ref, asset.artifact_ref.sha256)
         assets.append(
             AssetRow(
@@ -224,10 +238,12 @@ def assemble_document_bundle(
                 asset_type=asset.asset_type,
                 native_ref=asset.native_ref,
                 locator=asset.locator,
-                caption=asset.caption,
+                caption=caption,
             )
         )
         for ref in asset.source_units:
+            if ref in ocr_refs:
+                continue
             if ref not in source_owners:
                 raise TychoraError(
                     "INTEGRITY_ERROR", "Document asset references missing source unit"
@@ -252,6 +268,11 @@ def assemble_document_bundle(
             *registration.capture.sidecar_refs,
             cast(ArtifactRef, parsed.docling_json_ref),
             *(a.artifact_ref for a in parsed.assets),
+            *(
+                ref
+                for ref in (parsed.ocr_evidence_ref, parsed.image_bindings_ref)
+                if ref is not None
+            ),
         )
     }
     return ExtractionBundle(
@@ -295,7 +316,7 @@ def assemble_document_bundle(
 
 
 def replay_document(
-    manifest: bytes, raw_json: bytes, manifest_ref: ArtifactRef
+    manifest: bytes, raw_json: bytes, manifest_ref: ArtifactRef, *, read_declared=None
 ) -> ExtractionArtifact:
     """Reconstruct from retained JSON bytes alone, including independent bindings."""
     if (
@@ -315,7 +336,7 @@ def replay_document(
         for segment in unit["native_ref"][2:].split("/"):
             node = node[int(segment)] if isinstance(node, list) else node[segment]
         unit["raw_item"] = node
-    return ExtractionArtifact.model_validate_json(
+    parsed = ExtractionArtifact.model_validate_json(
         canonical_bytes(
             {
                 **data,
@@ -324,3 +345,29 @@ def replay_document(
             }
         )
     )
+
+    if parsed.image_representation is not None:
+        from tychora.adapters.docling.ocr_evidence import validate_external_images
+
+        declared = {
+            item["sha256"]: ArtifactRef.model_validate(item)
+            for item in root.get("required_artifacts", [])
+        }
+
+        def read(ref):
+            if read_declared is None or declared.get(ref.sha256) != ref:
+                raise ValueError(
+                    "External image is not authorized by extraction manifest"
+                )
+            return read_declared(ref)
+
+        validate_external_images(parsed, read)
+        for ref in (parsed.ocr_evidence_ref, parsed.image_bindings_ref):
+            assert ref is not None
+            payload = read(ref)
+            if (
+                len(payload) != ref.size_bytes
+                or sha256(payload).hexdigest() != ref.sha256
+            ):
+                raise ValueError("Retained PDF sidecar differs")
+    return parsed

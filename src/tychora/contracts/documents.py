@@ -2,7 +2,7 @@
 
 from typing import Literal, Self
 
-from pydantic import model_validator
+from pydantic import model_serializer, model_validator
 
 from .acquisition import CaptureManifest
 from .artifacts import ArtifactRef, physical_identity
@@ -119,6 +119,55 @@ class DocumentUnit(Contract):
     provenance: tuple[DocumentProvenance, ...] = ()
     locators: tuple[DocumentLocator, ...]
     cells: tuple[tuple[str, ...], ...] = ()
+
+    text_origin: Literal["source", "ocr"] = "source"
+
+    @model_serializer(mode="wrap")
+    def legacy_origin(self, handler):
+        data = handler(self)
+        if self.text_origin == "source":
+            data.pop("text_origin", None)
+        return data
+
+
+class DocumentImageBinding(Contract):
+    native_ref: NonEmptyStr
+    artifact_ref: ArtifactRef
+
+
+class OcrPageEvidence(Contract):
+    physical_page: PositiveInt
+    model_input_image: ArtifactRef
+    model_input_pixel_sha256: Sha256
+    original_pixel_sha256: Sha256
+    original_sha256: Sha256
+    width: PositiveInt
+    height: PositiveInt
+    region_pixel_transform: NonEmptyStr
+    renderer: FrozenJsonMap
+    channel_interpretation: Literal["pdfium-rgb-array-rapidocr-ndarray-no-channel-swap"]
+    policy_sha256: Sha256
+    model_identity: Sha256
+    runtime_inventory: FrozenJsonMap
+    cells: tuple[FrozenJsonMap, ...]
+    transcript: str
+    transcript_order: Literal["rapidocr-reader-order@1"] = "rapidocr-reader-order@1"
+    detected_boxes: NonNegativeInt
+    diagnostic: Literal["transcribed", "no-text-detected"]
+
+    @model_validator(mode="after")
+    def checked(self):
+        if (
+            self.width * self.height > 40000000
+            or self.model_input_image.media_type != "image/png"
+            or self.region_pixel_transform
+            != f"exif-transpose-rgb-v1:crop:0,0,{self.width},{self.height}"
+            or any(cell.get("from_ocr") is not True for cell in self.cells)
+            or (self.diagnostic == "transcribed") != bool(self.transcript.strip())
+            or (self.diagnostic == "no-text-detected") != (self.detected_boxes == 0)
+        ):
+            raise ValueError("OCR evidence coverage or input binding differs")
+        return self
 
 
 class DocumentSourcePart(Contract):
@@ -438,6 +487,8 @@ def validate_document_assets(
     original: ArtifactRef,
     source_key: str,
     original_image: OriginalImage | None = None,
+    image_representation: str | None = None,
+    image_bindings: tuple[DocumentImageBinding, ...] = (),
 ) -> None:
     import base64
     from hashlib import sha256
@@ -464,11 +515,27 @@ def validate_document_assets(
     for asset in assets:
         node = objects[asset.native_ref]
         image = node["image"]
-        header, encoded = image["uri"].split(",", 1)
-        if not header.startswith("data:image/") or not header.endswith(";base64"):
-            raise ValueError("Document images require embedded payloads")
-        payload = base64.b64decode(encoded, validate=True)
         ref = asset.artifact_ref
+        external = image["uri"].startswith("urn:tychora:artifact:sha256:")
+        if external:
+            bindings = {
+                binding.native_ref: binding.artifact_ref for binding in image_bindings
+            }
+            if (
+                image_representation != "scan-external-images@1"
+                or len(bindings) != len(image_bindings)
+                or bindings.get(asset.native_ref) != ref
+                or image["uri"] != "urn:tychora:artifact:sha256:" + ref.sha256
+                or image.get("mimetype") != ref.media_type
+            ):
+                raise ValueError("Undeclared external document image")
+            payload = b""
+            header = "data:" + ref.media_type + ";base64"
+        else:
+            header, encoded = image["uri"].split(",", 1)
+            if not header.startswith("data:image/") or not header.endswith(";base64"):
+                raise ValueError("Document images require embedded payloads")
+            payload = base64.b64decode(encoded, validate=True)
         unit = unit_refs.get(asset.native_ref)
         page = unit.locators[0].physical_page if unit else node["page_no"]
         geometry = (
@@ -513,8 +580,11 @@ def validate_document_assets(
                 == original_image.pixel_sha256
             )
         if (
-            sha256(payload).hexdigest() != ref.sha256
-            or len(payload) != ref.size_bytes
+            not external
+            and (
+                sha256(payload).hexdigest() != ref.sha256
+                or len(payload) != ref.size_bytes
+            )
             or ref.storage_key != ref.sha256
             or ref.media_type != header[5:].split(";", 1)[0]
             or asset.width != image["size"]["width"]

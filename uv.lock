@@ -3210,6 +3210,7 @@ code = [
 documents = [
     { name = "docling" },
     { name = "pillow" },
+    { name = "psutil" },
     { name = "pypdf" },
 ]
 full = [
@@ -3222,6 +3223,7 @@ full = [
     { name = "mcp" },
     { name = "pathspec" },
     { name = "pillow" },
+    { name = "psutil" },
     { name = "pypdf" },
     { name = "tree-sitter" },
     { name = "tree-sitter-javascript" },
@@ -3298,6 +3300,8 @@ requires-dist = [
     { name = "pillow", marker = "extra == 'full'" },
     { name = "platformdirs" },
     { name = "pydantic", specifier = ">=2,<3" },
+    { name = "psutil", marker = "extra == 'documents'", specifier = "==7.2.2" },
+    { name = "psutil", marker = "extra == 'full'", specifier = "==7.2.2" },
     { name = "pypdf", marker = "extra == 'documents'", specifier = "==6.19.0" },
     { name = "pypdf", marker = "extra == 'full'", specifier = "==6.19.0" },
     { name = "rich" },

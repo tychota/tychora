@@ -11,6 +11,7 @@ from typing import Any, cast
 from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef, ManifestRef, physical_identity
 from tychora.contracts.assets import ProxyRecord
+from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.composition import (
     DocumentCompositionPlan,
     PlannedProxy,
@@ -169,6 +170,7 @@ def _input_references(
     references: dict[str, ArtifactRef] = {}
     for ref in (
         *(asset.artifact_ref for asset in parsed.assets),
+        *(region.image_ref for region in plan.pixel_regions),
         *(proxy.derivation for proxy in plan.proxies),
         *(proxy.region.image_ref for proxy in plan.proxies if proxy.region is not None),
         *(
@@ -386,19 +388,91 @@ def build_composed_document(
         if assertions
         else None
     )
+    pdf_coverage = None
+    if parsed.pdf_processing is not None:
+        from tychora.contracts.composition import PdfCoverage
+        from tychora.contracts.pdf_policy import PdfProcessingPolicy
+
+        policy = PdfProcessingPolicy.model_validate_json(
+            canonical_bytes(parsed.pdf_processing)
+        )
+        pdf_coverage = PdfCoverage(
+            page_count=len(policy.native_pages)
+            + len(policy.ocr_pages)
+            + len(policy.blank_pages),
+            native_pages=policy.native_pages,
+            ocr_pages=policy.ocr_pages,
+            blank_pages=policy.blank_pages,
+            no_text_detected_pages=tuple(
+                page.physical_page
+                for page in parsed.ocr_pages
+                if page.diagnostic == "no-text-detected"
+            ),
+        )
     diagnostics_ref = (
         retain(
             canonical_bytes(
-                VisionCapabilityDiagnostics(gaps=plan.vision_gaps).model_dump(
-                    mode="json"
-                )
+                VisionCapabilityDiagnostics(
+                    gaps=plan.vision_gaps, pdf_coverage=pdf_coverage
+                ).model_dump(mode="json")
             )
         )
-        if plan.vision_gaps
+        if plan.vision_gaps or pdf_coverage is not None
         else None
     )
     assets = {asset.native_ref: asset.asset_id for asset in bundle.assets}
     parsed_assets = {asset.native_ref: asset for asset in parsed.assets}
+    if plan.pixel_regions:
+        from tychora.ports.vision import verify_region_source
+
+        if parsed.pdf_processing is None or {
+            region.source_native_ref for region in plan.pixel_regions
+        } != {f"#/pages/{page.physical_page}" for page in parsed.ocr_pages}:
+            raise ValueError("PDF pixel-owner coverage differs from evidence")
+        regions = sorted(
+            plan.pixel_regions,
+            key=lambda region: int(region.source_native_ref.rsplit("/", 1)[1]),
+        )
+        for region in regions:
+            selected = parsed_assets[region.source_native_ref]
+            evidence = next(
+                page
+                for page in parsed.ocr_pages
+                if f"#/pages/{page.physical_page}" == region.source_native_ref
+            )
+            if (
+                region.image_ref != evidence.model_input_image
+                or region.region_pixel_sha256 != evidence.model_input_pixel_sha256
+            ):
+                raise ValueError("PDF pixel owner differs from exact OCR input")
+            verify_region_source(
+                _region_input(region, _checked(region.image_ref, inputs)),
+                _checked(selected.artifact_ref, inputs),
+                selected.artifact_ref,
+                region.source_native_ref,
+            )
+            bundle, _ = _materialize_pixel_source_view(
+                bundle, assets[region.source_native_ref], region
+            )
+        bundle = bundle.model_copy(
+            update={
+                "units": tuple(
+                    unit.model_copy(
+                        update={
+                            "attributes": FrozenJsonMap(
+                                {
+                                    **unit.attributes,
+                                    "document_representation": "docling-pdf-pixels@1",
+                                }
+                            )
+                        }
+                    )
+                    if unit.unit_type == "image_region_original"
+                    else unit
+                    for unit in bundle.units
+                )
+            }
+        )
     region_dependencies: dict[bytes, tuple[str, ...]] = {}
     for proxy in plan.proxies:
         if proxy.region is None:
@@ -523,6 +597,8 @@ def build_composed_document(
                 proxy.derivation,
             )
         )
+    if parsed.image_representation is not None:
+        refs.update(references)
     units = (*bundle.units, *(proxy.unit for proxy in proxies))
     locators = (
         *bundle.locators,
@@ -609,6 +685,12 @@ def build_composed_document(
         }
     )
     if len(manifest) > MAX_COMPOSED_MANIFEST_BYTES:
+        if parsed.pdf_processing is not None:
+            from tychora.contracts.errors import TychoraError
+
+            raise TychoraError(
+                "LIMIT_EXCEEDED", "PDF composed manifest exceeds capacity"
+            )
         raise ValueError("Composed extraction manifest exceeds capacity")
     manifest_ref = retain(manifest)
     bundle = bundle.model_copy(
@@ -619,6 +701,18 @@ def build_composed_document(
             "artifacts": (*bundle.artifacts, manifest_ref),
         }
     )
+    if parsed.pdf_processing is not None:
+        from tychora.contracts.errors import TychoraError
+
+        closure = {ref.sha256: ref for ref in bundle.artifacts}
+        limits = parsed.pdf_processing["limits"]
+        assert isinstance(limits, FrozenJsonMap)
+        ceiling = limits["max_retained_bytes"]
+        assert isinstance(ceiling, int)
+        if sum(ref.size_bytes for ref in closure.values()) > ceiling:
+            raise TychoraError(
+                "LIMIT_EXCEEDED", "PDF composed closure exceeds processing capacity"
+            )
     return ComposedDocument(
         bundle, fragments, tuple(assertions), manifest_ref, payloads
     )
@@ -635,11 +729,20 @@ def compose_document(
     ctx.checkpoint()
     plan = DocumentNormalizationContext.bind(parsed, registry, plan).plan
     refs = _input_references(parsed, plan)
-    inputs = {}
-    for sha, ref in refs.items():
+
+    def read(ref):
         ctx.checkpoint()
         with artifacts.open_verified(ref) as stream:
-            inputs[sha] = stream.read(ref.size_bytes + 1)
+            return stream.read(ref.size_bytes + 1)
+
+    if (
+        parsed.pdf_processing is not None
+        and sum(ref.size_bytes for ref in refs.values()) > MAX_COMPOSITION_INPUT_BYTES
+    ):
+        from tychora.contracts.errors import TychoraError
+
+        raise TychoraError("LIMIT_EXCEEDED", "PDF composition inputs exceed capacity")
+    inputs = DeclaredPayloads(refs, read, MAX_COMPOSITION_INPUT_BYTES)
     result = build_composed_document(parsed, registry, plan, inputs)
     bound_refs = {ref.sha256: ref for ref in result.bundle.artifacts}
     for sha, payload in result.payloads.items():
@@ -661,6 +764,12 @@ def replay_composed_document(
 ) -> ComposedDocument:
     """Pure restore boundary: verify and recompute every canonical derived product."""
     if len(manifest) > MAX_COMPOSED_MANIFEST_BYTES:
+        if parsed.pdf_processing is not None:
+            from tychora.contracts.errors import TychoraError
+
+            raise TychoraError(
+                "LIMIT_EXCEEDED", "PDF composed manifest exceeds capacity"
+            )
         raise ValueError("Composed extraction manifest exceeds capacity")
     _checked(manifest_ref, {manifest_ref.sha256: manifest})
     try:
@@ -715,3 +824,26 @@ def replay_composed_document(
     for sha, ref in references.items():
         _checked(ref, {sha: manifest} if sha == manifest_ref.sha256 else inputs)
     return result
+
+
+class DeclaredPayloads(Mapping[str, bytes]):
+    """Bounded authorized closure, loaded one verified payload at a time."""
+
+    def __init__(self, refs, read, max_bytes):
+        self.refs = dict(refs)
+        self.read = read
+        if sum(ref.size_bytes for ref in self.refs.values()) > max_bytes:
+            raise ValueError("Declared payload closure exceeds capacity")
+
+    def __len__(self):
+        return len(self.refs)
+
+    def __iter__(self):
+        return iter(self.refs)
+
+    def __getitem__(self, sha):
+        ref = self.refs[sha]
+        payload = self.read(ref)
+        if len(payload) != ref.size_bytes or sha256(payload).hexdigest() != sha:
+            raise ValueError("Declared payload differs from exact artifact")
+        return payload

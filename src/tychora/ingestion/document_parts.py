@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+from tychora.adapters.docling.ocr_evidence import normalize_native_document_units
 from tychora.contracts.base import Contract
 from tychora.contracts.documents import (
     DocumentSeparator,
@@ -259,7 +260,10 @@ def validate_document_source_parts(
     unit: EvidenceUnit, parsed: ExtractionArtifact
 ) -> None:
     """Validate canonical ownership against complete verified SDK facts."""
-    items = {item.native_ref: cast(DocumentUnit, item) for item in parsed.units}
+    items = {
+        item.native_ref: cast(DocumentUnit, item)
+        for item in normalize_native_document_units(parsed)
+    }
     _validate_source_parts(unit, parsed, items)
 
 
@@ -419,7 +423,10 @@ def validate_document_ownership(
     units: tuple[EvidenceUnit, ...], parsed: ExtractionArtifact
 ) -> None:
     """Pure normalization/restore boundary; never degrade to parent-only ownership."""
-    items = {item.native_ref: cast(DocumentUnit, item) for item in parsed.units}
+    items = {
+        item.native_ref: cast(DocumentUnit, item)
+        for item in normalize_native_document_units(parsed)
+    }
     covered = set()
     for unit in units:
         if unit.attributes.get("document_representation") != "docling-source-parts@1":
