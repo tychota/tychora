@@ -60,7 +60,10 @@ class LocalAuth:
 
 
 def checked_authority_headers(
-    raw: list[tuple[bytes, bytes]], auth: LocalAuth
+    raw: list[tuple[bytes, bytes]],
+    auth: LocalAuth,
+    *,
+    max_request_bytes: int | None = None,
 ) -> tuple[dict[bytes, bytes], int | None]:
     """Reject ambiguous security and length headers before route parsing."""
     selected: dict[bytes, bytes] = {}
@@ -101,7 +104,9 @@ def checked_authority_headers(
         if len(length_text) > 20 or not length_text.isdecimal():
             raise TychoraError("INVALID_REQUEST", "Content length is malformed.")
         length = int(length_text)
-        if length > auth.max_request_bytes:
+        if length > (
+            auth.max_request_bytes if max_request_bytes is None else max_request_bytes
+        ):
             raise TychoraError(
                 "BUDGET_TOO_SMALL", "Request body exceeds the local limit."
             )
@@ -111,10 +116,16 @@ def checked_authority_headers(
 
 
 def checked_headers(
-    raw: list[tuple[bytes, bytes]], auth: LocalAuth, owner_scope: RequestScope
+    raw: list[tuple[bytes, bytes]],
+    auth: LocalAuth,
+    owner_scope: RequestScope,
+    *,
+    max_request_bytes: int | None = None,
 ) -> tuple[RequestScope, int | None]:
     """Validate local authority, then authenticate and narrow the API grant."""
-    selected, length = checked_authority_headers(raw, auth)
+    selected, length = checked_authority_headers(
+        raw, auth, max_request_bytes=max_request_bytes
+    )
     if b"authorization" not in selected:
         raise TychoraError("FORBIDDEN_SCOPE", "Local credential is required.")
     authorization = selected[b"authorization"].decode("ascii")

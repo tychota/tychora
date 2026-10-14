@@ -16,7 +16,16 @@ from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from threading import Lock, get_ident
-from typing import Any, BinaryIO, Literal, NoReturn, Protocol, cast, overload
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    BinaryIO,
+    Literal,
+    NoReturn,
+    Protocol,
+    cast,
+    overload,
+)
 from uuid import UUID, uuid4
 
 from tychora.adapters.files.cas import LocalArtifacts
@@ -70,6 +79,9 @@ from .runtime import (
     private_directory,
 )
 
+if TYPE_CHECKING:
+    from .pdf_intake import PdfIntakeService
+
 
 class CloseableRuntime(Protocol):
     def close(self) -> None: ...
@@ -113,6 +125,7 @@ class WorkspaceOwner:
         self._worker = BoundedWorker()
         self._runtime = RuntimeIdentity(self.path)
         self.service_runtime: ServiceRuntime | None = None
+        self.pdf_intakes: PdfIntakeService | None = None
         self._parsers = BoundedWorker(workers=2)
         self._providers: dict[str, BoundedWorker] = {}
         self._local_text: BoundedWorker | None = None
