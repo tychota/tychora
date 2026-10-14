@@ -17,3 +17,13 @@ Regenerate from the repository root with `PYTHONPATH=src python dashboard/script
 | `evaluation-list.json`, `evaluation-detail.json` | List is a bare list of saved run summaries. Detail contains evaluation_id/dataset_id/snapshot_id/job_id/epochs/config_sha/hardware/report/cases. Cases is a dictionary keyed by case_id; each value has case_id/runs/schema_version. Report cases are separate per-case metric summaries. MetricSet is `{metrics: [...]}`; MetricValue includes name/value/sample_count/denominator/not_applicable_reason. No paging or label-revision endpoints. |
 
 All data endpoints remain bearer-authenticated and scope-authorized. Example responses are for DTO and browser tests, never substitute live workspace data.
+
+`extraction-units.json` and `extraction-windows.json` are captured through the
+real retained-content HTTP routes. Units include only fully readable summaries;
+windows contain exact server-sliced stored ranges and projected locators. Stored
+window presence does not assert active snapshot membership. Tokenizer identity is
+not stored and is omitted. Pages default to 20 entries (maximum 50), with a 1 MiB
+response budget and opaque continuation. Cursors expire when the inspection
+service restarts, the policy/scope/request binding changes, or the bounded 1024
+cursor cache evicts them; expired cursors return `INVALID_REQUEST`. A bounded scan
+may return an empty, scope-limited page with continuation past denied rows.
