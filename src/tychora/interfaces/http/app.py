@@ -16,7 +16,8 @@ from tychora.application.runtime import ServiceRuntime
 from tychora.application.settings import SettingsService
 from tychora.contracts.errors import TychoraError
 
-from .auth import LocalAuth, checked_headers
+from .auth import LocalAuth, checked_authority_headers, checked_headers
+from .dashboard import is_dashboard_static_request, register_dashboard
 from .routes import register_routes
 
 if TYPE_CHECKING:
@@ -43,7 +44,22 @@ class RawBoundary:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+
+        async def uncached_send(message):
+            if message["type"] == "http.response.start":
+                message = dict(message)
+                message["headers"] = [
+                    (name, value)
+                    for name, value in message.get("headers", [])
+                    if name.lower() != b"cache-control"
+                ] + [(b"cache-control", b"no-store")]
+            await send(message)
+
         try:
+            if is_dashboard_static_request(scope):
+                checked_authority_headers(scope.get("headers", []), self.auth)
+                await self.app(scope, receive, uncached_send)
+                return
             request_scope, _ = checked_headers(
                 scope.get("headers", []), self.auth, self.owner.scope
             )
@@ -80,13 +96,13 @@ class RawBoundary:
             if not is_mcp:
                 self.runtime.admit(activation=activation)
             try:
-                await self.app(scope, replay, send)
+                await self.app(scope, replay, uncached_send)
             finally:
                 if not is_mcp:
                     self.runtime.release(activation=activation)
         except TychoraError as error:
             response = error_response(error)
-            await response(scope, receive, send)
+            await response(scope, receive, uncached_send)
 
 
 def create_app(owner: WorkspaceOwner, services: Services, auth: LocalAuth) -> FastAPI:
@@ -161,4 +177,5 @@ def create_app(owner: WorkspaceOwner, services: Services, auth: LocalAuth) -> Fa
         )
 
     register_routes(app)
+    register_dashboard(app)
     return app

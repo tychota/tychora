@@ -1,0 +1,26 @@
+{
+  "id": "e6aa0e2d-5d4f-47c1-b608-bf2a8775dd9d",
+  "operation": "add",
+  "state": "succeeded",
+  "request_digest": "8a07899ea380d6ede01840626616f6e9955326092dde38a9e7d2b6c891e72d20",
+  "effective_config": {
+    "sha256": "d791edb5fedcaddb8f0116cf2d87211fbdb8fdf2b599a860d0af505a74f9ff8c",
+    "size_bytes": 618366,
+    "media_type": "application/json",
+    "storage_key": "d791edb5fedcaddb8f0116cf2d87211fbdb8fdf2b599a860d0af505a74f9ff8c"
+  },
+  "captured_inputs": {
+    "sha256": "bfd443840dba5736e55851b0a77fb8ee275287308fd22d6eff661eaa00cb635a",
+    "size_bytes": 1212,
+    "media_type": "application/json",
+    "storage_key": "bfd443840dba5736e55851b0a77fb8ee275287308fd22d6eff661eaa00cb635a"
+  },
+  "base_snapshot_id": null,
+  "result_snapshot_id": "fc22b030ae7b780dfeb1c48d27d8f213c63c9be25fc91a8651d74fa121f29d23",
+  "result": null,
+  "cancellation_requested": false,
+  "latest_sequence": 9,
+  "retry_count": 0,
+  "error_code": null,
+  "retention_limited": false
+}

@@ -1,0 +1,19 @@
+# Dashboard HTTP examples
+
+These JSON responses were captured through the real FastAPI boundary using a temporary workspace and one synthetic pasted-text source. They contain no bearer credentials or local filesystem paths. Identifiers and timestamps are capture-specific, but references remain consistent across these files. This is a response-shape fixture, not a retrieval-quality benchmark; evaluation labels use the public identity of the synthetic evidence.
+
+Regenerate from the repository root with `PYTHONPATH=src python dashboard/scripts/generate_contracts.py`. The script requires the project HTTP test dependencies (`httpx`) and accepts `--output` for a temporary alternative destination. It makes no external provider calls and uses a declared synthetic output counter. Production Python hosting does not require Node; frontend builds remain a separate developer operation.
+
+| Examples | Actual shape and limits |
+| --- | --- |
+| `handshake.json` | Workspace/instance identifiers, full granted scope and permitted default collection ID. No collection display names or global workspace list. |
+| `discovery-kinds.json`, `sources.json` | Discovery envelope: subject, definitions, counts, capabilities, capability_status and next_cursor. Definition entries have id/version/label/definition/schema_digest. This bounded kinds page may have a continuation. Source label is its source key; its revision preview is not a current/latest marker. Source counts can be absent. |
+| `source-revisions.json` | Source ID, revision entries with retained stages and bounded extraction/channel previews, next_cursor and scope_limited. No percent-complete coverage, revision dates, or current revision flag. |
+| `source-add.json`, `job-status.json`, `job-events.json` | Acceptance is a JobHandle. Persisted status has snapshot/config/capture references, state and latest_sequence; it lacks current progress counters and created/updated timestamps. Event-page response is a bare event list, with actual stage/state/counters and sequence. Counters need not provide a completed/total pair. |
+| `query.json` | Canonical query envelope has segments, citations, visuals, relations, coverage, coverage_gaps, decision_requirements, checks, warnings, budget_contract and trace. Segments carry exact source/revision/extraction IDs and matched/context unit distinctions, signals, anchors and citations. No invented ranking score. Trace is null despite requesting it. |
+| `evidence.json`, `original.json` | InspectionResult envelope: evidence/partial_evidence/excerpts/records/original_ref/payload/media_type/truncated. The retained text original has URL-safe base64 payload, not a raw content URL. Null fields remain null. |
+| `query-history.json`, `query-run.json` | Bounded discovery listing and inspection records. request_retained is false: no stored question/result/trace, and replay must remain unavailable. No aggregate activity analytics. |
+| `evaluation-dataset.json`, `evaluation-receipt.json` | Registered dataset carries cases; execution returns a JobHandle after completing the current synchronous service call, despite HTTP 202. Fixture hardware reports offline=false; context is synthetic and has no external providers. |
+| `evaluation-list.json`, `evaluation-detail.json` | List is a bare list of saved run summaries. Detail contains evaluation_id/dataset_id/snapshot_id/job_id/epochs/config_sha/hardware/report/cases. Cases is a dictionary keyed by case_id; each value has case_id/runs/schema_version. Report cases are separate per-case metric summaries. MetricSet is `{metrics: [...]}`; MetricValue includes name/value/sample_count/denominator/not_applicable_reason. No paging or label-revision endpoints. |
+
+All data endpoints remain bearer-authenticated and scope-authorized. Example responses are for DTO and browser tests, never substitute live workspace data.
