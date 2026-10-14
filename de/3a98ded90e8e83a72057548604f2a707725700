@@ -1,0 +1,89 @@
+dashboard/package.json
+  s_346481235fa7eb::t_049b04095511f1 1-13
+  s_346481235fa7eb::t_30d4c5d0df75da 14-28
+dashboard/index.html
+  s_346481235fa7eb::t_049b04095511f1 1-2
+  s_346481235fa7eb::t_999745bd25e60d 3-13
+dashboard/src/test/setup.ts
+  s_346481235fa7eb::t_049b04095511f1 1-4
+dashboard/src/api/client.ts
+  s_346481235fa7eb::t_08f5c8c5735057 2-3,12-13,21,23,28,46,55,61-62,65-66,77-78,88,92,95-96,99,106
+  s_346481235fa7eb::t_df319201e53705 1,4-11,14-20,24-27,29-45,47-54,56-60,63-64,67-76,79-87,89-91,93-94,97-98,100-105
+  s_346481235fa7eb::t_349fbaf07e4657 22,107
+  s_346481235fa7eb::t_9c00ec3ac8fda3 108-113
+dashboard/src/components/Status.tsx
+  s_346481235fa7eb::t_08f5c8c5735057 1-8
+  s_346481235fa7eb::t_28233aa49ace01 9-39
+dashboard/.gitignore
+  s_346481235fa7eb::t_049b04095511f1 1
+dashboard/src/main.tsx
+  s_346481235fa7eb::t_08f5c8c5735057 1-4
+dashboard/src/components/Relations.tsx
+  s_346481235fa7eb::t_5e79f27dba3faf 1-33
+  s_346481235fa7eb::t_c462e566ffd955 34-210
+dashboard/src/pages/Search.tsx
+  s_346481235fa7eb::t_5ab87a9d7feee9 43,87-89,95-104,116,132-138,175,189-192,194-195,313-316,328-352,552-554,561-562,599-600,602
+  s_346481235fa7eb::t_df319201e53705 1-17,20-42,44-54,56-77,79-86,90-94,105-115,117-131,139-140,142-152,154-174,176-184,186-188,193,196-312,317-327,353-551,555-560,563-598,601,603-609,611-633,635-673
+  s_346481235fa7eb::t_ccab8d242b040f 18-19,55,78,141,153,185,674
+  s_346481235fa7eb::t_a308a27c464d91 610,634
+  s_346481235fa7eb::t_224818cadaf504 675-676
+dashboard/src/styles.css
+  s_346481235fa7eb::t_ccab8d242b040f 1-7
+  s_346481235fa7eb::t_a47d9e05183fdd 8-813
+dashboard/vite.config.ts
+  s_346481235fa7eb::t_049b04095511f1 1-8
+  s_346481235fa7eb::t_1c39c7d1cbbf8b 9-17
+dashboard/src/components/JsonDetails.tsx
+  s_346481235fa7eb::t_08f5c8c5735057 1-5
+  s_346481235fa7eb::t_751c0871749872 6-30
+docs/superpowers/specs/2026-10-14-dashboard-delivery-design.md
+  s_346481235fa7eb::t_69a1da091823b8 29
+dashboard/src/App.tsx
+  s_346481235fa7eb::t_65ea8b986dc6a5 1-11,13-20,22-85,88-98,101-217
+  s_346481235fa7eb::t_ccab8d242b040f 12,21,86-87,99-100
+dashboard/src/components/EvidenceReader.tsx
+  s_346481235fa7eb::t_a748da0edad1a5 23,25,27
+  s_346481235fa7eb::t_5e79f27dba3faf 1-22,24,26,28-88
+  s_346481235fa7eb::t_3bfaf7c62e7ea7 89-381
+dashboard/tsconfig.json
+  s_346481235fa7eb::t_049b04095511f1 1
+  s_346481235fa7eb::t_4639eb5d08449f 2-16
+dashboard/src/test/workbench.test.tsx
+  s_346481235fa7eb::t_a748da0edad1a5 443
+  s_346481235fa7eb::t_dd3dbbd7542512 522,586,599
+  s_346481235fa7eb::t_45cbe14d010b09 94-96,103-109,183,226,229-276,279-295,299-320,448-467,472-484,487-500
+  s_346481235fa7eb::t_b7e890efa90746 23-24,26-29,78-79,84-86,91,125,140-141,143,151-152,169-170,277,339,342-343,349,376-377,442,444-445,605-606
+  s_346481235fa7eb::t_88ca87b3134f42 22,172-182,184-225
+  s_346481235fa7eb::t_3527a95c735343 1-21,25,30-77,80-83,87-90,92-93,97-102,110-124,126-139,142,144-150,153-168,171,227-228,278,296-298,321-338,340-341,344-348,350-375,378-441,446-447,468-471,485-486,501-521,523-585,587-598,600-604
+  s_346481235fa7eb::t_ee68bb5758f704 607-619
+dashboard/src/session.tsx
+  s_346481235fa7eb::t_08f5c8c5735057 1-38
+  s_346481235fa7eb::t_d3aef87a4d5c21 39-110
+dashboard/src/api/contracts.ts
+  s_346481235fa7eb::t_08f5c8c5735057 1-27
+  s_346481235fa7eb::t_b10b406db1de61 28-294
+dashboard/package-lock.json
+  s_346481235fa7eb::t_334b2418bfba24 1-3038
+src/tychora/resources/dashboard/assets/index-Bxuxxsay.css
+  s_346481235fa7eb::t_97199f93243e85 1
+src/tychora/resources/dashboard/assets/index-Cdbfx_d6.js
+  s_346481235fa7eb::t_68191391ea866d 1-9
+src/tychora/resources/dashboard/index.html
+  s_346481235fa7eb::t_d4429ab94642bb 1-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de3a98ded90e8e83a72057548604f2a707725700",
+  "prompts": {},
+  "sessions": {
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
