@@ -1,0 +1,19 @@
+docs/superpowers/plans/2026-10-14-dashboard-redesign.md
+  s_219afc08798c44::t_481d488c5ee092 60,88,167,288
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c25f03f98654b650a15d170dafb250d010d89fe8",
+  "prompts": {},
+  "sessions": {
+    "s_219afc08798c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
