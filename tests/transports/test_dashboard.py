@@ -180,3 +180,35 @@ async def test_absent_bundle_is_clear_and_does_not_prevent_api_construction(
             "/v1/handshake", headers={"Authorization": "Bearer owner"}
         )
         assert api.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_asset_symlink_cannot_serve_dashboard_sibling_file(dashboard_app):
+    root = dashboard_app.state.dashboard_root
+    (root / "private.txt").write_text("non-asset sibling secret")
+    (root / "assets" / "sibling.js").symlink_to("../private.txt")
+    async with AsyncClient(
+        transport=ASGITransport(app=dashboard_app), base_url="http://127.0.0.1:8765"
+    ) as client:
+        response = await client.get("/dashboard/assets/sibling.js")
+        assert response.status_code == 404
+        assert "non-asset sibling secret" not in response.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outside_package", [False, True])
+async def test_symlinked_assets_directory_cannot_escape_asset_boundary(
+    dashboard_app, tmp_path, outside_package
+):
+    root = dashboard_app.state.dashboard_root
+    (root / "assets").rename(root / "original-assets")
+    target = (tmp_path if outside_package else root) / "private-assets"
+    target.mkdir()
+    (target / "private.js").write_text("non-asset directory secret")
+    (root / "assets").symlink_to(target, target_is_directory=True)
+    async with AsyncClient(
+        transport=ASGITransport(app=dashboard_app), base_url="http://127.0.0.1:8765"
+    ) as client:
+        response = await client.get("/dashboard/assets/private.js")
+        assert response.status_code == 404
+        assert "non-asset directory secret" not in response.text
