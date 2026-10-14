@@ -61,6 +61,8 @@ The new collection/grant/lifecycle and guided settings/readiness contracts are r
 | Settings / Backup | Export backup to an explicit server path | Entire workspace manage; show destination | Verified backup receipt, not a fictional browser download |
 | Settings / Backup | Restore into a clean destination | Entire workspace manage; review archive/destination | Verified separate restored workspace; current workspace is not silently switched |
 
+The remote-provider setup journey must be operable through the same administration UI. For a fresh workspace before first indexing, Models exposes workspace online/offline policy, the qualified provider/model/reference, and its supported text/image index backend; Collections owns upload consent. These are distinct prerequisites. A documented synthetic smoke test verifies ingestion and retrieval/reranking through real dashboard/HTTP operations with a simulated provider transport, while live provider qualification remains explicitly separate. Existing embedding generations cannot be silently converted by changing a collection or model selector.
+
 Credentials are references to owner-provisioned secrets. This redesign does not add a secret store, source move/rename semantics, arbitrary model migration or unsupported history/cache purge.
 
 ## Add and index documents
