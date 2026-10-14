@@ -62,5 +62,5 @@ export function fileFormat(name: string): string {
     jpg: "jpeg",
     jpeg: "jpeg",
   };
-  return suffix ? (formats[suffix] ?? "") : "";
+  return suffix && Object.hasOwn(formats, suffix) ? formats[suffix] : "";
 }

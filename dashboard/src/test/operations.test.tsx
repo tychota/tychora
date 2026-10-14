@@ -924,3 +924,36 @@ it("requires an explicit bytes format for unrecognized filenames and preserves d
   });
   expect(screen.getByLabelText("Format")).toHaveValue("markdown");
 });
+it.each(["file.constructor", "file.__proto__", "file.toString"])(
+  "treats inherited object suffix %s as an unrecognized format",
+  async (filename) => {
+    const { fileFormat } = await import("../pages/sources/submission");
+    expect(fileFormat(filename)).toBe("");
+  },
+);
+it.each(["file.constructor", "file.__proto__"])(
+  "keeps %s bytes behind the explicit format guard without rendering a nonstring",
+  async (filename) => {
+    await open("/dashboard/sources");
+    fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+    fireEvent.change(screen.getByLabelText("Input type"), {
+      target: { value: "bytes" },
+    });
+    const file = new File(["sample"], filename);
+    Object.defineProperty(file, "arrayBuffer", {
+      value: async () => new TextEncoder().encode("sample").buffer,
+    });
+    fireEvent.change(screen.getByLabelText("Source file"), {
+      target: { files: [file] },
+    });
+    await screen.findByText(/Choose an explicit format for this file/);
+    expect(
+      screen.getByRole("button", { name: "Submit source" }),
+    ).toBeDisabled();
+    expect(
+      requests.some(
+        (r) => r.path === "/v1/sources" && r.init.method === "POST",
+      ),
+    ).toBe(false);
+  },
+);
