@@ -15,10 +15,6 @@ export class SubmissionIntent {
     }
     return this.key!;
   }
-  changed() {
-    this.body = null;
-    this.key = null;
-  }
 }
 export function parseMetadata(
   text: string,
@@ -48,4 +44,23 @@ export async function fileBase64(file: File): Promise<string> {
   for (const byte of new Uint8Array(buffer))
     binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+/** Mirrors the parser formats and filename aliases in SourceService registration. */
+export function fileFormat(name: string): string {
+  const suffix = name.split(".").at(-1)?.toLowerCase();
+  if (!name.includes(".")) return "";
+  const formats: Record<string, string> = {
+    md: "markdown",
+    markdown: "markdown",
+    txt: "text",
+    text: "text",
+    json: "json",
+    pdf: "pdf",
+    docx: "docx",
+    png: "png",
+    jpg: "jpeg",
+    jpeg: "jpeg",
+  };
+  return suffix ? (formats[suffix] ?? "") : "";
 }

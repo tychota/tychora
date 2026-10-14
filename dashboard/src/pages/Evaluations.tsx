@@ -90,11 +90,13 @@ function EvaluationList() {
         </table>
       </div>
       {data.value?.length === 0 && (
-        <p>No recorded evaluations in this scope.</p>
+        <p>No authorized evaluations returned in the recent service window.</p>
       )}
       <p className="muted">
-        Select two available runs to compare common numeric metrics. This
-        endpoint returns the complete authorized list.
+        Select two available runs to compare common numeric metrics. The service
+        considers at most 100 most recent records before authorization
+        filtering. Older evaluations may be omitted; continuation is
+        unavailable.
       </p>
       {selected.length === 2 && (
         <Comparison

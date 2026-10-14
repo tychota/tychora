@@ -347,6 +347,9 @@ it("encodes selected file bytes and gives changed source intent a new key", asyn
   fireEvent.change(screen.getByLabelText("Input type"), {
     target: { value: "bytes" },
   });
+  fireEvent.change(screen.getByLabelText("Format"), {
+    target: { value: "text" },
+  });
   const file = new File([new Uint8Array([0, 255, 128])], "test.bin");
   Object.defineProperty(file, "arrayBuffer", {
     value: async () => Uint8Array.of(0, 255, 128).buffer,
@@ -702,4 +705,222 @@ it("offers source retry only when retained inputs remain and retry budget is ava
   await open(`/dashboard/jobs/${job.id}`);
   await screen.findByText("failed");
   expect(screen.queryByRole("button", { name: "Retry job" })).toBeNull();
+});
+it("preserves ambiguous source retry identity after formatting-only metadata edits", async () => {
+  const fallback = respond;
+  let adds = 0;
+  respond = (path, init) =>
+    path === "/v1/sources" && init.method === "POST"
+      ? ++adds === 1
+        ? Promise.reject(new Error("response lost"))
+        : json(receipt, 202)
+      : fallback(path, init);
+  await open("/dashboard/sources");
+  fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+  fireEvent.change(screen.getByLabelText("Source key"), {
+    target: { value: "ambiguous" },
+  });
+  fireEvent.change(screen.getByLabelText("Kind"), {
+    target: { value: "manual@1" },
+  });
+  fireEvent.change(screen.getByLabelText("Source text"), {
+    target: { value: "same text" },
+  });
+  fireEvent.click(
+    screen.getByLabelText("I confirm this source and processing destination."),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Submit source" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Submit source" }));
+  await screen.findByText("CONNECTION_FAILED");
+  fireEvent.change(screen.getByLabelText("Metadata JSON"), {
+    target: { value: "{ }" },
+  });
+  expect(screen.getByRole("button", { name: "Submit source" })).toBeDisabled();
+  fireEvent.click(
+    screen.getByLabelText("I confirm this source and processing destination."),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Submit source" }));
+  await screen.findByRole("link", { name: "Follow job" });
+  const sent = requests.filter(
+    (r) => r.path === "/v1/sources" && r.init.method === "POST",
+  );
+  expect(sent[0].init.body).toBe(sent[1].init.body);
+  expect(new Headers(sent[0].init.headers).get("Idempotency-Key")).toBe(
+    new Headers(sent[1].init.headers).get("Idempotency-Key"),
+  );
+});
+it.each(["running", "queued"])(
+  "offers explicit service recovery for retained %s source jobs",
+  async (state) => {
+    const fallback = respond;
+    let recovered = false;
+    respond = (path, init) =>
+      path.endsWith("/retry")
+        ? ((recovered = true), json({ ...receipt, state: "queued" }))
+        : path.endsWith("/events")
+          ? new Response(new ReadableStream({ start() {} }))
+          : path === `/v1/jobs/${job.id}`
+            ? json({ ...job, state: recovered ? "succeeded" : state })
+            : fallback(path, init);
+    await open(`/dashboard/jobs/${job.id}`);
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Resume or recover job" }),
+    );
+    await screen.findByText("succeeded");
+    expect(
+      requests.some(
+        (r) => r.path.endsWith("/retry") && r.init.method === "POST",
+      ),
+    ).toBe(true);
+  },
+);
+it("resumes a queued captured source even at its retry limit without claiming a new retry", async () => {
+  const fallback = respond;
+  respond = (path, init) =>
+    path.endsWith("/events")
+      ? new Response(new ReadableStream({ start() {} }))
+      : path === `/v1/jobs/${job.id}`
+        ? json({ ...job, state: "queued", retry_count: 3 })
+        : fallback(path, init);
+  await open(`/dashboard/jobs/${job.id}`);
+  await screen.findByRole("button", { name: "Resume or recover job" });
+});
+it("displays an event once when status refresh fails and its unacknowledged sequence is replayed", async () => {
+  const fallback = respond;
+  let reads = 0;
+  let streams = 0;
+  respond = (path, init) =>
+    path.endsWith("/events")
+      ? new Response(
+          ++streams === 1
+            ? 'id: 7\nevent: job\ndata: {"sequence":7,"stage":"parse","state":"running"}\n\n'
+            : 'id: 7\nevent: job\ndata: {"sequence":7,"stage":"parse","state":"running"}\n\nid: 8\nevent: job\ndata: {"sequence":8,"stage":"complete","state":"succeeded"}\n\n',
+        )
+      : path === `/v1/jobs/${job.id}`
+        ? ++reads === 2
+          ? Promise.reject(new Error("status connection lost"))
+          : json({
+              ...job,
+              latest_sequence: 6,
+              state: reads >= 4 ? "succeeded" : "running",
+            })
+        : fallback(path, init);
+  await open(`/dashboard/jobs/${job.id}`);
+  await waitFor(() =>
+    expect(screen.queryAllByText("7 · parse")).toHaveLength(1),
+  );
+  await screen.findByText("8 · complete", {}, { timeout: 2000 });
+  expect(screen.getAllByText("7 · parse")).toHaveLength(1);
+  const streamsSent = requests.filter((r) => r.path.endsWith("/events"));
+  expect(
+    streamsSent.map((r) => new Headers(r.init.headers).get("Last-Event-ID")),
+  ).toEqual(["6", "6"]);
+});
+it("discloses that evaluation inventory is recent, bounded before authorization and has no continuation", async () => {
+  const fallback = respond;
+  respond = (path, init) =>
+    path === "/v1/evaluations" ? json([]) : fallback(path, init);
+  await open("/dashboard/evaluations");
+  await screen.findByText(/100 most recent records before authorization/);
+  expect(screen.queryByText(/complete authorized list/)).toBeNull();
+  expect(screen.getByText(/older evaluations may be omitted/i)).toBeVisible();
+});
+it("sends a usable explicit default format for extensionless pasted text", async () => {
+  const fallback = respond;
+  respond = (path, init) =>
+    path === "/v1/sources" && init.method === "POST"
+      ? json(receipt, 202)
+      : fallback(path, init);
+  await open("/dashboard/sources");
+  fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+  fireEvent.change(screen.getByLabelText("Source key"), {
+    target: { value: "no-extension" },
+  });
+  fireEvent.change(screen.getByLabelText("Kind"), {
+    target: { value: "manual@1" },
+  });
+  fireEvent.change(screen.getByLabelText("Source text"), {
+    target: { value: "Plain source text" },
+  });
+  fireEvent.click(
+    screen.getByLabelText("I confirm this source and processing destination."),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Submit source" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Submit source" }));
+  await screen.findByRole("link", { name: "Follow job" });
+  expect(
+    JSON.parse(
+      requests.find(
+        (r) => r.path === "/v1/sources" && r.init.method === "POST",
+      )!.init.body as string,
+    ).format,
+  ).toBe("text");
+});
+it.each([
+  ["notes.md", "markdown"],
+  ["manual.txt", "text"],
+  ["scan.JPG", "jpeg"],
+])("resolves %s selected bytes format as %s", async (name, format) => {
+  const fallback = respond;
+  respond = (path, init) =>
+    path === "/v1/sources" && init.method === "POST"
+      ? json(receipt, 202)
+      : fallback(path, init);
+  await open("/dashboard/sources");
+  fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+  fireEvent.change(screen.getByLabelText("Source key"), {
+    target: { value: "no-extension" },
+  });
+  fireEvent.change(screen.getByLabelText("Kind"), {
+    target: { value: "manual@1" },
+  });
+  fireEvent.change(screen.getByLabelText("Input type"), {
+    target: { value: "bytes" },
+  });
+  const file = new File(["sample"], name);
+  Object.defineProperty(file, "arrayBuffer", {
+    value: async () => new TextEncoder().encode("sample").buffer,
+  });
+  fireEvent.change(screen.getByLabelText("Source file"), {
+    target: { files: [file] },
+  });
+  fireEvent.click(
+    screen.getByLabelText("I confirm this source and processing destination."),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Submit source" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Submit source" }));
+  await screen.findByRole("link", { name: "Follow job" });
+  expect(
+    JSON.parse(
+      requests.find(
+        (r) => r.path === "/v1/sources" && r.init.method === "POST",
+      )!.init.body as string,
+    ).format,
+  ).toBe(format);
+});
+it("requires an explicit bytes format for unrecognized filenames and preserves deliberate overrides", async () => {
+  await open("/dashboard/sources");
+  fireEvent.click(screen.getByRole("button", { name: "Add source" }));
+  fireEvent.change(screen.getByLabelText("Input type"), {
+    target: { value: "bytes" },
+  });
+  const file = new File(["sample"], "unknown.bin");
+  Object.defineProperty(file, "arrayBuffer", {
+    value: async () => new TextEncoder().encode("sample").buffer,
+  });
+  fireEvent.change(screen.getByLabelText("Source file"), {
+    target: { files: [file] },
+  });
+  await screen.findByText(/Choose an explicit format for this file/);
+  expect(screen.getByRole("button", { name: "Submit source" })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Format"), {
+    target: { value: "markdown" },
+  });
+  expect(screen.getByLabelText("Format")).toHaveValue("markdown");
 });

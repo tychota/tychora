@@ -10,6 +10,7 @@ import { More, RouteLink } from "../../components/Operations";
 import {
   encodedBody,
   fileBase64,
+  fileFormat,
   parseMetadata,
   REQUEST_LIMIT,
   SubmissionIntent,
@@ -48,20 +49,27 @@ export function SourceForm() {
     [],
   );
   const changed = () => {
-    intent.current.changed();
     setConfirmed(false);
     setReceipt(null);
   };
+  const resolvedFormat =
+    format.trim() ||
+    (type === "text" ? "text" : type === "bytes" ? fileFormat(fileName) : "");
   let encoded: { body: string; size: number } | null = null;
   let validation: unknown = null;
   try {
+    if (type === "bytes" && bytes !== null && !resolvedFormat)
+      throw new ApiError(
+        "INVALID_REQUEST",
+        "Choose an explicit format for this file; its filename has no recognized parser format.",
+      );
     encoded = encodedBody({
       type,
       source_key: key,
       collection_id: collection,
       kind,
       metadata: parseMetadata(metadata, { title, publisher, edition }),
-      ...(format ? { format } : {}),
+      ...(resolvedFormat ? { format: resolvedFormat } : {}),
       ...(type === "text"
         ? { text }
         : type === "bytes"
@@ -192,7 +200,11 @@ export function SourceForm() {
                   changed();
                   setFormat(e.target.value);
                 }}
-                placeholder="Optional registered format"
+                placeholder={
+                  resolvedFormat
+                    ? `Automatic: ${resolvedFormat}`
+                    : "Enter an explicit parser format"
+                }
               />
             </label>
             <label>
@@ -347,6 +359,15 @@ export function SourceForm() {
           >
             {busy ? "Submitting source…" : "Submit source"}
           </button>
+          <p className="muted">
+            Effective format:{" "}
+            {resolvedFormat ||
+              (type === "bytes"
+                ? "Explicit format required for unrecognized filenames"
+                : "Inferred by the server from registered path")}
+            . Pasted text defaults to text; a deliberate format overrides this
+            default.
+          </p>
         </fieldset>
       </form>
       {error !== null && <ErrorNotice error={error} />}{" "}
