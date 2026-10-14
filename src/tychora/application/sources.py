@@ -42,6 +42,9 @@ from tychora.configuration.global_facets import (
 from tychora.configuration.global_facets import (
     normalized_metadata,
 )
+from tychora.configuration.indexed_representation import pinned_runtime_compatible
+from tychora.configuration.models import ResolvedConfig
+from tychora.configuration.registry import Registry
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.code import CapturedSyntax, CodeRegistration
 from tychora.contracts.composition import DocumentCompositionPlan, VisionCapabilityGap
@@ -879,62 +882,61 @@ class SourceService:
         ).fetchone()
         if row is None:
             return False
-        if isinstance(registration, NativeRegistration):
-            from tychora.ingestion.native import native_parser_fingerprint
+        retained = self._retained_bundle(registration, ctx or ExecutionContext())
+        return retained is not None and retained.extraction.extraction_id == row[1]
 
-            kind = self.owner.store.registry.kinds[registration.revision.kind_id]
-            return row[2] == native_parser_fingerprint(
-                registration.format, self.owner.config
-            ) and row[3] == digest(
-                "native-normalizer-v1", kind, self.owner.store.registry.schema_digests
-            )
-        if isinstance(registration, CodeRegistration):
-            retained = self._retained_bundle(registration, ctx or ExecutionContext())
-            return retained is not None and retained.extraction.extraction_id == row[1]
-        artifact_row = self.owner.db.execute(
-            "SELECT size_bytes,media_type,storage_key FROM artifacts "
-            "WHERE artifact_sha=?",
-            (row[0],),
-        ).fetchone()
-        if artifact_row is None:
-            raise TychoraError(
-                "INTEGRITY_ERROR", "Selected document manifest is missing"
-            )
-        from tychora.contracts.artifacts import ArtifactRef
-        from tychora.ingestion.document_records import document_normalizer_fingerprint
+    def _retained_extraction_config(
+        self, capture: CaptureManifest, extraction_id: str
+    ) -> ResolvedConfig:
+        """Resolve only exact capture/extraction lineage, within explicit budgets."""
+        from tychora.configuration.resolve import validate_retained_config
 
-        ref = ArtifactRef(
-            sha256=row[0],
-            size_bytes=artifact_row[0],
-            media_type=artifact_row[1],
-            storage_key=artifact_row[2],
-        )
-        with self.owner.artifacts.open_verified(ref) as stream:
-            root = json.load(stream)
         if (
-            not isinstance(root, dict)
-            or root.get("type") != "extraction"
-            or root.get("schema_version") != "1"
-        ):
-            raise TychoraError("INTEGRITY_ERROR", "Selected document manifest differs")
-        data = root.get("data", {})
-        if (
-            not isinstance(data, dict)
-            or data.get("representation") != "document-composition@1"
+            capture.manifest_ref is None
+            or self._committed_capture(capture.manifest_ref, historical=True) != capture
         ):
             raise TychoraError(
-                "INTEGRITY_ERROR", "Selected document composition differs"
+                "INTEGRITY_ERROR", "Retained capture manifest binding differs"
             )
-        plan = data.get("plan")
-        if not isinstance(plan, dict):
-            raise TychoraError("INTEGRITY_ERROR", "Selected document plan differs")
-        kind = cast(
-            Mapping[str, Any],
-            self.owner.store.registry.kinds[registration.revision.kind_id],
+        refs = self.owner.db.execute(
+            "SELECT DISTINCT effective_config_sha FROM jobs WHERE captured_inputs_sha=? LIMIT 65",
+            (capture.manifest_ref.sha256,),
+        ).fetchall()
+        if not refs:
+            refs = self.owner.db.execute(
+                "SELECT DISTINCT s.config_sha FROM snapshots s JOIN snapshot_members m USING(snapshot_id) "
+                "WHERE m.extraction_id=? LIMIT 65",
+                (extraction_id,),
+            ).fetchall()
+        if len(refs) > 64:
+            raise TychoraError(
+                "BUDGET_TOO_SMALL", "Retained configuration candidate budget exceeded"
+            )
+        total = 0
+        for (sha,) in refs:
+            row = self.owner.db.execute(
+                "SELECT size_bytes FROM artifacts WHERE artifact_sha=? AND payload_state='present'",
+                (sha,),
+            ).fetchone()
+            if row is None:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Retained configuration lineage is unavailable"
+                )
+            total += row[0]
+        if total > 16 * 1024 * 1024:
+            raise TychoraError(
+                "BUDGET_TOO_SMALL", "Retained configuration byte budget exceeded"
+            )
+        matched = None
+        for (sha,) in refs:
+            config = validate_retained_config(self.owner.store.retained_config_sha(sha))
+            if config.config_sha == capture.config_sha:
+                matched = config
+        if matched is not None:
+            return matched
+        raise TychoraError(
+            "INTEGRITY_ERROR", "Retained capture configuration binding is unavailable"
         )
-        return plan.get(
-            "base_normalizer_fingerprint"
-        ) == document_normalizer_fingerprint(kind, self.owner.store.registry)
 
     def _retained_bundle(
         self,
@@ -992,7 +994,13 @@ class SourceService:
                     for item in retained_code.files
                 ):
                     continue
-                bundle = normalize_code(retained_code, self.owner.store.registry)
+                retained_config = self._retained_extraction_config(
+                    old_capture, extraction_id
+                )
+                if not pinned_runtime_compatible(retained_config, self.owner.config):
+                    continue
+                retained_registry = Registry.from_config(retained_config)
+                bundle = normalize_code(retained_code, retained_registry)
             elif data.get("representation") == "document-composition@1":
                 if not isinstance(registration, DocumentRegistration):
                     raise TychoraError(
@@ -1016,25 +1024,26 @@ class SourceService:
                 with self.owner.artifacts.open_verified(doc_ref) as stream:
                     doc_payload = stream.read(doc_ref.size_bytes + 1)
                 parsed = replay_document(parsed_payload, doc_payload, parsed_ref)
-                if (
-                    parsed.registration.capture.config_sha
-                    != registration.capture.config_sha
-                ):
+                retained_config = self._retained_extraction_config(
+                    parsed.registration.capture, extraction_id
+                )
+                if not pinned_runtime_compatible(retained_config, self.owner.config):
                     continue
+                retained_registry = Registry.from_config(retained_config)
                 from tychora.ingestion.document_records import (
                     document_normalizer_fingerprint,
                 )
 
                 kind = cast(
                     Mapping[str, Any],
-                    self.owner.store.registry.kinds[registration.revision.kind_id],
+                    retained_registry.kinds[registration.revision.kind_id],
                 )
                 current_fingerprint = document_normalizer_fingerprint(
-                    kind, self.owner.store.registry
+                    kind, retained_registry
                 )
                 if parsed.normalizer_fingerprint != current_fingerprint:
                     if parsed.normalizer_fingerprint == document_normalizer_fingerprint(
-                        kind, self.owner.store.registry, legacy_v1=True
+                        kind, retained_registry, legacy_v1=True
                     ):
                         continue
                     raise TychoraError(
@@ -1042,7 +1051,7 @@ class SourceService:
                     )
                 bundle = compose_document(
                     parsed,
-                    self.owner.store.registry,
+                    retained_registry,
                     DocumentCompositionPlan.model_validate_json(
                         canonical_bytes(data["plan"])
                     ),
@@ -1061,17 +1070,22 @@ class SourceService:
                 )
                 from tychora.ingestion.native import native_parser_fingerprint
 
-                if (
-                    parsed.registration.capture.config_sha
-                    != registration.capture.config_sha
-                    or parsed.parser_fingerprint
-                    != native_parser_fingerprint(registration.format, self.owner.config)
-                ):
+                retained_config = self._retained_extraction_config(
+                    parsed.registration.capture, extraction_id
+                )
+                if not pinned_runtime_compatible(retained_config, self.owner.config):
                     continue
+                if parsed.parser_fingerprint != native_parser_fingerprint(
+                    registration.format, retained_config
+                ):
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Retained native parser binding differs"
+                    )
+                retained_registry = Registry.from_config(retained_config)
                 bundle = normalize(
                     parsed,
                     registration.revision.revision_id,
-                    self.owner.store.registry,
+                    retained_registry,
                 )
             if (
                 bundle.extraction.extraction_id != extraction_id

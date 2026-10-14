@@ -254,9 +254,10 @@ class QueryService:
         self.execution_plan = execution_plan
         self.delivery_serialization = None
 
-    def _projection_fingerprint(self) -> str:
+    def _projection_fingerprint(self, config: ResolvedConfig | None = None) -> str:
+        config = config or self.owner.config
         parts = (
-            self.owner.config.output_fingerprint,
+            config.output_fingerprint,
             tuple(profile.model_dump(mode="json") for profile in self.profiles),
         )
         return digest(
@@ -268,7 +269,9 @@ class QueryService:
             ),
         )
 
-    def _provider_fingerprint(self) -> str:
+    def _provider_fingerprint(self, config: ResolvedConfig | None = None) -> str:
+        config = config or self.owner.config
+
         def factory_identity(provider: TextQueryProvider | VisualQueryProvider | None):
             if provider is None:
                 return None
@@ -281,9 +284,9 @@ class QueryService:
 
         return digest(
             "query-provider-v1",
-            self.owner.config.query_fingerprint,
-            self.owner.config.values.providers.model_dump(mode="json"),
-            self.owner.config.values.index.model_dump(mode="json"),
+            config.query_fingerprint,
+            config.values.providers.model_dump(mode="json"),
+            config.values.index.model_dump(mode="json"),
             factory_identity(self.text_provider),
             factory_identity(self.visual_provider),
             self.text_index is not None,
@@ -509,18 +512,40 @@ class QueryService:
         granted = self.owner.scope.narrow(scope)
         if "read" not in granted.capabilities:
             raise TychoraError("FORBIDDEN_SCOPE", "Search requires read capability.")
-        request = await self.owner.run_blocking(
-            lambda: self.history.replay_request(
-                run_id,
-                scope=granted,
-                snapshot_id=self.owner.store.resolve_snapshot(None).snapshot_id,
-                config_sha=self.owner.config.config_sha,
-                projection_fingerprint=self._projection_fingerprint(),
-                provider_fingerprint=self._provider_fingerprint(),
-                providers_available=self._replay_ready,
-            ),
-            ctx,
-        )
+
+        def retained_request():
+            from tychora.configuration.additive_compatibility import (
+                qualified_additive_registry_extension,
+            )
+
+            snapshot = self.owner.store.resolve_snapshot(None)
+
+            def read(config):
+                return self.history.replay_request(
+                    run_id,
+                    scope=granted,
+                    snapshot_id=snapshot.snapshot_id,
+                    config_sha=config.config_sha,
+                    projection_fingerprint=self._projection_fingerprint(config),
+                    provider_fingerprint=self._provider_fingerprint(config),
+                    providers_available=self._replay_ready,
+                )
+
+            try:
+                return read(self.owner.config)
+            except TychoraError as error:
+                if error.code != "REPLAY_UNAVAILABLE":
+                    raise
+                retained = self.owner.store.retained_config(snapshot)
+                if not qualified_additive_registry_extension(
+                    retained, self.owner.config
+                ):
+                    raise
+                # Recheck every recorded identity using the exact snapshot config;
+                # provider instance, credentials, scope and snapshot checks stay strict.
+                return read(retained)
+
+        request = await self.owner.run_blocking(retained_request, ctx)
         return await self.search(request, granted, ctx)
 
     async def search(

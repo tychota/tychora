@@ -1,5 +1,28 @@
 # Configuration and external packs
 
+New workspaces use `general-documents@1`, an additive extension of the unchanged
+`documents@1` pack. Its `document@1` kind accepts a title alone and preserves
+optional metadata validation. It uses the existing structured-section normalizer
+and evidence lane; existing specialized kinds retain their required metadata.
+
+Existing workspaces keep their registered profile. To upgrade explicitly, change
+that profile's `builtin = "documents@1"` to `builtin = "general-documents@1"`
+through settings activation, preserving the profile name and other settings.
+Activation proves unchanged old kind/schema/reference meanings, policies,
+parser, embedding and index settings before permitting the added kind. Retained
+extractions, citations and configuration artifacts keep their original identities;
+re-adding an unchanged original uses its verified retained configuration.
+Representation changes still require the existing rebuild/migration workflow.
+
+Authorized readers can fetch
+`GET /v1/discovery/kinds/{kind_id}/metadata-schema` for a registered kind's typed
+required/optional fields, exact schema digests and local reference closure.
+Responses are bounded to 64 schema nodes and 256 KiB. Fields marked `advanced`
+need a metadata editor that retains the supplied schema constraints; they must
+not be silently omitted. The endpoint does not accept arbitrary schema paths or
+fetch remote references.
+
+
 A workspace stores its durable selection in `workspace.toml`. `init --config` accepts that workspace document, not a pack's `profile.toml`. A workspace document registers names under `[profiles]`, selects one in `[defaults]`, and can override strict `[configuration]` values. Relative pack paths resolve from the workspace document. On ordinary reopen the durable selected profile is used. Existing workspaces keep the same filename; there is no automatic rename or migration.
 
 The generic workbench pack in `examples/profiles/workbench/` demonstrates an external data-only profile. It extends the version-qualified bundled `documents@1` pack, which provides regulation, standard, template, and feedback schemas and distinct roles/lanes. It registers `clarifies@1`, an explicit historical lane mapping, a project facet bound to source metadata, and hierarchical output. To use it from this checkout, provide the same checksum-verifiable local `output-tokenizer` bundle described in the [getting-started guide](getting-started.md). Set `TYCHORA_MODEL_BUNDLE` to its directory; a clean offline workspace cannot add/search before this asset is provisioned:

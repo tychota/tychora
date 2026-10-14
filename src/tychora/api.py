@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 DEFAULT_COLLECTION_ID = UUID("00000000-0000-4000-8000-000000000001")
 _DEFAULT_CONFIG = (
-    'schema_version = 1\n[profiles.local]\nbuiltin = "documents@1"\n'
+    'schema_version = 1\n[profiles.local]\nbuiltin = "general-documents@1"\n'
     '[defaults]\nprofile = "local"\n'
 )
 

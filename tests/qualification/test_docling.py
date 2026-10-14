@@ -20,14 +20,23 @@ from tychora.ingestion.acquire import Acquirer
 from tychora.ports.execution import ExecutionContext
 
 
+@pytest.fixture(params=["manual@1", "document@1"])
+def document_kind(request):
+    return request.param
+
+
 @pytest.fixture(params=["pdf", "docx"])
-def execution(request, tmp_path):
+def execution(request, tmp_path, document_kind):
     path = tmp_path / "workspace.toml"
     pack = tmp_path / "document-pack"
     shutil.copytree(str(files("tychora") / "profiles/documents"), pack)
     with (pack / "profile.toml").open("a") as out:
         out.write('\n[extraction]\nparser="docling"\n')
-    path.write_text('schema_version=1\n[profiles.test]\npath="document-pack"\n')
+    path.write_text(
+        'schema_version=1\n[profiles.test]\nbuiltin="general-documents@1"\n[configuration.extraction]\nparser="docling"\n'
+        if document_kind == "document@1"
+        else 'schema_version=1\n[profiles.test]\npath="document-pack"\n'
+    )
     with path.open("a") as out:
         out.write(
             "\n[configuration.acquisition]\nroots="
@@ -46,13 +55,15 @@ def execution(request, tmp_path):
 
 
 @pytest.fixture
-def rich_capture(execution):
+def rich_capture(execution, document_kind):
     owner = execution.owner
     metadata = json.loads(
         (
             Path(__file__).parents[1] / "configuration/fixtures/generic-records.json"
         ).read_text()
     )["manual@1"]["metadata"]
+    if document_kind == "document@1":
+        metadata = {"title": metadata["title"]}
     collection = CollectionRow(
         collection_id="00000000-0000-4000-8000-000000000010",
         workspace_id=owner.workspace_id,
@@ -67,7 +78,7 @@ def rich_capture(execution):
                 {
                     "type": "file",
                     "path": str(source_path),
-                    "kind": "manual@1",
+                    "kind": document_kind,
                     "metadata": metadata,
                     "collection_id": UUID(collection.collection_id),
                     "source_key": source_key,
@@ -82,7 +93,7 @@ def rich_capture(execution):
     revision = RevisionRow(
         revision_id=identity.revision_id(sid, captured.original_sha, "1", msha),
         source_id=sid,
-        kind_id="manual@1",
+        kind_id=document_kind,
         original_sha=captured.original_sha,
         edition_key="1",
         metadata_sha=msha,

@@ -22,6 +22,8 @@ from tychora.contracts.operations import (
     DefinitionEntry,
     DiscoverRequest,
     DiscoveryResult,
+    KindMetadataField,
+    KindMetadataForm,
     NamedCount,
     SourceChannelCoverage,
     SourceChannelPage,
@@ -1076,6 +1078,108 @@ class DiscoveryService:
             )
             compiler.revalidate_epoch(view, "delivery")
             return summary
+
+    async def kind_metadata_schema(
+        self, kind_id: str, scope: RequestScope, ctx: ExecutionContext
+    ) -> KindMetadataForm:
+        """Expose only a current authorized kind's bounded, retained schema closure."""
+        if self.owner is None:
+            raise TychoraError("NOT_FOUND", "Kind metadata is unavailable.")
+        owner = self.owner
+
+        def read():
+            ctx.checkpoint()
+            granted = owner.scope.narrow(scope)
+            kind = self.registry.kinds.get(kind_id)
+            if (
+                "read" not in granted.capabilities
+                or not granted.collection_ids
+                or not isinstance(kind, Mapping)
+                or not set(kind.get("allowed_uses", granted.uses)) & granted.uses
+                or owner.db.execute(
+                    "SELECT 1 FROM collections WHERE workspace_id=? "
+                    "AND access_floor<=? AND collection_id IN "
+                    "(SELECT value FROM json_each(?)) LIMIT 1",
+                    (
+                        owner.workspace_id,
+                        granted.access_ceiling,
+                        json.dumps(sorted(granted.collection_ids)),
+                    ),
+                ).fetchone()
+                is None
+            ):
+                raise TychoraError("NOT_FOUND", "Kind metadata is unavailable.")
+            envelope = cast(dict, self.registry.historical_definitions()[kind_id])
+            schema_id = envelope["schema_bindings"]["metadata_schema"]
+            schemas = envelope["schemas"]
+            nodes = 0
+
+            def count_nodes(node):
+                nonlocal nodes
+                nodes += 1
+                if nodes > 64:
+                    raise TychoraError(
+                        "BUDGET_TOO_SMALL", "Metadata schema node budget exceeded."
+                    )
+                if isinstance(node, Mapping):
+                    for group in ("properties", "$defs"):
+                        for child in node.get(group, {}).values():
+                            count_nodes(child)
+                    for key in ("items", "additionalProperties"):
+                        if key in node:
+                            count_nodes(node[key])
+
+            for schema in schemas.values():
+                count_nodes(schema)
+            root = schemas[schema_id]
+            fields = []
+            for name, definition in root.get("properties", {}).items():
+                types = (
+                    definition.get("type", ())
+                    if isinstance(definition, Mapping)
+                    else ()
+                )
+                types = (types,) if isinstance(types, str) else tuple(types)
+                advanced = (
+                    not types
+                    or bool(
+                        set(types) - {"string", "integer", "number", "boolean", "null"}
+                    )
+                    or isinstance(definition, Mapping)
+                    and "$ref" in definition
+                )
+                fields.append(
+                    KindMetadataField(
+                        name=name,
+                        required=name in root.get("required", ()),
+                        value_types=types,
+                        description=definition.get("description", "")
+                        if isinstance(definition, Mapping)
+                        else "",
+                        constraints=FrozenJsonMap(definition)
+                        if isinstance(definition, Mapping)
+                        else definition,
+                        advanced=advanced,
+                    )
+                )
+            form = KindMetadataForm(
+                kind_id=kind_id,
+                schema_id=schema_id,
+                schema_digests=envelope["schema_digests"],
+                fields=tuple(fields),
+                schemas=schemas,
+                schema_reference_bindings=envelope["schema_reference_bindings"],
+                advanced="$ref" in root
+                or root.get("type") != "object"
+                or any(field.advanced for field in fields),
+            )
+            if len(form.model_dump_json().encode("utf-8")) > 256 * 1024:
+                raise TychoraError(
+                    "BUDGET_TOO_SMALL", "Metadata schema response budget exceeded."
+                )
+            return form
+
+        return await owner.run_blocking(read, ctx)
 
     def definition(
         self, subject: str, item_id: str, scope: RequestScope

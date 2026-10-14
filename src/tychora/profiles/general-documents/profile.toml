@@ -1,0 +1,9 @@
+schema_version = 1
+id = "general-documents"
+version = "1"
+extends = ["builtin:documents@1"]
+kind_definitions = ["kinds/document.toml"]
+schema_definitions = ["schemas/document-metadata.json"]
+
+[lanes.evidence]
+kinds = ["evidence@1", "research_note@1", "code_file@1", "document@1"]
