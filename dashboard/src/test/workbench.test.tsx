@@ -17,6 +17,7 @@ import {
   citationText,
   decodeBase64url,
   OriginalInspection,
+  EvidenceReader,
 } from "../components/EvidenceReader";
 import { Relations } from "../components/Relations";
 import { App, useRoute } from "../App";
@@ -222,6 +223,7 @@ describe("connected workbench", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: /Record synthetic/ }),
     );
+    expect(await screen.findByText("Matched evidence")).toBeInTheDocument();
     fireEvent.click(
       await screen.findByRole("button", { name: "Explore relations" }),
     );
@@ -231,6 +233,8 @@ describe("connected workbench", () => {
     expect(
       screen.getByRole("button", { name: "Select graph unit target-unit" }),
     ).toHaveClass("selected");
+    expect(screen.getByText("Related evidence")).toBeInTheDocument();
+    expect(screen.queryByText("Matched evidence")).not.toBeInTheDocument();
     await waitFor(() =>
       expect(requests.some((r) => r.path === "/v1/evidence/target-unit")).toBe(
         true,
@@ -457,6 +461,37 @@ describe("connected workbench", () => {
   });
 });
 describe("exact provenance", () => {
+  it("labels returned context-only evidence without calling it a query match", async () => {
+    queryResponse = {
+      ...query,
+      segments: [
+        { ...query.segments[0], context_only_unit_ids: ["context-unit"] },
+      ],
+    };
+    render(<App />);
+    await connect();
+    await search();
+    fireEvent.click(
+      await screen.findByRole("button", { name: /Record synthetic/ }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Context · context-unit" }),
+    );
+    expect(screen.getByText("Context only")).toBeInTheDocument();
+    expect(screen.queryByText("Matched evidence")).not.toBeInTheDocument();
+  });
+  it("defaults direct evidence inspection to a neutral provenance label", async () => {
+    render(
+      <EvidenceReader
+        client={new ApiClient("test-token", handshake.scope)}
+        unitId={evidence.id}
+      />,
+    );
+    expect(await screen.findByText(/Original source text/)).toBeInTheDocument();
+    expect(screen.getByText("Direct inspection")).toBeInTheDocument();
+    expect(screen.queryByText("Matched evidence")).not.toBeInTheDocument();
+    expect(screen.queryByText("Context only")).not.toBeInTheDocument();
+  });
   it("offers SVG as download without rendering imported markup", async () => {
     const svg = '<svg onload="alert(1)"></svg>';
     vi.stubGlobal(

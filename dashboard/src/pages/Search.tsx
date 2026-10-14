@@ -11,6 +11,7 @@ import type {
 import {
   EvidenceReader,
   OriginalInspection,
+  type EvidenceSelectionRole,
 } from "../components/EvidenceReader";
 import { Relations } from "../components/Relations";
 import { ErrorNotice, Status } from "../components/Status";
@@ -46,7 +47,7 @@ export function Search() {
   const [selection, setSelection] = useState<{
     unitId: string;
     segment: Segment | null;
-    contextOnly: boolean;
+    selectionRole: EvidenceSelectionRole;
   } | null>(null);
   const request = useRef<AbortController | null>(null);
   useEffect(() => {
@@ -178,7 +179,9 @@ export function Search() {
         ? {
             unitId,
             segment,
-            contextOnly: !segment.matched_unit_ids.includes(unitId),
+            selectionRole: segment.matched_unit_ids.includes(unitId)
+              ? "matched"
+              : "context",
           }
         : null,
     );
@@ -554,10 +557,12 @@ export function Search() {
                                 setSelection({
                                   unitId: id,
                                   segment: selectedSegment,
-                                  contextOnly:
-                                    selectedSegment.context_only_unit_ids.includes(
+                                  selectionRole:
+                                    selectedSegment.matched_unit_ids.includes(
                                       id,
-                                    ),
+                                    )
+                                      ? "matched"
+                                      : "context",
                                 });
                               }}
                             >
@@ -594,7 +599,7 @@ export function Search() {
                       )}
                       sourceId={selectedSegment?.source_id}
                       revisionId={selectedSegment?.revision_id}
-                      contextOnly={selection.contextOnly}
+                      selectionRole={selection.selectionRole}
                     />
                     {relationSeed && (
                       <Relations
@@ -605,7 +610,7 @@ export function Search() {
                           setSelection({
                             unitId,
                             segment: null,
-                            contextOnly: false,
+                            selectionRole: "related",
                           })
                         }
                       />
