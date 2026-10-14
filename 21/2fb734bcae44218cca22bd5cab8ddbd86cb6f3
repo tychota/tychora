@@ -1,0 +1,31 @@
+dashboard/src/pages/Evaluations.tsx
+  s_346481235fa7eb::t_9f987c5b43c29c 93,96-99
+dashboard/src/pages/Jobs.tsx
+  s_346481235fa7eb::t_759d260e0d9c76 58-62,100-106,141-148,176-180,227
+dashboard/src/pages/sources/SourceForm.tsx
+  s_346481235fa7eb::t_5ac3901768dbc6 13,55-57,61-65,72,203-207,362-370
+dashboard/src/pages/sources/submission.ts
+  s_346481235fa7eb::t_3a615ce4284f6d 48-66
+dashboard/src/test/operations.test.tsx
+  s_346481235fa7eb::t_b63fcbf45250d0 350-352,709-926
+src/tychora/resources/dashboard/assets/index-C0XPyDld.js
+  s_346481235fa7eb::t_7b539fed3d57bc 1,3,6,8-12
+src/tychora/resources/dashboard/index.html
+  s_346481235fa7eb::t_8b9996bdcc75e5 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "212fb734bcae44218cca22bd5cab8ddbd86cb6f3",
+  "prompts": {},
+  "sessions": {
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
