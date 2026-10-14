@@ -58,6 +58,7 @@ nav:
   - Use:
       - Python API: api.md
       - CLI: cli.md
+      - Dashboard: dashboard.md
       - HTTP API: http.md
       - MCP: mcp.md
       - Operations: operations.md

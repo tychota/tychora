@@ -2,23 +2,11 @@
 
 Updated: 2026-10-14. Audience: the next maintainer or agent continuing the engine and dashboard work.
 
-## Start here: dashboard specification and implementation plan
+## Start here: implemented dashboard and engine follow-ups
 
-The owner's next task is to specify and plan the dashboard. **Do not start dashboard implementation or the engine extension backlog automatically.** Begin with the existing [dashboard design draft](docs/superpowers/specs/2026-09-10-tychora-dashboard-design.md), reconcile it with the actual engine, then produce an actionable plan. That draft describes intended behavior; it is not proof that every backend endpoint exists.
+The bundled local dashboard implements Search, Sources, Jobs, Evaluations, Activity and Settings through real authenticated services. Read [dashboard usage and delivery](docs/dashboard.md), the [delivery design](docs/superpowers/specs/2026-10-14-dashboard-delivery-design.md) and the [implementation plan](docs/superpowers/plans/2026-10-14-dashboard.md). It is an evidence workbench; accepted source jobs outlive browser connections. Node is build-only, credentials remain in memory, and API/MCP scope authorization remains authoritative.
 
-Read these in order:
-
-1. [Current architecture](docs/architecture.md): layers, libraries, SQLite tables, artifacts, indexing, reference resolution and sequence diagrams.
-2. [Implementation assessment](docs/review-assessment.md): confirmed defects, reproduced cases, fixed findings, and unverified review inventory.
-3. [Dashboard design draft](docs/superpowers/specs/2026-09-10-tychora-dashboard-design.md).
-4. [Engine specification](docs/superpowers/specs/2026-09-10-tychora-engine-design.md) and [engine implementation plan](docs/superpowers/plans/2026-09-11-tychora-engine.md): historical intent and execution context.
-5. [HTTP](docs/http.md), [Python API](docs/api.md), [operations](docs/operations.md), and [evaluation](docs/evaluation.md).
-
-For dashboard planning, create an endpoint/capability matrix: available and verified, available with limitations, or missing. Cover discovery, scoped source/revision inventory, original/asset inspection, bounded relations, job status/events/recovery, queries, traces, history/replay/purge, evaluations and configuration. Check response fields and authorization against actual HTTP handlers and contract tests. Do not make a convincing mock stand in for a missing backend feature.
-
-The dashboard draft proposes Search, Sources, Jobs, Evaluations, Activity and Settings. It is an evidence inspection and operations interface. It needs exact citations, source readers, original/derived distinctions, partial-coverage states, bounded graph exploration, and accessible edge lists. Query history represents retrieval runs; an LLM chat or answer-generation workflow is not required. Workspaces currently have no global directory registry, and collection management is incomplete: specify how selection will actually work before designing a universal selector.
-
-Plan small end-to-end journeys: search and inspect original evidence; add a source and follow a durable job; diagnose partial coverage; inspect relations; compare evaluations. Identify backend prerequisite tasks separately. Frontend business logic must not duplicate retrieval, authorization or indexing. The proposed React/TypeScript frontend and bundled static resources remain design choices to confirm. The existing draft calls for HTTP/SSE, keyboard access, small-screen inspection, safe rendering of imported content, and reconnect/recovery tests.
+The UI exposes existing engine limits: metadata-only history cannot replay; trace generation and expiry/purge enforcement remain outstanding; relations are bounded; PDF originals have locators without overlays; collection lifecycle/global workspace discovery, evaluation label editing/aggregate analytics and automatic settings rebuild planning remain engine follow-ups. Browser workflow checks use a disposable offline synthetic corpus and actual HTTP, not quality benchmarks. Existing upstream qualification and advisory blockers below remain open.
 
 ## Product decisions to preserve
 
@@ -35,7 +23,7 @@ The engine branch was fast-forwarded into `main` at `e7de14081073c4a9020d5e595cb
 
 The package is an **alpha**, not a fully qualified production release. Implemented areas include versioned capture and extraction, typed evidence and locators, SQLite/FTS5, optional Chroma/Ladybug, document and code adapters, provider boundaries, hybrid retrieval, deterministic formatting, API/CLI/HTTP/MCP, evaluation machinery, and lifecycle operations. See the architecture for concrete code boundaries rather than inferring completion from this list.
 
-The dashboard has a design draft, but no implemented application UI. The Material for MkDocs site is documentation, not that dashboard. The public site excludes the historical planning archive; those specifications remain available in Git.
+The bundled dashboard is implemented and served by the local HTTP owner at /dashboard/. The Material for MkDocs site is documentation, not that dashboard. The public site excludes the historical planning archive; those specifications remain available in Git.
 
 Distribution supports a Python wheel and source archive. Standalone executable build/qualification tooling also exists, with platform and model-asset limits documented in [distribution](docs/distribution.md). Model weights and tokenizer assets are external. Do not equate a wheel, a local frozen build, and qualification on all supported operating systems.
 
@@ -136,9 +124,9 @@ Vector and graph ports provide a starting boundary for Qdrant and Neo4j. Parity 
 
 Earlier engineering estimates were 4–8 weeks for Qdrant parity, 6–12 for Neo4j, and 3–6 months for PostgreSQL canonical-store parity. At an illustrative €800/day, that is €16–32k, €24–48k and €48–96k respectively; narrow prototypes are smaller. These are uncertain human-effort estimates, not quotes, model-usage costs or commitments. Shared refactoring changes the combined estimate. See [extension boundaries](docs/extensions.md) before planning each implementation.
 
-## Owner's intended work after the dashboard specification/plan
+## Owner's remaining engine work after dashboard delivery
 
-The following work is explicitly desired but not implemented by this handoff. The order after dashboard planning is not fixed:
+The following work is explicitly desired but not implemented by this handoff. The order after dashboard delivery is not fixed:
 
 1. Polish the product and documentation.
 2. Understand and redesign chunking around semantic units, with contextual indexing and measured retrieval behavior.

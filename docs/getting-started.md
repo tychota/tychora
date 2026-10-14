@@ -59,5 +59,6 @@ tychora --workspace ./knowledge --offline inspect evidence UNIT_ID --json
 
 - Add local files with explicit acquisition roots using [configuration](configuration.md).
 - Keep independent corpora in [separate workspaces](workspaces.md).
+- Inspect evidence and follow jobs in the [local dashboard](dashboard.md).
 - Call the engine from the [Python API](api.md) or an [MCP agent](mcp.md).
 - Review the current [implementation limits](review-assessment.md) before relying on strict retrieval, history retention or traces.
