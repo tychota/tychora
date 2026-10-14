@@ -1,0 +1,65 @@
+dashboard/src/App.tsx
+  s_346481235fa7eb::t_f98894a6f70191 12,101,188
+dashboard/src/api/client.ts
+  s_346481235fa7eb::t_734871c042a346 50,61,93,107-122
+dashboard/src/api/events.ts
+  s_346481235fa7eb::t_3fc68e1f51440d 1-179
+dashboard/src/api/operations.ts
+  s_346481235fa7eb::t_cfe2c9b416c030 1-132
+dashboard/src/components/Operations.tsx
+  s_346481235fa7eb::t_54be581b34886e 1-72
+dashboard/src/hooks/useResource.ts
+  s_346481235fa7eb::t_fa69448b2931a6 1-72
+dashboard/src/pages/Activity.tsx
+  s_346481235fa7eb::t_d41180a306dc4b 1-146
+dashboard/src/pages/Evaluations.tsx
+  s_346481235fa7eb::t_d88312def7cef6 1-250
+dashboard/src/pages/Jobs.tsx
+  s_346481235fa7eb::t_3027a5221a1add 1-266
+dashboard/src/pages/OperationsRouter.tsx
+  s_346481235fa7eb::t_f7d24aaf714989 1-27
+dashboard/src/pages/Settings.tsx
+  s_346481235fa7eb::t_713b33e98c0878 1-182
+dashboard/src/pages/Sources.tsx
+  s_346481235fa7eb::t_d894b057f3d795 1-159
+dashboard/src/pages/evaluations/EvaluationForm.tsx
+  s_346481235fa7eb::t_f2d97993af7203 1-182
+dashboard/src/pages/evaluations/Metrics.tsx
+  s_346481235fa7eb::t_4e3ce8c2e18d1d 1-30
+dashboard/src/pages/evaluations/QueryInspection.tsx
+  s_346481235fa7eb::t_27081df48a1d7d 1-63
+dashboard/src/pages/evaluations/compare.ts
+  s_346481235fa7eb::t_7186df8593dcc5 1-44
+dashboard/src/pages/sources/Coverage.tsx
+  s_346481235fa7eb::t_899c391021feb6 1-162
+dashboard/src/pages/sources/SourceForm.tsx
+  s_346481235fa7eb::t_f6317e51e38c50 1-363
+dashboard/src/pages/sources/submission.ts
+  s_346481235fa7eb::t_3fd24050218993 1-51
+dashboard/src/styles.css
+  s_346481235fa7eb::t_3d74870160d0dc 814-906
+dashboard/src/test/operations.test.tsx
+  s_346481235fa7eb::t_d7d1821ca78601 1-705
+src/tychora/resources/dashboard/assets/index-BcvTI8NL.css
+  s_346481235fa7eb::t_2d3124fb668c43 1
+src/tychora/resources/dashboard/assets/index-D_0-qQp7.js
+  s_346481235fa7eb::t_46a2b6ce33c361 1-6,8-12
+src/tychora/resources/dashboard/index.html
+  s_346481235fa7eb::t_6e22cf106de138 8-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b33cb86543a9f049b5e51c2faa221ca438cf2abc",
+  "prompts": {},
+  "sessions": {
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
