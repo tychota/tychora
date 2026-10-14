@@ -55,7 +55,11 @@ function JobDetail({ id }: { id: string }) {
       refresh,
       onEvent: async (event) => {
         if (controller.signal.aborted) return;
-        setEvents((old) => [...old, event].slice(-100));
+        setEvents((old) =>
+          old.some((item) => item.sequence === event.sequence)
+            ? old
+            : [...old, event].slice(-100),
+        );
         await refresh();
       },
     }).catch((error) => {
@@ -93,6 +97,13 @@ function JobDetail({ id }: { id: string }) {
   const manage = handshake?.scope.capabilities.includes("manage");
   const sourceJob = job && ["add", "sync"].includes(job.operation);
   const mayRecover = sourceJob ? write : manage;
+  const canResume =
+    sourceJob &&
+    write &&
+    job.captured_inputs !== null &&
+    !job.cancellation_requested &&
+    (job.state === "queued" ||
+      (job.state === "running" && job.retry_count < 3));
   return (
     <>
       <PageHeading title="Job details">
@@ -127,6 +138,14 @@ function JobDetail({ id }: { id: string }) {
             </Status>
           )}
           <div className="unit-actions">
+            {canResume && (
+              <button
+                disabled={actionBusy}
+                onClick={() => void action("retry")}
+              >
+                Resume or recover job
+              </button>
+            )}
             {sourceJob &&
               write &&
               job.captured_inputs !== null &&
@@ -154,8 +173,11 @@ function JobDetail({ id }: { id: string }) {
             </button>
           </div>
           <p className="muted">
-            Retry requires retained inputs, a transient failure and remaining
-            server retry budget.
+            Resume or recover asks the scheduler to keep an active worker or
+            restart a retained queued/orphaned job. Queued resumption does not
+            spend a retry; recovering an orphaned running job requires remaining
+            retry budget. Failed retries require a transient failure. The server
+            verifies eligibility.
           </p>
           <p className="muted">
             Disconnecting leaves the job running. Cancellation is a separate
@@ -202,7 +224,7 @@ function JobDetail({ id }: { id: string }) {
           {actionError !== null && <ErrorNotice error={actionError} />}{" "}
           {retryReceipt && (
             <Status>
-              Retry accepted · {retryReceipt.state} ·{" "}
+              Recovery request accepted · {retryReceipt.state} ·{" "}
               <RouteLink to={`/dashboard/jobs/${objectPath(retryReceipt.id)}`}>
                 Follow retry job
               </RouteLink>
