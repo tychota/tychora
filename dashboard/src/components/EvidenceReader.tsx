@@ -224,13 +224,25 @@ export function OriginalInspection({
     </section>
   );
 }
+export type EvidenceSelectionRole =
+  | "matched"
+  | "context"
+  | "related"
+  | "direct";
+const selectionLabels: Record<EvidenceSelectionRole, string> = {
+  matched: "Matched evidence",
+  context: "Context only",
+  related: "Related evidence",
+  direct: "Direct inspection",
+};
 export interface EvidenceReaderProps {
   client: ApiClient;
   unitId: string;
   citation?: Citation;
   sourceId?: string;
   revisionId?: string;
-  contextOnly?: boolean;
+  /** Match/context roles require explicit membership in returned query metadata. */
+  selectionRole?: EvidenceSelectionRole;
 }
 export function EvidenceReader({
   client,
@@ -238,7 +250,7 @@ export function EvidenceReader({
   citation,
   sourceId,
   revisionId,
-  contextOnly = false,
+  selectionRole = "direct",
 }: EvidenceReaderProps) {
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -290,9 +302,7 @@ export function EvidenceReader({
   return (
     <section className="evidence-reader" aria-label="Evidence reader">
       <div className="reader-heading">
-        <p className="eyebrow">
-          {contextOnly ? "Context only" : "Matched evidence"}
-        </p>
+        <p className="eyebrow">{selectionLabels[selectionRole]}</p>
         <h2>Exact evidence</h2>
       </div>
       {error !== null ? (
