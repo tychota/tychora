@@ -69,7 +69,7 @@ async def test_full_static_manager_and_narrow_tokens_across_global_routes(tmp_pa
                     "destination": str(tmp_path / "restored"),
                 },
             ),
-            ("POST", "/v1/jobs", {"operation": "rebuild", "channels": ["lexical"]}),
+            ("POST", "/v1/jobs", {"operation": "rebuild", "channels": ["text"]}),
             ("POST", "/v1/jobs", {"operation": "migrate", "target_version": "2"}),
         ]
         async with AsyncClient(
@@ -93,7 +93,18 @@ async def test_full_static_manager_and_narrow_tokens_across_global_routes(tmp_pa
                 assert (
                     await client.get(url, headers={"Authorization": "Bearer narrow"})
                 ).status_code == 403
-            for method, url, body in cases:
+            expected = [
+                (200, None),
+                (200, None),
+                (400, "INVALID_REQUEST"),
+                (200, None),
+                (200, None),
+                (200, None),
+                (409, "PROFILE_INCOMPATIBLE"),
+            ]
+            for (method, url, body), (status, code) in zip(
+                cases, expected, strict=True
+            ):
                 # Refresh digest after any successful settings write.
                 if method == "PATCH":
                     body["base_workspace_sha256"] = hashlib.sha256(
@@ -102,7 +113,20 @@ async def test_full_static_manager_and_narrow_tokens_across_global_routes(tmp_pa
                 response = await client.request(
                     method, url, json=body, headers={"Authorization": "Bearer full"}
                 )
-                assert response.status_code != 403, (body, response.text)
+                assert response.status_code == status, (body, response.text)
+                if code is not None:
+                    assert response.json()["code"] == code
+                elif method == "PUT":
+                    assert response.json()["profile"] == "local"
+                elif method == "PATCH":
+                    assert response.json()["active_profile"] == "local"
+                elif body["operation"] in {"export", "import"}:
+                    assert response.json()["receipt"]["operation"] == body["operation"]
+                elif body["operation"] == "rebuild":
+                    assert (
+                        response.json()["recovery"]["workspace_id"]
+                        == owner.workspace_id
+                    )
             selected = await client.put(
                 "/v1/settings",
                 json={"profile": "local", "workspace_toml": original},

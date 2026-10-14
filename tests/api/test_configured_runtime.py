@@ -159,17 +159,12 @@ async def test_settings_activation_recomposes_credential_without_changing_space(
         old_transport = old._base._runtime.transport()
         assert keys == ["synthetic-old"]
         monkeypatch.setenv("TEST_VOYAGE_KEY", "synthetic-new")
-        ws.runtime.admit(activation=True)
-        try:
-            await SettingsService(ws.owner, ws.runtime).activate(
-                SettingsActivation(
-                    profile="test",
-                    workspace_toml=content
-                    + '\n[configuration.output]\ntitle="Rotated"\n',
-                )
+        await SettingsService(ws.owner, ws.runtime).activate(
+            SettingsActivation(
+                profile="test",
+                workspace_toml=content + '\n[configuration.output]\ntitle="Rotated"\n',
             )
-        finally:
-            ws.runtime.release(activation=True)
+        )
         current = ws.services.provider_bindings.text_query
         assert current is not None
         assert current.credential_binding_id != old_id
@@ -180,17 +175,12 @@ async def test_settings_activation_recomposes_credential_without_changing_space(
         native_index = ws.services.provider_bindings.text_index
         current_transport = current._base._runtime.transport()
         monkeypatch.setenv("TEST_VOYAGE_KEY", "synthetic-third")
-        ws.runtime.admit(activation=True)
-        try:
-            await SettingsService(ws.owner, ws.runtime).activate(
-                SettingsActivation(
-                    profile="test",
-                    workspace_toml=content
-                    + '\n[configuration.output]\ntitle="Rotated"\n',
-                )
+        await SettingsService(ws.owner, ws.runtime).activate(
+            SettingsActivation(
+                profile="test",
+                workspace_toml=content + '\n[configuration.output]\ntitle="Rotated"\n',
             )
-        finally:
-            ws.runtime.release(activation=True)
+        )
         latest = ws.services.provider_bindings.text_query
         assert latest is not None
         assert latest.credential_binding_id != current.credential_binding_id
@@ -252,13 +242,9 @@ async def test_committed_activation_settles_each_owned_runtime_close(
             runtime.transport()
         assert len(transports) == 2
         candidate = content + '\n[configuration.output]\ntitle="Committed"\n'
-        ws.runtime.admit(activation=True)
-        try:
-            accepted = await SettingsService(ws.owner, ws.runtime).activate(
-                SettingsActivation(profile="test", workspace_toml=candidate)
-            )
-        finally:
-            ws.runtime.release(activation=True)
+        accepted = await SettingsService(ws.owner, ws.runtime).activate(
+            SettingsActivation(profile="test", workspace_toml=candidate)
+        )
         assert accepted.config_sha == ws.owner.config.config_sha
         assert ws.runtime.services is not old
         assert (workspace / "workspace.toml").read_text() == candidate
@@ -1100,15 +1086,11 @@ async def test_failed_settings_prepare_restores_native_graph_policy(tmp_path):
             '[configuration.providers.text]\nprovider="voyage"\n'
             'model="unsupported"\ncredential_ref="env:UNSET_TEST_KEY"\n'
         )
-        ws.runtime.admit(activation=True)
-        try:
-            with pytest.raises(TychoraError) as rejected:
-                await SettingsService(ws.owner, ws.runtime).activate(
-                    SettingsActivation(profile="test", workspace_toml=candidate)
-                )
-            assert rejected.value.code == "CAPABILITY_MISSING"
-        finally:
-            ws.runtime.release(activation=True)
+        with pytest.raises(TychoraError) as rejected:
+            await SettingsService(ws.owner, ws.runtime).activate(
+                SettingsActivation(profile="test", workspace_toml=candidate)
+            )
+        assert rejected.value.code == "CAPABILITY_MISSING"
         assert ws.services.provider_bindings.graph is graph
         assert graph._traversal.policy == previous_policy
         assert (workspace / "workspace.toml").read_text() == content

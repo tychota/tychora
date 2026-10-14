@@ -3,6 +3,53 @@
   "base_workspace_sha256": "dc0da08ac40d94bc0fb31ac37bd71d2f2723fe3035aa042a4ed3df509e8a0b6a",
   "fields": [
     {
+      "path": "offline",
+      "effective_value": true,
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "offline",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "type": "boolean"
+      },
+      "choices": []
+    },
+    {
+      "path": "index.text.backend",
+      "effective_value": "disabled",
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "index.text.backend",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "enum": ["disabled", "chroma"],
+        "type": "string"
+      },
+      "choices": ["disabled", "chroma"]
+    },
+    {
+      "path": "index.image.backend",
+      "effective_value": "disabled",
+      "override_value": null,
+      "overridden": false,
+      "origin": {
+        "key": "index.image.backend",
+        "layer": "defaults",
+        "source": "engine"
+      },
+      "value_schema": {
+        "enum": ["disabled", "chroma"],
+        "type": "string"
+      },
+      "choices": ["disabled", "chroma"]
+    },
+    {
       "path": "providers.text.provider",
       "effective_value": "disabled",
       "override_value": null,

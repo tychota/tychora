@@ -77,7 +77,7 @@ class RawBoundary:
                     r"/v1/pdf-intakes/(" + ID_PATTERN + r")/content",
                     scope.get("path", ""),
                 )
-                if scope.get("method") in {"PUT", "PATCH"}
+                if scope.get("method") == "PUT"
                 else None
             )
             request_scope, declared = checked_headers(

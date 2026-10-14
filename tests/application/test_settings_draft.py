@@ -305,3 +305,194 @@ async def test_activation_refreshes_only_managed_future_upload_authority(tmp_pat
                     )
                 ).json()["scope"]["upload_providers"]
             )
+
+
+@pytest.mark.asyncio
+async def test_fresh_remote_settings_apply_and_inherit_without_provider_io(
+    tmp_path, monkeypatch
+):
+    from tychora.application.setup import SetupService
+
+    cache = tmp_path / "missing-cache"
+    monkeypatch.setenv("TYCHORA_MODEL_CACHE", str(cache))
+    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+        owner = kb._workspace.owner
+
+        def forbidden(*args, **kwargs):
+            pytest.fail(
+                "Settings inspection/activation must not resolve secrets or dispatch/download"
+            )
+
+        monkeypatch.setattr(
+            "tychora.application.default_bindings._credential", forbidden
+        )
+        monkeypatch.setattr(
+            "tychora.application.default_bindings.HttpxVoyageTransport", forbidden
+        )
+        monkeypatch.setattr(SetupService, "_download", forbidden)
+        app = create_app(
+            owner,
+            kb._workspace.services,
+            LocalAuth({"owner": kb.scope}, authority="127.0.0.1:8765"),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://127.0.0.1:8765",
+            headers={"Authorization": "Bearer owner"},
+        ) as client:
+            fields = (await client.get("/v1/settings/fields")).json()
+            indexed = {field["path"]: field for field in fields["fields"]}
+            assert indexed["offline"]["value_schema"]["type"] == "boolean"
+            for path in ("index.text.backend", "index.image.backend"):
+                assert indexed[path]["choices"] == ["disabled", "chroma"]
+            patch = {
+                "base_workspace_sha256": fields["base_workspace_sha256"],
+                "changes": [
+                    {"path": "offline", "action": "set", "value": False},
+                    {
+                        "path": "providers.text.provider",
+                        "action": "set",
+                        "value": "voyage",
+                    },
+                    {
+                        "path": "providers.text.model",
+                        "action": "set",
+                        "value": "voyage-context-4",
+                    },
+                    {
+                        "path": "providers.text.credential_ref",
+                        "action": "set",
+                        "value": "env:SYNTHETIC_NOT_RESOLVED",
+                    },
+                    {
+                        "path": "providers.rerank.provider",
+                        "action": "set",
+                        "value": "voyage",
+                    },
+                    {
+                        "path": "providers.rerank.model",
+                        "action": "set",
+                        "value": "rerank-2.5",
+                    },
+                    {
+                        "path": "providers.rerank.credential_ref",
+                        "action": "set",
+                        "value": "env:SYNTHETIC_NOT_RESOLVED",
+                    },
+                    {"path": "index.text.backend", "action": "set", "value": "chroma"},
+                    {
+                        "path": "index.image.backend",
+                        "action": "set",
+                        "value": "disabled",
+                    },
+                ],
+            }
+            original = (owner.path / "workspace.toml").read_bytes()
+            previous = owner.config
+            preview = await client.post("/v1/settings/preview", json=patch)
+            assert preview.status_code == 200, preview.text
+            assert preview.json()["activation_allowed"]
+            assert (owner.path / "workspace.toml").read_bytes() == original
+            assert owner.config is previous and not (owner.path / "indexes").exists()
+            applied = await client.patch("/v1/settings", json=patch)
+            assert applied.status_code == 200, applied.text
+            assert not owner.config.values.offline
+            assert owner.config.values.index.text.backend == "chroma"
+            bindings = app.state.runtime.services.provider_bindings
+            assert bindings.text_query is not None and bindings.reranker is not None
+            assert bindings.text_index is not None
+            assert not cache.exists()
+            assert not kb.scope.upload_providers
+            assert not (
+                await client.get(
+                    "/v1/collections/" + str(kb.default_collection_id) + "/consent"
+                )
+            ).json()["collection_upload_providers"]
+            patch = {
+                "base_workspace_sha256": applied.json()["base_workspace_sha256"],
+                "changes": [
+                    {"path": path, "action": "inherit"}
+                    for path in ("offline", "index.text.backend", "index.image.backend")
+                ],
+            }
+            inherited = await client.patch("/v1/settings", json=patch)
+            assert inherited.status_code == 200, inherited.text
+            fields = {field["path"]: field for field in inherited.json()["fields"]}
+            assert fields["offline"]["effective_value"] is True
+            for path in ("offline", "index.text.backend", "index.image.backend"):
+                assert not fields[path]["overridden"]
+            assert fields["index.text.backend"]["effective_value"] == "disabled"
+            assert fields["index.image.backend"]["effective_value"] == "disabled"
+
+            added = await client.post(
+                "/v1/sources",
+                json={
+                    "type": "text",
+                    "source_key": "populated",
+                    "collection_id": "default",
+                    "kind": "document@1",
+                    "format": "markdown",
+                    "text": "Synthetic retained evidence.",
+                    "metadata": {"title": "Retained evidence"},
+                },
+            )
+            assert added.status_code == 202, added.text
+            job = await app.state.runtime.services.jobs_for_scope(owner.scope).wait(
+                added.json()["id"], ExecutionContext(), timeout=5
+            )
+            assert job.state == "succeeded"
+            incompatible = {
+                "base_workspace_sha256": inherited.json()["base_workspace_sha256"],
+                "changes": [
+                    {"path": "offline", "action": "set", "value": False},
+                    {"path": "index.text.backend", "action": "set", "value": "chroma"},
+                ],
+            }
+            preview = await client.post("/v1/settings/preview", json=incompatible)
+            assert preview.status_code == 200, preview.text
+            assert preview.json()["blockers"] == ["PROFILE_INCOMPATIBLE"]
+            assert not preview.json()["activation_allowed"]
+            rejected = await client.patch("/v1/settings", json=incompatible)
+            assert (
+                rejected.status_code == 409
+                and rejected.json()["code"] == "PROFILE_INCOMPATIBLE"
+            )
+            assert (
+                owner.config.values.offline
+                and owner.config.values.index.text.backend == "disabled"
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        ("offline", "false"),
+        ("offline", 0),
+        ("index.text.backend", "other"),
+        ("index.image.backend", True),
+    ],
+)
+async def test_remote_prerequisite_types_are_strict(tmp_path, path, value):
+    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+        owner = kb._workspace.owner
+        app = create_app(
+            owner,
+            kb._workspace.services,
+            LocalAuth({"owner": kb.scope}, authority="127.0.0.1:8765"),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://127.0.0.1:8765",
+            headers={"Authorization": "Bearer owner"},
+        ) as client:
+            fields = (await client.get("/v1/settings/fields")).json()
+            assert path in {field["path"] for field in fields["fields"]}
+            patch = {
+                "base_workspace_sha256": fields["base_workspace_sha256"],
+                "changes": [{"path": path, "action": "set", "value": value}],
+            }
+            result = await client.patch("/v1/settings", json=patch)
+            assert (
+                result.status_code == 400 and result.json()["code"] == "INVALID_REQUEST"
+            )
