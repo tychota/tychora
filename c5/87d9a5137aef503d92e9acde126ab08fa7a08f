@@ -1,0 +1,68 @@
+tests/transports/test_dashboard_distribution.py
+  s_346481235fa7eb::t_261e92de91bbe6 1-44
+  s_346481235fa7eb::t_801a79497c1d97 45-72
+.github/workflows/dashboard.yml
+  s_346481235fa7eb::t_cdee83739acc05 1-47
+docs/dashboard.md
+  s_346481235fa7eb::t_cdee83739acc05 1-57
+.gitignore
+  s_346481235fa7eb::t_18cc74b2e672ff 28-34
+HANDOFF.md
+  s_346481235fa7eb::t_71a4c8d08e2eec 5,7,9,26,127,129
+dashboard/e2e/dashboard.spec.ts
+  s_346481235fa7eb::t_c955753b71caea 1-436
+dashboard/e2e/server.py
+  s_346481235fa7eb::t_7702bfb5496d2e 1-64
+dashboard/index.html
+  s_346481235fa7eb::t_cc8fb5a200b795 7
+dashboard/package-lock.json
+  s_346481235fa7eb::t_0205c80c664378 15,19,977-992,1564-1573,2377-2423,2792-2798
+dashboard/package.json
+  s_346481235fa7eb::t_e122694136555b 9-11,18,22
+dashboard/playwright.config.ts
+  s_346481235fa7eb::t_91f8e1eaebd48d 1-30
+dashboard/public/assets/favicon.svg
+  s_346481235fa7eb::t_9d3f57f85eab69 1-7
+dashboard/scripts/notices.mjs
+  s_346481235fa7eb::t_dddfb625b6e333 1-13
+dashboard/tsconfig.json
+  s_346481235fa7eb::t_0d5ace3d19e72d 13,15
+dashboard/vite.config.ts
+  s_346481235fa7eb::t_156baf685adf42 13
+docs/getting-started.md
+  s_346481235fa7eb::t_d36ce6d03cdcb6 62
+docs/http.md
+  s_346481235fa7eb::t_d6bb076c3b3d3c 7-9
+docs/superpowers/plans/2026-10-14-dashboard.md
+  s_346481235fa7eb::t_a22ea2e7f5a1e1 3,44,47,49-50,52,55-58,66,75-80,88,97-103,111-115
+mkdocs.yml
+  s_346481235fa7eb::t_3633855910c9ed 61
+packaging/build_public_stage.py
+  s_346481235fa7eb::t_83ceebcbef4430 12-19,53-64
+packaging/check_artifact.py
+  s_346481235fa7eb::t_ef8f25a5de8486 32-34,108-114
+pyproject.toml
+  s_346481235fa7eb::t_010b2da7489f6c 57,69-70
+src/tychora/resources/dashboard/assets/THIRD-PARTY-NOTICES.txt
+  s_346481235fa7eb::t_98bcff315407ad 1-70
+src/tychora/resources/dashboard/assets/favicon.svg
+  s_346481235fa7eb::t_463da134dc89fb 1-7
+src/tychora/resources/dashboard/index.html
+  s_346481235fa7eb::t_f2f215af2b9ac9 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c587d9a5137aef503d92e9acde126ab08fa7a08f",
+  "prompts": {},
+  "sessions": {
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
