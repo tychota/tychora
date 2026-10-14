@@ -147,6 +147,10 @@ class LocalWorkspace:
                 )
             self.owner.managed_default_owner = managed_default_owner
             if managed_default_owner:
+                self.owner._managed_scope_listeners.append(
+                    lambda scope: setattr(self, "scope", scope)
+                )
+            if managed_default_owner:
                 from tychora.application.consent import (
                     restore_default_owner_upload_scope,
                 )

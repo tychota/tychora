@@ -1,4 +1,12 @@
-import type { Scope } from "./contracts";
+import type {
+  Scope,
+  CollectionInput,
+  CollectionSummary,
+  CollectionPage,
+  CollectionConsentView,
+  DocumentPage,
+  Handshake,
+} from "./contracts";
 
 export class ApiError extends Error {
   constructor(
@@ -25,6 +33,57 @@ export class ApiClient {
     private token: string,
     private readonly scope?: Scope,
   ) {}
+  /** The server supplies this fresh immutable grant after credential authentication. */
+  credentialOnly(): ApiClient {
+    return new ApiClient(this.token);
+  }
+  withGrant(scope: Scope): ApiClient {
+    return new ApiClient(this.token, scope);
+  }
+  collections(cursor?: string, includeArchived = false) {
+    const params = new URLSearchParams({
+      limit: "100",
+      include_archived: String(includeArchived),
+    });
+    if (cursor) params.set("cursor", cursor);
+    return this.request<CollectionPage>(`/v1/collections?${params}`);
+  }
+  getCollection(id: string) {
+    return this.request<CollectionSummary>(
+      `/v1/collections/${encodeURIComponent(id)}`,
+    );
+  }
+  createCollection(value: CollectionInput) {
+    return this.request<CollectionSummary>("/v1/collections", {
+      method: "POST",
+      body: JSON.stringify(value),
+    });
+  }
+  editCollection(id: string, value: CollectionInput) {
+    return this.request<CollectionSummary>(
+      `/v1/collections/${encodeURIComponent(id)}`,
+      { method: "PATCH", body: JSON.stringify(value) },
+    );
+  }
+  archiveCollection(id: string, archived: boolean) {
+    return this.request<CollectionSummary>(
+      `/v1/collections/${encodeURIComponent(id)}/${archived ? "archive" : "reactivate"}`,
+      { method: "POST" },
+    );
+  }
+  collectionConsent(id: string) {
+    return this.request<CollectionConsentView>(
+      `/v1/collections/${encodeURIComponent(id)}/consent`,
+    );
+  }
+  documents(cursor?: string) {
+    return this.request<DocumentPage>(
+      `/v1/documents${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`,
+    );
+  }
+  handshake() {
+    return this.request<Handshake>("/v1/handshake");
+  }
   narrow(collections: string[]): ApiClient {
     if (
       !this.scope ||

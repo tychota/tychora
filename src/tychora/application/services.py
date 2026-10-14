@@ -13,6 +13,7 @@ from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.adapters.sqlite.publication import PublicationReceipts
 from tychora.application.acquired_source import AcquiredSource
 from tychora.application.bridge import ClientBridge
+from tychora.application.collections import CollectionService
 from tychora.application.discovery import DiscoveryService
 from tychora.application.inspection import InspectionService
 from tychora.application.jobs import JobService
@@ -37,6 +38,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class Services:
+    collections: CollectionService
     discovery: DiscoveryService
     inspection: InspectionService
     jobs: JobService
@@ -227,6 +229,27 @@ class SourceJobScheduler:
             source = await self.jobs.owner.run_blocking(
                 retained_source, ExecutionContext()
             )
+
+            def admit_retry():
+                from .collection_policy import require_active_collection
+
+                row = self.jobs.owner.db.execute(
+                    "SELECT workspace_id,access_floor,policy_json FROM collections WHERE collection_id=?",
+                    (str(source.root.collection_id),),
+                ).fetchone()
+                granted = self.jobs.owner.scope.narrow(scope)
+                if (
+                    row is None
+                    or row[0] != self.jobs.owner.workspace_id
+                    or row[1] > granted.access_ceiling
+                    or str(source.root.collection_id) not in granted.collection_ids
+                ):
+                    raise TychoraError(
+                        "FORBIDDEN_SCOPE", "Retry collection is unavailable."
+                    )
+                require_active_collection(row[2])
+
+            await self.jobs.owner.run_blocking(admit_retry, ExecutionContext())
             if status.state == "running":
                 status = await scoped.recover(job_id, ExecutionContext())
             if status.state in {"failed", "interrupted"}:
@@ -392,6 +415,10 @@ def build_services(
         vision_credential=providers.vision_credential,
     )
     jobs = JobService(owner, repository, owner.scope)
+    if owner.managed_default_owner:
+        owner._managed_scope_listeners.append(
+            lambda scope: setattr(jobs, "scope", scope)
+        )
     query = QueryService(
         owner,
         output_counter=counter,
@@ -407,6 +434,7 @@ def build_services(
     )
     evaluations = EvaluationService(owner, query, repository)
     return Services(
+        collections=CollectionService(owner),
         discovery=DiscoveryService(config, Registry.from_config(config), owner),
         inspection=InspectionService(owner, graph=providers.graph),
         jobs=jobs,

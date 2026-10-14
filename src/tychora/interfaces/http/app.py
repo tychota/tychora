@@ -89,6 +89,16 @@ class RawBoundary:
                 max_request_bytes=10**20 if binary else None,
             )
             scope.setdefault("state", {})["request_scope"] = request_scope
+            scope["state"]["managed_workspace_owner"] = self.auth.is_managed_identity(
+                next(
+                    (
+                        value.decode("ascii")
+                        for name, value in scope.get("headers", [])
+                        if name.lower() == b"authorization"
+                    ),
+                    "",
+                )
+            )
             if binary:
                 self.runtime.admit()
                 try:
@@ -169,6 +179,8 @@ def create_app(owner: WorkspaceOwner, services: Services, auth: LocalAuth) -> Fa
         raise TychoraError(
             "FORBIDDEN_SCOPE", "Local token principal differs from owner."
         )
+
+    auth.bind_managed_owner(owner)
 
     @asynccontextmanager
     async def lifespan(current: FastAPI):

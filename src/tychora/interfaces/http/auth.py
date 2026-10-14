@@ -20,6 +20,7 @@ class LocalAuth:
         authority: str,
         origin: str | None = None,
         max_request_bytes: int = 1024 * 1024,
+        managed_owner_token: str | None = None,
     ) -> None:
         parsed = urlsplit(f"http://{authority}")
         if (
@@ -37,12 +38,54 @@ class LocalAuth:
             raise TychoraError("INVALID_REQUEST", "Local credentials are invalid.")
         if max_request_bytes < 1:
             raise TychoraError("INVALID_REQUEST", "Request limit must be positive.")
-        self._grants = tuple(token_scopes.items())
+        if managed_owner_token is not None and managed_owner_token not in token_scopes:
+            raise TychoraError(
+                "INVALID_REQUEST", "Managed token must have an explicit initial grant."
+            )
+        self._managed_slot = (
+            (managed_owner_token, token_scopes[managed_owner_token])
+            if managed_owner_token is not None
+            else None
+        )
+        self._managed_bound = False
+        self._grants = tuple(
+            (token, scope)
+            for token, scope in token_scopes.items()
+            if token != managed_owner_token
+        )
         self.authority = authority
         self.origin = origin or f"http://{authority}"
         if self.origin != f"http://{authority}":
             raise TychoraError("INVALID_REQUEST", "Local origin must match authority.")
         self.max_request_bytes = max_request_bytes
+
+    def bind_managed_owner(self, owner) -> None:
+        if self._managed_slot is None:
+            return
+        if (
+            self._managed_bound
+            or getattr(owner, "_managed_auth_bound", False)
+            or not owner.managed_default_owner
+            or self._managed_slot[1] != owner.scope
+        ):
+            raise TychoraError(
+                "FORBIDDEN_SCOPE",
+                "Managed binding requires the exact managed owner grant.",
+            )
+        self._managed_bound = True
+        owner._managed_auth_bound = True
+        owner._managed_scope_listeners.append(self.refresh_managed_owner)
+
+    def refresh_managed_owner(self, scope: RequestScope) -> None:
+        if self._managed_slot is not None and self._managed_bound:
+            self._managed_slot = (self._managed_slot[0], scope)
+
+    def is_managed_identity(self, authorization: str) -> bool:
+        return (
+            self._managed_bound
+            and self._managed_slot is not None
+            and hmac.compare_digest(authorization, "Bearer " + self._managed_slot[0])
+        )
 
     def authenticate(
         self, authorization: str, owner_scope: RequestScope
@@ -51,7 +94,10 @@ class LocalAuth:
             raise TychoraError("FORBIDDEN_SCOPE", "Local credential is required.")
         credential = authorization[7:]
         granted = None
-        for token, scope in self._grants:
+        for token, scope in (
+            *self._grants,
+            *((self._managed_slot,) if self._managed_slot is not None else ()),
+        ):
             if hmac.compare_digest(credential, token):
                 granted = scope
         if granted is None or granted.principal_id != owner_scope.principal_id:

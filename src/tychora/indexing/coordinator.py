@@ -13,6 +13,9 @@ from uuid import UUID, uuid5
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.adapters.sqlite.graph import read_graph_build
 from tychora.adapters.sqlite.publication import publication_manifest
+from tychora.application.collection_policy import (
+    require_active_collection,
+)
 from tychora.configuration.indexed_representation import pinned_runtime_compatible
 from tychora.configuration.models import ResolvedConfig
 from tychora.contracts.artifacts import ArtifactRef
@@ -879,6 +882,17 @@ class ProjectionCoordinator:
         )
         return PublicationSlot(slot="graph", family=family, batches=(batch,))
 
+    def _require_active_source(self, source_id: str) -> None:
+        row = self.store.db.execute(
+            "SELECT c.policy_json FROM sources s JOIN collections c USING(collection_id) WHERE s.source_id=? AND s.withdrawn_at IS NULL",
+            (source_id,),
+        ).fetchone()
+        if row is None:
+            raise TychoraError(
+                "FORBIDDEN_SCOPE", "Source is unavailable for publication."
+            )
+        require_active_collection(row[0])
+
     def prepare(
         self,
         bundle: ExtractionBundle,
@@ -887,6 +901,12 @@ class ProjectionCoordinator:
         ctx: ExecutionContext,
     ) -> PreparedProjection:
         ctx.checkpoint()
+        row = self.store.db.execute(
+            "SELECT policy_json FROM collections WHERE collection_id=?",
+            (bundle.collection.collection_id,),
+        ).fetchone()
+        if row is not None:
+            require_active_collection(row[0])
         config_ref = self._config_ref(job)
         windows = self._windows(bundle)
         canonical = self._canonical_bundle(bundle, windows)
@@ -1027,6 +1047,7 @@ class ProjectionCoordinator:
         if self._config_ref(prepared.job) != prepared.config_ref:
             _fail("Projection configuration changed before finalization")
         canonical = prepared.bundle
+        self._require_active_source(canonical.source.source_id)
         selected = prepared.members
         windows = prepared.windows
         old_slots = prepared.old_slots
@@ -1202,6 +1223,7 @@ class ProjectionCoordinator:
     ) -> PublicationPlan:
         """Fresh capture of an active immutable revision reuses retained artifacts."""
         ctx.checkpoint()
+        self._require_active_source(source_id)
         current = self.store.resolve_snapshot(base_snapshot_id)
         selected = tuple(
             member.model_copy(update={"is_default": member.revision_id == revision_id})
@@ -1253,6 +1275,9 @@ class ProjectionCoordinator:
 
     def attach(self, plan: PublicationPlan, ctx: ExecutionContext) -> None:
         """Reopen configured native ports for a retained plan before verification."""
+        from tychora.adapters.sqlite.publication import check_publication_target
+
+        check_publication_target(self.store, plan)
         for slot in plan.slots:
             ctx.checkpoint()
             if slot.slot in {"text", "image"}:

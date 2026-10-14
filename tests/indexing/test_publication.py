@@ -355,7 +355,7 @@ def make_projected_corpus(tmp_path, config_factory, *, legacy=False) -> Projecte
             old.collection.slug,
             old.collection.title,
             old.collection.access_floor,
-            "{}",
+            canonical_bytes(old.collection.policy_json).decode(),
         ),
     )
     scope = RequestScope(
@@ -902,3 +902,30 @@ def test_retained_vector_plan_rebinds_native_index(
     f.store.vector_indexes.clear()
     f.coordinator.attach(plan, ExecutionContext())
     assert f.store.publish_snapshot(plan) == plan.snapshot_id
+
+
+def test_archive_after_preparation_blocks_canonical_publication(projected_corpus):
+    from datetime import UTC, datetime
+
+    from tychora.application.collection_policy import parse_collection_policy
+
+    corpus = projected_corpus
+    bundle, _, plan = corpus.prepare_revision("Archive during publication")
+    raw = corpus.store.db.execute(
+        "SELECT policy_json FROM collections WHERE collection_id=?",
+        (bundle.collection.collection_id,),
+    ).fetchone()[0]
+    policy = parse_collection_policy(raw).model_copy(
+        update={"archived_at": datetime.now(UTC)}
+    )
+    active = corpus.store.active_snapshot_id()
+    corpus.store.db.execute(
+        "UPDATE collections SET policy_json=? WHERE collection_id=?",
+        (policy.model_dump_json(), bundle.collection.collection_id),
+    )
+    corpus.store.db.execute("UPDATE workspaces SET policy_epoch=policy_epoch+1")
+    corpus.store.db.commit()
+    with pytest.raises(TychoraError) as error:
+        corpus.store.publish_snapshot(plan)
+    assert error.value.code == "FORBIDDEN_SCOPE"
+    assert corpus.store.active_snapshot_id() == active

@@ -5,6 +5,7 @@ import sqlite3
 from contextlib import contextmanager
 from typing import NoReturn, cast
 
+from tychora.application.collection_policy import require_active_collection
 from tychora.application.leases import LeaseSet
 from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
@@ -276,9 +277,33 @@ class CorpusStore(PolicyRepository):
                     {**_row(bundle.workspace), "schema_version": 1},
                     ("workspace_id",),
                 )
-                raised = self._register(
-                    "collections", _row(bundle.collection), "collection_id"
-                )
+                collection = _row(bundle.collection)
+                current = self.db.execute(
+                    "SELECT workspace_id,slug,title,access_floor,policy_json FROM collections WHERE collection_id=?",
+                    (bundle.collection.collection_id,),
+                ).fetchone()
+                if current is not None:
+                    if (
+                        current[0] != bundle.workspace.workspace_id
+                        or bundle.source.collection_id
+                        != bundle.collection.collection_id
+                    ):
+                        _fail("Collection immutable membership differs")
+                    require_active_collection(current[4])
+                    if current[3] > bundle.collection.access_floor:
+                        raise TychoraError(
+                            "SCOPE_CHANGED", "Collection floor changed since capture."
+                        )
+                    # Captured bundles cannot restore stale names, consent or lifecycle.
+                    collection.update(
+                        workspace_id=current[0],
+                        slug=current[1],
+                        title=current[2],
+                        policy_json=current[4],
+                    )
+                else:
+                    require_active_collection(collection["policy_json"])
+                raised = self._register("collections", collection, "collection_id")
                 existing_source = self.db.execute(
                     "SELECT withdrawn_at FROM sources WHERE source_id=?",
                     (bundle.source.source_id,),

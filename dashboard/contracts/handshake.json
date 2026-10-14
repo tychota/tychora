@@ -22,5 +22,7 @@
     ],
     "upload_providers": []
   },
-  "default_collection_id": "00000000-0000-4000-8000-000000000001"
+  "default_collection_id": "00000000-0000-4000-8000-000000000001",
+  "managed_workspace_owner": false,
+  "policy_epoch": 0
 }

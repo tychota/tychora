@@ -343,7 +343,7 @@ class DiscoveryService:
                 "FROM revisions r JOIN sources s USING(source_id) "
                 "JOIN collections c USING(collection_id) "
                 "JOIN kinds k USING(kind_id) "
-                "WHERE c.workspace_id=? ORDER BY r.revision_id",
+                "WHERE c.workspace_id=? AND json_extract(c.policy_json,'$.archived_at') IS NULL ORDER BY r.revision_id",
                 (owner.workspace_id,),
             )
             sources: dict[str, set[str]] = {}
@@ -406,7 +406,11 @@ class DiscoveryService:
             raise TychoraError("INVALID_REQUEST", "Source page limit is invalid.")
 
         def read() -> tuple[tuple, ...]:
-            selector = "s.source_id=?" if source_id is not None else "s.source_id>?"
+            selector = (
+                "s.source_id=?"
+                if source_id is not None
+                else "s.source_id>? AND json_extract(c.policy_json,'$.archived_at') IS NULL"
+            )
             return tuple(
                 owner.db.execute(
                     "SELECT s.source_id,s.source_key,s.source_type,s.collection_id "

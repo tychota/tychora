@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, cast
 from uuid import uuid4
 
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.operations import (
     MaintenancePlan,
     MaintenanceResult,
@@ -24,7 +22,7 @@ if TYPE_CHECKING:
     from tychora.configuration.models import ResolvedConfig
 
 
-REGISTERED_UPLOAD_PROVIDERS = frozenset({"voyage", "anthropic"})
+from .collection_policy import REGISTERED_UPLOAD_PROVIDERS, parse_collection_policy
 
 
 def enabled_upload_providers(config: ResolvedConfig) -> frozenset[str]:
@@ -44,72 +42,19 @@ def enabled_upload_providers(config: ResolvedConfig) -> frozenset[str]:
     return frozenset(enabled)
 
 
-def _unique(pairs: list[tuple[str, object]]) -> dict[str, object]:
-    value: dict[str, object] = {}
-    for key, item in pairs:
-        if key in value:
-            raise ValueError("Duplicate collection policy field")
-        value[key] = item
-    return value
-
-
-def _providers(value: object, *, registered_only: bool = True) -> frozenset[str]:
-    if (
-        not isinstance(value, list)
-        or any(type(item) is not str or not item.strip() for item in value)
-        or len(set(value)) != len(value)
-        or (registered_only and not set(value) <= REGISTERED_UPLOAD_PROVIDERS)
-    ):
-        raise TychoraError("INTEGRITY_ERROR", "Collection upload policy is malformed.")
-    return frozenset(value)
-
-
 def parse_upload_policy(
     raw: str, *, allow_injected_provider_ids: bool = False
 ) -> tuple[frozenset[str], frozenset[str]]:
-    """Schema-v1 extension: absent owner grant means deny without migration."""
-    try:
-        policy = json.loads(raw, object_pairs_hook=_unique)
-    except (ValueError, TypeError):
-        raise TychoraError(
-            "INTEGRITY_ERROR", "Collection upload policy is malformed."
-        ) from None
-    if (
-        not isinstance(policy, dict)
-        or set(policy)
-        not in (
-            {"schema_version", "upload_providers"},
-            {"schema_version", "upload_providers", "owner_upload_providers"},
-        )
-        or type(policy["schema_version"]) is not int
-        or policy["schema_version"] != 1
-    ):
-        raise TychoraError("INTEGRITY_ERROR", "Collection upload policy is malformed.")
-    collection = _providers(
-        policy["upload_providers"], registered_only=not allow_injected_provider_ids
+    policy = parse_collection_policy(
+        raw, allow_injected_provider_ids=allow_injected_provider_ids
     )
-    owner = _providers(policy.get("owner_upload_providers", []))
-    return collection, owner
+    return frozenset(policy.upload_providers), frozenset(policy.owner_upload_providers)
 
 
 def restore_default_owner_upload_scope(owner: WorkspaceOwner) -> RequestScope:
-    """Derive a new immutable future-call grant only for the default owner."""
-    if not owner.managed_default_owner:
-        return owner.scope
-    enabled = enabled_upload_providers(owner.config)
-    granted: set[str] = set()
-    for collection_id in sorted(owner.scope.collection_ids):
-        row = owner.db.execute(
-            "SELECT policy_json FROM collections WHERE collection_id=? AND workspace_id=?",
-            (collection_id, owner.workspace_id),
-        ).fetchone()
-        if row is not None:
-            _, owner_providers = parse_upload_policy(row[0])
-            granted.update(owner_providers & enabled)
-    owner.scope = owner.scope.model_copy(
-        update={"upload_providers": frozenset(granted)}
-    )
-    return owner.scope
+    from .workspace_authority import refresh_managed_owner
+
+    return refresh_managed_owner(owner)
 
 
 def apply_upload_consent(
@@ -143,7 +88,11 @@ def apply_upload_consent(
             raise TychoraError(
                 "FORBIDDEN_SCOPE", "Collection is outside the management grant."
             )
-        collection_set, owner_set = parse_upload_policy(row[1])
+        policy = parse_collection_policy(row[1])
+        collection_set, owner_set = (
+            set(policy.upload_providers),
+            set(policy.owner_upload_providers),
+        )
         if request.action == "grant":
             if request.provider not in enabled_upload_providers(owner.config):
                 raise TychoraError(
@@ -163,23 +112,21 @@ def apply_upload_consent(
                 selected.add(request.provider)
             else:
                 selected.discard(request.provider)
-        owner.db.execute(
-            "UPDATE collections SET policy_json=? WHERE collection_id=?",
-            (
-                canonical_bytes(
-                    {
-                        "schema_version": 1,
-                        "upload_providers": sorted(collection_updated),
-                        "owner_upload_providers": sorted(owner_updated),
-                    }
-                ).decode("utf-8"),
-                collection_id,
-            ),
-        )
-        owner.db.execute(
-            "UPDATE workspaces SET policy_epoch=policy_epoch+1 WHERE workspace_id=?",
-            (owner.workspace_id,),
-        )
+        if collection_updated != collection_set or owner_updated != owner_set:
+            updated = policy.model_copy(
+                update={
+                    "upload_providers": tuple(sorted(collection_updated)),
+                    "owner_upload_providers": tuple(sorted(owner_updated)),
+                }
+            )
+            owner.db.execute(
+                "UPDATE collections SET policy_json=? WHERE collection_id=?",
+                (updated.model_dump_json(), collection_id),
+            )
+            owner.db.execute(
+                "UPDATE workspaces SET policy_epoch=policy_epoch+1 WHERE workspace_id=?",
+                (owner.workspace_id,),
+            )
         epoch = owner.db.execute(
             "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
             (owner.workspace_id,),
@@ -188,6 +135,7 @@ def apply_upload_consent(
     except BaseException:
         owner.db.rollback()
         raise
+    restore_default_owner_upload_scope(owner)
     return MaintenanceResult(
         plan=MaintenancePlan(
             operation="provider-upload-consent",
@@ -195,7 +143,7 @@ def apply_upload_consent(
             actions=(
                 f"{request.action} {request.provider} in collection upload policy",
                 f"{request.action} {request.provider} for default installation owner",
-                "reopen the default owner session to acquire a new grant"
+                "refresh the managed session handshake to acquire the current grant"
                 if request.action == "grant"
                 else "revocation blocks current and queued uploads immediately",
             ),
@@ -213,7 +161,7 @@ def apply_upload_consent(
             collection_upload_providers=tuple(sorted(collection_updated)),
             owner_upload_providers=tuple(sorted(owner_updated)),
             policy_epoch=epoch,
-            default_owner_requires_reopen=request.action == "grant",
+            default_owner_requires_reopen=False,
         ),
     )
 

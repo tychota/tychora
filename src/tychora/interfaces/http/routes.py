@@ -114,12 +114,98 @@ def _inspection_json(value) -> Response:
 
 
 def register_routes(app: FastAPI) -> None:
+    from tychora.contracts.collections import CollectionCreate, CollectionEdit
+
+    @app.get("/v1/collections")
+    async def collections(
+        request: Request,
+        cursor: str | None = None,
+        limit: int = 50,
+        include_archived: bool = False,
+    ):
+        result = await _services(request).collections.list(
+            _scope(request),
+            ExecutionContext(),
+            cursor=cursor,
+            limit=limit,
+            include_archived=include_archived,
+        )
+        return JSONResponse(result.model_dump(mode="json"))
+
+    @app.post("/v1/collections")
+    async def create_collection(request: Request):
+        parsed = CollectionCreate.from_mapping(await _body_map(request))
+        result = await _services(request).collections.create(
+            parsed,
+            _scope(request),
+            ExecutionContext(),
+            managed_owner_authorized=request.state.managed_workspace_owner,
+        )
+        return JSONResponse(result.model_dump(mode="json"), status_code=201)
+
+    @app.get("/v1/collections/{collection_id}")
+    async def get_collection(collection_id: str, request: Request):
+        result = await _services(request).collections.get(
+            collection_id, _scope(request), ExecutionContext()
+        )
+        return JSONResponse(result.model_dump(mode="json"))
+
+    @app.patch("/v1/collections/{collection_id}")
+    async def edit_collection(collection_id: str, request: Request):
+        parsed = CollectionEdit.from_mapping(await _body_map(request))
+        result = await _services(request).collections.edit(
+            collection_id, parsed, _scope(request), ExecutionContext()
+        )
+        return JSONResponse(result.model_dump(mode="json"))
+
+    @app.post("/v1/collections/{collection_id}/archive")
+    async def archive_collection(collection_id: str, request: Request):
+        result = await _services(request).collections.set_archived(
+            collection_id, True, _scope(request), ExecutionContext()
+        )
+        return JSONResponse(result.model_dump(mode="json"))
+
+    @app.post("/v1/collections/{collection_id}/reactivate")
+    async def reactivate_collection(collection_id: str, request: Request):
+        result = await _services(request).collections.set_archived(
+            collection_id, False, _scope(request), ExecutionContext()
+        )
+        return JSONResponse(result.model_dump(mode="json"))
+
+    @app.get("/v1/collections/{collection_id}/consent")
+    async def collection_consent(collection_id: str, request: Request):
+        result = await _services(request).collections.consent(
+            collection_id, _scope(request), ExecutionContext()
+        )
+        result = result.model_copy(
+            update={
+                "managed_grant_refresh_available": result.managed_grant_refresh_available
+                and request.state.managed_workspace_owner
+            }
+        )
+        return JSONResponse(result.model_dump(mode="json"))
+
+    @app.get("/v1/documents")
+    async def documents(request: Request, cursor: str | None = None, limit: int = 50):
+        result = await _services(request).collections.documents(
+            _scope(request), ExecutionContext(), cursor=cursor, limit=limit
+        )
+        return JSONResponse(result.model_dump(mode="json"))
+
     @app.get("/v1/handshake")
     async def handshake(request: Request):
         owner = request.app.state.owner
         scope = _scope(request)
         return JSONResponse(
             {
+                "managed_workspace_owner": request.state.managed_workspace_owner,
+                "policy_epoch": await owner.run_blocking(
+                    lambda: owner.db.execute(
+                        "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
+                        (owner.workspace_id,),
+                    ).fetchone()[0],
+                    ExecutionContext(),
+                ),
                 "schema_version": "1",
                 "protocol_version": 1,
                 "workspace_id": owner.workspace_id,

@@ -698,3 +698,82 @@ def test_native_recovery_on_empty_synthetic_workspace_is_an_explicit_manage_acti
             kb.scope, ExecutionContext()
         )
         assert report.native_pending_batches == 0
+
+
+def test_archived_v2_collection_and_active_v1_survive_backup_restore(tmp_path):
+    from tests.transports.test_http import Counter
+    from tychora import Tychora
+    from tychora.contracts.collections import CollectionCreate
+
+    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+        ws = kb._workspace
+        service = ws.services.collections
+        created = ws.bridge.call(
+            service.create(
+                CollectionCreate(
+                    title="Archive", slug="archive", default_kind_id="manual@1"
+                ),
+                kb.scope,
+                ExecutionContext(),
+                managed_owner_authorized=True,
+            )
+        )
+        archived = ws.bridge.call(
+            service.set_archived(
+                created.collection_id, True, kb.scope, ExecutionContext()
+            )
+        )
+
+        def grant_retained_policy():
+            from tychora.application.collection_policy import parse_collection_policy
+
+            raw = ws.owner.db.execute(
+                "SELECT policy_json FROM collections WHERE collection_id=?",
+                (created.collection_id,),
+            ).fetchone()[0]
+            policy = parse_collection_policy(raw).model_copy(
+                update={
+                    "upload_providers": ("voyage",),
+                    "owner_upload_providers": ("voyage",),
+                }
+            )
+            ws.owner.db.execute(
+                "UPDATE collections SET policy_json=? WHERE collection_id=?",
+                (policy.model_dump_json(), created.collection_id),
+            )
+            ws.owner.db.commit()
+
+        ws.bridge.call(ws.owner.run_blocking(grant_retained_policy, ExecutionContext()))
+        BackupService(ws.owner).export(
+            tmp_path / "backup", kb.scope, ctx=ExecutionContext()
+        )
+    with Tychora.restore(tmp_path / "backup", tmp_path / "restored") as restored:
+        ws = restored._workspace
+        retained = ws.bridge.call(
+            ws.services.collections.get(
+                created.collection_id, restored.scope, ExecutionContext()
+            )
+        )
+        assert retained.collection_id == created.collection_id
+        assert retained.archived_at == archived.archived_at
+        assert retained.default_kind_id == "manual@1"
+        consent = ws.bridge.call(
+            ws.services.collections.consent(
+                created.collection_id, restored.scope, ExecutionContext()
+            )
+        )
+        assert (
+            consent.collection_upload_providers
+            == consent.owner_upload_providers
+            == ("voyage",)
+        )
+        default = ws.bridge.call(
+            ws.services.collections.get(
+                str(restored.default_collection_id), restored.scope, ExecutionContext()
+            )
+        )
+        assert default.archived_at is None
+        result = restored.management.run(
+            {"operation": "migrate", "target_version": "1"}
+        )
+        assert result

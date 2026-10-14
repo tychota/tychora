@@ -110,7 +110,9 @@ class InspectionService:
                 },
             }
         )
-        return self.compiler.compile_attempt(snapshot, scope, query, self.owner.config)
+        return self.compiler.compile_attempt(
+            snapshot, scope, query, self.owner.config, _retained_inspection=True
+        )
 
     def _artifact(
         self,

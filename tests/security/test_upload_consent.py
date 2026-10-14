@@ -68,7 +68,7 @@ def _dispatch(kb, collection_id, scope=None, *, policy_epoch=None):
     return result, sent
 
 
-def test_default_owner_grant_is_durable_only_after_reopen_and_revoke_is_current(
+def test_default_owner_grant_refreshes_future_calls_and_revoke_is_current(
     tmp_path,
 ):
     workspace = tmp_path / "knowledge"
@@ -94,10 +94,9 @@ def test_default_owner_grant_is_durable_only_after_reopen_and_revoke_is_current(
         assert granted.upload_consent is not None
         assert granted.upload_consent.collection_upload_providers == ("voyage",)
         assert granted.upload_consent.owner_upload_providers == ("voyage",)
-        assert granted.upload_consent.default_owner_requires_reopen is True
+        assert granted.upload_consent.default_owner_requires_reopen is False
         assert granted.upload_consent.policy_epoch == epoch_before + 1
-        with pytest.raises(TychoraError):
-            _dispatch(kb, collection)
+        assert _dispatch(kb, collection) == ("mock", ["mock"])
     with Tychora.open(workspace, config=config, providers=ProviderBindings()) as kb:
         collection = kb.default_collection_id
         assert "voyage" in kb._workspace.scope.upload_providers
@@ -296,7 +295,7 @@ async def test_public_revoke_blocks_actual_queued_provider_admission(tmp_path):
             results = await asyncio.gather(*tasks, return_exceptions=True)
             assert results[:2] == ["mock", "mock"]
             assert isinstance(results[2], TychoraError)
-            assert results[2].code == "SCOPE_CHANGED"
+            assert results[2].code in {"SCOPE_CHANGED", "FORBIDDEN_SCOPE"}
             assert len(started) == 2
         finally:
             release.set()

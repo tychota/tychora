@@ -31,7 +31,11 @@ class CollectionRow(Contract):
     slug: NonEmptyStr
     title: NonEmptyStr
     access_floor: AccessRank = 0
-    policy_json: FrozenJsonMap = Field(default_factory=FrozenJsonMap)
+    policy_json: FrozenJsonMap = Field(
+        default_factory=lambda: FrozenJsonMap(
+            {"schema_version": 1, "upload_providers": []}
+        )
+    )
 
 
 class SourceRow(Contract):
