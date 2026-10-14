@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Tychora source and evidence mark</title>
+  <rect width="64" height="64" rx="14" fill="#173f35"/>
+  <path d="M17 16h16c7 0 12 5 12 12v19H29c-7 0-12-5-12-12V16Z" fill="none" stroke="#f7f3e9" stroke-width="4" stroke-linejoin="round"/>
+  <path d="M27 27h18M27 36h18" stroke="#d39268" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="46" cy="46" r="7" fill="#d39268" stroke="#173f35" stroke-width="3"/>
+</svg>

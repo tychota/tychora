@@ -54,6 +54,7 @@ sources = ["src"]
 only-include = [
   ".gitignore",
   "src/tychora",
+  "dashboard",
   "tests",
   "packaging",
   "docs",
@@ -64,6 +65,8 @@ only-include = [
   "pyproject.toml",
   "uv.lock",
 ]
+
+exclude = ["dashboard/.gitignore", "dashboard/node_modules", "dashboard/test-results", "dashboard/playwright-report", "dashboard/public/assets/THIRD-PARTY-NOTICES.txt", "**/__pycache__", "**/.cache"]
 
 [tool.ruff]
 target-version = "py312"

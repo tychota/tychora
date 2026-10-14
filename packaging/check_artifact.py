@@ -29,6 +29,9 @@ class ArtifactAudit(NamedTuple):
 _DENIED_PARTS = frozenset(
     {
         ".git",
+        "node_modules",
+        "test-results",
+        "playwright-report",
         ".superpowers",
         ".venv",
         ".cache",
@@ -102,7 +105,13 @@ def _allowed_path(path: PurePosixPath, kind: str) -> bool:
         return True
     if len(rel) >= 3 and rel[:2] == ("src", "tychora"):
         return True
-    return len(rel) >= 2 and rel[0] in {"docs", "examples", "tests", "packaging"}
+    return len(rel) >= 2 and rel[0] in {
+        "docs",
+        "examples",
+        "tests",
+        "packaging",
+        "dashboard",
+    }
 
 
 def _validate_member(name: str, data: bytes, kind: str) -> str:

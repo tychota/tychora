@@ -9,7 +9,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-SOURCE_DIRS = ("src/tychora/", "tests/", "packaging/", "docs/", "examples/")
+SOURCE_DIRS = (
+    "src/tychora/",
+    "tests/",
+    "packaging/",
+    "docs/",
+    "examples/",
+    "dashboard/",
+)
 SOURCE_FILES = {
     ".gitignore",
     "README.md",
@@ -42,6 +49,18 @@ def build_public_stage(
             continue
         name = raw.decode("utf-8", "surrogateescape")
         if name not in SOURCE_FILES and not name.startswith(SOURCE_DIRS):
+            continue
+        if any(
+            part
+            in {
+                "node_modules",
+                "test-results",
+                "playwright-report",
+                "__pycache__",
+                ".cache",
+            }
+            for part in Path(name).parts
+        ):
             continue
         original = repository / name
         if not original.is_file() or original.is_symlink():
