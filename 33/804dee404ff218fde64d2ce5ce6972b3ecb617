@@ -1,0 +1,21 @@
+src/tychora/interfaces/http/dashboard.py
+  s_219afc08798c44::t_9cdbc2e903f523 43,47-50,75
+tests/transports/test_dashboard.py
+  s_219afc08798c44::t_13e1eb120b7021 183-214
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "33804dee404ff218fde64d2ce5ce6972b3ecb617",
+  "prompts": {},
+  "sessions": {
+    "s_219afc08798c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
