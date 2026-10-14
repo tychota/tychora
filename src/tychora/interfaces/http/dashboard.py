@@ -40,11 +40,14 @@ def is_dashboard_static_request(scope: dict) -> bool:
     )
 
 
-def _contained_file(root: Path, relative: str) -> Path | None:
+def _contained_file(root: Path, relative: str, *, directory: str = "") -> Path | None:
     try:
         root = root.resolve()
         candidate = (root / relative).resolve()
-        if candidate.is_relative_to(root) and candidate.is_file():
+        # Keep the admission boundary literal: resolving it would allow an
+        # assets directory symlink to redefine which files are public.
+        boundary = root / directory
+        if candidate.is_relative_to(boundary) and candidate.is_file():
             return candidate
     except (OSError, RuntimeError):
         # Missing, inaccessible, or cyclic paths are never a public file.
@@ -69,7 +72,7 @@ def register_dashboard(app: FastAPI) -> None:
                     headers=SECURITY_HEADERS,
                 )
         else:
-            file = _contained_file(root, path)
+            file = _contained_file(root, path, directory="assets")
             if file is None:
                 return PlainTextResponse(
                     "Dashboard asset is unavailable.",
