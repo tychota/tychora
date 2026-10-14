@@ -403,3 +403,61 @@ async def test_metadata_form_keeps_transitive_local_refs_and_boolean_constraints
         assert fields["advanced"].advanced
         assert fields["forbidden"].advanced and fields["forbidden"].constraints is False
         assert form.advanced
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "root_options,metadata,advanced",
+    [
+        (
+            {
+                "required": ["title", "custom"],
+                "additionalProperties": {"type": "string"},
+            },
+            {"title": "Notes", "custom": "Required value"},
+            True,
+        ),
+        (
+            {"additionalProperties": {"type": "string"}},
+            {"title": "Notes", "custom": "Optional value"},
+            True,
+        ),
+        ({"additionalProperties": True}, {"title": "Notes", "custom": 1}, True),
+        ({}, {"title": "Notes", "custom": 1}, True),
+        (
+            {"additionalProperties": False, "enum": [{"title": "Notes"}]},
+            {"title": "Notes"},
+            True,
+        ),
+        ({"additionalProperties": False}, {"title": "Notes"}, False),
+    ],
+)
+async def test_metadata_form_marks_unrepresented_root_semantics_advanced(
+    tmp_path, root_options, metadata, advanced
+):
+    from tychora import Tychora
+    from tychora.configuration.models import ResolvedConfig
+    from tychora.configuration.resolve import _resolved_hashes
+
+    with Tychora.open(tmp_path / "metadata-root") as kb:
+        owner = kb._workspace.owner
+        raw = owner.config.model_dump(mode="json")
+        schema = {
+            "$id": "manual-metadata@1",
+            "type": "object",
+            "properties": {"title": {"type": "string"}},
+            "required": ["title"],
+            **root_options,
+        }
+        raw["registry"]["schemas"]["manual-metadata@1"] = schema
+        raw.update(_resolved_hashes(raw["registry"], raw["values"]))
+        config = ResolvedConfig.model_validate_json(json.dumps(raw))
+        registry = Registry.from_config(config)
+        assert registry.validate_metadata("manual@1", metadata) == metadata
+        service = DiscoveryService(config, registry, owner)
+        form = await service.kind_metadata_schema(
+            "manual@1", kb.scope, ExecutionContext()
+        )
+        assert form.advanced is advanced
+        assert [field.name for field in form.fields] == ["title"]
+        assert form.model_dump(mode="json")["schemas"][form.schema_id] == schema

@@ -1169,8 +1169,27 @@ class DiscoveryService:
                 fields=tuple(fields),
                 schemas=schemas,
                 schema_reference_bindings=envelope["schema_reference_bindings"],
-                advanced="$ref" in root
+                # Simple fields describe a closed object only. Preserve every
+                # other root constraint for the schema-aware advanced editor.
+                advanced=bool(
+                    set(root)
+                    - {
+                        "$id",
+                        "$schema",
+                        "$defs",
+                        "title",
+                        "description",
+                        "type",
+                        "properties",
+                        "required",
+                        "additionalProperties",
+                    }
+                )
                 or root.get("type") != "object"
+                or bool(
+                    set(root.get("required", ())) - root.get("properties", {}).keys()
+                )
+                or root.get("additionalProperties", True) is not False
                 or any(field.advanced for field in fields),
             )
             if len(form.model_dump_json().encode("utf-8")) > 256 * 1024:
