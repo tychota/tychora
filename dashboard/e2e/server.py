@@ -129,12 +129,19 @@ def main() -> None:
 
             async def transient_extract(registration, capture, ctx, source, scope):
                 key = source.root.source_key
-                if key == "synthetic-recovery" and key not in failed_recovery:
+                if (
+                    key in {"synthetic-recovery", "synthetic-pdf-recovery"}
+                    and key not in failed_recovery
+                ):
                     failed_recovery.add(key)
                     raise TychoraError(
                         "PROVIDER_FAILURE",
                         "Synthetic transient fixture failure",
                         retryable=True,
+                    )
+                if key == "synthetic-pdf-partial":
+                    raise TychoraError(
+                        "DEADLINE_EXCEEDED", "Synthetic partial-conversion timeout"
                     )
                 return await original_extract(registration, capture, ctx, source, scope)
 

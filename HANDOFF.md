@@ -1,12 +1,16 @@
 # Tychora handoff
 
-Updated: 2026-10-14. Audience: the next maintainer or agent continuing the engine and dashboard work.
+Updated: 2026-10-15. Audience: the next maintainer or agent continuing the engine and dashboard work.
 
 ## Start here: implemented dashboard and engine follow-ups
 
-The bundled local dashboard implements Search, Sources, Jobs, Evaluations, Activity and Settings through real authenticated services. Read [dashboard usage and delivery](docs/dashboard.md), the [delivery design](docs/superpowers/specs/2026-10-14-dashboard-delivery-design.md) and the [implementation plan](docs/superpowers/plans/2026-10-14-dashboard.md). It is an evidence workbench; accepted source jobs outlive browser connections. Node is build-only, credentials remain in memory, and API/MCP scope authorization remains authoritative.
+The bundled local dashboard implements named Collections, Documents/Add documents, Search, Explore, Models, Jobs, Evaluations, exact-scope Activity and Settings through authenticated services. Read [dashboard usage and delivery](docs/dashboard.md). It preserves one workspace with several stable collection identities and memory-only browser credentials/content/drafts. Node is build-only. Existing custom/restricted grants never broaden; whole-workspace maintenance requires complete authority.
 
-The UI exposes existing engine limits: metadata-only history cannot replay; trace generation and expiry/purge enforcement remain outstanding; relations are bounded; PDF originals have locators without overlays; collection lifecycle/global workspace discovery, evaluation label editing/aggregate analytics and automatic settings rebuild planning remain engine follow-ups. Browser workflow checks use a disposable offline synthetic corpus and actual HTTP, not quality benchmarks. Existing upstream qualification and advisory blockers below remain open.
+Add documents now streams chosen PDFs as raw File bodies through private prepare/upload/analyse receipts, explicit confirmation of server-issued analysis/policy hashes and the existing durable source-job scheduler. Ordinary JSON remains 1 MiB; binary PDF intake is at most 100 MiB with lower configured limits. Model/setup navigation retains File/title/text/destination/kind and renews stale receipts under current authority, while cleanup keeps the exact original receipt owner. Queued/accepted and retained page-processing progress are not indexed success. OCR remains derived, noncitable and review-required with physical page locators and retained input/derivation identities; selected coverage and registered search modes expose gaps and exclusion honestly. Original inspection remains separately bounded at 16 MiB payload/24 MiB encoded response; large retained PDFs can exceed browser inspection without being removed.
+
+Qualified browser verification uses generated synthetic content, actual disposable HTTP, installed pinned local OCR/tokenizers and explicit opt-in. Synthetic transient/partial failures are identified as test seams; simulated remote-provider journeys do not establish connectivity or quality. Thin CI does not provision model assets and explicitly skips those qualified scenarios. Current Task 6 evidence is recorded in the task report; no claim follows about private full-document OCR accuracy/capacity or hosted CI. The controller owns private corpus, backup, runtime and preview work.
+
+Remaining engine boundaries include bounded relations/inventory, metadata-only history without replay, unavailable trace/history-cache purge enforcement, no PDF overlays, no global workspace discovery, evaluation label editing/aggregate analytics and automatic settings rebuild planning. Earlier upstream qualification/advisory blockers below remain open; collection lifecycle and local named collection administration are implemented.
 
 ## Product decisions to preserve
 
@@ -65,18 +69,18 @@ The full source run does not establish live embedding/reranking quality, gold-se
 
 The earlier review was checked against `e7de140`. Preserve the distinctions below when turning it into issues. The [full assessment](docs/review-assessment.md) has exact source references and the remaining review inventory.
 
-| Priority area | Current finding | Next useful acceptance test |
-| --- | --- | --- |
-| Strict lexical retrieval | More than the 80-per-kind cap marks the channel incomplete; strict queries can report `INDEX_INCOMPLETE` for normal truncation | More than 80 eligible matches remains a valid bounded search; genuinely unavailable/incomplete indexes still fail appropriately |
-| Historical editions | A unique selected edition can still produce an overlap warning and a human-decision requirement | Unique dated winner produces no spurious conflict; tied/unknown/overlapping cases retain explicit behavior |
-| Retention and purge | Advertised history/cache purge commands return `CAPABILITY_MISSING`; expiry is recorded but not enforced | Working scoped purge, expiry enforcement, retained-payload/replay behavior and job-diagnostic cleanup |
-| Vector identities | Family creation identity is configuration-derived; record IDs omit family identity | Independent families with identical configuration remain isolated across rebuild, restore and deletion; plan migration before changing durable IDs |
-| Workspace ownership | A second client encountering a standalone Python owner can receive `INTEGRITY_ERROR` | Two-process case returns a retryable ownership error without treating an ordinary live owner as corrupt |
-| Query traces | The trace request exists, but the result trace stays null | Scoped trace with bounded timings/counts/reasons and no hidden-source leakage, exposed consistently across transports |
+| Priority area            | Current finding                                                                                                                | Next useful acceptance test                                                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Strict lexical retrieval | More than the 80-per-kind cap marks the channel incomplete; strict queries can report `INDEX_INCOMPLETE` for normal truncation | More than 80 eligible matches remains a valid bounded search; genuinely unavailable/incomplete indexes still fail appropriately                    |
+| Historical editions      | A unique selected edition can still produce an overlap warning and a human-decision requirement                                | Unique dated winner produces no spurious conflict; tied/unknown/overlapping cases retain explicit behavior                                         |
+| Retention and purge      | Advertised history/cache purge commands return `CAPABILITY_MISSING`; expiry is recorded but not enforced                       | Working scoped purge, expiry enforcement, retained-payload/replay behavior and job-diagnostic cleanup                                              |
+| Vector identities        | Family creation identity is configuration-derived; record IDs omit family identity                                             | Independent families with identical configuration remain isolated across rebuild, restore and deletion; plan migration before changing durable IDs |
+| Workspace ownership      | A second client encountering a standalone Python owner can receive `INTEGRITY_ERROR`                                           | Two-process case returns a retryable ownership error without treating an ordinary live owner as corrupt                                            |
+| Query traces             | The trace request exists, but the result trace stays null                                                                      | Scoped trace with bounded timings/counts/reasons and no hidden-source leakage, exposed consistently across transports                              |
 
 Synthetic probes reproduced lexical cap classification, the spurious edition warning, and missing purge dispatch. Their end-to-end consequences and the other findings were assessed through code inspection; do not describe all six as full end-to-end reproductions.
 
-Dashboard-relevant gaps also include incomplete collection creation/list/discovery, missing CLI relation-assertion inspection by ID, code context excerpts without their own locator/reason, and full request-history retention not exposed through normal configuration. Metadata-only history cannot provide exact replay. Do not display unavailable trace, retention or replay features as operational.
+Dashboard-relevant gaps also include global workspace discovery, missing CLI relation-assertion inspection by ID, code context excerpts without their own locator/reason, and full request-history retention not exposed through normal configuration. Metadata-only history cannot provide exact replay. Do not display unavailable trace, retention or replay features as operational.
 
 Some findings were already overtaken: missing-revision original access was corrected in `e7de140`; parse reuse, read scope, vector candidate/window separation and reranker asset setup were finalized in earlier commits. Historical failing-suite counts and claims about workflows never running are not current facts.
 

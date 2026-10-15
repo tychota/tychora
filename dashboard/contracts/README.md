@@ -42,3 +42,5 @@ exclude/include modes, successful visual/LabelledProxy query, retained windows
 and full evidence. Content is synthetic; OCR remains needs_review/noncitable.
 No token, private path, user document or live provider is captured. The ignored
 qualified journey also records a restricted-scope HTTP403 and actual windows.
+
+Task 6 `task6-pdf-*-status.json` captures full actual intake-status route envelopes for generated native/scanned/mixed/blank PDFs using `generate_contracts.py --pdf`. `task6-pdf-{analysed,accepted,events,excluded,included,evidence,windows,units,coverage,diagnostics}.json` comes from the qualified generated 2,749,832-byte PDF browser journey's actual authenticated HTTP capture, exported with `--pdf-evidence`. Analysis is nested in the status envelope, submission acceptance is a direct JobHandle, and events are a returned event page. Private receipt identifiers and volatile expiry are redacted; policy/analysis hashes remain opaque server values. OCR is noncitable/needs_review and no-text-detected is detector-relative. These are synthetic local integration evidence, not accuracy or full-document capacity qualification.

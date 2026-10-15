@@ -237,7 +237,10 @@ function JobDetail({ id }: { id: string }) {
                 <span className="muted">{event.timestamp}</span>
                 {event.counters?.map((c) => (
                   <span key={c.name}>
-                    {c.name}: {c.count}
+                    {c.name === "accepted_pdf_pages"
+                      ? "Retained processing pages"
+                      : c.name}
+                    : {c.count}
                   </span>
                 ))}
                 {event.diagnostic_refs?.length > 0 && (

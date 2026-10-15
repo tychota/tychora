@@ -8,6 +8,8 @@ import type {
   KindMetadataForm,
   ModelCatalog,
   ModelReadiness,
+  PdfIntakeDescriptor,
+  Json,
 } from "../../api/contracts";
 import type { JobHandle } from "../../api/operations";
 import { ApiError, publicError } from "../../api/client";
@@ -23,12 +25,13 @@ import {
   parseMetadata,
   REQUEST_LIMIT,
 } from "./submission";
+import { PdfIntake } from "./PdfIntakePanel";
 const labelFor = (name: string) =>
   name.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 export function SourceForm() {
   const session = useSession();
   const { adminClient, handshake } = session;
-  const { draft, setDraft, draftId, intent, receiptOwner } =
+  const { draft, setDraft, draftId, intent, receiptOwner, pendingPdf } =
     useAddDocumentDraft();
   const kinds = usePages<Discovery>("/v1/discovery?subject=kinds", adminClient);
   const settings = useResource<Settings>("/v1/settings", adminClient);
@@ -72,6 +75,7 @@ export function SourceForm() {
       : draft.type === "bytes"
         ? fileFormat(draft.file?.name ?? "")
         : "");
+  const isPdf = draft.type === "bytes" && resolvedFormat === "pdf";
   const selections = requiredAssetSelections(catalog.value, resolvedFormat);
   const readinessPath =
     manager && selections.length
@@ -100,6 +104,17 @@ export function SourceForm() {
   let encoded: { body: string; size: number } | null = null;
   let validation: unknown = null;
   try {
+    if (
+      draft.type === "bytes" &&
+      draft.file &&
+      (fileFormat(draft.file.name) === "pdf" ||
+        draft.file.type === "application/pdf") &&
+      resolvedFormat !== "pdf"
+    )
+      throw new ApiError(
+        "INVALID_REQUEST",
+        "PDF files require PDF format and streamed analysis. Clear the conflicting format override.",
+      );
     if (draft.type === "bytes" && draft.bytes !== null && !resolvedFormat)
       throw new ApiError(
         "INVALID_REQUEST",
@@ -195,7 +210,7 @@ export function SourceForm() {
     !readiness.busy;
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!canSubmit || !adminClient || !handshake || !encoded) return;
+    if (isPdf || !canSubmit || !adminClient || !handshake || !encoded) return;
     const body = encoded.body;
     const submittedClient = adminClient
       .withGrant(handshake.scope)
@@ -210,7 +225,8 @@ export function SourceForm() {
         signal: lifetime.current.signal,
       });
       if (!lifetime.current.signal.aborted) {
-        receiptOwner.current?.dispose();
+        if (receiptOwner.current !== pendingPdf.current?.owner)
+          receiptOwner.current?.dispose();
         receiptOwner.current = submittedClient;
         setDraft((previous) => ({ ...previous, receipt, setupReturn: null }));
         setConfirmed(false);
@@ -228,6 +244,14 @@ export function SourceForm() {
     setFileError(null);
     setFileBusy(!!file);
     if (!file) return;
+    if (
+      (draft.format.trim() || fileFormat(file.name)) === "pdf" ||
+      fileFormat(file.name) === "pdf" ||
+      file.type === "application/pdf"
+    ) {
+      setFileBusy(false);
+      return;
+    }
     try {
       const bytes = await fileBase64(file);
       if (version === fileVersion.current && !lifetime.current.signal.aborted)
@@ -454,13 +478,6 @@ export function SourceForm() {
                   {draft.file.size.toLocaleString("en-US")} bytes.
                 </p>
               )}
-              {resolvedFormat === "pdf" && (
-                <p>
-                  PDFs use the existing encoded file path with its 1 MiB limit.
-                  Analysis and OCR review will be available with the PDF intake
-                  workflow.
-                </p>
-              )}
             </>
           ) : (
             <label>
@@ -625,20 +642,22 @@ export function SourceForm() {
             (draft.text || draft.file || draft.advanced) && (
               <ErrorNotice error={validation} />
             )}
-          <p className="muted">
-            Encoded request:{" "}
-            {encoded
-              ? `${encoded.size.toLocaleString("en-US")} bytes`
-              : "Unknown"}{" "}
-            · 1 MiB limit.
-          </p>
-          {tooLarge && (
+          {!isPdf && (
+            <p className="muted">
+              Encoded request:{" "}
+              {encoded
+                ? `${encoded.size.toLocaleString("en-US")} bytes`
+                : "Unknown"}{" "}
+              · 1 MiB limit.
+            </p>
+          )}
+          {!isPdf && tooLarge && (
             <Status tone="warning">
               Encoded request exceeds the 1 MiB limit. Shorten the text, choose
               a smaller file, or use a registered-root path.
             </Status>
           )}
-          {(draft.type !== "text" || draft.kind !== "document@1") && (
+          {!isPdf && (draft.type !== "text" || draft.kind !== "document@1") && (
             <label className="collection-option">
               <input
                 type="checkbox"
@@ -648,13 +667,61 @@ export function SourceForm() {
               I confirm this source and processing destination.
             </label>
           )}
-          <button className="primary" type="submit" disabled={!canSubmit}>
-            {busy
-              ? "Submitting…"
-              : draft.type === "text" && draft.kind === "document@1"
-                ? "Index text"
-                : "Submit source"}
-          </button>
+          {(isPdf && draft.file) || pendingPdf.current ? (
+            <PdfIntake
+              file={isPdf && draft.file ? draft.file : pendingPdf.current!.file}
+              descriptor={
+                !isPdf ||
+                !draft.file ||
+                validation ||
+                !schemaValue ||
+                !(draft.key.trim() || draft.fields.title?.trim()) ||
+                !destination ||
+                prerequisites.some((p) => p.blocking) ||
+                !handshake?.scope.capabilities.includes("write")
+                  ? null
+                  : ({
+                      source_key:
+                        draft.key.trim() || draft.fields.title?.trim() || "",
+                      collection_id: draft.collection,
+                      kind: draft.kind,
+                      metadata: resolvedMetadata as Record<string, Json>,
+                      expected_size_bytes: draft.file.size,
+                      format: "pdf",
+                    } satisfies PdfIntakeDescriptor)
+              }
+              client={adminClient}
+              scope={handshake?.scope ?? null}
+              epoch={session.sessionKey}
+              ownerRef={receiptOwner}
+              pendingRef={pendingPdf}
+              onAccepted={(receipt, owner) => {
+                if (
+                  receiptOwner.current &&
+                  receiptOwner.current !== owner &&
+                  receiptOwner.current !== pendingPdf.current?.owner
+                )
+                  receiptOwner.current.dispose();
+                receiptOwner.current = owner;
+                setDraft((previous) => ({
+                  ...previous,
+                  receipt,
+                  setupReturn: null,
+                }));
+              }}
+            />
+          ) : null}
+          {!isPdf && (
+            <>
+              <button className="primary" type="submit" disabled={!canSubmit}>
+                {busy
+                  ? "Submitting…"
+                  : draft.type === "text" && draft.kind === "document@1"
+                    ? "Index text"
+                    : "Submit source"}
+              </button>
+            </>
+          )}
         </fieldset>
       </form>
       {error !== null && <ErrorNotice error={error} />}

@@ -1,0 +1,25 @@
+{
+  "source_id": "56270bce-62c0-5e40-8576-3f66ecbdd229",
+  "revision_id": "b382c90d6a98859030aee6e5efb1408702c45f15ea86a3ade04cc7f86883fb43",
+  "extractions": [
+    {
+      "extraction_id": "e8f20f090369d20260828867c8b423e584e3a97f5b7a0328a0acf0d8bd855e9d",
+      "stages": {
+        "extraction": "retained",
+        "lexical": "ready",
+        "ocr": "needs_review",
+        "pdf_coverage": {
+          "blank_pages": [3],
+          "native_pages": [2],
+          "no_text_detected_pages": [],
+          "ocr_pages": [1],
+          "page_count": 3
+        },
+        "pdf_processing": "processed"
+      },
+      "code_resolution": null,
+      "channels_truncated": false
+    }
+  ],
+  "next_cursor": null
+}

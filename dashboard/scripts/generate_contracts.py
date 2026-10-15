@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
 import tempfile
 from hashlib import sha256
 from pathlib import Path
@@ -193,7 +194,106 @@ async def capture(output: Path) -> None:
         await app.state.runtime.services.source_jobs.aclose()
 
 
+async def capture_pdf(output: Path) -> None:
+    """Capture actual status envelopes without invoking recognition or indexing."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from dashboard.e2e.pdf_fixture import generate_pdf
+
+    output.mkdir(parents=True, exist_ok=True)
+    with (
+        tempfile.TemporaryDirectory(prefix="tychora-pdf-contracts-") as directory,
+        Tychora.open(
+            Path(directory) / "workspace", token_counter=SyntheticCounter()
+        ) as kb,
+    ):
+        app = create_app(
+            kb._workspace.owner,
+            kb._workspace.services,
+            LocalAuth({"synthetic-pdf-capture": kb.scope}, authority="127.0.0.1:8765"),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://127.0.0.1:8765",
+            headers={"Authorization": "Bearer synthetic-pdf-capture"},
+        ) as client:
+            for mode in ("native", "scan", "mixed", "blank"):
+                data = generate_pdf(mode)
+                prepared = await client.post(
+                    "/v1/pdf-intakes",
+                    json={
+                        "source_key": f"synthetic-{mode}",
+                        "collection_id": str(kb.default_collection_id),
+                        "kind": "document@1",
+                        "metadata": {"title": f"Synthetic {mode}"},
+                        "expected_size_bytes": len(data),
+                        "format": "pdf",
+                    },
+                )
+                prepared.raise_for_status()
+                path = "/v1/pdf-intakes/" + prepared.json()["intake_id"]
+                uploaded = await client.put(
+                    path + "/content",
+                    content=data,
+                    headers={"Content-Type": "application/pdf"},
+                )
+                uploaded.raise_for_status()
+                analysed = await client.post(path + "/analyse")
+                analysed.raise_for_status()
+                value = redact_pdf(analysed.json())
+                (output / f"task6-pdf-{mode}-status.json").write_text(
+                    json.dumps(value, indent=2) + "\n"
+                )
+                (await client.delete(path)).raise_for_status()
+        await app.state.runtime.services.source_jobs.aclose()
+
+
+def redact_pdf(value):
+    """Opaque private intake receipts and volatile expiry never enter examples."""
+    if isinstance(value, dict):
+        return {
+            key: "<synthetic-receipt>"
+            if key == "intake_id"
+            else "2030-01-01T00:00:00Z"
+            if key == "expires_at"
+            else redact_pdf(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_pdf(item) for item in value]
+    return redact_paths(value)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=Path("dashboard/contracts"))
-    asyncio.run(capture(parser.parse_args().output))
+    parser.add_argument(
+        "--pdf",
+        action="store_true",
+        help="Capture generated PDF analysis envelopes; verified local assets are explicit prerequisites",
+    )
+    parser.add_argument(
+        "--pdf-evidence",
+        type=Path,
+        help="Export a synthetic Task6 real HTTP browser capture without repeating OCR",
+    )
+    args = parser.parse_args()
+    if args.pdf_evidence:
+        capture_value = json.loads(args.pdf_evidence.read_text())
+        args.output.mkdir(parents=True, exist_ok=True)
+        for key in (
+            "analysed",
+            "accepted",
+            "events",
+            "excluded",
+            "included",
+            "evidence",
+            "windows",
+            "units",
+            "coverage",
+            "diagnostics",
+        ):
+            (args.output / f"task6-pdf-{key}.json").write_text(
+                json.dumps(redact_pdf(capture_value[key]), indent=2) + "\n"
+            )
+    else:
+        asyncio.run(capture_pdf(args.output) if args.pdf else capture(args.output))

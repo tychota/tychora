@@ -10,6 +10,7 @@ import {
 } from "react";
 import type { JobHandle } from "../../api/operations";
 import { SubmissionIntent } from "../sources/submission";
+import type { PendingPdfSubmission } from "../sources/pdfIntake";
 import type { ApiClient } from "../../api/client";
 export interface AddDocumentDraft {
   type: string;
@@ -38,6 +39,7 @@ interface DraftContext {
   intent: SubmissionIntent;
   /** Task 6 retains this exact client/scope for receipt-bound PDF requests. */
   receiptOwner: React.RefObject<ApiClient | null>;
+  pendingPdf: React.RefObject<PendingPdfSubmission | null>;
 }
 const Context = createContext<DraftContext | null>(null);
 export function AddDocumentDraftProvider({
@@ -64,10 +66,25 @@ export function AddDocumentDraftProvider({
   const [draftId] = useState(() => crypto.randomUUID());
   const intent = useRef(new SubmissionIntent());
   const receiptOwner = useRef<ApiClient | null>(null);
-  useEffect(() => () => receiptOwner.current?.dispose(), []);
+  const pendingPdf = useRef<PendingPdfSubmission | null>(null);
+  useEffect(
+    () => () => {
+      receiptOwner.current?.dispose();
+      pendingPdf.current?.owner.dispose();
+      pendingPdf.current = null;
+    },
+    [],
+  );
   return (
     <Context.Provider
-      value={{ draft, setDraft, draftId, intent: intent.current, receiptOwner }}
+      value={{
+        draft,
+        setDraft,
+        draftId,
+        intent: intent.current,
+        receiptOwner,
+        pendingPdf,
+      }}
     >
       {children}
     </Context.Provider>
