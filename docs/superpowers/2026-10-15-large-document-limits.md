@@ -11,6 +11,8 @@ Audience: whoever continues `feat/dashboard`. Branch `fix/docling-formula-spans`
 
 | `fix: keep capped lexical results complete under strict retrieval` | Every strict search on a real corpus fails with `INDEX_INCOMPLETE` | The lexical adapter reported its intentional 80-candidate truncation as an incomplete channel (review-assessment item 1) | Report the channel complete after scoring all eligible rows; truncation stays visible through `distinct_candidate_count`; the existing 81-match test now asserts this |
 
+| `fix: skip empty excerpt ranges on textless picture units` + `fix: skip whitespace separators between table cell fragments` | After the lexical fix, searches on a corpus with tables failed with `INTEGRITY_ERROR: Document excerpt has no physical fragment` | `_physical_ranges` required an overlapping locator even for an empty range (picture units keep zero-width locators) or a range covering only the tab between two table-cell fragments | Empty and whitespace-only ranges outside every fragment yield no fragment; non-whitespace text outside every fragment still fails; tests in `tests/retrieval/test_segments.py` |
+
 The formula text itself is still not searchable (empty projection). Making `orig` the unit text for formulas is a separate semantic decision.
 
 ## Still open
@@ -20,6 +22,9 @@ The formula text itself is still not searchable (empty projection). Making `orig
 3. **Opaque failures.** Unexpected exceptions in source jobs become `JOB_INTERRUPTED` (retryable) with no diagnostic, and parser-process failures become a bare `INVALID_REQUEST`. The server logs nothing. Each of the issues above needed an in-process reproduction to diagnose. Map known parser/mapping failures to typed errors with a reason, and record a bounded diagnostic on the job.
 4. **Transient provider failure.** One `PROVIDER_FAILURE` occurred on a small PDF and did not recur on retry; nothing was logged, so its cause is unknown.
 5. **Scanned PDFs.** Image-only PDFs need the OCR intake (`/v1/pdf-intakes`, redesign Task 6); the ordinary file add parses them with `do_ocr=False` and indexes nothing useful.
+
+6. **Query latency.** On a ~22k-unit workspace (online Voyage text + rerank), strict searches take 15–31 s, close to the 30 s local HTTP deadline (one query returned `DEADLINE_EXCEEDED`). Not yet profiled.
+7. **Review of `d6882ea` (streamed PDF composition): approve with nits.** Legacy composed manifests replay byte-identically (cross-commit check), bounds are enforced on descriptors before reads, and no partial canonical state was found. Follow-ups: (a) medium — `application/discovery.py:822-827` replays and decodes every page image of the raw extraction on each paginated `source_selections` request (~300 MB I/O for a 382-page scan); cache per extraction or verify only the selected image, with cancellation; (b) low — `application/restore.py:446-456` catches only `ValueError`, so `LIMIT_EXCEEDED` escapes the config loop and the outer `INTEGRITY_ERROR` mapping; it also hardcodes `512*1024*1024` instead of `MAX_COMPOSITION_REPLAY_BYTES`; (c) low — new admission validation raises bare `ValueError`, surfacing as retryable `JOB_INTERRUPTED`; (d) nit — raw images are read/hashed up to three times and the extraction revalidated per admission call; (e) add a fixed-digest legacy identity test.
 
 ## Verification on this branch
 
