@@ -1,0 +1,19 @@
+docs/superpowers/2026-10-15-large-document-limits.md
+  s_ab847b2c6c265a::t_f909729cb0bc50 14-15,26-28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c26b4d6a06fa9fcf9f38905ea579ab2c5d8056f0",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
