@@ -154,3 +154,72 @@ async def test_qualified_http_pdf_submission_publishes_and_reports_batches(tmp_p
             (tmp_path / "qualified-job-response.json").write_bytes(
                 canonical_bytes(status.model_dump(mode="json"))
             )
+
+
+@pytest.mark.asyncio
+async def test_pdf_composition_limit_is_durable_nonretryable_job_failure(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from tychora.application import pdf_processing
+    from tychora.contracts.artifacts import ArtifactRef
+    from tychora.contracts.composition import DocumentCompositionPlan
+    from tychora.ingestion.composition import _input_references
+
+    monkeypatch.setattr(pdf_processing, "resolve_pdf_policy", synthetic_policy_resolver)
+    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+
+        async def oversized_parser_output(*args, **kwargs):
+            # Only descriptors; exercise the authoritative input admission and real
+            # source-job failure mapping without allocating 256 MiB or loading models.
+            ref = ArtifactRef(
+                sha256="e" * 64,
+                storage_key="e" * 64,
+                size_bytes=268435457,
+                media_type="image/png",
+            )
+            parsed = SimpleNamespace(
+                assets=(SimpleNamespace(artifact_ref=ref),),
+                pdf_processing=FrozenJsonMap({"mode": "native"}),
+            )
+            _input_references(
+                parsed, DocumentCompositionPlan(base_normalizer_fingerprint="f" * 64)
+            )
+            pytest.fail("Oversized composition was accepted")
+
+        monkeypatch.setattr(
+            kb._workspace.services.sources, "_extract", oversized_parser_output
+        )
+        async with client_for(app_for(kb)) as client:
+            data = make_pdf(tmp_path)
+            receipt = (
+                await client.post("/v1/pdf-intakes", json=descriptor(kb, len(data)))
+            ).json()
+            path = "/v1/pdf-intakes/" + receipt["intake_id"]
+            await client.put(path + "/content", content=data)
+            analysis = (await client.post(path + "/analyse")).json()["analysis"]
+            response = await client.post(
+                path + "/submit",
+                json={
+                    name: analysis[name]
+                    for name in ("analysis_sha256", "policy_sha256")
+                },
+                headers={"Idempotency-Key": "over-limit"},
+            )
+            assert response.status_code == 202
+            status = await kb._workspace.services.jobs.wait(
+                response.json()["id"], ExecutionContext()
+            )
+            assert status.state == "failed"
+            assert status.error_code == "LIMIT_EXCEEDED"
+            assert status.captured_inputs is not None
+            retry_class = await kb._workspace.owner.run_blocking(
+                lambda: kb._workspace.owner.db.execute(
+                    "SELECT state FROM job_steps WHERE job_id=? AND step_key='__tychora__/retry'",
+                    (status.id,),
+                ).fetchone()[0],
+                ExecutionContext(),
+            )
+            assert retry_class == "permanent"
+            assert status.result_snapshot_id is None
