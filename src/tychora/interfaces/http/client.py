@@ -441,6 +441,16 @@ class HTTPClient:
             self.closed = True
             self._http.close()
 
+    def dashboard_launch_link(self) -> str:
+        """Mint a one-time dashboard link from the live owner (owner token only)."""
+        value = self._request("POST", "/v1/session/launch-codes").json()
+        url = value.get("url") if isinstance(value, dict) else None
+        if not isinstance(url, str) or not url.startswith(
+            self.endpoint + "/dashboard/#launch="
+        ):
+            raise TychoraError("PROVIDER_FAILURE", "Local HTTP response is invalid.")
+        return url
+
     @property
     def default_collection_id(self) -> UUID:
         self._require_open()

@@ -21,6 +21,7 @@ class LocalAuth:
         origin: str | None = None,
         max_request_bytes: int = 1024 * 1024,
         managed_owner_token: str | None = None,
+        launch_token: str | None = None,
     ) -> None:
         parsed = urlsplit(f"http://{authority}")
         if (
@@ -42,6 +43,16 @@ class LocalAuth:
             raise TychoraError(
                 "INVALID_REQUEST", "Managed token must have an explicit initial grant."
             )
+        if launch_token is not None and launch_token not in token_scopes:
+            raise TychoraError(
+                "INVALID_REQUEST", "Launch token must have an explicit grant."
+            )
+        from .launch import LaunchCodes
+
+        # Dashboard launch codes are opt-in composition, used by `serve`.
+        self.launch_codes = (
+            LaunchCodes(launch_token) if launch_token is not None else None
+        )
         self._managed_slot = (
             (managed_owner_token, token_scopes[managed_owner_token])
             if managed_owner_token is not None
