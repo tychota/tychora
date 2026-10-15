@@ -1,0 +1,145 @@
+src/tychora/contracts/pdf_policy.py
+  s_346481235fa7eb::t_b8c65b488da3a4 22,29-30,35-36
+src/tychora/adapters/docling/text_coordinates.py
+  s_346481235fa7eb::t_99fcef229ea472 172-188
+  s_346481235fa7eb::t_2c77b440dfd600 1-12,14-25,33-51,55-70,78-82,88-91,93,119-121,126-131,135-140,144-146,151-159,161-166
+  s_346481235fa7eb::t_03b7594f7ecf29 13,71-77,92,94,97,100-103,110-112,160
+  s_346481235fa7eb::t_0ebf27d22eb4e0 26-32,52-54,83-87,95-96,98-99,104-109,113-118,122-125,132-134,141-143,147-150,167-171,189-192
+dashboard/src/styles.css
+  s_346481235fa7eb::t_aef8248158c8c1 481-490
+tests/cli/test_commands.py
+  s_346481235fa7eb::t_e68db811ced898 44,54-57
+tests/transports/test_pdf_policy_confirmation.py
+  s_346481235fa7eb::t_9aad34762f04b7 5,16-20,168,170,207-208
+  s_346481235fa7eb::t_062cf99e9f9720 209-214
+tests/runtime/test_parser_bounds.py
+  s_346481235fa7eb::t_9aad34762f04b7 41-59,145-147
+  s_346481235fa7eb::t_d34a2539be7cce 24
+dashboard/src/pages/search/request.ts
+  s_346481235fa7eb::t_d34a5ef696b3e8 1-29
+  s_346481235fa7eb::t_aa5946c9ee09ff 30-49
+tests/ingestion/test_pdf_coordinates.py
+  s_346481235fa7eb::t_43fbc26a2ecb4c 9,22-24,228-234,236-239,243-279
+  s_346481235fa7eb::t_5b1b76ccd660e5 1-8,10-21,25-48,54-57,89-106,109,116-121,141-147,152-160,162-163,167-175,178-181,186-216,218,280,282-287,298
+  s_346481235fa7eb::t_497c9be6080656 302-303,307-312,323-324,326-327,331,335-337,342-352,357-359
+  s_346481235fa7eb::t_0ebf27d22eb4e0 49-53,58-88,107-108,110-115,122-140,148-151,161,164-166,176-177,182-185,217,219-227,235,240-242,281,288-297,299-301,304-306,313-322,325,328-330,332-334,338-341,353-356,360-362
+  s_346481235fa7eb::t_bc992311ec5526 363-365
+src/tychora/adapters/docling/ocr_lineage_capture.py
+  s_346481235fa7eb::t_b8c65b488da3a4 15,17,46,49-73
+  s_346481235fa7eb::t_c9db6c1e3faa0a 74,77,101,110-111,121,157,263
+src/tychora/contracts/extraction.py
+  s_346481235fa7eb::t_99fcef229ea472 140,147-148,193-200
+  s_346481235fa7eb::t_7e382bb2a81b44 201-205,223
+docs/dashboard.md
+  s_346481235fa7eb::t_89ff7e22892b2e 15,42-43,48-60
+  s_346481235fa7eb::t_c36b43c543e4b5 61
+  s_346481235fa7eb::t_3a8e955c4d989c 62
+src/tychora/application/pdf_processing.py
+  s_346481235fa7eb::t_b8c65b488da3a4 151
+dashboard/src/pages/sources/PdfIntakePanel.tsx
+  s_346481235fa7eb::t_d34a5ef696b3e8 338-339
+  s_346481235fa7eb::t_c39ea309f0186a 340-341
+dashboard/src/test/pdf-intake.test.tsx
+  s_346481235fa7eb::t_ac5f1e1eb1ee6e 197-223,225,227,234,238
+  s_346481235fa7eb::t_d5535ef25cdadb 224,226,228-233,235-237,239-241
+dashboard/src/components/Relations.tsx
+  s_346481235fa7eb::t_d34a5ef696b3e8 121-122
+dashboard/e2e/task5.spec.ts
+  s_346481235fa7eb::t_3f7b93d9879db6 18-23
+src/tychora/adapters/docling/pdf_batches.py
+  s_346481235fa7eb::t_99fcef229ea472 271-278,305-307,365,410-421,491-492,511
+  s_346481235fa7eb::t_b8c65b488da3a4 17-19,21,40-41,43,495-503
+  s_346481235fa7eb::t_b2f548fc4566a5 44-45,134-135,214-215,493-494,504-505,507,510,512,524-532
+src/tychora/adapters/docling/ocr_lineage.py
+  s_346481235fa7eb::t_99fcef229ea472 250,256-257
+  s_346481235fa7eb::t_2c77b440dfd600 82,100,114,120-121,144,146-148,153-154,158,161-166
+  s_346481235fa7eb::t_da784fcfb36270 258-261
+src/tychora/adapters/docling/parser.py
+  s_346481235fa7eb::t_99fcef229ea472 422-424,670-682
+  s_346481235fa7eb::t_00c301464bb8be 683-689,716-728,776-783,1004-1009,1067-1068
+dashboard/src/api/contracts.ts
+  s_346481235fa7eb::t_d34a5ef696b3e8 279-282,286-306,308-311,314-317
+  s_346481235fa7eb::t_bf2b2a61cc2ea2 318-319
+dashboard/e2e/task7.spec.ts
+  s_346481235fa7eb::t_c36b43c543e4b5 5-8,13-16,19-28,30-37,40-76,78-98,100-110,113-115,119-129,131-136,142-152,154-163,165-183,186-190,192,195-201,203-212,215-227,232-260
+  s_346481235fa7eb::t_3343ce6c63b6f5 1-4,9-12,17-18,29,38-39,77,99,111-112,116-118,130,137-141,153,164,184-185,191,193-194,202,213-214,228-231,261
+  s_346481235fa7eb::t_751b8187204a9d 262-269
+dashboard/src/test/task5.test.tsx
+  s_346481235fa7eb::t_ac5f1e1eb1ee6e 16,346-348,355,371,407-415,423-424,426,440-444,515-517,522-523,527-528,540,544,547
+  s_346481235fa7eb::t_c36b43c543e4b5 349-354,356-359,380,382,384-387,405-406,478,480-484,488-513
+  s_346481235fa7eb::t_004498d656e67e 360-370,372-379,381,383,388-404,416-422,425,427-439,452-454,461-464,467-470,474-477,479,485-487,518-521,524-526,529-539,541-543,548
+  s_346481235fa7eb::t_3343ce6c63b6f5 445-451,455-460,465-466,471-473,514,545
+  s_346481235fa7eb::t_f62f1376e4b468 546,549
+src/tychora/contracts/documents.py
+  s_346481235fa7eb::t_b8c65b488da3a4 84-87,295,301-302,304,419,437-439
+  s_346481235fa7eb::t_1a0a3e01766bf1 440-441,445-446,472-473
+src/tychora/ingestion/document_parts.py
+  s_346481235fa7eb::t_b8c65b488da3a4 80-81
+dashboard/e2e/task6.spec.ts
+  s_346481235fa7eb::t_3f7b93d9879db6 12-17
+dashboard/src/pages/Search.tsx
+  s_346481235fa7eb::t_aef8248158c8c1 34-40,172-177,181-184,329-332,348-354,357-360,363-370,372-373,519
+  s_346481235fa7eb::t_004498d656e67e 347
+  s_346481235fa7eb::t_e68db811ced898 197,201-203
+  s_346481235fa7eb::t_d34a5ef696b3e8 10,21,33,75-81,114,119,137,157,170-171,178-180,185-195,302,355-356,486-487,498-507
+  s_346481235fa7eb::t_c36b43c543e4b5 198-200,278-282,284-296,361-362,374-398,400,402-404,406-407,415-424,426-431
+  s_346481235fa7eb::t_3ff631a9caf3b0 432-485,488-497,508-518,734,737-738,757,871-876
+src/tychora/adapters/docling/ocr_evidence.py
+  s_346481235fa7eb::t_99fcef229ea472 235-242,251-253
+  s_346481235fa7eb::t_3b4fa40f467c7a 254
+src/tychora/adapters/docling/mapping.py
+  s_346481235fa7eb::t_b8c65b488da3a4 20-24,31,142,159-161
+  s_346481235fa7eb::t_8899d1f9883e74 162-163,165-168,196-197
+dashboard/src/test/workbench.test.tsx
+  s_346481235fa7eb::t_c36b43c543e4b5 412
+dashboard/src/components/EvidenceReader.tsx
+  s_346481235fa7eb::t_89e4eba64ed7b8 329-345,412-428
+docs/superpowers/plans/2026-10-14-dashboard-redesign.md
+  s_346481235fa7eb::t_3c37452a5d43a8 52-57,112,118,124,128-130,133,135-167,195,198-200,248,250-251,255-258,265,268-273,292-297,301,303-306
+docs/superpowers/plans/2026-10-14-indexed-content-inspection.md
+  s_346481235fa7eb::t_8f57fdbc12337a 39,47
+docs/superpowers/plans/2026-10-14-pdf-intake.md
+  s_346481235fa7eb::t_312ece6f870ab6 51-52,73-74,84,98,111,115,144,146-155,158-171,187-189,225-227,234,240-249,255-271,274-276,288-290,292-294
+src/tychora/resources/dashboard/assets/index-BNrj406m.css
+  s_346481235fa7eb::t_3a6c33c07f50a5 1
+src/tychora/resources/dashboard/assets/index-D8cDXeD0.js
+  s_346481235fa7eb::t_03e8aa514f2e5a 1,3,6,8-12,14-15
+src/tychora/resources/dashboard/index.html
+  s_346481235fa7eb::t_f09f52c5787ce9 9-10
+tests/evaluation/test_graph_scenarios.py
+  s_346481235fa7eb::t_43eaf705e21560 170
+tests/evaluation/test_table_scenario.py
+  s_346481235fa7eb::t_28eaddfe2916c7 143
+tests/indexing/test_recovery.py
+  s_346481235fa7eb::t_3928e01ac17ba4 72
+tests/indexing/test_sources.py
+  s_346481235fa7eb::t_3c24f19226af08 139,209,312,708,787,1065
+tests/ingestion/test_ocr_lineage.py
+  s_346481235fa7eb::t_b007f6f53adbf3 5,9-10,84,86-88,103-104,106-107,409,648
+tests/ingestion/test_ocr_origin.py
+  s_346481235fa7eb::t_cfb12c0961a585 97,385-387,400-402,405-414
+tests/ingestion/test_pdf_batches.py
+  s_346481235fa7eb::t_0909e7d2e8f421 1,11,86-87,89-92,95
+tests/qualification/test_scanned_pdf.py
+  s_346481235fa7eb::t_642340943c1a0c 18,121,249-251,253-256,268,270,273-274,278,298,354,425-427
+tests/retrieval/test_eligibility.py
+  s_346481235fa7eb::t_cac026f7780cdd 435
+tests/storage/test_corpus.py
+  s_346481235fa7eb::t_40f8740c5e591f 404-408
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8e743ae568ececdbb531427eb1c3997956f101ab",
+  "prompts": {},
+  "sessions": {
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
