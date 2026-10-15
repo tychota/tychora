@@ -271,6 +271,12 @@ class DiscoveryService:
                     ),
                 }
             case "settings":
+                from tychora.ingestion.composition import (
+                    MAX_COMPOSITION_GROUP_BYTES,
+                    MAX_COMPOSITION_INPUT_BYTES,
+                    MAX_COMPOSITION_REPLAY_BYTES,
+                )
+
                 safe = self.config.inspect(owner_authorized=False)
                 values = cast(FrozenJsonMap, safe["values"])
                 return {
@@ -285,6 +291,18 @@ class DiscoveryService:
                                 "health_scope": "whole_workspace",
                                 "health_capability": "read",
                                 "resume_deletions_capability": "manage",
+                            },
+                            "document_composition_inputs": {
+                                "legacy": {
+                                    "aggregate_bytes": MAX_COMPOSITION_INPUT_BYTES,
+                                },
+                                "pdf-streamed-images@1": {
+                                    "raw_images": "exact_declared_bindings_streamed",
+                                    "nonraw_aggregate_bytes": MAX_COMPOSITION_INPUT_BYTES,
+                                    "unique_encoded_group_bytes": MAX_COMPOSITION_GROUP_BYTES,
+                                    "unique_inputs_and_products_bytes": MAX_COMPOSITION_REPLAY_BYTES,
+                                    "maximum_pdf_retained_bytes": 1073741824,
+                                },
                             },
                             "parser_limits": {
                                 "native_source_bytes": min(
@@ -769,8 +787,8 @@ class DiscoveryService:
             if row is None or original is None or original[0] != "present":
                 raise TychoraError("NOT_FOUND", "Selectable extraction is unavailable.")
 
-            def read_ref(ref: ArtifactRef) -> bytes:
-                if ref.size_bytes > 16 * 1024 * 1024:
+            def read_ref(ref: ArtifactRef, maximum: int = 16 * 1024 * 1024) -> bytes:
+                if ref.size_bytes > maximum:
                     raise TychoraError(
                         "INVALID_REQUEST", "Selection inspection exceeds its limit."
                     )
@@ -801,7 +819,12 @@ class DiscoveryService:
             raw = read_ref(raw_ref)
             raw_data = json.loads(raw)["data"]
             doc_ref = ArtifactRef.model_validate(raw_data["docling_json_ref"])
-            parsed = replay_document(raw, read_ref(doc_ref), raw_ref)
+            parsed = replay_document(
+                raw,
+                read_ref(doc_ref),
+                raw_ref,
+                read_declared=lambda ref: read_ref(ref, 256 * 1024 * 1024),
+            )
             if (
                 parsed.registration.source.source_id != source_id
                 or parsed.registration.revision.revision_id != revision_id

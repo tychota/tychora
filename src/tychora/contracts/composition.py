@@ -308,6 +308,7 @@ class VisionCapabilityDiagnostics(Contract):
 
 class DocumentCompositionPlan(Contract):
     base_normalizer_fingerprint: Sha256
+    input_strategy: Literal["pdf-streamed-images@1"] | None = None
     table_strategy: Literal["table-fragments@1"] = "table-fragments@1"
     proxy_strategy: Literal["asset-proxies@1"] = "asset-proxies@1"
     infer_table_continuations: bool = True
@@ -315,6 +316,13 @@ class DocumentCompositionPlan(Contract):
     proxies: tuple[PlannedProxy, ...] = ()
     pixel_regions: tuple[PlannedRegion, ...] = ()
     vision_gaps: Annotated[tuple[VisionCapabilityGap, ...], Field(max_length=100)] = ()
+
+    @model_serializer(mode="wrap")
+    def legacy_input_strategy(self, handler):
+        data = handler(self)
+        if self.input_strategy is None:
+            data.pop("input_strategy", None)
+        return data
 
     def semantic_data(self) -> JsonValue:
         """Preserve the exact Task13 plan form when no region enrichment exists."""
