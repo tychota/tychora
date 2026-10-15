@@ -232,6 +232,14 @@ def _validate_ocr_origins(parsed):
         validate_ordered_ocr_lineage(parsed, evidence)
     elif parsed.ocr_lineage is not None:
         raise ValueError("Legacy PDF cannot carry ordered OCR cell lineage")
+    if policy.text_coordinates:
+        native = parsed.native_text_evidence
+        if native is None or tuple(
+            page["physical_page"] for page in native["pages"]
+        ) != tuple(sorted((*policy.native_pages, *policy.blank_pages))):
+            raise ValueError("Native assembly page coverage differs from policy")
+    elif parsed.native_text_evidence is not None:
+        raise ValueError("Legacy PDF cannot carry native coordinate proof")
     from .ocr_lineage import evidence_document
 
     if parsed.image_representation != "scan-external-images@1":
@@ -240,7 +248,10 @@ def _validate_ocr_origins(parsed):
         (
             parsed.ocr_evidence_ref,
             evidence_document(
-                parsed.ocr_pages, parsed.ocr_lineage, policy.origin_proof
+                parsed.ocr_pages,
+                parsed.ocr_lineage,
+                policy.origin_proof,
+                native=parsed.native_text_evidence,
             ),
         ),
         (

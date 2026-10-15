@@ -18,10 +18,10 @@ class WrappedPdfParser:
 
     def _convert(self, call, paths, report):
         from pathlib import PurePath
-        from types import SimpleNamespace
 
         from docling.datamodel.base_models import InputFormat
         from docling.datamodel.document import InputDocument
+        from docling.datamodel.pipeline_options import PipelineOptions
         from docling.pipeline.base_pipeline import BasePipeline
 
         from tychora.adapters.docling.ocr_lineage_capture import invalid
@@ -38,11 +38,25 @@ class WrappedPdfParser:
                     raise RuntimeError("Synthetic unrelated wrapper") from None
             invalid()
 
-        pipeline = SimpleNamespace(
-            _build_document=lambda result: result,
-            _assemble_document=assemble,
-            _unload=lambda result: None,
-        )
+        class SyntheticPipeline(BasePipeline):
+            def _build_document(self, conv_res):
+                return conv_res
+
+            def _assemble_document(self, conv_res):
+                return assemble(conv_res)
+
+            def _determine_status(self, conv_res):
+                return conv_res.status
+
+            @classmethod
+            def get_default_options(cls):
+                return PipelineOptions()
+
+            @classmethod
+            def is_backend_supported(cls, backend):
+                return False
+
+        pipeline = SyntheticPipeline(PipelineOptions())
         document = InputDocument.model_construct(
             file=PurePath("synthetic.pdf"),
             document_hash="a" * 64,
@@ -128,6 +142,9 @@ def test_bounded_parser_reaps_before_return(tmp_path, cancel):
 
 
 class BatchParser:
+    def __call__(self, paths):
+        raise AssertionError("Batch parser requires the bounded report protocol")
+
     def run(self, paths, report):
         from tychora.application.owner import StagedOutput
         from tychora.application.runtime import ParserOutputBatch

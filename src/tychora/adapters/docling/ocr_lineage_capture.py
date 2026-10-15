@@ -12,8 +12,9 @@ def invalid():
 
 
 class LineageCapture:
-    def __init__(self, pages):
+    def __init__(self, pages, *, from_ocr=True):
         self.pages = pages
+        self.from_ocr = from_ocr
         self.records = {}
         self.tables = {}
 
@@ -42,12 +43,38 @@ class LineageCapture:
                 invalid()
             ids.append(index)
         segment = {"page": page, "cells": ids, "join": join}
-        segment_text(segment, self.evidence)
+        self.segment_text(segment)
         return segment
+
+    def segment_text(self, segment):
+        return segment_text(segment, self.evidence, from_ocr=self.from_ocr)
+
+    def capture_native_page(self, page):
+        if self.from_ocr:
+            return
+        cells = [
+            {
+                "index": cell.index,
+                "text": cell.text,
+                "from_ocr": cell.from_ocr,
+                "confidence": cell.confidence,
+                "rect": cell.rect.model_dump(mode="json"),
+            }
+            for cell in page.cells
+        ]
+        if len(cells) > MAX_ENTRIES or any(
+            cell["index"] != index or cell["from_ocr"] is not False
+            for index, cell in enumerate(cells)
+        ):
+            invalid()
+        previous = self.pages.get(page.page_no)
+        if previous is not None and previous != {"cells": cells}:
+            invalid()
+        self.pages[page.page_no] = {"cells": cells}
 
     def bind(self, item, element, join="sanitize"):
         segment = self.segment(element.page_no, element.cluster.cells, join)
-        if join == "sanitize" and segment_text(segment, self.evidence) != element.text:
+        if join == "sanitize" and self.segment_text(segment) != element.text:
             invalid()
         projection = (
             "list"
@@ -71,7 +98,7 @@ class LineageCapture:
         self.records[item.self_ref] = record
 
     def check_text(self, item, record):
-        fields = text_fields(record, self.evidence)
+        fields = text_fields(record, self.evidence, from_ocr=self.from_ocr)
         if any(getattr(item, key) != value for key, value in fields.items()):
             invalid()
 
@@ -80,6 +107,8 @@ def instrument_reading_order(model, capture):
     class ReadingOrder(type(model)):
         def __call__(self, result):
             capture.records.clear()
+            for page in result.pages:
+                capture.capture_native_page(page)
             return super().__call__(result)
 
         def _handle_text_element(self, element, **kwargs):
@@ -89,7 +118,7 @@ def instrument_reading_order(model, capture):
 
         def _merge_elements(self, element, merged_elem, new_item, page_height):
             segment = capture.segment(merged_elem.page_no, merged_elem.cluster.cells)
-            if segment_text(segment, capture.evidence) != merged_elem.text:
+            if capture.segment_text(segment) != merged_elem.text:
                 invalid()
             super()._merge_elements(element, merged_elem, new_item, page_height)
             record = capture.records[new_item.self_ref]
@@ -125,7 +154,7 @@ def instrument_reading_order(model, capture):
             if len(cells) != len(item.data.table_cells):
                 invalid()
             for cell, segment in zip(item.data.table_cells, cells, strict=True):
-                if cell.text != segment_text(segment, capture.evidence):
+                if cell.text != capture.segment_text(segment):
                     invalid()
             capture.records[item.self_ref] = {
                 "native_ref": item.self_ref,
@@ -231,6 +260,7 @@ class LineageTableStage:
 
     def __call__(self, result, pages):
         for page in pages:
+            self.capture.capture_native_page(page)
             self.page = page.page_no
             self.pending = []
             yielded = list(self.model(result, (page,)))

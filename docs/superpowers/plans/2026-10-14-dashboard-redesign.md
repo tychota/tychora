@@ -49,8 +49,12 @@ PDF backend Tasks 1 and 2 execute under `docs/superpowers/plans/2026-10-14-pdf-i
 **Produced interfaces:**
 
 ```python
-def qualified_additive_registry_extension(retained: ResolvedConfig, current: ResolvedConfig) -> bool: ...
-async def kind_metadata_schema(kind_id: str, scope: RequestScope, ctx: ExecutionContext) -> KindMetadataForm: ...
+def qualified_additive_registry_extension(
+    retained: ResolvedConfig, current: ResolvedConfig
+) -> bool: ...
+async def kind_metadata_schema(
+    kind_id: str, scope: RequestScope, ctx: ExecutionContext
+) -> KindMetadataForm: ...
 ```
 
 The compatibility function is a predicate, not a fingerprint replacement. It first retains existing credential rotation and monotonic offline/root tightening rules, then proves all remaining representation configuration values exactly equal: extraction/parser/normalizer options, text/image provider/model/dimensions/chunking/accounting, graph/index semantics and all nonpermitted values. Existing kinds/schemas/relations and transitive definition/schema-reference bindings have identical canonical meanings. Added kinds must use the already-qualified normalizer and schemas validated by LocalSchemas. Existing lane/role/mode/facet/output meanings stay identical; the sole lane change permitted is insertion of newly added kind IDs into a preexisting lane admitted under unchanged modes. Existing kind→lane mapping/order/authority/review/use policy must stay fixed. Removed IDs, edited references, rebindings, changed schemas, provider/parser model changes and arbitrary new normalizer semantics return false. Pack/origin/derived digest differences are acceptable only after this source-level proof, never ignored upfront.
@@ -105,30 +109,62 @@ class CollectionPolicyV2(Contract):
     archived_at: AwareDatetime | None = None
     default_kind_id: Identifier | None = None  # null inherits qualified document@1
 
+
 class CollectionCreate(Contract):
     default_kind_id: Identifier | None = None
     title: Annotated[str, Field(min_length=1, max_length=200)]
     slug: Annotated[str, Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=100)]
+
 
 class CollectionEdit(Contract):
     default_kind_id: Identifier | None = None
     title: Annotated[str, Field(min_length=1, max_length=200)]
     slug: Annotated[str, Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$", max_length=100)]
 
+
 # Shared parser upgrades v1 projection in memory; rejects duplicate keys,
 # unregistered providers (unless existing injected-provider mode), unknown keys,
 # malformed timestamps and unknown versions. Serializing a mutation emits v2.
-def parse_collection_policy(raw: str, *, allow_injected_provider_ids=False) -> CollectionPolicyV2: ...
+def parse_collection_policy(
+    raw: str, *, allow_injected_provider_ids=False
+) -> CollectionPolicyV2: ...
 def collection_is_active(raw: str) -> bool: ...
 
+
 # CollectionService(owner) async methods perform canonical work on owner lane.
-async def list(scope: RequestScope, ctx: ExecutionContext, *, cursor=None, limit=50, include_archived=False) -> CollectionPage: ...
-async def get(collection_id: str, scope: RequestScope, ctx: ExecutionContext) -> CollectionSummary: ...
-async def create(request: CollectionCreate, scope: RequestScope, ctx: ExecutionContext, *, managed_owner_authorized: bool) -> CollectionSummary: ...
-async def edit(collection_id: str, request: CollectionEdit, scope: RequestScope, ctx: ExecutionContext) -> CollectionSummary: ...
-async def set_archived(collection_id: str, archived: bool, scope: RequestScope, ctx: ExecutionContext) -> CollectionSummary: ...
-async def consent(collection_id: str, scope: RequestScope, ctx: ExecutionContext) -> CollectionConsentView: ...
-async def documents(scope: RequestScope, ctx: ExecutionContext, *, cursor=None, limit=50) -> DocumentPage: ...
+async def list(
+    scope: RequestScope,
+    ctx: ExecutionContext,
+    *,
+    cursor=None,
+    limit=50,
+    include_archived=False,
+) -> CollectionPage: ...
+async def get(
+    collection_id: str, scope: RequestScope, ctx: ExecutionContext
+) -> CollectionSummary: ...
+async def create(
+    request: CollectionCreate,
+    scope: RequestScope,
+    ctx: ExecutionContext,
+    *,
+    managed_owner_authorized: bool,
+) -> CollectionSummary: ...
+async def edit(
+    collection_id: str,
+    request: CollectionEdit,
+    scope: RequestScope,
+    ctx: ExecutionContext,
+) -> CollectionSummary: ...
+async def set_archived(
+    collection_id: str, archived: bool, scope: RequestScope, ctx: ExecutionContext
+) -> CollectionSummary: ...
+async def consent(
+    collection_id: str, scope: RequestScope, ctx: ExecutionContext
+) -> CollectionConsentView: ...
+async def documents(
+    scope: RequestScope, ctx: ExecutionContext, *, cursor=None, limit=50
+) -> DocumentPage: ...
 ```
 
 CollectionSummary contains UUID/workspace/slug/title, archived_at, access_floor, policy_epoch and bounded summary fields. Page limits 1–100; opaque cursors bind to scope, subject and policy epoch. Return only granted readable rows. Name sorting/filtering can initially be done over the current bounded frontend page; do not claim global sorting if cursor order remains UUID.
@@ -156,9 +192,12 @@ def test_v1_collection_policy_remains_active():
     assert policy.upload_providers == ()
     assert policy.owner_upload_providers == ()
 
+
 def test_unknown_collection_policy_field_fails_closed():
     with pytest.raises(TychoraError) as error:
-        parse_collection_policy('{"schema_version":2,"upload_providers":[],"owner_upload_providers":[],"archived_at":null,"surprise":true}')
+        parse_collection_policy(
+            '{"schema_version":2,"upload_providers":[],"owner_upload_providers":[],"archived_at":null,"surprise":true}'
+        )
     assert error.value.code == "INTEGRITY_ERROR"
 ```
 
@@ -206,23 +245,32 @@ Snapshot publication retains unchanged prior members from archived collections. 
 # All base digests are server-issued SHA256 of exact workspace.toml bytes;
 # limits cap encoded request to ordinary 1 MiB HTTP boundary.
 class SettingsFieldChange(Contract):
-    path: NonEmptyStr                 # dot path from the fixed allowlist below
+    path: NonEmptyStr  # dot path from the fixed allowlist below
     action: Literal["set", "inherit"]
-    value: JsonValue | None = None    # inherit forbids value; set validates type
+    value: JsonValue | None = None  # inherit forbids value; set validates type
+
 
 class SettingsPatch(Contract):
     base_workspace_sha256: Sha256
-    changes: Annotated[tuple[SettingsFieldChange, ...], Field(min_length=1, max_length=32)]
+    changes: Annotated[
+        tuple[SettingsFieldChange, ...], Field(min_length=1, max_length=32)
+    ]
+
 
 class SettingsDraftService:
     async def fields(self, scope, ctx) -> SettingsFieldView: ...
     async def preview(self, patch: SettingsPatch, scope, ctx) -> SettingsPreview: ...
     async def apply(self, patch: SettingsPatch, scope, ctx) -> SettingsFieldView: ...
 
+
 class ModelInventoryService:
     async def catalog(self, scope, ctx) -> ModelCatalog: ...
-    async def setup_plan(self, selections: tuple[str, ...], scope, ctx) -> SetupPlanView: ...
-    async def readiness(self, selections: tuple[str, ...], scope, ctx) -> ModelReadiness: ...
+    async def setup_plan(
+        self, selections: tuple[str, ...], scope, ctx
+    ) -> SetupPlanView: ...
+    async def readiness(
+        self, selections: tuple[str, ...], scope, ctx
+    ) -> ModelReadiness: ...
 ```
 
 **HTTP:** GET `/v1/settings/fields`, POST `/v1/settings/preview`, PATCH `/v1/settings`; preserve GET/PUT `/v1/settings` for redacted inspection/expert activation. GET `/v1/models` gives qualified inventory; POST `/v1/models/setup-plan` with `{selections:[...]}`; GET `/v1/models/readiness?selection=...` for explicit selections. Setup execution stays POST `/v1/jobs` `{operation:"setup", assets:[...],offline,local_bundle}`. No alternate activate/download/rebuild/backup executor.
@@ -241,16 +289,21 @@ Preview returns redacted effective change list, base/candidate digests, `activat
 
 ```python
 def test_ast_patch_preserves_unrelated_structure():
-    original = ('schema_version=1\n# keep this\n[profiles.local]\n'
-                'builtin="documents@1"\n[defaults]\nprofile="local"\n'
-                '[configuration.providers.text]\nprovider="disabled"\n'
-                'credential_ref="env:UNCHANGED_REFERENCE"\n')
+    original = (
+        "schema_version=1\n# keep this\n[profiles.local]\n"
+        'builtin="documents@1"\n[defaults]\nprofile="local"\n'
+        '[configuration.providers.text]\nprovider="disabled"\n'
+        'credential_ref="env:UNCHANGED_REFERENCE"\n'
+    )
     document = tomlkit.parse(original)
     document["configuration"]["providers"]["text"]["model"] = "voyage-context-4"
     revised = tomlkit.dumps(document)
-    assert '# keep this' in revised
+    assert "# keep this" in revised
     assert tomllib.loads(revised)["profiles"] == tomllib.loads(original)["profiles"]
-    assert tomllib.loads(revised)["configuration"]["providers"]["text"]["credential_ref"] == "env:UNCHANGED_REFERENCE"
+    assert (
+        tomllib.loads(revised)["configuration"]["providers"]["text"]["credential_ref"]
+        == "env:UNCHANGED_REFERENCE"
+    )
 ```
 
 The product test calls SettingsDraftService; this library-level snippet illustrates the preservation contract rather than replacing integration coverage. Test inherited leaf removal restores resolved origin/value, and qualified model list excludes unsupported rerank runtime choices.

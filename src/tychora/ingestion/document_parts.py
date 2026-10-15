@@ -77,7 +77,8 @@ def _part_locators(
                 physical_page=prov.physical_page,
                 geometry=prov.geometry,
             )
-            for prov in item.provenance
+            for index, prov in enumerate(item.provenance)
+            if prov.char_domain != "docling_assembly_step" or index == 0
             if prov.char_domain != "docling_orig_text_item"
             or min(part.source_end, prov.charspan[1])
             > max(part.source_start, prov.charspan[0])

@@ -276,28 +276,46 @@ export type Filter =
   | {
       op: "range";
       field: string;
-      lower?: string | number;
-      upper?: string | number;
-      include_lower: boolean;
-      include_upper: boolean;
+      lower?: string | number | null;
+      upper?: string | number | null;
+      include_lower?: boolean;
+      include_upper?: boolean;
     }
   | { op: "and" | "or"; children: Filter[] };
 export interface QueryRequest {
-  input: { type: "question"; text: string };
-  mode?: string;
-  filters?: Filter;
-  revision_selector: "current" | "all";
-  revision_ids: string[];
-  as_of?: string;
-  cutoff?: string;
-  unknown_dates: "strict" | "permissive";
-  limit: number;
-  trace: boolean;
+  input:
+    | { type: "question" | "passage"; text: string }
+    | { type: "image"; asset_ref: string };
+  profile?: string | null;
+  mode?: string | null;
+  filters?: Filter | null;
+  hints?: string[];
+  context?: Record<string, Json>;
+  revision_selector?: "current" | "all";
+  revision_ids?: string[];
+  as_of?: string | null;
+  cutoff?: string | null;
+  unknown_dates?: "strict" | "permissive";
+  include_global?: boolean;
+  modalities?: string[];
+  previous_unit_ids?: string[];
+  exact_identifiers?: string[];
+  exact_only?: boolean;
+  limit?: number;
+  trace?: boolean;
+  render_targets?: RenderTarget[];
   budgets?: {
-    max_tokens: number;
-    tokenizer_id: string;
-    max_response_bytes: number;
+    max_tokens?: number;
+    tokenizer_id?: string;
+    max_response_bytes?: number;
+    render_targets?: RenderTarget[];
   };
+}
+export interface RenderTarget {
+  renderer: string;
+  profile_digest: string;
+  schema_digest: string;
+  serialization: string;
 }
 
 export interface PdfCoverage {

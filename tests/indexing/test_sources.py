@@ -136,7 +136,7 @@ async def test_add_and_sync_native_source_reuse_canonical_extraction(tmp_path):
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
         await owner.run_blocking(
             lambda: owner.db.execute(
-                "INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,'{}')",
+                'INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
                 (collection, owner.workspace_id, "manuals", "Manuals"),
             ),
             ExecutionContext(),
@@ -206,7 +206,7 @@ async def test_image_slot_publishes_required_empty_batch(tmp_path, monkeypatch, 
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
         await owner.run_blocking(
             lambda: owner.db.execute(
-                "INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,'{}')",
+                'INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
                 (collection, owner.workspace_id, "manuals", "Manuals"),
             ),
             ExecutionContext(),
@@ -309,7 +309,7 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
         await owner.run_blocking(
             lambda: owner.db.execute(
-                "INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,'{}')",
+                'INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
                 (collection, owner.workspace_id, "manuals", "Manuals"),
             ),
             ExecutionContext(),
@@ -705,7 +705,7 @@ async def test_relocated_file_with_identical_bytes_reuses_immutable_registration
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
         await owner.run_blocking(
             lambda: owner.db.execute(
-                "INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,'{}')",
+                'INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
                 (collection, owner.workspace_id, "manuals", "Manuals"),
             ),
             ExecutionContext(),
@@ -784,7 +784,7 @@ async def test_reselects_retained_extraction_after_intervening_revision(
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
         await owner.run_blocking(
             lambda: owner.db.execute(
-                "INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,'{}')",
+                'INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
                 (collection, owner.workspace_id, "manuals", "Manuals"),
             ),
             ExecutionContext(),
@@ -1062,7 +1062,7 @@ async def test_repository_source_uses_spawned_language_adapters(tmp_path, monkey
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
         await owner.run_blocking(
             lambda: owner.db.execute(
-                "INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,'{}')",
+                'INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
                 (collection, owner.workspace_id, "code", "Code"),
             ),
             ExecutionContext(),

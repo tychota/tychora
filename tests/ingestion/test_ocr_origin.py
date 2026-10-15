@@ -94,6 +94,7 @@ def test_pdf_coverage_distinguishes_detector_gaps_from_known_blank_pages():
         no_text_detected_pages=(1,),
     )
     diagnostic = VisionCapabilityDiagnostics(gaps=(), pdf_coverage=coverage)
+    assert diagnostic.pdf_coverage is not None
     assert diagnostic.pdf_coverage.no_text_detected_pages == (1,)
     assert diagnostic.pdf_coverage.blank_pages == (3,)
     with pytest.raises(ValueError):
@@ -381,7 +382,9 @@ def test_live_pdf_budget_counts_prior_outputs_and_deduplicates_repeated_refs(
     assert writes == []
 
 
-def test_legacy_composition_limit_and_conflicting_identity_remain_distinct():
+def test_legacy_composition_limit_and_conflicting_identity_remain_distinct(
+    retained_case,
+):
     from tychora.contracts.artifacts import ArtifactRef
     from tychora.contracts.base import FrozenJsonMap
     from tychora.contracts.composition import DocumentCompositionPlan
@@ -394,15 +397,21 @@ def test_legacy_composition_limit_and_conflicting_identity_remain_distinct():
         media_type="image/png",
     )
     plan = DocumentCompositionPlan(base_normalizer_fingerprint="b" * 64)
-    parsed = SimpleNamespace(
-        pdf_processing=None, assets=(SimpleNamespace(artifact_ref=ref),)
-    )
+    original, _, _ = retained_case
+    asset = original.assets[0].model_copy(update={"artifact_ref": ref})
+    parsed = original.model_copy(update={"pdf_processing": None, "assets": (asset,)})
     with pytest.raises(ValueError, match="aggregate capacity"):
         _input_references(parsed, plan)
-    parsed.pdf_processing = FrozenJsonMap({"mode": "native"})
-    parsed.assets = (
-        *parsed.assets,
-        SimpleNamespace(artifact_ref=ref.model_copy(update={"size_bytes": 1})),
+    parsed = parsed.model_copy(
+        update={
+            "pdf_processing": FrozenJsonMap({"mode": "native"}),
+            "assets": (
+                asset,
+                asset.model_copy(
+                    update={"artifact_ref": ref.model_copy(update={"size_bytes": 1})}
+                ),
+            ),
+        }
     )
     with pytest.raises(ValueError, match="Conflicting"):
         _input_references(parsed, plan)

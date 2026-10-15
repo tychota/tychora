@@ -2,6 +2,7 @@
 
 import pytest
 
+from tests.ingestion import test_docling_mapping as mapping_fixtures
 from tests.jobs.test_acquired_sources import synthetic_policy_resolver
 from tests.transports.test_http import Counter
 from tests.transports.test_pdf_intake import app_for, client_for, descriptor, make_pdf
@@ -11,6 +12,11 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.pdf_policy import PdfProcessingPolicy
 from tychora.ports.execution import ExecutionContext
+
+document_kind = mapping_fixtures.document_kind
+execution = mapping_fixtures.execution
+rich_capture = mapping_fixtures.rich_capture
+retained_case = mapping_fixtures.retained_case
 
 
 @pytest.mark.asyncio
@@ -159,11 +165,10 @@ async def test_qualified_http_pdf_submission_publishes_and_reports_batches(tmp_p
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("fault", ["limit", "lineage", "wrapped-lineage"])
+@pytest.mark.parametrize("execution", ["pdf"], indirect=True)
 async def test_pdf_composition_limit_is_durable_nonretryable_job_failure(
-    tmp_path, monkeypatch, fault
+    tmp_path, monkeypatch, fault, retained_case
 ):
-    from types import SimpleNamespace
-
     from tychora.application import pdf_processing
     from tychora.contracts.artifacts import ArtifactRef
     from tychora.contracts.composition import DocumentCompositionPlan
@@ -199,9 +204,14 @@ async def test_pdf_composition_limit_is_durable_nonretryable_job_failure(
                 size_bytes=268435457,
                 media_type="image/png",
             )
-            parsed = SimpleNamespace(
-                assets=(SimpleNamespace(artifact_ref=ref),),
-                pdf_processing=FrozenJsonMap({"mode": "native"}),
+            original, _, _ = retained_case
+            parsed = original.model_copy(
+                update={
+                    "assets": (
+                        original.assets[0].model_copy(update={"artifact_ref": ref}),
+                    ),
+                    "pdf_processing": FrozenJsonMap({"mode": "native"}),
+                }
             )
             _input_references(
                 parsed, DocumentCompositionPlan(base_normalizer_fingerprint="f" * 64)

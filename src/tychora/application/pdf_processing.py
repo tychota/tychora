@@ -148,6 +148,7 @@ def resolve_pdf_policy(owner, services, descriptor, facts, *, max_retained_bytes
         if not facts["unknown_pages"]:
             policy = PdfProcessingPolicy(
                 origin_proof="ordered-ocr-cells@1",
+                text_coordinates="docling-assembly@1",
                 mode="local_ocr" if scan else "native",
                 native_pages=tuple(facts["native_text_pages"]),
                 ocr_pages=tuple(facts["image_only_pages"]),

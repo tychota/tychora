@@ -137,12 +137,15 @@ class ExtractionArtifact(Contract):
     ocr_evidence_ref: ArtifactRef | None = None
     image_bindings_ref: ArtifactRef | None = None
     ocr_lineage: tuple[FrozenJsonMap, ...] | None = None
+    native_text_evidence: FrozenJsonMap | None = None
 
     @model_serializer(mode="wrap")
     def legacy_pdf_fields(self, handler):
         data = handler(self)
         if self.ocr_lineage is None:
             data.pop("ocr_lineage", None)
+        if self.native_text_evidence is None:
+            data.pop("native_text_evidence", None)
         if self.pdf_processing is None:
             for key in (
                 "pdf_processing",
@@ -187,7 +190,19 @@ class ExtractionArtifact(Contract):
             ):
                 raise ValueError("Docling JSON differs from retained artifact")
             document_units = cast(tuple[DocumentUnit, ...], self.units)
-            validate_document_units(self.document_json, document_units)
+            from tychora.adapters.docling.text_coordinates import coordinate_proof
+
+            coordinates = coordinate_proof(
+                self.pdf_processing.get("text_coordinates")
+                if self.pdf_processing
+                else None,
+                {page.physical_page: page for page in self.ocr_pages},
+                self.ocr_lineage,
+                self.native_text_evidence,
+            )
+            validate_document_units(
+                self.document_json, document_units, coordinates=coordinates
+            )
             validate_document_assets(
                 self.document_json,
                 document_units,
@@ -205,6 +220,7 @@ class ExtractionArtifact(Contract):
             elif (
                 self.ocr_pages
                 or self.ocr_lineage is not None
+                or self.native_text_evidence is not None
                 or self.image_bindings
                 or self.image_representation
                 or any(u.text_origin != "source" for u in document_units)

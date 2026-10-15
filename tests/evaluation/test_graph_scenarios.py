@@ -167,7 +167,7 @@ async def test_published_decisions_and_hidden_parent_support_are_excluded(tmp_pa
         await owner.run_blocking(
             lambda: owner.db.execute(
                 "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) "
-                "VALUES (?,?,?,?,0,'{}')",
+                'VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
                 (COLLECTION, owner.workspace_id, "manuals", "Manuals"),
             ),
             ctx,

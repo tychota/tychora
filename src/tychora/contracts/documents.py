@@ -81,7 +81,10 @@ class DocumentRegistration(Contract):
 
 class DocumentProvenance(Contract):
     char_domain: Literal[
-        "docling_text_item", "docling_orig_text_item", "docling_nontext_item"
+        "docling_text_item",
+        "docling_orig_text_item",
+        "docling_nontext_item",
+        "docling_assembly_step",
     ]
     charspan: tuple[NonNegativeInt, NonNegativeInt]
     physical_page: PositiveInt
@@ -289,13 +292,16 @@ def document_text_domain(
 
 
 def validate_document_units(
-    document: FrozenJsonMap, units: tuple[DocumentUnit, ...]
+    document: FrozenJsonMap, units: tuple[DocumentUnit, ...], *, coordinates=None
 ) -> None:
     """Bind every emitted fact to its retained native object and physical page."""
     from collections.abc import Mapping
     from typing import Any, cast
 
+    from tychora.adapters.docling.text_coordinates import project_document
+
     raw = cast(Mapping[str, Any], document)
+    projections = project_document(raw, coordinates)
     objects = {
         item["self_ref"]: item
         for name in (
@@ -410,7 +416,7 @@ def validate_document_units(
         if len(native_prov) != len(unit.provenance):
             raise ValueError("Document provenance coverage differs")
         expected_locators = []
-        for native, prov in zip(native_prov, unit.provenance):
+        for prov_index, (native, prov) in enumerate(zip(native_prov, unit.provenance)):
             page = raw["pages"][str(native["page_no"])]
             if page.get("page_no") != native["page_no"]:
                 raise ValueError(
@@ -428,12 +434,16 @@ def validate_document_units(
                 y0=height - box["t"] if bottom else box["t"],
                 y1=height - box["b"] if bottom else box["b"],
             )
-            domain, source_length, text_offset = document_text_domain(
-                FrozenJsonMap(item)
+            qualified = unit.native_ref in projections
+            domain, source_length, text_offset = (
+                ("docling_assembly_step", 0, 0)
+                if qualified
+                else document_text_domain(FrozenJsonMap(item))
             )
             span = tuple(native["charspan"])
             if (
-                domain != "docling_nontext_item"
+                not qualified
+                and domain != "docling_nontext_item"
                 and not 0 <= span[0] <= span[1] <= source_length
             ):
                 raise ValueError("Impossible retained Docling item span")
@@ -459,6 +469,8 @@ def validate_document_units(
                 if domain != "docling_nontext_item"
                 else len(unit.text)
             )
+            if qualified:
+                start, end = projections[unit.native_ref][prov_index]
             if domain != "docling_orig_text_item" or end > start:
                 expected_locators.append((start, end, prov.physical_page, expected))
         if (

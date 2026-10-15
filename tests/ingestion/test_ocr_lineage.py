@@ -2,8 +2,11 @@
 
 import importlib
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
+
+from tychora.contracts.base import FrozenJsonMap
 
 
 def lineage_module():
@@ -78,9 +81,11 @@ def test_policy_proof_version_changes_identity_without_changing_old_serializatio
         "options": {},
         "limits": {},
     }
-    old = PdfProcessingPolicy(**values)
+    old = PdfProcessingPolicy.model_validate(values)
     assert "origin_proof" not in old.model_dump(mode="json")
-    new = PdfProcessingPolicy(**values, origin_proof="ordered-ocr-cells@1")
+    new = PdfProcessingPolicy.model_validate(
+        {**values, "origin_proof": "ordered-ocr-cells@1"}
+    )
     assert policy_sha256(new) != policy_sha256(old)
 
 
@@ -95,11 +100,11 @@ def test_old_captured_policy_is_not_silently_upgraded_on_retry(monkeypatch):
         native_pages=(1,),
         ocr_pages=(),
         blank_pages=(),
-        backend_identity={},
-        runtime_inventory={},
+        backend_identity=FrozenJsonMap({}),
+        runtime_inventory=FrozenJsonMap({}),
         model_inventory_sha256="a" * 64,
-        options={},
-        limits={"max_retained_bytes": 1024},
+        options=FrozenJsonMap({}),
+        limits=FrozenJsonMap({"max_retained_bytes": 1024}),
     )
     before = canonical_bytes(old.model_dump(mode="json"))
     current = old.model_copy(update={"origin_proof": "ordered-ocr-cells@1"})
@@ -401,7 +406,7 @@ def test_exact_lineage_tampering_fails(mutation):
         "projection": "text",
         "segments": [{"page": 1, "cells": [0, 1], "join": "sanitize"}],
     }
-    records = [deepcopy(record)]
+    records: list[dict[str, Any]] = [deepcopy(record)]
     if mutation == "missing":
         records = []
     elif mutation == "page":
@@ -640,7 +645,7 @@ def test_actual_rich_table_picture_keeps_table_token_lineage():
     capture, doc, _, element = sdk_case(["table text"])
     cluster = element([], DocItemLabel.PICTURE).cluster
     picture = FigureElement(
-        label=DocItemLabel.PICTURE, id=1, page_no=1, cluster=cluster, text="", data=None
+        label=DocItemLabel.PICTURE, id=1, page_no=1, cluster=cluster, text=""
     )
     cell = TableCell(
         start_row_offset_idx=0,

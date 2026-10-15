@@ -478,6 +478,16 @@ summary {
   max-width: 72ch;
   user-select: text;
 }
+.structured-query textarea {
+  width: 100%;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.evidence-metadata {
+  margin: 1rem 0;
+  font-size: 13px;
+}
 .locators {
   padding-top: 0.8rem;
   border-top: 1px solid var(--line);

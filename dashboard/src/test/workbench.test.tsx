@@ -409,6 +409,7 @@ describe("connected workbench", () => {
         : fetch(path, init),
     );
     await search();
+    await waitFor(() => expect(resolve).toBeTypeOf("function"));
     fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
     await act(async () => resolve(new Response(JSON.stringify(query))));
     expect(screen.queryByText(query.run_id)).not.toBeInTheDocument();

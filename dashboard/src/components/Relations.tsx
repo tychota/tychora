@@ -118,8 +118,8 @@ export function Relations({ client, unitIds, onSelectUnit }: RelationsProps) {
         <>
           {result.paths.length === 0 && (
             <Status>
-              No relation paths were returned. This may reflect scope or an
-              unavailable relation channel.
+              No relation paths were returned for the selected seed, filters and
+              scope within this request’s bounds.
             </Status>
           )}
           {result.truncated && (
