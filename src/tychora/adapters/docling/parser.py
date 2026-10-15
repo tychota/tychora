@@ -312,7 +312,14 @@ class _Convert:
     def run(self, paths, report):
         from .pdf_batches import run_pdf_batches
 
-        return run_pdf_batches(self, paths, report)
+        try:
+            return run_pdf_batches(self, paths, report)
+        except RuntimeError as exc:
+            # The SDK wraps assembly failures with an explicit cause. Preserve
+            # our typed failure for the bounded worker's code-only sanitizer.
+            if isinstance(exc.__cause__, TychoraError):
+                raise exc.__cause__ from None
+            raise
 
     def __call__(self, paths: tuple[Path, ...]) -> tuple[StagedOutput, ...]:
         # This callable is the entire child payload: no canonical handles.

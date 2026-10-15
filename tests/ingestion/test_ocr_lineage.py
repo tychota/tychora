@@ -215,6 +215,131 @@ def test_real_sdk_emission_binds_exact_cells_and_fields(label):
 
 
 @pytest.mark.parametrize(
+    ("texts", "marker", "enumerated", "text", "original"),
+    [
+        (["Neutral sentence"], "", False, "Neutral sentence", "Neutral sentence"),
+        (["-"], "", False, "-", "-"),
+        (["1."], "", False, "1.", "1."),
+        (["• Neutral bullet"], "·", False, "Neutral bullet", "· Neutral bullet"),
+        (["1. Neutral number"], "1.", True, "Neutral number", "1. Neutral number"),
+        (
+            ["1.2 Neutral outline"],
+            "1.2",
+            True,
+            "Neutral outline",
+            "1.2 Neutral outline",
+        ),
+        (
+            ["Neutral first\nNeutral second"],
+            "",
+            False,
+            "Neutral first\nNeutral second",
+            "Neutral first\nNeutral second",
+        ),
+        (
+            ["- Neutral first\nNeutral second"],
+            "-",
+            False,
+            "Neutral first\nNeutral second",
+            "- Neutral first\nNeutral second",
+        ),
+        (
+            ["2. Neutral first\nNeutral second"],
+            "2.",
+            True,
+            "Neutral first\nNeutral second",
+            "2. Neutral first\nNeutral second",
+        ),
+        (
+            ["Neutral first", "Neutral second"],
+            "",
+            False,
+            "Neutral first Neutral second",
+            "Neutral first Neutral second",
+        ),
+    ],
+)
+def test_actual_list_emission_replays_exact_fields_and_preserves_cells(
+    texts, marker, enumerated, text, original
+):
+    from copy import deepcopy
+
+    from docling.models.stages.reading_order.readingorder_model import (
+        ReadingOrderModel,
+        ReadingOrderOptions,
+    )
+    from docling_core.types.doc import DocItemLabel
+
+    from tychora.adapters.docling.ocr_lineage import text_fields, validate_lineage
+    from tychora.adapters.docling.ocr_lineage_capture import instrument_reading_order
+
+    capture, doc, cells, element = sdk_case(texts)
+    before = [cell.model_dump(mode="json") for cell in cells]
+    saved = deepcopy(capture.pages)
+    model = instrument_reading_order(ReadingOrderModel(ReadingOrderOptions()), capture)
+    item, _ = model._handle_text_element(
+        element(list(range(len(cells))), DocItemLabel.LIST_ITEM),
+        out_doc=doc,
+        current_list=None,
+        parent=None,
+        page_height=200,
+    )
+    expected = {
+        "marker": marker,
+        "enumerated": enumerated,
+        "text": text,
+        "orig": original,
+    }
+    assert {key: getattr(item, key) for key in expected} == expected
+    assert text_fields(capture.records[item.self_ref], capture.evidence) == expected
+    unit = SimpleNamespace(
+        native_ref=item.self_ref,
+        text_origin="ocr",
+        provenance=(SimpleNamespace(physical_page=1),),
+        raw_item=item.model_dump(mode="json"),
+    )
+    validate_lineage((unit,), capture.evidence, tuple(capture.records.values()))
+    assert [cell.model_dump(mode="json") for cell in cells] == before
+    assert capture.pages == saved
+
+
+@pytest.mark.parametrize("text", ["Neutral sentence", "1. Neutral sentence"])
+@pytest.mark.parametrize("field", ["marker", "enumerated", "text", "orig"])
+def test_list_lineage_rejects_altered_emitted_fields(text, field):
+    from docling.models.stages.reading_order.readingorder_model import (
+        ReadingOrderModel,
+        ReadingOrderOptions,
+    )
+    from docling_core.types.doc import DocItemLabel
+
+    from tychora.adapters.docling.ocr_lineage import validate_lineage
+    from tychora.adapters.docling.ocr_lineage_capture import instrument_reading_order
+
+    capture, doc, _, element = sdk_case([text])
+    model = instrument_reading_order(ReadingOrderModel(ReadingOrderOptions()), capture)
+    item, _ = model._handle_text_element(
+        element([0], DocItemLabel.LIST_ITEM),
+        out_doc=doc,
+        current_list=None,
+        parent=None,
+        page_height=200,
+    )
+    unit = SimpleNamespace(
+        native_ref=item.self_ref,
+        text_origin="ocr",
+        provenance=(SimpleNamespace(physical_page=1),),
+        raw_item=item.model_dump(mode="json"),
+    )
+    records = tuple(capture.records.values())
+    validate_lineage((unit,), capture.evidence, records)
+    unit.raw_item[field] = (
+        not unit.raw_item[field] if field == "enumerated" else "substitution"
+    )
+    with pytest.raises(ValueError, match="lineage"):
+        validate_lineage((unit,), capture.evidence, records)
+
+
+@pytest.mark.parametrize(
     ("left", "right", "expected"),
     [
         ("algo-", "rithms", "algorithms"),
