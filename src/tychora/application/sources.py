@@ -88,8 +88,53 @@ if TYPE_CHECKING:
     from tychora.contracts.acquisition import CaptureManifest
     from tychora.contracts.artifacts import ArtifactRef
     from tychora.contracts.corpus import ExtractionBundle
+    from tychora.contracts.indexing import ContextGroup
     from tychora.indexing.coordinator import PreparedProjection, ProjectionCoordinator
     from tychora.ports.language import SyntaxResult
+
+# Matches the owner's per-authorization dependency bound.
+MAX_UPLOAD_DEPENDENCIES = 2048
+
+
+def upload_batches(
+    groups: tuple[ContextGroup, ...],
+) -> tuple[tuple[ContextGroup, ...], ...]:
+    """Split ordered groups so each separately authorized upload stays bounded."""
+    batches: list[list[ContextGroup]] = []
+    current: list[ContextGroup] = []
+    dependencies: frozenset[str] = frozenset()
+    for group in groups:
+        if len(group.dependency_ids) > MAX_UPLOAD_DEPENDENCIES:
+            raise TychoraError(
+                "INVALID_REQUEST",
+                "One embedding group exceeds the upload authorization bound",
+            )
+        merged = dependencies | group.dependency_ids
+        if current and len(merged) > MAX_UPLOAD_DEPENDENCIES:
+            batches.append(current)
+            current, merged = [], group.dependency_ids
+        current.append(group)
+        dependencies = merged
+    if current:
+        batches.append(current)
+    if len(batches) == 1:
+        return (groups,)
+    renumbered = []
+    for batch in batches:
+        # Request indices only pack provider calls; each batch restarts at zero.
+        indices = {
+            index: position
+            for position, index in enumerate(
+                dict.fromkeys(group.request_index for group in batch)
+            )
+        }
+        renumbered.append(
+            tuple(
+                group.model_copy(update={"request_index": indices[group.request_index]})
+                for group in batch
+            )
+        )
+    return tuple(renumbered)
 
 
 def _parse_code_file(
@@ -846,25 +891,32 @@ class SourceService:
             ).fetchone()[0],
             ctx,
         )
-        dependencies = frozenset().union(
-            *(group.dependency_ids for group in prepared.text_groups)
-        )
-        if self.coordinator.local_text_embedder is embedder:
-            return await self.owner.run_local_text(
-                lambda: embedder.embed_groups(prepared.text_groups, ctx),
-                ctx,
-                scope=scope,
-                dependencies=dependencies,
-                policy_epoch=epoch,
-            )
-        return await self.owner.run_provider(
-            embedder.capabilities.provider,
-            lambda: embedder.embed_groups(prepared.text_groups, ctx),
-            ctx,
-            scope=scope,
-            dependencies=dependencies,
-            policy_epoch=epoch,
-        )
+        records = []
+        # Every batch is authorized independently against the same policy epoch.
+        for batch in upload_batches(prepared.text_groups):
+            dependencies = frozenset().union(*(group.dependency_ids for group in batch))
+            if self.coordinator.local_text_embedder is embedder:
+                records.extend(
+                    await self.owner.run_local_text(
+                        partial(embedder.embed_groups, batch, ctx),
+                        ctx,
+                        scope=scope,
+                        dependencies=dependencies,
+                        policy_epoch=epoch,
+                    )
+                )
+            else:
+                records.extend(
+                    await self.owner.run_provider(
+                        embedder.capabilities.provider,
+                        partial(embedder.embed_groups, batch, ctx),
+                        ctx,
+                        scope=scope,
+                        dependencies=dependencies,
+                        policy_epoch=epoch,
+                    )
+                )
+        return tuple(records)
 
     async def _visual_records(
         self, prepared: PreparedProjection, scope: RequestScope, ctx: ExecutionContext
