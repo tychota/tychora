@@ -1378,3 +1378,42 @@ def test_empty_range_on_textless_picture_locator_yields_no_fragment():
     assert _physical_ranges(item, unit.unit_id, 0, 0) == ()
     with pytest.raises(TychoraError, match="no physical fragment"):
         _physical_ranges(item, unit.unit_id, 0, len(text))
+
+
+def test_separator_between_table_cell_fragments_yields_no_fragment():
+    import pytest
+
+    from tychora.contracts.errors import TychoraError
+    from tychora.contracts.evidence import DocumentLocator
+    from tychora.retrieval.segments import _physical_ranges
+
+    text = "rowA\trowB"
+    bundle, prepared, ranked, _view = case(
+        text, (RerankMatch(None, "placeholder", 0, len(text), "lexical", 1, 1.0),)
+    )
+    cells = tuple(
+        DocumentLocator(
+            artifact_ref=bundle.revision.original_sha,
+            native_ref=f"#/tables/0:{index}",
+            char_start=start,
+            char_end=end,
+            physical_page=1,
+        )
+        for index, (start, end) in enumerate(((0, 4), (5, 9)))
+    )
+    unit = bundle.units[0].model_copy(update={"locators": cells})
+    prepared = prepared.model_copy(
+        update={"units": (prepared.units[0].model_copy(update={"unit": unit}),)}
+    )
+    item = replace(
+        ranked.items[0], facts=replace(ranked.items[0].facts, prepared=prepared)
+    )
+    assert _physical_ranges(item, unit.unit_id, 4, 5) == ()
+    assert _physical_ranges(item, unit.unit_id, 3, 6) == ((3, 4), (5, 6))
+    gapped = unit.model_copy(update={"locators": cells[:1]})
+    prepared = prepared.model_copy(
+        update={"units": (prepared.units[0].model_copy(update={"unit": gapped}),)}
+    )
+    item = replace(item, facts=replace(item.facts, prepared=prepared))
+    with pytest.raises(TychoraError, match="no physical fragment"):
+        _physical_ranges(item, unit.unit_id, 5, 9)
