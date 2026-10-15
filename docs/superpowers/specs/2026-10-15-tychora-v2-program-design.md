@@ -49,6 +49,24 @@ What this document assumes and the product owner may correct:
 | Dashboard scope now | UX only: structure, flows, copy, interaction and visualisation behaviour. Fonts, colours and visual style are a later pass with the impeccable skill. | Product owner |
 | Immediate fix | Neighbour context and adjacent-result merging skip Docling documents (`retrieval/segments.py`); fixed test-first before sub-project 2, which keeps the fix. | Product owner |
 
+### Resolved open questions (2026-10-15)
+
+The product owner accepted the proposed defaults for the questions raised by the sub-project designs:
+
+1. Engine core adds `max_upload_rank` to the collection policy; documents of confidentiality rank 2 or higher are refused in collections with provider upload consent.
+2. Picture crops for vision descriptions fit 2,576 px; evaluation decides whether 1,568 px is sufficient.
+3. The query mode `research` keeps its name.
+4. `rescore_top` is a query parameter, not part of vector-family identity.
+5. Upstream advisories without a fix go into a time-limited waiver register, reviewed monthly (the Chroma upgrade is assessed separately).
+6. Coverage runs nightly or as a report; fast gates run on every change (test-suite speed is investigated separately).
+7. Dashboard MVP effort of about 60–63 days is accepted; the graph explorer is in the MVP and the large-corpus overview in phase 2.
+8. Picture descriptions created while consent was valid stay searchable after revocation; nothing new is sent.
+9. The existing Anthropic upload consent covers Batch API submission.
+10. If style-only heading inference fails the gold set, ship bookmark and numbering heading detection only.
+11. Legacy kind packs are deleted without aliases; `manage rebuild` applies a one-time kind map.
+
+Deferred: whether an earlier private code project can become a public code-evaluation corpus (fallback: Tychora's own source tree).
+
 ## 3. Sub-projects
 
 | # | Sub-project | Design document | Depends on |
