@@ -335,7 +335,10 @@ export function PdfIntake({
     operation.current = controller;
     const version = generation.current;
     const live = () =>
-      generation.current === version && !controller.signal.aborted;
+      generation.current === version &&
+      !controller.signal.aborted &&
+      operation.current === controller &&
+      pending.current === retained;
     try {
       const inspected = await inspectPdf(
         retained.owner,

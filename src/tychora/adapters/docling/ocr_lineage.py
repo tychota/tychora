@@ -79,7 +79,7 @@ def sanitize_text(lines):
     ).strip()
 
 
-def segment_text(segment, evidence):
+def segment_text(segment, evidence, *, from_ocr=True):
     if set(segment) != {"page", "cells", "join"}:
         fail()
     page = segment["page"]
@@ -97,7 +97,7 @@ def segment_text(segment, evidence):
         if type(index) is not int or not 0 <= index < len(cells):
             fail()
         cell = cells[index]
-        if cell.get("index") != index or cell.get("from_ocr") is not True:
+        if cell.get("index") != index or cell.get("from_ocr") is not from_ocr:
             fail()
         texts.append(cell["text"])
     join = segment["join"]
@@ -111,13 +111,14 @@ def segment_text(segment, evidence):
     fail()
 
 
-def text_fields(record, evidence):
+def replay_text(record, evidence, *, from_ocr=True):
     if set(record) != {"native_ref", "kind", "projection", "segments"}:
         fail()
     segments = record["segments"]
     if not 0 < len(segments) <= MAX_ENTRIES:
         fail()
-    original = segment_text(segments[0], evidence)
+    original = segment_text(segments[0], evidence, from_ocr=from_ocr)
+    spans = [(0, len(original))]
     text = original
     projection = record["projection"]
     fields = {}
@@ -140,18 +141,29 @@ def text_fields(record, evidence):
                 break
     elif projection != "text":
         fail()
+    intervals = [(0, len(text))]
     for segment in segments[1:]:
-        continuation = segment_text(segment, evidence)
+        continuation = segment_text(segment, evidence, from_ocr=from_ocr)
+        # The pinned SDK records this BEFORE deciding whether to delete a hyphen.
+        spans.append((len(text) + 1, len(text) + 1 + len(continuation)))
         stripped = continuation.lstrip()
         if text.endswith("\u00ad") or (
             text.endswith("-") and stripped and stripped[0].islower()
         ):
+            end = len(text) - 1
+            intervals = [(min(left, end), min(right, end)) for left, right in intervals]
             text = text[:-1] + continuation
             original = original[:-1] + continuation
         else:
+            end = len(text) + 1
             text += " " + continuation
             original += " " + continuation
-    return {**fields, "text": text, "orig": original}
+        intervals.append((end, len(text)))
+    return {**fields, "text": text, "orig": original}, tuple(spans), tuple(intervals)
+
+
+def text_fields(record, evidence, *, from_ocr=True):
+    return replay_text(record, evidence, from_ocr=from_ocr)[0]
 
 
 def validate_lineage(units, evidence, records):
@@ -235,13 +247,18 @@ def validate_parser_lineage(units, evidence, records):
         raise TychoraError("INTEGRITY_ERROR", "Invalid PDF OCR lineage proof") from exc
 
 
-def evidence_document(pages, lineage, version):
+def evidence_document(pages, lineage, version, *, native=None):
     serialized = [page.model_dump(mode="json") for page in pages]
     if version is None:
         return serialized
     if version != VERSION:
         fail()
-    return {"version": VERSION, "pages": serialized, "lineage": lineage}
+    return {
+        "version": VERSION,
+        "pages": serialized,
+        "lineage": lineage,
+        **({"native_text_evidence": native} if native is not None else {}),
+    }
 
 
 def merge_lineage(exports, proofs):

@@ -13,6 +13,7 @@ import { Search } from "../pages/Search";
 import { OperationsRouter } from "../pages/OperationsRouter";
 import { ModelDraftProvider } from "../pages/models/draft";
 import { EvidenceReader } from "../components/EvidenceReader";
+import { Relations } from "../components/Relations";
 import query from "../../contracts/query.json";
 import evidence from "../../contracts/evidence.json";
 import handshake from "../../contracts/handshake.json";
@@ -341,6 +342,210 @@ it("shows submitted mode review policy and supported explicit inclusion", async 
   expect(
     screen.getByText(/Review-required content.*included/),
   ).toBeInTheDocument();
+});
+it("submits structured passage fields and retries the submitted body despite edited drafts", async () => {
+  render(<Search />);
+  await screen.findByText(/Review-required content.*excluded/);
+  fireEvent.change(screen.getByLabelText("Question"), {
+    target: { value: "simple draft" },
+  });
+  fireEvent.change(screen.getByLabelText("Result limit"), {
+    target: { value: "3" },
+  });
+  fireEvent.click(screen.getByLabelText("Structured request"));
+  expect(screen.queryByLabelText("Question")).toBeNull();
+  expect(screen.queryByLabelText("Result limit")).toBeNull();
+  expect(screen.queryByLabelText("Retrieval mode")).toBeNull();
+  expect(
+    screen.getByText(/Search uses the QueryRequest JSON/),
+  ).toBeInTheDocument();
+  const body = {
+    input: { type: "passage", text: "retained passage" },
+    mode: "exclude",
+    hints: ["specific"],
+    context: { task: "comparison" },
+    modalities: ["text"],
+    exact_only: true,
+  };
+  fireEvent.change(screen.getByLabelText("QueryRequest JSON"), {
+    target: { value: JSON.stringify(body) },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Search evidence" }));
+  await waitFor(() =>
+    expect(calls.filter((c) => c.path === "/v1/queries")).toHaveLength(1),
+  );
+  expect(
+    JSON.parse(
+      calls.find((c) => c.path === "/v1/queries")!.init.body as string,
+    ),
+  ).toEqual(body);
+  const editedDraft =
+    '{"input":{"type":"image","asset_ref":"draft"},"mode":"include"}';
+  fireEvent.change(screen.getByLabelText("QueryRequest JSON"), {
+    target: { value: editedDraft },
+  });
+  fireEvent.click(screen.getByLabelText("Structured request"));
+  expect(screen.queryByLabelText("QueryRequest JSON")).toBeNull();
+  expect(screen.getByLabelText("Question")).toHaveValue("simple draft");
+  expect(screen.getByLabelText("Result limit")).toHaveValue(3);
+  fireEvent.change(screen.getByLabelText("Retrieval mode"), {
+    target: { value: "include" },
+  });
+  expect(
+    screen.getByText(/Review-required content.*excluded/),
+  ).toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("button", { name: /Include review-required/ }),
+  );
+  await waitFor(() =>
+    expect(calls.filter((c) => c.path === "/v1/queries")).toHaveLength(2),
+  );
+  expect(
+    JSON.parse(
+      calls.filter((c) => c.path === "/v1/queries").at(-1)!.init.body as string,
+    ),
+  ).toEqual({ ...body, mode: "include" });
+  fireEvent.click(screen.getByLabelText("Structured request"));
+  expect(screen.getByLabelText("QueryRequest JSON")).toHaveValue(editedDraft);
+});
+it("retains structured drafts after invalid JSON, size rejection and typed backend rejection", async () => {
+  render(<Search />);
+  fireEvent.click(screen.getByLabelText("Structured request"));
+  const editor = screen.getByLabelText("QueryRequest JSON");
+  fireEvent.change(editor, { target: { value: "{broken" } });
+  fireEvent.click(screen.getByRole("button", { name: "Search evidence" }));
+  expect(await screen.findByText(/valid JSON/)).toBeInTheDocument();
+  expect(editor).toHaveValue("{broken");
+  fireEvent.change(editor, {
+    target: {
+      value: JSON.stringify({
+        input: { type: "question", text: "x".repeat(1048576) },
+      }),
+    },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Search evidence" }));
+  expect(await screen.findByText(/1 MiB/)).toBeInTheDocument();
+  expect(calls.some((c) => c.path === "/v1/queries")).toBe(false);
+  const old = response;
+  response = (path, init) =>
+    path === "/v1/queries"
+      ? new Response(
+          JSON.stringify({
+            code: "INVALID_REQUEST",
+            message: "Unsupported mode",
+            retryable: false,
+          }),
+          { status: 422 },
+        )
+      : old(path, init);
+  const draft =
+    '{"input":{"type":"image","asset_ref":"asset"},"mode":"unknown"}';
+  fireEvent.change(editor, { target: { value: draft } });
+  fireEvent.click(screen.getByRole("button", { name: "Search evidence" }));
+  expect(await screen.findByText(/Unsupported mode/)).toBeInTheDocument();
+  expect(editor).toHaveValue(draft);
+});
+it("aborts a structured request and ignores its completion when scope changes", async () => {
+  const original = state.session.client as ApiClient;
+  let finish!: (value: Response) => void;
+  let querySignal: AbortSignal | null | undefined;
+  vi.stubGlobal("fetch", (path: string, init: RequestInit = {}) => {
+    if (path === "/v1/queries") {
+      querySignal = init.signal;
+      return new Promise<Response>((resolve) => {
+        finish = resolve;
+      });
+    }
+    return Promise.resolve(new Response(JSON.stringify(response(path, init))));
+  });
+  const view = render(<Search />);
+  await screen.findByText(/Review-required content.*excluded/);
+  fireEvent.click(screen.getByLabelText("Structured request"));
+  fireEvent.change(screen.getByLabelText("QueryRequest JSON"), {
+    target: { value: '{"input":{"type":"passage","text":"old scope"}}' },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Search evidence" }));
+  await waitFor(() => expect(querySignal).toBeDefined());
+  original.dispose();
+  state.session.client = new ApiClient("synthetic", {
+    ...handshake.scope,
+    collection_ids: ["new-scope"],
+  });
+  view.rerender(<Search />);
+  await act(async () => finish(new Response(JSON.stringify(result))));
+  expect(querySignal?.aborted).toBe(true);
+  expect(screen.queryByRole("region", { name: "Search results" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Search evidence" })).toBeEnabled();
+});
+it("resolves an omitted request mode before sending when initial settings are delayed", async () => {
+  const pending: ((value: Response) => void)[] = [];
+  vi.stubGlobal("fetch", (path: string, init: RequestInit = {}) => {
+    calls.push({ path, init });
+    if (path === "/v1/settings")
+      return new Promise<Response>((resolve) => {
+        pending.push(resolve);
+      });
+    return Promise.resolve(new Response(JSON.stringify(response(path, init))));
+  });
+  render(<Search />);
+  fireEvent.change(screen.getByLabelText("Question"), {
+    target: { value: "default mode" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Search evidence" }));
+  expect(calls.some((c) => c.path === "/v1/queries")).toBe(false);
+  await act(async () => {
+    for (const finish of pending)
+      finish(
+        new Response(
+          JSON.stringify({
+            profile: "local",
+            values: { default_mode: "exclude" },
+          }),
+        ),
+      );
+  });
+  await waitFor(() =>
+    expect(calls.filter((c) => c.path === "/v1/queries")).toHaveLength(1),
+  );
+  expect(
+    screen.getByText(/Review-required content.*excluded by exclude/),
+  ).toBeInTheDocument();
+  expect(
+    JSON.parse(
+      calls.find((c) => c.path === "/v1/queries")!.init.body as string,
+    ),
+  ).not.toHaveProperty("mode");
+});
+it("shows scoped empty relations separately from a typed unavailable channel", async () => {
+  const client = state.session.client as ApiClient;
+  const old = response;
+  response = (path, init) =>
+    path === "/v1/relations"
+      ? { paths: [], truncated: true, next_cursor: null }
+      : old(path, init);
+  render(<Relations client={client} unitIds={["seed"]} />);
+  fireEvent.click(screen.getByRole("button", { name: "Explore relations" }));
+  expect(
+    await screen.findByText(/No relation paths.*selected seed/),
+  ).toBeInTheDocument();
+  expect(screen.getByText(/Relation view is truncated/)).toBeInTheDocument();
+  expect(screen.queryByText(/unavailable relation channel/)).toBeNull();
+  response = (path, init) =>
+    path === "/v1/relations"
+      ? new Response(
+          JSON.stringify({
+            code: "INDEX_INCOMPLETE",
+            message: "Relation channel unavailable",
+            retryable: false,
+          }),
+          { status: 409 },
+        )
+      : old(path, init);
+  fireEvent.click(screen.getByRole("button", { name: "Explore relations" }));
+  expect(
+    await screen.findByText(/Relation channel unavailable/),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/No relation paths.*selected seed/)).toBeNull();
 });
 it("labels noncitable full evidence references without a citation action", async () => {
   const old = response;

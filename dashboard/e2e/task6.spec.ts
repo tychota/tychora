@@ -9,10 +9,12 @@ import {
 } from "@playwright/test";
 const scenario = process.env.TYCHORA_E2E_SCENARIO || "local";
 const fixtures = process.env.TYCHORA_E2E_FIXTURE_DIR!;
-const artifacts = resolve(
-  import.meta.dirname,
-  "../../.superpowers/verification/dashboard-e2e/task6",
-);
+const artifacts =
+  process.env.TYCHORA_E2E_ARTIFACT_DIR ||
+  resolve(
+    import.meta.dirname,
+    "../../.superpowers/verification/dashboard-e2e/task6",
+  );
 const headers = { Authorization: "Bearer synthetic-dashboard-owner" };
 async function api(request: APIRequestContext, path: string, data?: unknown) {
   const response =

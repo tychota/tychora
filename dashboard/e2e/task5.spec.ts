@@ -15,10 +15,12 @@ const fixtures =
     import.meta.dirname,
     "../../.superpowers/verification/dashboard-e2e/task5-fixtures",
   );
-const artifacts = resolve(
-  import.meta.dirname,
-  "../../.superpowers/verification/dashboard-e2e/task5",
-);
+const artifacts =
+  process.env.TYCHORA_E2E_ARTIFACT_DIR ||
+  resolve(
+    import.meta.dirname,
+    "../../.superpowers/verification/dashboard-e2e/task5",
+  );
 const headers = { Authorization: "Bearer synthetic-dashboard-owner" };
 async function api(request: APIRequestContext, path: string, data?: unknown) {
   const r =

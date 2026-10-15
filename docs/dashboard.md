@@ -12,6 +12,7 @@ Retrieve only the token from that owner's private runtime record through a trust
 import json
 import subprocess
 from pathlib import Path
+
 record = json.loads(Path("knowledge/.runtime/endpoint.json").read_text())
 subprocess.run(["pbcopy"], input=record["token"].encode(), check=True)
 ```
@@ -38,9 +39,26 @@ PDF binary intake is at most **100 MiB (104857600 bytes)**, further narrowed by 
 
 Whole-original browser inspection has a separate existing **16 MiB payload / 24 MiB encoded response** ceiling. A retained/indexed PDF above that inspection limit can return `INVALID_REQUEST: Inspection payload exceeds its limit`; this does not mean the original was removed or fully downloaded. No expanded download endpoint is supplied. See [HTTP](http.md) for the actual intake contract.
 
+New PDF analyses identify the coordinate rule as `text_coordinates: docling-assembly@1` in the confirmed processing policy. Captured native and OCR cell assembly independently prove final text ownership, including list markers, formula suppression and dehyphenation. Raw SDK spans remain exact retained evidence. Older retained extractions keep their original serialization, identities and recorded coordinate interpretation; they are not retroactively qualified by the new rule. A stale captured policy requires fresh analysis rather than silently changing an accepted retry. These changes do not raise capacity limits or establish full-document OCR accuracy.
+
 ## Search and exact evidence
 
 Search starts with the query, named collection scope and one Search action. Registered filters, revision/date policy, retrieval mode, output budget, provider context and technical JSON are progressive details. Results are evidence, without a generated-answer/chat claim.
+
+For a supported structured query, open **Filters & retrieval options**, enable **Structured request**, and edit **QueryRequest JSON**. It goes through the same selected collection scope and `/v1/queries` endpoint. For example:
+
+```json
+{
+  "input": { "type": "passage", "text": "A passage to compare with retained evidence" },
+  "hints": ["exact source context"],
+  "context": { "purpose": "comparison" },
+  "modalities": ["text"],
+  "limit": 8,
+  "trace": true
+}
+```
+
+The contract also supports question input and image input with an existing `asset_ref`, plus the backend's profile, filters, revision/date, identifier, budget and rendering fields. The server remains authoritative for types, supported values and permissions. Invalid JSON, the ordinary **1 MiB** body limit, and typed server rejection preserve the editor draft. Structured mode hides the simple question and filters; **Search evidence** submits the JSON editor. Switching modes keeps both drafts. Result review labels and **Submitted QueryRequest** describe the body actually sent, including its effective default mode when omitted; editing a draft or simple controls does not relabel existing results. **Include review-required content** retries that submitted body with the selected authorized inclusion mode and leaves evidence review/citation status unchanged.
 
 The selected reader has three deliberate representations:
 

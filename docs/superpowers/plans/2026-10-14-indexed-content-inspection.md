@@ -36,7 +36,7 @@
 
 - [ ] Write failing real-service tests using long synthetic unit with several persisted windows, emoji/combining/CRLF content. Compare returned IDs/ranges/counts/fingerprints against retained rows and exact Python text slices, with no window regeneration. Example invariant:
 ```python
-assert result.windows[0].text == canonical_unit.text[row.char_start:row.char_end]
+assert result.windows[0].text == canonical_unit.text[row.char_start : row.char_end]
 assert result.windows[0].id == row.id
 ```
 - [ ] Add failures for denied parent/child overlap, permitted disjoint spans, wrong source/revision/extraction lineage, missing IDs, stale/wrong scope/filter/limit cursor, ordered continuation across excluded rows, empty units and removed-original independence. Reuse retained inspection fixtures and review/policy mutation cases from `tests/application/test_inspection.py`.
@@ -44,7 +44,7 @@ assert result.windows[0].id == row.id
 - [ ] Expose two GET lineage routes with read capability and `_source_json` response budget. Example transport expectations:
 ```python
 assert response.status_code == 200
-assert response.json()['windows'][0]['text'] == expected_text
+assert response.json()["windows"][0]["text"] == expected_text
 assert (await denied_client.get(path)).status_code == 403
 ```
 - [ ] Capture synthetic units/windows fixtures through actual HTTP and document shapes/limitations. Run new application/transport tests plus existing inspection scope regressions and Ruff/typing for changed Python. Report exact commands/results and commit.

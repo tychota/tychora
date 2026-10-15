@@ -7,6 +7,7 @@ import type {
   QueryResult,
   Segment,
   Settings,
+  Json,
 } from "../api/contracts";
 import {
   EvidenceReader,
@@ -17,6 +18,7 @@ import { ReturnedPassage } from "../components/ReturnedPassage";
 import { VisualPassage } from "../components/VisualPassage";
 import { StoredChunks } from "../components/StoredChunks";
 import { effectiveMode, reviewAdmission } from "./search/review";
+import { parseQueryDraft, requestMode } from "./search/request";
 import { RouteLink } from "../routing";
 import { Relations } from "../components/Relations";
 import { ErrorNotice, Status } from "../components/Status";
@@ -28,6 +30,14 @@ export function Search() {
   const [limit, setLimit] = useState(8);
   const [maxTokens, setMaxTokens] = useState(6000);
   const [mode, setMode] = useState("");
+  const [structured, setStructured] = useState(false);
+  const [queryDraft, setQueryDraft] = useState(
+    '{\n  "input": { "type": "question", "text": "" }\n}',
+  );
+  const [submittedBody, setSubmittedBody] = useState<Record<
+    string,
+    Json
+  > | null>(null);
   const [revisionSelector, setRevisionSelector] = useState<"current" | "all">(
     "current",
   );
@@ -62,6 +72,13 @@ export function Search() {
   const request = useRef<AbortController | null>(null);
   useEffect(() => {
     if (!client) return;
+    setResult(null);
+    setSubmittedBody(null);
+    setSubmittedMode(null);
+    setSelection(null);
+    setRelationSeed(null);
+    setLoading(false);
+    setError(null);
     const controller = new AbortController();
     void Promise.allSettled([
       client.request<Discovery>("/v1/discovery?subject=kinds&limit=100", {
@@ -94,12 +111,12 @@ export function Search() {
   }, [client]);
   const submit = async (event?: FormEvent, overrideMode?: string) => {
     event?.preventDefault();
-    if (!client || !question.trim()) return;
+    if (!client || (!overrideMode && !structured && !question.trim())) return;
     const selectedFacet = discovery.facets?.definitions.find(
       (value) => value.id === facet,
     );
     let typedFacetValue: string | number | boolean = facetValue;
-    if (selectedFacet && facetValue) {
+    if (!structured && !overrideMode && selectedFacet && facetValue) {
       const type = selectedFacet.definition.value_type;
       if (type === "integer" || type === "number") {
         typedFacetValue = Number(facetValue);
@@ -117,18 +134,7 @@ export function Search() {
         }
       } else if (type === "boolean") typedFacetValue = facetValue === "true";
     }
-    request.current?.abort();
-    const controller = new AbortController();
-    request.current = controller;
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    setSelection(null);
-    setRelationSeed(null);
-    setReaderView("passage");
-    const requestMode = overrideMode ?? mode;
-    setSubmittedMode(requestMode || effectiveMode(discovery.settings));
-    const body: QueryRequest = {
+    const simpleBody: QueryRequest = {
       input: { type: "question", text: question.trim() },
       limit: Math.max(1, Math.min(50, limit)),
       revision_selector: revisionSelector,
@@ -148,7 +154,7 @@ export function Search() {
             },
           }
         : {}),
-      ...(requestMode ? { mode: requestMode } : {}),
+      ...(mode ? { mode } : {}),
       ...(asOf ? { as_of: asOf } : {}),
       ...(cutoff ? { cutoff } : {}),
       ...(facet && facetValue
@@ -161,7 +167,40 @@ export function Search() {
           }
         : {}),
     };
+    let body: Record<string, Json>;
     try {
+      const source =
+        overrideMode && submittedBody
+          ? submittedBody
+          : parseQueryDraft(
+              structured ? queryDraft : JSON.stringify(simpleBody),
+            );
+      body = overrideMode ? { ...source, mode: overrideMode } : source;
+      // The override also stays within the ordinary HTTP request boundary.
+      parseQueryDraft(JSON.stringify(body));
+    } catch (error) {
+      setError(publicError(error));
+      return;
+    }
+    request.current?.abort();
+    const controller = new AbortController();
+    request.current = controller;
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    setSelection(null);
+    setRelationSeed(null);
+    setReaderView("passage");
+    setSubmittedBody(body);
+    setSubmittedMode(requestMode(body, effectiveMode(discovery.settings)));
+    try {
+      if (typeof body.mode !== "string" && !effectiveMode(discovery.settings)) {
+        const settings = await client.request<Settings>("/v1/settings", {
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        setSubmittedMode(requestMode(body, effectiveMode(settings)));
+      }
       const value = await client.request<QueryResult>("/v1/queries", {
         method: "POST",
         signal: controller.signal,
@@ -236,25 +275,31 @@ export function Search() {
         </p>
       </header>
       <form className="search-form" onSubmit={(event) => void submit(event)}>
-        <label className="question-label" htmlFor="question">
-          Question
-        </label>
+        {!structured && (
+          <label className="question-label" htmlFor="question">
+            Question
+          </label>
+        )}
         <div className="question-row">
-          <textarea
-            id="question"
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            rows={2}
-            maxLength={12000}
-            placeholder="What do you need to verify?"
-            required
-          />
+          {structured ? (
+            <p>Structured request · Search uses the QueryRequest JSON below.</p>
+          ) : (
+            <textarea
+              id="question"
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              rows={2}
+              maxLength={12000}
+              placeholder="What do you need to verify?"
+              required
+            />
+          )}
           <button
             className="primary"
             type="submit"
             disabled={
               loading ||
-              !question.trim() ||
+              (!structured && !question.trim()) ||
               !handshake?.scope.capabilities.includes("read")
             }
           >
@@ -281,9 +326,11 @@ export function Search() {
                 </p>
                 <button
                   type="button"
-                  disabled={loading || !question.trim()}
+                  disabled={
+                    loading ||
+                    (!submittedBody && !structured && !question.trim())
+                  }
                   onClick={() => {
-                    setMode(inclusionMode.id);
                     void submit(undefined, inclusionMode.id);
                   }}
                 >
@@ -297,106 +344,67 @@ export function Search() {
         )}
         <details className="search-options">
           <summary>Filters & retrieval options</summary>
-          <div className="filter-row">
-            <label>
-              Response token budget
-              <input
-                type="number"
-                min={1}
-                max={6000}
-                required
-                value={maxTokens}
-                onChange={(e) => setMaxTokens(Number(e.target.value))}
+          <label className="collection-option">
+            <input
+              type="checkbox"
+              checked={structured}
+              onChange={(event) => {
+                setStructured(event.target.checked);
+              }}
+            />
+            Structured request
+          </label>
+          {structured && (
+            <div className="structured-query">
+              <p>
+                Edit the supported QueryRequest body. The workspace validates
+                fields and permissions. Turn off structured request to return to
+                your simple search draft.
+              </p>
+              <label htmlFor="query-request-json">QueryRequest JSON</label>
+              <textarea
+                id="query-request-json"
+                value={queryDraft}
+                onChange={(event) => setQueryDraft(event.target.value)}
+                rows={12}
+                spellCheck={false}
               />
-            </label>
-            <label>
-              Result limit
-              <input
-                type="number"
-                min={1}
-                max={50}
-                value={limit}
-                required
-                onChange={(e) => setLimit(Number(e.target.value))}
-              />
-            </label>
-            <label>
-              Retrieval mode
-              <select
-                aria-label="Retrieval mode"
-                value={mode}
-                onChange={(e) => setMode(e.target.value)}
-              >
-                <option value="">Configured default</option>
-                {discovery.profiles?.definitions.map((definition) => (
-                  <option key={definition.id} value={definition.id}>
-                    {definition.label || definition.id}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Revisions
-              <select
-                value={revisionSelector}
-                onChange={(e) =>
-                  setRevisionSelector(e.target.value as "current" | "all")
-                }
-              >
-                <option value="current">Current</option>
-                <option value="all">All readable revisions</option>
-              </select>
-            </label>
-            <label>
-              As of date
-              <input
-                type="date"
-                value={asOf}
-                onChange={(e) => setAsOf(e.target.value)}
-              />
-            </label>
-            <label>
-              Cutoff date
-              <input
-                type="date"
-                value={cutoff}
-                onChange={(e) => setCutoff(e.target.value)}
-              />
-            </label>
-            <label>
-              Unknown dates
-              <select
-                value={unknownDates}
-                onChange={(e) =>
-                  setUnknownDates(e.target.value as "strict" | "permissive")
-                }
-              >
-                <option value="strict">Strict</option>
-                <option value="permissive">Permissive</option>
-              </select>
-            </label>
-            <label className="wide-field">
-              Exact revision IDs
-              <input
-                value={revisionIds}
-                onChange={(e) => setRevisionIds(e.target.value)}
-                placeholder="Comma-separated IDs; up to 20"
-                maxLength={2600}
-              />
-            </label>
-            {facets.length > 0 && (
-              <>
+            </div>
+          )}
+          {!structured && (
+            <>
+              <div className="filter-row">
                 <label>
-                  Metadata facet
+                  Response token budget
+                  <input
+                    type="number"
+                    min={1}
+                    max={6000}
+                    required
+                    value={maxTokens}
+                    onChange={(e) => setMaxTokens(Number(e.target.value))}
+                  />
+                </label>
+                <label>
+                  Result limit
+                  <input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={limit}
+                    required
+                    onChange={(e) => setLimit(Number(e.target.value))}
+                  />
+                </label>
+                <label>
+                  Retrieval mode
                   <select
-                    value={facet}
-                    onChange={(e) => {
-                      setFacet(e.target.value);
-                      setFacetValue("");
-                    }}
+                    aria-label="Retrieval mode"
+                    value={mode}
+                    onChange={(e) => setMode(e.target.value)}
                   >
-                    <option value="">No metadata filter</option>
-                    {facets.map((definition) => (
+                    <option value="">Configured default</option>
+                    {discovery.profiles?.definitions.map((definition) => (
                       <option key={definition.id} value={definition.id}>
                         {definition.label || definition.id}
                       </option>
@@ -404,41 +412,111 @@ export function Search() {
                   </select>
                 </label>
                 <label>
-                  Exact facet value
-                  {facetType === "boolean" ? (
-                    <select
-                      value={facetValue}
-                      onChange={(e) => setFacetValue(e.target.value)}
-                    >
-                      <option value="">No exact value</option>
-                      <option value="true">True</option>
-                      <option value="false">False</option>
-                    </select>
-                  ) : (
-                    <input
-                      type={
-                        facetType === "integer" || facetType === "number"
-                          ? "number"
-                          : facetType === "date"
-                            ? "date"
-                            : "text"
-                      }
-                      step={facetType === "integer" ? 1 : "any"}
-                      value={facetValue}
-                      onChange={(e) => setFacetValue(e.target.value)}
-                      disabled={!facet}
-                      maxLength={500}
-                    />
-                  )}
+                  Revisions
+                  <select
+                    value={revisionSelector}
+                    onChange={(e) =>
+                      setRevisionSelector(e.target.value as "current" | "all")
+                    }
+                  >
+                    <option value="current">Current</option>
+                    <option value="all">All readable revisions</option>
+                  </select>
                 </label>
-              </>
-            )}
-          </div>
-          <p className="muted">
-            Dates apply to retained revision metadata. Missing dates follow your
-            selected policy. Kind filters are available only when the registered
-            facet schema supports them.
-          </p>
+                <label>
+                  As of date
+                  <input
+                    type="date"
+                    value={asOf}
+                    onChange={(e) => setAsOf(e.target.value)}
+                  />
+                </label>
+                <label>
+                  Cutoff date
+                  <input
+                    type="date"
+                    value={cutoff}
+                    onChange={(e) => setCutoff(e.target.value)}
+                  />
+                </label>
+                <label>
+                  Unknown dates
+                  <select
+                    value={unknownDates}
+                    onChange={(e) =>
+                      setUnknownDates(e.target.value as "strict" | "permissive")
+                    }
+                  >
+                    <option value="strict">Strict</option>
+                    <option value="permissive">Permissive</option>
+                  </select>
+                </label>
+                <label className="wide-field">
+                  Exact revision IDs
+                  <input
+                    value={revisionIds}
+                    onChange={(e) => setRevisionIds(e.target.value)}
+                    placeholder="Comma-separated IDs; up to 20"
+                    maxLength={2600}
+                  />
+                </label>
+                {facets.length > 0 && (
+                  <>
+                    <label>
+                      Metadata facet
+                      <select
+                        value={facet}
+                        onChange={(e) => {
+                          setFacet(e.target.value);
+                          setFacetValue("");
+                        }}
+                      >
+                        <option value="">No metadata filter</option>
+                        {facets.map((definition) => (
+                          <option key={definition.id} value={definition.id}>
+                            {definition.label || definition.id}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Exact facet value
+                      {facetType === "boolean" ? (
+                        <select
+                          value={facetValue}
+                          onChange={(e) => setFacetValue(e.target.value)}
+                        >
+                          <option value="">No exact value</option>
+                          <option value="true">True</option>
+                          <option value="false">False</option>
+                        </select>
+                      ) : (
+                        <input
+                          type={
+                            facetType === "integer" || facetType === "number"
+                              ? "number"
+                              : facetType === "date"
+                                ? "date"
+                                : "text"
+                          }
+                          step={facetType === "integer" ? 1 : "any"}
+                          value={facetValue}
+                          onChange={(e) => setFacetValue(e.target.value)}
+                          disabled={!facet}
+                          maxLength={500}
+                        />
+                      )}
+                    </label>
+                  </>
+                )}
+              </div>
+              <p className="muted">
+                Dates apply to retained revision metadata. Missing dates follow
+                your selected policy. Kind filters are available only when the
+                registered facet schema supports them.
+              </p>
+            </>
+          )}
         </details>
         <details>
           <summary>Configured providers and upload permission</summary>
@@ -653,9 +731,11 @@ export function Search() {
                           {[
                             ...selectedSegment.matched_unit_ids,
                             ...selectedSegment.context_only_unit_ids,
-                          ].map((id) => (
+                          ].map((id, index) => (
                             <button
                               key={id}
+                              title={id}
+                              aria-label={`${selectedSegment.matched_unit_ids.includes(id) ? "Matched" : "Context"} · ${id}`}
                               aria-pressed={selection.unitId === id}
                               onClick={() => {
                                 setRelationSeed(id);
@@ -674,7 +754,7 @@ export function Search() {
                               {selectedSegment.matched_unit_ids.includes(id)
                                 ? "Matched"
                                 : "Context"}{" "}
-                              · {id}
+                              unit {index + 1}
                             </button>
                           ))}
                         </div>
@@ -788,6 +868,12 @@ export function Search() {
                 {result.checks.truncated ? " · truncated" : ""}
               </dd>
             </dl>
+            {submittedBody && (
+              <JsonDetails
+                value={submittedBody}
+                label="Submitted QueryRequest"
+              />
+            )}
             <JsonDetails value={result} label="Authoritative query JSON" />
           </details>
         </>

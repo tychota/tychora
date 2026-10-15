@@ -15,7 +15,7 @@ from tychora.configuration.resolve import resolve_config
 from tychora.contracts import identity
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.corpus import CollectionRow, RevisionRow, SourceRow, WorkspaceRow
-from tychora.contracts.documents import DocumentRegistration
+from tychora.contracts.documents import DocumentRegistration, DocumentUnit
 from tychora.contracts.pdf_policy import PdfProcessingPolicy
 from tychora.contracts.requests import RequestScope, SourceInput
 from tychora.ingestion.acquire import Acquirer
@@ -118,6 +118,7 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
     )
     policy = PdfProcessingPolicy(
         origin_proof=None if mode == "legacy" else "ordered-ocr-cells@1",
+        text_coordinates=None if mode == "legacy" else "docling-assembly@1",
         mode="native" if mode == "native" else "local_ocr",
         native_pages=(
             (1, 2, *range(4, 18))
@@ -245,8 +246,14 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
                         segment["page"] = 2
                     else:
                         segment["join"] = "approximate"
-                with pytest.raises(ValueError, match="lineage|policy|provenance"):
+                with pytest.raises(
+                    ValueError, match="lineage|policy|provenance|coordinate|assembly"
+                ):
                     ExtractionArtifact.model_validate_json(canonical_bytes(altered))
+        document_units = tuple(
+            unit for unit in parsed.units if isinstance(unit, DocumentUnit)
+        )
+        assert len(document_units) == len(parsed.units)
         assert accepted == list(range(1, 18))
         assert owner.config.config_sha == config.config_sha
         assert parsed.original_ref == capture.original_ref
@@ -258,16 +265,17 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
             assert any(
                 unit.unit_type == "table"
                 and any(cell for row in unit.cells for cell in row)
-                for unit in parsed.units
+                for unit in document_units
             )
-            assert any(unit.text_origin == "ocr" for unit in parsed.units)
+            assert any(unit.text_origin == "ocr" for unit in document_units)
             if mode == "columns":
                 available = "".join(
-                    "".join(cell["text"].split()) for cell in parsed.ocr_pages[0].cells
+                    "".join(str(cell["text"]).split())
+                    for cell in parsed.ocr_pages[0].cells
                 )
                 transformed = [
                     unit
-                    for unit in parsed.units
+                    for unit in document_units
                     if unit.text_origin == "ocr"
                     and unit.text
                     and not unit.cells
@@ -287,7 +295,7 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
             assert parsed.ocr_pages == ()
         assert any(
             unit.text_origin == "source" and "Native page" in unit.text
-            for unit in parsed.units
+            for unit in document_units
         )
         assert parsed.image_representation == "scan-external-images@1"
         import json
@@ -343,6 +351,7 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
         if mode != "native":
             owner.run_blocking_sync(verify_clean_raster, ctx)
         composed = owner.run_blocking_sync(compose, ctx)
+        assert parser.retention_budget is not None
         assert parser.retention_budget.retained_bytes == sum(
             ref.size_bytes
             for ref in {ref.sha256: ref for ref in composed.bundle.artifacts}.values()
@@ -413,7 +422,9 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
             assert coverage.stages["pdf_processing"] == (
                 "indexed_with_gaps" if mode == "gap" else "processed"
             )
-            assert coverage.stages["pdf_coverage"]["page_count"] == 17
+            pdf_coverage = coverage.stages["pdf_coverage"]
+            assert isinstance(pdf_coverage, FrozenJsonMap)
+            assert pdf_coverage["page_count"] == 17
             inspection = InspectionService(owner)._inspect_diagnostics(
                 SimpleNamespace(id=extraction),
                 SimpleNamespace(

@@ -401,7 +401,11 @@ def test_registration_access_floor_can_only_rise(corpus):
     )
     corpus.commit_extraction(elevated)
     assert epoch(corpus) == 1
-    corpus.commit_extraction(b)
+    before = corpus.db.execute("SELECT * FROM revisions").fetchall()
+    with pytest.raises(TychoraError) as stale:
+        corpus.commit_extraction(b)
+    assert stale.value.code == "SCOPE_CHANGED"
+    assert corpus.db.execute("SELECT * FROM revisions").fetchall() == before
     assert epoch(corpus) == 1
     assert corpus.db.execute("SELECT access_floor FROM sources").fetchone()[0] == 2
     assert corpus.db.execute("SELECT access_floor FROM collections").fetchone()[0] == 1

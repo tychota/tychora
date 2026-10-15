@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 
 import pytest
@@ -7,6 +8,7 @@ from tychora.adapters.docling.mapping import map_document
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.documents import validate_document_units
 from tychora.contracts.errors import TychoraError
+from tychora.contracts.identity import canonical_bytes
 
 
 def test_merge_keeps_physical_pages_and_remaps_local_references():
@@ -81,13 +83,16 @@ def test_merge_nested_caption_and_table_cell_references():
     second["texts"][0]["prov"][0]["page_no"] = 20
     second["tables"][0]["data"]["table_cells"][0]["provenance"]["page_no"] = 20
     merged = merge_pdf_page_exports((FrozenJsonMap(first), FrozenJsonMap(second)))
-    assert merged["tables"][1]["captions"][0]["$ref"] == "#/texts/1"
-    assert merged["tables"][1]["data"]["table_cells"][0]["provenance"]["page_no"] == 20
+    retained = json.loads(canonical_bytes(merged))
+    assert retained["tables"][1]["captions"][0]["$ref"] == "#/texts/1"
     assert (
-        merged["tables"][1]["data"]["table_cells"][0]["provenance"]["source"]["$ref"]
+        retained["tables"][1]["data"]["table_cells"][0]["provenance"]["page_no"] == 20
+    )
+    assert (
+        retained["tables"][1]["data"]["table_cells"][0]["provenance"]["source"]["$ref"]
         == "#/texts/1"
     )
-    assert merged["groups"][1]["children"][1]["$ref"] == "#/tables/1"
+    assert retained["groups"][1]["children"][1]["$ref"] == "#/tables/1"
     validate_document_units(merged, map_document(merged, original).units)
 
 

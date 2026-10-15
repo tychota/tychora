@@ -48,6 +48,8 @@ Existing interfaces to preserve: SourceJobScheduler.add_async, SourceService.acc
 # contracts/pdf_policy.py: independent of requests.py
 from typing import Literal
 from tychora.contracts.base import Contract, FrozenJsonMap, Sha256
+
+
 class PdfProcessingPolicy(Contract):
     version: Literal["pdf-processing@1"] = "pdf-processing@1"
     mode: Literal["native", "local_ocr"]
@@ -68,6 +70,8 @@ from uuid import UUID
 from pydantic import Field
 from tychora.contracts.base import Contract, FrozenJsonMap, NonEmptyStr, Sha256
 from tychora.contracts.pdf_policy import PdfProcessingPolicy
+
+
 class PdfIntakeDescriptor(Contract):
     source_key: NonEmptyStr
     collection_id: UUID
@@ -76,6 +80,7 @@ class PdfIntakeDescriptor(Contract):
     expected_size_bytes: int = Field(gt=0, le=104857600)
     expected_sha256: Sha256 | None = None
     format: Literal["pdf"] = "pdf"
+
 
 class PdfAnalysis(Contract):
     original_sha256: Sha256
@@ -90,6 +95,7 @@ class PdfAnalysis(Contract):
     proposed_policy: PdfProcessingPolicy | None
     analysis_sha256: Sha256
 
+
 class PdfIntakeSubmission(Contract):
     analysis_sha256: Sha256
     policy_sha256: Sha256
@@ -102,8 +108,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.pdf_policy import PdfProcessingPolicy
+
 if TYPE_CHECKING:
     from tychora.contracts.requests import RequestScope, SourceInput
+
 
 @dataclass(frozen=True)
 class AcquiredSource:
@@ -133,18 +141,34 @@ async def test_binary_intake_preserves_json_gate(tmp_path):
     from tychora import Tychora
     from tychora.interfaces.http.app import create_app
     from tychora.interfaces.http.auth import LocalAuth
+
     with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
-        app = create_app(kb._workspace.owner, kb._workspace.services,
-                         LocalAuth({"writer": kb.scope}, authority="127.0.0.1:8765"))
-        async with AsyncClient(transport=ASGITransport(app=app),
-                               base_url="http://127.0.0.1:8765",
-                               headers={"Authorization": "Bearer writer"}) as client:
+        app = create_app(
+            kb._workspace.owner,
+            kb._workspace.services,
+            LocalAuth({"writer": kb.scope}, authority="127.0.0.1:8765"),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://127.0.0.1:8765",
+            headers={"Authorization": "Bearer writer"},
+        ) as client:
             rejected = await client.post("/v1/sources", content=b" " * (1048576 + 1))
             assert rejected.status_code == 400
-            prepared = await client.post("/v1/pdf-intakes", json={
-                "source_key": "synthetic.pdf", "collection_id": kb.scope.collection_ids.__iter__().__next__(),
-                "kind": "manual@1", "expected_size_bytes": 2048,
-                "metadata": {"title": "Synthetic", "publisher": "Example", "edition": "1"}})
+            prepared = await client.post(
+                "/v1/pdf-intakes",
+                json={
+                    "source_key": "synthetic.pdf",
+                    "collection_id": kb.scope.collection_ids.__iter__().__next__(),
+                    "kind": "manual@1",
+                    "expected_size_bytes": 2048,
+                    "metadata": {
+                        "title": "Synthetic",
+                        "publisher": "Example",
+                        "edition": "1",
+                    },
+                },
+            )
             assert prepared.status_code == 201
             assert prepared.json()["state"] == "prepared"
             assert "path" not in prepared.json()
@@ -160,7 +184,9 @@ if received > min(receipt.byte_ceiling, 104857600):
     raise TychoraError("LIMIT_EXCEEDED", "PDF upload exceeds its byte limit.")
 # finalize only after EOF, actual-size/hash checks and fsync
 if received != receipt.descriptor.expected_size_bytes:
-    raise TychoraError("INVALID_REQUEST", "PDF upload length differs from the prepared input.")
+    raise TychoraError(
+        "INVALID_REQUEST", "PDF upload length differs from the prepared input."
+    )
 ```
 
 - [ ] **4. Add classification and ownership failures, then implement analysis.** Test native/scanned/mixed/blank/encrypted/malformed synthetic PDFs, image strips and all-page census. Count text without returning it, classify unknown pages conservatively, enforce 1000-page/40M-pixel/100k-object limits and 60-second isolated analysis timeout. Model/parser/normalizer preflight returns blockers; a markdown-default owner receives an explicit proposed per-intake PDF policy, never a changed workspace file. Test foreign workspace/principal, narrower collection, expired receipt, token rotation with stable grant, changed grant, stale analysis and replaced staging inode. Reject before content open and never disclose numeric census from a foreign receipt.
@@ -196,37 +222,58 @@ assert source_intent(legacy_source) == old_intent
 assert explicit_parsed.original_ref == native_parsed.original_ref
 assert explicit_parsed.parser_fingerprint != native_parsed.parser_fingerprint
 assert current.config_sha == original_config.config_sha
-assert indexed_representation_identity(current) == indexed_representation_identity(original_config)
+assert indexed_representation_identity(current) == indexed_representation_identity(
+    original_config
+)
 ```
 
 - [ ] **2. Add failing batched merge/origin tests with complete synthetic exports.** Reuse mapping_case from tests/ingestion/test_docling_mapping.py, create two batches with duplicate local #/texts/0 refs but distinct physical page keys, nested body/furniture groups, captions and table-cell provenance. merge_pdf_page_exports remaps every known self_ref/$ref according to array offsets while preserving physical page numbers and hierarchy order. Unknown reference domains, duplicate physical pages, disconnected hierarchy or missing cell evidence fail INTEGRITY_ERROR. Validate the merged map with map_document and validate_document_units/assets. Test a native/ocr mixed document and blank page: retained units cover complete SDK JSON, but only native units enter source text/caption/record normalization.
 
 ```python
 from tests.ingestion.test_docling_mapping import mapping_case
+
 export, original = mapping_case()
 assert map_document(export, original).units[0].locators[0].physical_page == 2
 # New merge fixture deliberately uses local refs twice, while pages remain distinct.
 assert [u.locators[0].physical_page for u in merged.units] == [2, 20]
 assert len({u.native_ref for u in merged.units}) == len(merged.units)
-assert all(u.text_origin == "ocr" for u in ocr_proxy_bundle.units if u.unit_type == "asset_proxy")
-assert all(not u.citable and u.review_state == "needs_review"
-           for u in ocr_proxy_bundle.units if u.text_origin == "ocr")
+assert all(
+    u.text_origin == "ocr"
+    for u in ocr_proxy_bundle.units
+    if u.unit_type == "asset_proxy"
+)
+assert all(
+    not u.citable and u.review_state == "needs_review"
+    for u in ocr_proxy_bundle.units
+    if u.text_origin == "ocr"
+)
 ```
 
 - [ ] **3. Implement explicit PDF mode and exact-input provenance.** In _prepare, qualify the captured policy without changing owner.config; reject unsupported non-PDF policies and missing/corrupt runtime/assets. Native pass retains existing backend/options. Scanned passes select PyPdfiumDocumentBackend, pinned RapidOcrOptions FULL_PAGE, CPU two threads and telemetry/offline controls. Retain parsed pages before cleanup and from_ocr markers. Match retained input raster to actual OCR input pixel identity; if it differs, fail INTEGRITY_ERROR rather than attach the transcript to a lower-resolution display image. Keep full mapped parser JSON/units and sidecar origin bindings; omit OCR from native normalization. Compose deterministic physical-page pixel-owner units/assets before creating planned OCR proxies through the shared LocalOcrProvider receipt builder. Verify same-extraction dependencies, source hashes and crop transforms using existing proof code. Preserve explicit captions/native relationships and label OCR layout/reading order as derived.
 
 ```python
-ocr = RapidOcrOptions(backend="onnxruntime", mode=OcrMode.FULL_PAGE,
-                     det_model_path=str(det), rec_model_path=str(rec),
-                     cls_model_path=str(cls), scale=3.0)
-options = PdfPipelineOptions(artifacts_path=model_root, do_ocr=True, ocr_options=ocr,
-                            generate_parsed_pages=True, enable_remote_services=False,
-                            allow_external_plugins=False,
-                            accelerator_options=AcceleratorOptions(device=AcceleratorDevice.CPU,
-                                                                   num_threads=2))
+ocr = RapidOcrOptions(
+    backend="onnxruntime",
+    mode=OcrMode.FULL_PAGE,
+    det_model_path=str(det),
+    rec_model_path=str(rec),
+    cls_model_path=str(cls),
+    scale=3.0,
+)
+options = PdfPipelineOptions(
+    artifacts_path=model_root,
+    do_ocr=True,
+    ocr_options=ocr,
+    generate_parsed_pages=True,
+    enable_remote_services=False,
+    allow_external_plugins=False,
+    accelerator_options=AcceleratorOptions(device=AcceleratorDevice.CPU, num_threads=2),
+)
 assert evidence.model_input_pixel_sha256 == region.region_pixel_sha256
 assert evidence.original_sha256 == parsed.original_ref.sha256
-proxy = planned_vision_proxy(region, observation, asset_native_ref=page_asset.native_ref)
+proxy = planned_vision_proxy(
+    region, observation, asset_native_ref=page_asset.native_ref
+)
 ```
 
 Qualification uses the authoritative `application/pdf_processing.py` seam from Task 1. Include verified OCR inventory and pinned backend/runtime/options in the explicit policy identity; remove only execution blockers actually resolved by this task. Narrow `application/restore.py` changes must admit and independently verify declared pixel-owner units/external-image closure without weakening native ownership or allowing arbitrary marker-less source units. The exact OCR input means the raster array passed to the RapidOCR reader; retain channel interpretation and renderer transforms, and pin the reader's subsequent internal resizing/preprocessing in policy. Capture this array at the child-local SDK invocation, not by re-rendering after conversion or substituting the display thumbnail. Mixed-mode cached pipelines share the same total child RSS ceiling.
@@ -238,9 +285,13 @@ Qualification uses the authoritative `application/pdf_processing.py` seam from T
 assert converted.status == ConversionStatus.SUCCESS
 assert not converted.errors and not converted.has_timeout_errors()
 if actual_pages != expected_pages:
-    raise TychoraError("INDEX_INCOMPLETE", "PDF processing did not cover every selected page.")
+    raise TychoraError(
+        "INDEX_INCOMPLETE", "PDF processing did not cover every selected page."
+    )
 if required_text_page and not transcription.strip():
-    raise TychoraError("INDEX_INCOMPLETE", "A scanned text page produced no usable OCR.")
+    raise TychoraError(
+        "INDEX_INCOMPLETE", "A scanned text page produced no usable OCR."
+    )
 ```
 
 - [ ] **6. Run synthetic regressions and qualified local-model tests.** Run new batching/origin/supervisor tests plus existing mapping/composition/public vision, root acquisition, configured-runtime, restore and Docling qualification. Model qualification is explicit via TYCHORA_TEST_DOCLING_MODELS/TYCHORA_MODEL_CACHE pointing to a verified local bundle; do not auto-download missing assets. Add a generated striped scan with synthetic small margin text and compare clean PDFium raster/physical page identity, native versus OCR origins and retained pixel receipts. Require complete SUCCESS and nonempty mapped text including tables, not document.texts alone. Replay merged/external-image manifest and compare extraction/proxy/dependency IDs. Check historical no-policy/native records still restore. Report real test outcomes and runtime limits; commit this independently reviewed adapter/provenance task.

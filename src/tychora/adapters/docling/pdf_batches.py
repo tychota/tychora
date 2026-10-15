@@ -14,8 +14,11 @@ DOMAINS = ("texts", "tables", "pictures", "groups", "key_value_items", "form_ite
 MAX_METADATA_BYTES = 268435456
 
 
-def merge_pdf_page_exports(exports: tuple[FrozenJsonMap, ...]) -> FrozenJsonMap:
+def merge_pdf_page_exports(
+    exports: tuple[FrozenJsonMap, ...], *, coordinates=()
+) -> FrozenJsonMap:
     from .mapping import map_document
+    from .text_coordinates import merge_coordinate_proofs
 
     def fail() -> NoReturn:
         raise TychoraError(
@@ -34,10 +37,12 @@ def merge_pdf_page_exports(exports: tuple[FrozenJsonMap, ...]) -> FrozenJsonMap:
         media_type="application/pdf",
     )
     try:
-        for export in exports:
+        combined_coordinates = merge_coordinate_proofs(exports, coordinates)
+        for index, export in enumerate(exports):
             raw = json.loads(canonical_bytes(export))
-            mapped = map_document(raw, dummy)
-            validate_document_units(FrozenJsonMap(raw), mapped.units)
+            proof = coordinates[index] if coordinates else None
+            mapped = map_document(raw, dummy, coordinates=proof)
+            validate_document_units(FrozenJsonMap(raw), mapped.units, coordinates=proof)
             objects = {
                 item["self_ref"]: item
                 for domain in DOMAINS
@@ -126,8 +131,8 @@ def merge_pdf_page_exports(exports: tuple[FrozenJsonMap, ...]) -> FrozenJsonMap:
                     adjusted[root].get("children", [])
                 )
         result = FrozenJsonMap(merged)
-        mapped = map_document(result, dummy)
-        validate_document_units(result, mapped.units)
+        mapped = map_document(result, dummy, coordinates=combined_coordinates)
+        validate_document_units(result, mapped.units, coordinates=combined_coordinates)
         return result
     except (KeyError, TypeError, ValueError, RecursionError, IndexError):
         fail()
@@ -206,6 +211,8 @@ def run_pdf_batches(call, paths, report):
     )
 
     lineage = LineageCapture(captures)
+    native_captures = {}
+    native_lineage = LineageCapture(native_captures, from_ocr=False)
 
     class OcrStage:
         def __init__(self, model):
@@ -261,6 +268,14 @@ def run_pdf_batches(call, paths, report):
         def _make_ocr_model(self, art_path):
             return OcrStage(super()._make_ocr_model(art_path))
 
+    class NativeEvidencePipeline(StandardPdfPipeline):
+        def _init_models(self):
+            super()._init_models()
+            self.table_model = LineageTableStage(self.table_model, native_lineage)
+            self.reading_order_model = instrument_reading_order(
+                self.reading_order_model, native_lineage
+            )
+
     layout = LayoutObjectDetectionOptions.from_preset("layout_heron_default")
     layout.model_spec.revision = "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8"
     common: dict[str, Any] = {
@@ -287,6 +302,9 @@ def run_pdf_batches(call, paths, report):
         allowed_formats=[InputFormat.PDF],
         format_options={
             InputFormat.PDF: PdfFormatOption(
+                pipeline_cls=NativeEvidencePipeline
+                if policy.text_coordinates
+                else StandardPdfPipeline,
                 pipeline_options=PdfPipelineOptions(do_ocr=False, **common),
                 backend_options=ThreadedDoclingParseBackendOptions(render_scale=1.0),
             )
@@ -344,6 +362,7 @@ def run_pdf_batches(call, paths, report):
     for start in range(1, count + 1, 16):
         stop = min(start + 15, count)
         exports, evidence, outputs, proofs = [], [], [], []
+        native_proofs, coordinates = [], []
 
         def stage(name, payload, media, outputs=outputs):
             target = original.with_name(name)
@@ -388,6 +407,18 @@ def run_pdf_batches(call, paths, report):
                     if ocr and policy.origin_proof
                     else []
                 )
+                current_native = {
+                    "pages": [
+                        {"physical_page": number, **native_captures.pop(number)}
+                        for number in range(current, end + 1)
+                    ]
+                    if not ocr and policy.text_coordinates
+                    else [],
+                    "lineage": list(native_lineage.records.values())
+                    if not ocr and policy.text_coordinates
+                    else [],
+                }
+                native_proofs.append(current_native)
                 if ocr:
                     for number in range(current, end + 1):
                         record = captures.pop(number)
@@ -457,10 +488,28 @@ def run_pdf_batches(call, paths, report):
                     )
                     image["uri"] = "urn:tychora:artifact:sha256:" + ref["sha256"]
                 exports.append(FrozenJsonMap(raw))
+                if policy.text_coordinates:
+                    from .text_coordinates import batch_coordinate_proof
+
+                    coordinates.append(
+                        batch_coordinate_proof(
+                            policy,
+                            [
+                                page
+                                for page in evidence
+                                if current <= page["physical_page"] <= end
+                            ],
+                            proofs[-1],
+                            current_native,
+                        )
+                    )
                 lineage.tables.clear()
+                native_lineage.tables.clear()
                 del converted, raw, nodes
             current = end + 1
-        merged = merge_pdf_page_exports(tuple(exports))
+        merged = merge_pdf_page_exports(tuple(exports), coordinates=coordinates)
+        from .text_coordinates import merge_native_evidence
+
         stage(
             f"batch-{start}.json",
             canonical_bytes(
@@ -470,6 +519,15 @@ def run_pdf_batches(call, paths, report):
                     **(
                         {"lineage": merge_lineage(exports, proofs)}
                         if policy.origin_proof
+                        else {}
+                    ),
+                    **(
+                        {
+                            "native_text_evidence": merge_native_evidence(
+                                exports, native_proofs
+                            )
+                        }
+                        if policy.text_coordinates
                         else {}
                     ),
                 }

@@ -316,20 +316,6 @@ export function EvidenceReader({
         <Status>Loading evidence…</Status>
       ) : (
         <>
-          <dl className="identity">
-            <dt>Evidence</dt>
-            <dd>{inspection.id}</dd>
-            <dt>Source</dt>
-            <dd>{sourceId ?? citation?.source_id ?? "Unknown"}</dd>
-            <dt>Revision</dt>
-            <dd>{revisionId ?? citation?.revision_id ?? "Unknown"}</dd>
-            <dt>Extraction</dt>
-            <dd>
-              {unit?.extraction_id ??
-                inspection.partial_evidence?.extraction_id ??
-                "Unknown"}
-            </dd>
-          </dl>
           {unit ? (
             <>
               <p className="origin-label">
@@ -340,6 +326,23 @@ export function EvidenceReader({
                     : "Derived text"}{" "}
                 · {unit.unit_type} · {unit.review_state}
                 {!unit.citable && " · not citable"}
+                {unit.locators.some(
+                  (loc) => "physical_page" in loc && loc.physical_page !== null,
+                ) && (
+                  <>
+                    {" "}
+                    · Page{" "}
+                    {Array.from(
+                      new Set(
+                        unit.locators.flatMap((loc) =>
+                          "physical_page" in loc && loc.physical_page !== null
+                            ? [loc.physical_page]
+                            : [],
+                        ),
+                      ),
+                    ).join(", ")}
+                  </>
+                )}
               </p>
               {unit.heading_path.length > 0 && (
                 <p className="muted">{unit.heading_path.join(" / ")}</p>
@@ -406,6 +409,23 @@ export function EvidenceReader({
               ))}
             </>
           )}
+          <details className="evidence-metadata">
+            <summary>Source identities</summary>
+            <dl className="identity">
+              <dt>Evidence</dt>
+              <dd>{inspection.id}</dd>
+              <dt>Source</dt>
+              <dd>{sourceId ?? citation?.source_id ?? "Unknown"}</dd>
+              <dt>Revision</dt>
+              <dd>{revisionId ?? citation?.revision_id ?? "Unknown"}</dd>
+              <dt>Extraction</dt>
+              <dd>
+                {unit?.extraction_id ??
+                  inspection.partial_evidence?.extraction_id ??
+                  "Unknown"}
+              </dd>
+            </dl>
+          </details>
           {inspection.truncated && (
             <Status tone="warning">Evidence inspection is truncated.</Status>
           )}

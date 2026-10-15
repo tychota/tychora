@@ -419,6 +419,9 @@ class DoclingParser:
         self._evidence = []
         self._lineages = []
         self._lineage = None
+        self._native_batches = []
+        self._native_text_evidence = None
+        self._coordinate_batches = []
         self._external_refs = {}
         self._metadata_bytes = 0
         self.retention_budget = None
@@ -664,6 +667,26 @@ class DoclingParser:
             raise TychoraError("INDEX_INCOMPLETE", "PDF batch page coverage differs")
         self._exports.append(FrozenJsonMap(metadata["document"]))
         self._evidence.extend(metadata["evidence"])
+        if self.policy.text_coordinates:
+            from .text_coordinates import batch_coordinate_proof
+
+            native = metadata.get("native_text_evidence")
+            if native is None:
+                raise TychoraError("INTEGRITY_ERROR", "Missing native assembly batch")
+            try:
+                self._coordinate_batches.append(
+                    batch_coordinate_proof(
+                        self.policy,
+                        metadata["evidence"],
+                        metadata.get("lineage"),
+                        native,
+                    )
+                )
+            except (ValueError, KeyError, TypeError, IndexError) as exc:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Invalid PDF coordinate batch"
+                ) from exc
+            self._native_batches.append(native)
         if self.policy.origin_proof:
             if "lineage" not in metadata or not isinstance(metadata["lineage"], list):
                 raise TychoraError("INTEGRITY_ERROR", "Missing PDF OCR lineage batch")
@@ -690,7 +713,19 @@ class DoclingParser:
                     "INTEGRITY_ERROR", "Invalid PDF OCR lineage references"
                 ) from exc
             self._lineages.clear()
-        payload = canonical_bytes(merge_pdf_page_exports(tuple(self._exports)))
+        if self.policy.text_coordinates:
+            from .text_coordinates import merge_native_evidence
+
+            self._native_text_evidence = merge_native_evidence(
+                self._exports, self._native_batches
+            )
+            self._native_batches.clear()
+        payload = canonical_bytes(
+            merge_pdf_page_exports(
+                tuple(self._exports), coordinates=self._coordinate_batches
+            )
+        )
+        self._coordinate_batches.clear()
         self._exports.clear()
         result = self._retain(
             (
@@ -738,7 +773,14 @@ class DoclingParser:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Docling output is not canonical JSON"
             )
-        mapped = map_document(document_json, original)
+        coordinates = None
+        if self.policy is not None and self.policy.text_coordinates:
+            from .text_coordinates import batch_coordinate_proof
+
+            coordinates = batch_coordinate_proof(
+                self.policy, self._evidence, self._lineage, self._native_text_evidence
+            )
+        mapped = map_document(document_json, original, coordinates=coordinates)
         if self.registration.format == "docx" and any(
             unit.provenance for unit in mapped.units
         ):
@@ -959,7 +1001,12 @@ class DoclingParser:
                 for asset in assets
             )
             evidence_payload = canonical_bytes(
-                evidence_document(evidence, self._lineage, self.policy.origin_proof)
+                evidence_document(
+                    evidence,
+                    self._lineage,
+                    self.policy.origin_proof,
+                    native=self._native_text_evidence,
+                )
             )
             bindings_payload = canonical_bytes(
                 {
@@ -1017,6 +1064,8 @@ class DoclingParser:
             )
             if self.policy.origin_proof:
                 data["ocr_lineage"] = self._lineage
+            if self.policy.text_coordinates:
+                data["native_text_evidence"] = self._native_text_evidence
         encoded = extraction_document(data)
         if self.policy is not None:
             self._reserve_metadata(encoded)

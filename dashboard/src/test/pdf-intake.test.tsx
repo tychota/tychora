@@ -194,6 +194,51 @@ it("keeps same submission key after ambiguous rejection and recovers an accepted
   expect(keys).toHaveLength(2);
   expect(keys[0]).toBe(keys[1]);
 });
+it("ignores a delayed no-job check after a confirmed retry is accepted", async () => {
+  const props = fixture();
+  let submissions = 0;
+  let checks = 0;
+  let finish!: (value: Response) => void;
+  const base = respond;
+  respond = (path, init) => {
+    if (path.endsWith("/submit"))
+      return ++submissions === 1
+        ? json(
+            { code: "WORKSPACE_BUSY", message: "Try again", retryable: true },
+            409,
+          )
+        : json({ id: "accepted-retry", operation: "add", state: "queued" });
+    if (
+      path.endsWith(receipt().intake_id) &&
+      init.method !== "DELETE" &&
+      ++checks === 2
+    )
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    return base(path, init);
+  };
+  render(<PdfIntake {...props} />);
+  await analyse();
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /confirm this exact analysis/ }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Ingest PDF" }));
+  await screen.findByText(/Try again/);
+  fireEvent.click(screen.getByRole("button", { name: "Check submission" }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Retry confirmed submission" }),
+  );
+  await waitFor(() =>
+    expect(props.onAccepted).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "accepted-retry" }),
+      expect.anything(),
+    ),
+  );
+  await act(async () => finish(json(receipt("analysed", { analysis }))));
+  expect(screen.queryByText(/No accepted job is confirmed yet/)).toBeNull();
+  expect(props.onAccepted).toHaveBeenCalledTimes(1);
+});
 it("stops waiting for analysis without claiming server cancellation and ignores a late result", async () => {
   const props = fixture();
   let finish!: (v: Response) => void;

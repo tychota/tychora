@@ -19,16 +19,21 @@ class PdfProcessingPolicy(Contract):
     options: FrozenJsonMap
     limits: FrozenJsonMap
     origin_proof: Literal["ordered-ocr-cells@1"] | None = None
+    text_coordinates: Literal["docling-assembly@1"] | None = None
 
     @model_serializer(mode="wrap")
     def legacy_origin_proof(self, handler):
         data = handler(self)
         if self.origin_proof is None:
             data.pop("origin_proof", None)
+        if self.text_coordinates is None:
+            data.pop("text_coordinates", None)
         return data
 
     @model_validator(mode="after")
     def page_partition(self) -> Self:
+        if self.text_coordinates is not None and self.origin_proof is None:
+            raise ValueError("Assembly coordinates require ordered origin proof")
         pages = (*self.native_pages, *self.ocr_pages, *self.blank_pages)
         for group in (self.native_pages, self.ocr_pages, self.blank_pages):
             if tuple(sorted(set(group))) != group or any(page < 1 for page in group):
