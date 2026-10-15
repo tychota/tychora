@@ -648,7 +648,6 @@ def test_external_image_payload_verification_is_independent(retained_case, failu
 
     with pytest.raises(ValueError):
         validate_external_images(parsed, read)
-||||||| parent of dd07ae0 (fix: accept unenriched Docling formula spans over original text)
 
 
 def test_mapping_accepts_unenriched_formula_span_over_original_text():
