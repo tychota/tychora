@@ -251,11 +251,22 @@ def merge_lineage(exports, proofs):
     result = []
     for export, records in zip(exports, proofs, strict=True):
         for record in records:
-            _, domain, number = record["native_ref"].split("/")
+            reference = record["native_ref"]
+            if not isinstance(reference, str):
+                fail()
+            parts = reference.split("/")
+            if (
+                len(parts) != 3
+                or parts[0] != "#"
+                or parts[1] not in DOMAINS
+                or re.fullmatch(r"0|[1-9][0-9]*", parts[2]) is None
+            ):
+                fail()
+            _, domain, number = parts
             index = int(number)
             if (
-                domain not in DOMAINS
-                or export[domain][index]["self_ref"] != record["native_ref"]
+                index >= len(export.get(domain, ()))
+                or export[domain][index]["self_ref"] != reference
             ):
                 fail()
             result.append(

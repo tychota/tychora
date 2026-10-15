@@ -378,6 +378,39 @@ def test_lineage_merge_remaps_only_output_refs_not_physical_cells():
     assert [record["segments"][0]["page"] for record in merged] == [1, 17]
 
 
+@pytest.mark.parametrize(
+    "native_ref",
+    [
+        None,
+        17,
+        True,
+        1.5,
+        [],
+        {},
+        "",
+        "#/texts",
+        "#/unknown/0",
+        "#/texts/-1",
+        "#/texts/00",
+        "#/texts/9",
+    ],
+)
+def test_parent_pdf_finish_rejects_malformed_lineage_ref_as_integrity_error(native_ref):
+    from tychora.adapters.docling.parser import DoclingParser
+    from tychora.contracts.errors import TychoraError
+
+    # Exercise the real parent boundary before any owner/storage/model is needed.
+    parser = object.__new__(DoclingParser)
+    parser.policy = SimpleNamespace(origin_proof="ordered-ocr-cells@1")
+    parser._exports = [{"texts": [{"self_ref": "#/texts/0"}]}]
+    parser._lineages = [[{"native_ref": native_ref}]]
+    parser._lineage = None
+    with pytest.raises(TychoraError) as error:
+        parser._finish_pdf(None, None, None, None, None)
+    assert error.value.code == "INTEGRITY_ERROR"
+    assert parser._lineage is None
+
+
 def test_legacy_evidence_list_is_unchanged_and_new_envelope_is_versioned():
     from tychora.adapters.docling.ocr_lineage import evidence_document
 
