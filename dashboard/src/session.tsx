@@ -7,6 +7,11 @@ import {
   type ReactNode,
 } from "react";
 import { ApiClient, ApiError } from "./api/client";
+import {
+  forgetRememberedToken,
+  readRememberedToken,
+  rememberToken,
+} from "./credentials";
 import type {
   Handshake,
   CollectionInput,
@@ -49,7 +54,17 @@ interface Session {
   sessionKey: number;
   selectionKey: number;
   connectionKey: number;
-  connect: (token: string) => Promise<void>;
+  /** Whether this browser stores the credential (opt-in, localStorage). */
+  remembered: boolean;
+  /**
+   * Connect with a bearer token. `remember` true stores it on success, false
+   * removes any stored token, and omitted keeps the current choice.
+   */
+  connect: (token: string, options?: { remember?: boolean }) => Promise<void>;
+  /** Store or remove the connected credential on this browser. */
+  setRemembered: (remember: boolean) => void;
+  /** Remove the stored credential and disconnect. */
+  forget: () => void;
   refreshGrant: (selectCreatedId?: string) => Promise<void>;
   createCollection: (value: CollectionInput) => Promise<CollectionSummary>;
   selectCollections: (ids: string[]) => void;
@@ -74,6 +89,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     selectionKey: 0,
     connectionKey: 0,
   });
+  const [remembered, setRememberedState] = useState(
+    () => readRememberedToken() !== null,
+  );
+  const token = useRef<string | null>(null);
   const active = useRef<ApiClient | null>(null);
   const pending = useRef<ApiClient | null>(null);
   const grant = useRef<ApiClient | null>(null);
@@ -88,6 +107,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     pending.current?.dispose();
     grant.current?.dispose();
     active.current = pending.current = grant.current = null;
+    token.current = null;
     setState({
       client: null,
       adminClient: null,
@@ -98,10 +118,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       connectionKey: epoch.current,
     });
   };
-  const connect = async (token: string) => {
+  const connect = async (
+    credential: string,
+    options: { remember?: boolean } = {},
+  ) => {
     disconnect();
     const generation = epoch.current;
-    const candidate = new ApiClient(token);
+    const candidate = new ApiClient(credential);
     pending.current = candidate;
     try {
       const handshake = await candidate.request<Handshake>("/v1/handshake");
@@ -112,7 +135,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         [],
       );
       if (generation !== epoch.current) return;
-      grant.current = new ApiClient(token);
+      grant.current = new ApiClient(credential);
+      token.current = credential;
+      const remember = options.remember ?? readRememberedToken() !== null;
+      if (remember) setRememberedState(rememberToken(credential));
+      else {
+        forgetRememberedToken();
+        setRememberedState(false);
+      }
       const scoped = grant.current.withGrant(handshake.scope);
       active.current = collections.length ? scoped.narrow(collections) : null;
       scoped.dispose();
@@ -198,6 +228,19 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       selectionKey: previous.selectionKey + 1,
     }));
   };
+  const setRemembered = (remember: boolean) => {
+    if (remember && token.current)
+      setRememberedState(rememberToken(token.current));
+    else if (!remember) {
+      forgetRememberedToken();
+      setRememberedState(false);
+    }
+  };
+  const forget = () => {
+    forgetRememberedToken();
+    setRememberedState(false);
+    disconnect();
+  };
   useEffect(
     () => () => {
       active.current?.dispose();
@@ -210,7 +253,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     <Context.Provider
       value={{
         ...state,
+        remembered,
         connect,
+        setRemembered,
+        forget,
         refreshGrant,
         createCollection,
         selectCollections,
