@@ -158,7 +158,7 @@ async def test_qualified_http_pdf_submission_publishes_and_reports_batches(tmp_p
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fault", ["limit", "lineage"])
+@pytest.mark.parametrize("fault", ["limit", "lineage", "wrapped-lineage"])
 async def test_pdf_composition_limit_is_durable_nonretryable_job_failure(
     tmp_path, monkeypatch, fault
 ):
@@ -173,6 +173,20 @@ async def test_pdf_composition_limit_is_durable_nonretryable_job_failure(
     with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
 
         async def oversized_parser_output(*args, **kwargs):
+            if fault == "wrapped-lineage":
+                from tests.runtime.test_parser_bounds import WrappedPdfParser
+                from tychora.application.runtime import (
+                    ParserExecutionLimits,
+                    parser_process,
+                )
+
+                parser_process(
+                    WrappedPdfParser(),
+                    (),
+                    limits=ParserExecutionLimits(
+                        1, 20, 4294967296, 268435456, ExecutionContext()
+                    ),
+                )
             if fault == "lineage":
                 from tychora.adapters.docling.ocr_lineage import validate_parser_lineage
 

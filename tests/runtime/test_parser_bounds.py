@@ -10,6 +10,87 @@ from tychora.contracts.errors import TychoraError
 from tychora.ports.execution import ExecutionContext
 
 
+class WrappedPdfParser:
+    """Exercise the real SDK error wrapper without constructing models/backends."""
+
+    def __init__(self, fault="lineage"):
+        self.fault = fault
+
+    def _convert(self, call, paths, report):
+        from pathlib import PurePath
+        from types import SimpleNamespace
+
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.document import InputDocument
+        from docling.pipeline.base_pipeline import BasePipeline
+
+        from tychora.adapters.docling.ocr_lineage_capture import invalid
+
+        def assemble(result):
+            if self.fault == "untyped":
+                raise ValueError("Synthetic SDK details must remain private")
+            if self.fault == "unsupported":
+                raise TychoraError("FORBIDDEN_SCOPE", "Synthetic unapproved code")
+            if self.fault == "implicit":
+                try:
+                    invalid()
+                except TychoraError:
+                    raise RuntimeError("Synthetic unrelated wrapper") from None
+            invalid()
+
+        pipeline = SimpleNamespace(
+            _build_document=lambda result: result,
+            _assemble_document=assemble,
+            _unload=lambda result: None,
+        )
+        document = InputDocument.model_construct(
+            file=PurePath("synthetic.pdf"),
+            document_hash="a" * 64,
+            format=InputFormat.PDF,
+        )
+        return BasePipeline.execute(pipeline, document, raises_on_error=True)
+
+    def run(self, paths, report):
+        from unittest.mock import patch
+
+        from tychora.adapters.docling import pdf_batches
+        from tychora.adapters.docling.parser import _Convert
+
+        # Only replace model/backend work. The SDK wrapper, owning adapter and
+        # runtime sanitization stay real, including in a separately spawned child.
+        with patch.object(pdf_batches, "run_pdf_batches", self._convert):
+            return _Convert("", "pdf").run(paths, report)
+
+    def __call__(self, paths):
+        return self._convert(None, paths, None)
+
+
+@pytest.mark.parametrize(
+    ("fault", "bounded", "expected"),
+    [
+        ("lineage", True, "INTEGRITY_ERROR"),
+        ("untyped", True, "INVALID_REQUEST"),
+        ("unsupported", True, "INVALID_REQUEST"),
+        ("implicit", True, "INVALID_REQUEST"),
+        ("lineage", False, "INVALID_REQUEST"),
+    ],
+)
+def test_sdk_wrapped_pdf_failure_keeps_only_bounded_typed_code(
+    fault, bounded, expected
+):
+    from tychora.application.runtime import _parser_entry
+
+    receiver, sender = multiprocessing.Pipe()
+    try:
+        _parser_entry(WrappedPdfParser(fault), (), sender, bounded=bounded)
+        assert receiver.recv() == ("error", expected)
+        with pytest.raises(EOFError):
+            receiver.recv()
+    finally:
+        receiver.close()
+        sender.close()
+
+
 @pytest.mark.parametrize("cancel", [False, True])
 def test_bounded_parser_reaps_before_return(tmp_path, cancel):
     from tychora.application.runtime import ParserExecutionLimits, parser_process

@@ -124,7 +124,7 @@ def text_fields(record, evidence):
     if projection == "formula":
         text = ""
     elif projection == "list":
-        fields = {"marker": "-", "enumerated": False}
+        fields = {"marker": "", "enumerated": False}
         for enumerated, patterns in ((False, _BULLETS), (True, _NUMBERS)):
             match = next(
                 (
