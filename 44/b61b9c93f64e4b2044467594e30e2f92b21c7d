@@ -1,0 +1,29 @@
+tests/transports/test_pdf_policy_confirmation.py
+  s_346481235fa7eb::t_0c0faa37abe55b 161,176-189
+src/tychora/adapters/docling/parser.py
+  s_346481235fa7eb::t_1d6a61d7256711 315-322
+tests/ingestion/test_ocr_lineage.py
+  s_346481235fa7eb::t_0c0faa37abe55b 218-224,232-341
+  s_346481235fa7eb::t_31bf221cfefc3b 225-231
+  s_346481235fa7eb::t_bc27d52a436576 217
+src/tychora/adapters/docling/ocr_lineage.py
+  s_346481235fa7eb::t_1d6a61d7256711 127
+tests/runtime/test_parser_bounds.py
+  s_346481235fa7eb::t_0c0faa37abe55b 13-93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "44b61b9c93f64e4b2044467594e30e2f92b21c7d",
+  "prompts": {},
+  "sessions": {
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
