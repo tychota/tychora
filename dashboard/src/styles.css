@@ -661,6 +661,26 @@ summary {
 .connection > .muted {
   font-size: 0.8rem;
 }
+.connection form .remember-choice,
+.workspace-context .remember-choice {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 500;
+}
+.connection-notice {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  padding: 0.8rem 1rem;
+  margin: 0.8rem 0;
+  font-size: 0.86rem;
+  line-height: 1.6;
+}
+.session-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
 @media (min-width: 1600px) {
   .main-content {
     max-width: 1550px;
