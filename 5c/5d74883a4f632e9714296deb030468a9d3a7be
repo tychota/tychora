@@ -1,0 +1,45 @@
+src/tychora/adapters/docling/ocr_evidence.py
+  s_346481235fa7eb::t_2e06af520bbfd1 252,273,333,335-336,342,371-373,376-379,383-385
+src/tychora/adapters/docling/parser.py
+  s_346481235fa7eb::t_4fb9e12456ba7b 415-424,643-644,663-664
+src/tychora/adapters/vision/local.py
+  s_346481235fa7eb::t_3cb066f606f3f5 140,142,163-167,169-171,208,212-219,221,225,251-252
+src/tychora/application/pdf_processing.py
+  s_346481235fa7eb::t_36ebea004dec7d 3,5-10,200-274
+src/tychora/application/sources.py
+  s_346481235fa7eb::t_8aad0de8b95d44 1688,1696-1698,1711-1712,1718-1726,1745-1747,1801-1802,1831-1841,1851-1859,1926-1936
+src/tychora/application/vision_selection.py
+  s_346481235fa7eb::t_5ebd346349af92 138-142,223-224,268-272,300-301,303-305
+src/tychora/ingestion/composition.py
+  s_346481235fa7eb::t_7265a15edcfa95 193-198,733-734,746-747,749-750,754-756
+tests/ingestion/test_ocr_origin.py
+  s_219afc08798c44::t_de9a55549c1cc2 6,124-408
+tests/qualification/test_scanned_pdf.py
+  s_346481235fa7eb::t_04892a76fcf51c 229-231,242,263-266
+tests/transports/test_pdf_policy_confirmation.py
+  s_346481235fa7eb::t_47adffdefb328d 157-225
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5c5d74883a4f632e9714296deb030468a9d3a7be",
+  "prompts": {},
+  "sessions": {
+    "s_219afc08798c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    },
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
