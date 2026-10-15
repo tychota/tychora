@@ -548,3 +548,63 @@ export interface KindMetadataForm {
   schema_reference_bindings: Record<string, Json>;
   advanced: boolean;
 }
+
+export interface PdfIntakeDescriptor {
+  source_key: string;
+  collection_id: string;
+  kind: string;
+  metadata: Record<string, Json>;
+  expected_size_bytes: number;
+  expected_sha256?: string;
+  format: "pdf";
+}
+export interface PdfProcessingPolicy {
+  origin_proof?: "ordered-ocr-cells@1" | null;
+  version: "pdf-processing@1";
+  mode: "native" | "local_ocr";
+  native_pages: number[];
+  ocr_pages: number[];
+  blank_pages: number[];
+  backend_identity: Record<string, Json>;
+  runtime_inventory: Record<string, Json>;
+  model_inventory_sha256: string;
+  options: Record<string, Json>;
+  limits: Record<string, Json>;
+}
+export interface PdfAnalysis {
+  original_sha256: string;
+  size_bytes: number;
+  page_count: number;
+  native_text_pages: number[];
+  image_only_pages: number[];
+  blank_pages: number[];
+  unknown_pages: number[];
+  requires_ocr: boolean;
+  blockers: string[];
+  proposed_policy: PdfProcessingPolicy | null;
+  analysis_sha256: string;
+  policy_sha256?: string | null;
+}
+export interface PdfIntakeSubmission {
+  analysis_sha256: string;
+  policy_sha256: string;
+}
+export interface PdfIntakeStatus {
+  intake_id: string;
+  state:
+    | "prepared"
+    | "receiving"
+    | "staged"
+    | "analysing"
+    | "analysed"
+    | "submitted"
+    | "aborted"
+    | "expired"
+    | "failed";
+  byte_ceiling: number;
+  received_bytes: number;
+  expires_at: string;
+  analysis: PdfAnalysis | null;
+  job: import("./operations").JobHandle | null;
+  error: { code: string; message: string; retryable: boolean } | null;
+}

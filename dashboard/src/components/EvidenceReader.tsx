@@ -346,6 +346,49 @@ export function EvidenceReader({
               )}
               <div className="evidence-text">{unit.text}</div>
               <LocatorDetails locators={unit.locators} />
+              {unit.text_origin === "ocr" &&
+                inspection.records
+                  .filter(
+                    (record) =>
+                      record.record_type === "vision_derivation" &&
+                      record.value.task === "ocr",
+                  )
+                  .map((record) => (
+                    <section key={record.id} aria-label="OCR provenance">
+                      <h3>OCR input and derivation</h3>
+                      <p>
+                        Retained derivation links this transcript to its input
+                        pixels and local processing identity. Uncalibrated OCR
+                        scores do not accept the transcription or make it
+                        citable.
+                      </p>
+                      <dl className="identity">
+                        <dt>Retained input image SHA-256</dt>
+                        <dd>
+                          {typeof record.value.image_sha256 === "string"
+                            ? record.value.image_sha256
+                            : "Unavailable"}
+                        </dd>
+                        <dt>Input context identity</dt>
+                        <dd>
+                          {typeof record.value.source_context_sha256 ===
+                          "string"
+                            ? record.value.source_context_sha256
+                            : "Unavailable"}
+                        </dd>
+                        <dt>Recorded local model</dt>
+                        <dd>
+                          {typeof record.value.model === "string"
+                            ? record.value.model
+                            : "Unavailable"}
+                        </dd>
+                      </dl>
+                      <JsonDetails
+                        value={record.value}
+                        label="Exact OCR derivation receipt"
+                      />
+                    </section>
+                  ))}
             </>
           ) : (
             <>

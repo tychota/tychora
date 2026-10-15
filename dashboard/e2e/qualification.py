@@ -84,6 +84,13 @@ def prepare(scenario: str, workspace: Path, fixtures: Path) -> None:
         from tests.qualification.test_scanned_pdf import generated_scan
 
         (fixtures / "synthetic-scan.pdf").write_bytes(generated_scan("columns"))
+        try:
+            from dashboard.e2e.pdf_fixture import generate_pdf
+        except ModuleNotFoundError:
+            from pdf_fixture import generate_pdf
+        for mode in ("mixed", "scan", "native", "blank"):
+            (fixtures / f"task6-{mode}.pdf").write_bytes(generate_pdf(mode))
+        (fixtures / "task6-invalid.pdf").write_bytes(b"not a PDF")
         pack = workspace / "browser-profile"
         pack.mkdir()
         modes = ""

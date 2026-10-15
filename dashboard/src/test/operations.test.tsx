@@ -1046,7 +1046,7 @@ function confirmSource() {
   );
 }
 function selectedPdf(size: number) {
-  const file = new File(["sample"], "large.pdf");
+  const file = new File(["sample"], "large.docx");
   Object.defineProperty(file, "size", { value: size });
   return file;
 }
@@ -1055,7 +1055,7 @@ function sourcePosts() {
     (r) => r.path === "/v1/sources" && r.init.method === "POST",
   );
 }
-it("accepts preserved pasted text after rejecting a 50 MiB selected PDF", async () => {
+it("accepts preserved pasted text after rejecting a 50 MiB selected non-PDF file", async () => {
   const fallback = respond;
   respond = (path, init) =>
     path === "/v1/sources" && init.method === "POST"
@@ -1112,7 +1112,7 @@ it.each(["success", "error"])(
     Object.defineProperty(file, "arrayBuffer", { value: () => pending });
     changeSourceType("bytes");
     fireEvent.change(screen.getByLabelText("Format"), {
-      target: { value: "pdf" },
+      target: { value: "docx" },
     });
     fireEvent.change(screen.getByLabelText("Source file"), {
       target: { files: [file] },

@@ -1,0 +1,90 @@
+{
+  "source_id": "56270bce-62c0-5e40-8576-3f66ecbdd229",
+  "revision_id": "b382c90d6a98859030aee6e5efb1408702c45f15ea86a3ade04cc7f86883fb43",
+  "extraction_id": "e8f20f090369d20260828867c8b423e584e3a97f5b7a0328a0acf0d8bd855e9d",
+  "units": [
+    {
+      "id": "0f18c17d99dbc4be467416fdfd268eba16d7418a30edb0588613554323518c16",
+      "ordinal": 0,
+      "unit_type": "text",
+      "heading_path": [],
+      "text_origin": "source",
+      "review_state": "unreviewed",
+      "citable": true,
+      "locators": [
+        {
+          "char_start": 0,
+          "char_end": 34,
+          "char_domain": "unit",
+          "type": "document",
+          "artifact_ref": "d89f62485f775ed0f83546ca4d322fc4057bf99e93ec444d3a54ea1b8fe67460",
+          "native_ref": "synthetic-pdf-recovery",
+          "physical_page": 2,
+          "printed_page": null,
+          "geometry": {
+            "domain": "points",
+            "x0": 50,
+            "y0": 91.38400000000001,
+            "x1": 229.41199999999998,
+            "y1": 102.48400000000004
+          }
+        }
+      ],
+      "preview": "Native telescope calibration notes"
+    },
+    {
+      "id": "d57bd016d8e344884e9c1e0acb3f43303f9fdf207d87306bdcd9469983866366",
+      "ordinal": 1,
+      "unit_type": "image_region_original",
+      "heading_path": [],
+      "text_origin": "source",
+      "review_state": "unreviewed",
+      "citable": true,
+      "locators": [
+        {
+          "type": "image",
+          "artifact_ref": "d89f62485f775ed0f83546ca4d322fc4057bf99e93ec444d3a54ea1b8fe67460",
+          "native_ref": "synthetic-pdf-recovery",
+          "physical_page": 1,
+          "printed_page": null,
+          "geometry": {
+            "domain": "pixels",
+            "x0": 0,
+            "y0": 0,
+            "x1": 1800,
+            "y1": 2400
+          }
+        }
+      ],
+      "preview": ""
+    },
+    {
+      "id": "f3c05d6a473b60e12f5ec043b3f33d88f55907f8a11b2c6cd3a1dc01cdd8469e",
+      "ordinal": 2,
+      "unit_type": "asset_proxy",
+      "heading_path": [],
+      "text_origin": "ocr",
+      "review_state": "needs_review",
+      "citable": false,
+      "locators": [
+        {
+          "type": "image",
+          "artifact_ref": "d89f62485f775ed0f83546ca4d322fc4057bf99e93ec444d3a54ea1b8fe67460",
+          "native_ref": "synthetic-pdf-recovery",
+          "physical_page": 1,
+          "printed_page": null,
+          "geometry": {
+            "domain": "points",
+            "x0": 0,
+            "y0": 0,
+            "x1": 600,
+            "y1": 800
+          }
+        }
+      ],
+      "preview": "Violet telescope field notes\nSynthetic local OCR evidence\nReview this derived transcript"
+    }
+  ],
+  "next_cursor": null,
+  "scope_limited": false
+}

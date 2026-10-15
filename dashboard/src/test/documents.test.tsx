@@ -781,3 +781,162 @@ it("keeps missing document packages blocking when bounded assets remain unknown"
     result.some((p) => p.blocking && p.message.includes("Required packages")),
   ).toBe(true);
 });
+it("keeps a selected PDF draft through Models, and text stays submit-ready after PDF upload failure", async () => {
+  const fallback = respond;
+  respond = (path, init) =>
+    path === "/v1/handshake"
+      ? json({
+          ...handshake,
+          scope: { ...handshake.scope, capabilities: ["read", "write"] },
+        })
+      : path === "/v1/pdf-intakes"
+        ? json({
+            intake_id: "a".repeat(64),
+            state: "prepared",
+            byte_ceiling: 2000000,
+            received_bytes: 0,
+            expires_at: new Date(Date.now() + 1800000).toISOString(),
+            analysis: null,
+            job: null,
+            error: null,
+          })
+        : path.endsWith("/content")
+          ? json(
+              { code: "LIMIT_EXCEEDED", message: "Synthetic upload limit" },
+              413,
+            )
+          : path === "/v1/sources"
+            ? json(receipt, 202)
+            : fallback(path, init);
+  await open("/dashboard/documents/add");
+  fireEvent.change(screen.getByLabelText("Content"), {
+    target: { value: "Retained plain text" },
+  });
+  fireEvent.change(screen.getByLabelText("Destination"), {
+    target: { value: collection.collection_id },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Files" }));
+  const file = new File(["synthetic"], "synthetic.pdf");
+  Object.defineProperty(file, "size", { value: 2000000 });
+  Object.defineProperty(file, "arrayBuffer", {
+    value: vi.fn(() => {
+      throw new Error("forbidden whole PDF read");
+    }),
+  });
+  fireEvent.change(screen.getByLabelText("Source file"), {
+    target: { files: [file] },
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Analyse PDF" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("link", { name: "Models" }));
+  fireEvent.click(screen.getByRole("link", { name: "Documents" }));
+  fireEvent.click(screen.getByRole("link", { name: "Add documents" }));
+  expect(screen.getByText(/Selected file: synthetic.pdf/)).toBeVisible();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Analyse PDF" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Analyse PDF" }));
+  await screen.findByText(/Synthetic upload limit/);
+  expect(screen.getByText(/Upload failed/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Pasted text" }));
+  expect(screen.getByLabelText("Content")).toHaveValue("Retained plain text");
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Index text" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Index text" }));
+  await screen.findByRole("link", { name: "Follow job" });
+  expect(file.arrayBuffer).not.toHaveBeenCalled();
+  expect(localStorage.length + sessionStorage.length).toBe(0);
+});
+it("keeps pending PDF recovery available while independently submitting preserved text", async () => {
+  const pdf = (await import("../../contracts/task6-pdf-mixed-status.json"))
+    .default;
+  const fallback = respond;
+  let submits = 0;
+  respond = (path, init) =>
+    path === "/v1/handshake"
+      ? json({
+          ...handshake,
+          scope: { ...handshake.scope, capabilities: ["read", "write"] },
+        })
+      : path === "/v1/pdf-intakes"
+        ? json({ ...pdf, state: "prepared", analysis: null })
+        : path.endsWith("/content")
+          ? json({ ...pdf, state: "staged", analysis: null })
+          : path.endsWith("/analyse")
+            ? json(pdf)
+            : path.endsWith("/submit")
+              ? ++submits === 1
+                ? Promise.reject(new Error("lost response"))
+                : json(
+                    { id: "recovered-pdf", operation: "add", state: "queued" },
+                    202,
+                  )
+              : path.startsWith("/v1/pdf-intakes/")
+                ? Promise.reject(new Error("unavailable"))
+                : path === "/v1/sources"
+                  ? json(receipt, 202)
+                  : fallback(path, init);
+  await open("/dashboard/documents/add");
+  fireEvent.change(screen.getByLabelText("Content"), {
+    target: { value: "Independent preserved text" },
+  });
+  fireEvent.change(screen.getByLabelText("Destination"), {
+    target: { value: collection.collection_id },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "Files" }));
+  fireEvent.change(screen.getByLabelText("Source file"), {
+    target: { files: [new File(["synthetic"], "synthetic.pdf")] },
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Analyse PDF" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Analyse PDF" }));
+  await screen.findByText(/3 physical pages/);
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /confirm this exact analysis/ }),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Ingest PDF" }));
+  await screen.findByText(/Submission was not confirmed/);
+  fireEvent.click(screen.getByRole("button", { name: "Pasted text" }));
+  expect(
+    screen.getByRole("button", { name: "Check submission" }),
+  ).toBeVisible();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Index text" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Index text" }));
+  await screen.findByRole("link", { name: "Follow job" });
+  fireEvent.click(
+    screen.getByRole("checkbox", { name: /confirm this exact analysis/ }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Retry confirmed submission" }),
+  );
+  await waitFor(() =>
+    expect(requests.filter((r) => r.path.endsWith("/submit"))).toHaveLength(2),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("link", { name: "Follow job" })).toHaveAttribute(
+      "href",
+      "/dashboard/jobs/recovered-pdf",
+    ),
+  );
+});
+it("never base64 reads an identified PDF under a conflicting format override", async () => {
+  await open("/dashboard/documents/add");
+  fireEvent.click(screen.getByText("Advanced source options"));
+  fireEvent.click(screen.getByRole("button", { name: "Files" }));
+  fireEvent.change(screen.getByLabelText("Format"), {
+    target: { value: "docx" },
+  });
+  const file = new File(["synthetic"], "scan.pdf", { type: "application/pdf" });
+  const read = vi.fn(async () => new ArrayBuffer(1));
+  Object.defineProperty(file, "arrayBuffer", { value: read });
+  fireEvent.change(screen.getByLabelText("Source file"), {
+    target: { files: [file] },
+  });
+  await screen.findByText(/PDF files require PDF format/);
+  expect(read).not.toHaveBeenCalled();
+});

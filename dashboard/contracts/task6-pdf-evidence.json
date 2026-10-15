@@ -1,0 +1,64 @@
+{
+  "subject": "evidence",
+  "id": "f3c05d6a473b60e12f5ec043b3f33d88f55907f8a11b2c6cd3a1dc01cdd8469e",
+  "evidence": {
+    "unit_id": "f3c05d6a473b60e12f5ec043b3f33d88f55907f8a11b2c6cd3a1dc01cdd8469e",
+    "extraction_id": "e8f20f090369d20260828867c8b423e584e3a97f5b7a0328a0acf0d8bd855e9d",
+    "parent_id": null,
+    "ordinal": 2,
+    "unit_type": "asset_proxy",
+    "native_ref": "asset-proxy:a88c2ffd9f22ae409f758944bd4be3878a411b798c05f81a008c3090048e5d4a",
+    "boundary_key": "asset-proxy:a88c2ffd9f22ae409f758944bd4be3878a411b798c05f81a008c3090048e5d4a",
+    "heading_path": [],
+    "text": "Violet telescope field notes\nSynthetic local OCR evidence\nReview this derived transcript",
+    "text_sha": "817a522d8faf094f2391672bed0549d2a1da9412dceb449779cf85a17b263983",
+    "text_origin": "ocr",
+    "citable": false,
+    "review_state": "needs_review",
+    "locators": [
+      {
+        "type": "image",
+        "artifact_ref": "d89f62485f775ed0f83546ca4d322fc4057bf99e93ec444d3a54ea1b8fe67460",
+        "native_ref": "synthetic-pdf-recovery",
+        "physical_page": 1,
+        "printed_page": null,
+        "geometry": {
+          "domain": "points",
+          "x0": 0,
+          "y0": 0,
+          "x1": 600,
+          "y1": 800
+        }
+      }
+    ],
+    "attributes": {
+      "asset_id": "4b3b350aff4d0a4abb13c526802c3f60361c86ef04fb153de0bac347eec3955a",
+      "proxy_kind": "ocr"
+    }
+  },
+  "partial_evidence": null,
+  "excerpts": [],
+  "records": [
+    {
+      "id": "f3c05d6a473b60e12f5ec043b3f33d88f55907f8a11b2c6cd3a1dc01cdd8469e",
+      "record_type": "vision_derivation",
+      "schema_id": "vision-derivation@1",
+      "value": {
+        "dependency_ids": ["56270bce-62c0-5e40-8576-3f66ecbdd229"],
+        "image_sha256": "d8eae9992850d84aecd63c58065b774e6f7f32bc001679a9b8d00e9afb131d83",
+        "interpretation": null,
+        "literal_transcription": "Violet telescope field notes\nSynthetic local OCR evidence\nReview this derived transcript",
+        "model": "docling-rapidocr:362a2f314e9d1e7d351b41ddb2c40ee7bf2f3621dffc72d31b51514e9915a7ae",
+        "prompt_identity": "903f794c71ea3f79516239d5b68d9b4f6054f062d76d3636f68405d2c2780c70",
+        "source_context_sha256": "33fcb559797a99cff97f4e6485c2a6c25a0b111d2d4d058fd078e35f94d70c67",
+        "target_id": null,
+        "task": "ocr",
+        "uncertainties": ["OCR model scores are uncalibrated."]
+      }
+    }
+  ],
+  "original_ref": null,
+  "payload": null,
+  "media_type": null,
+  "truncated": false
+}

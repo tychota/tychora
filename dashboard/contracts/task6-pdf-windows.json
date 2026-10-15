@@ -1,0 +1,36 @@
+{
+  "source_id": "56270bce-62c0-5e40-8576-3f66ecbdd229",
+  "revision_id": "b382c90d6a98859030aee6e5efb1408702c45f15ea86a3ade04cc7f86883fb43",
+  "extraction_id": "e8f20f090369d20260828867c8b423e584e3a97f5b7a0328a0acf0d8bd855e9d",
+  "windows": [
+    {
+      "id": "5c46ee90ffc40a52ed107fc336432bf254fb68402c5e442a7dd5ec2abfba4210",
+      "unit_id": "f3c05d6a473b60e12f5ec043b3f33d88f55907f8a11b2c6cd3a1dc01cdd8469e",
+      "extraction_id": "e8f20f090369d20260828867c8b423e584e3a97f5b7a0328a0acf0d8bd855e9d",
+      "char_start": 0,
+      "char_end": 88,
+      "text": "Violet telescope field notes\nSynthetic local OCR evidence\nReview this derived transcript",
+      "token_count": 16,
+      "chunker_fingerprint": "6e07c1eb95a3bf4af3d1a56706e77c6bea8ee612c8f37399bb6dcf12a3f24340",
+      "context_group_key": "399df0ae3617e8778f56f6d04745f09286f5313cec3da6cfb4e07687eaa4ad86",
+      "locators": [
+        {
+          "type": "image",
+          "artifact_ref": "d89f62485f775ed0f83546ca4d322fc4057bf99e93ec444d3a54ea1b8fe67460",
+          "native_ref": "synthetic-pdf-recovery",
+          "physical_page": 1,
+          "printed_page": null,
+          "geometry": {
+            "domain": "points",
+            "x0": 0,
+            "y0": 0,
+            "x1": 600,
+            "y1": 800
+          }
+        }
+      ]
+    }
+  ],
+  "next_cursor": null,
+  "scope_limited": false
+}

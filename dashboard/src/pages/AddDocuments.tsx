@@ -5,7 +5,7 @@ export function AddDocuments() {
     <>
       <PageHeading title="Add documents">
         <p>
-          Index text into one named collection. Your draft stays in memory
+          Add text or files to one named collection. Your draft stays in memory
           during setup.
         </p>
         <RouteLink to="/dashboard/documents">Back to documents</RouteLink>
