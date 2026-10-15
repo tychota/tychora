@@ -21,6 +21,7 @@ from tychora.ports.execution import ExecutionContext
 
 from .auth import LocalAuth, checked_authority_headers, checked_headers
 from .dashboard import is_dashboard_static_request, register_dashboard
+from .launch import LAUNCH_PATH, MAX_EXCHANGE_BYTES, exchange, register_launch
 from .pdf_intakes import register_pdf_intakes
 from .routes import register_routes
 
@@ -71,6 +72,15 @@ class RawBoundary:
             if is_dashboard_static_request(scope):
                 checked_authority_headers(scope.get("headers", []), self.auth)
                 await self.app(scope, receive, uncached_send)
+                return
+            if scope.get("path") == LAUNCH_PATH:
+                # Unauthenticated by design, but still exact Host/Origin bound.
+                checked_authority_headers(
+                    scope.get("headers", []),
+                    self.auth,
+                    max_request_bytes=MAX_EXCHANGE_BYTES,
+                )
+                await exchange(scope, receive, uncached_send, self.auth)
                 return
             binary = (
                 re.fullmatch(
@@ -263,6 +273,7 @@ def create_app(owner: WorkspaceOwner, services: Services, auth: LocalAuth) -> Fa
         )
 
     register_pdf_intakes(app)
+    register_launch(app)
     register_routes(app)
     register_dashboard(app)
     return app
