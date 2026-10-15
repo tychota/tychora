@@ -208,5 +208,7 @@ def test_eighty_owner_caps_are_independent_and_ranks_are_dense():
     assert [item.rank for item in result.source_candidates] == list(range(1, 81))
     assert [item.rank for item in result.asset_candidates] == list(range(1, 81))
     assert result.distinct_candidate_count == 162
-    assert not result.complete
+    # Every eligible row was scored: truncation to the cap is a bounded result,
+    # visible through the counts, not an incomplete index.
+    assert result.complete
     db.close()
