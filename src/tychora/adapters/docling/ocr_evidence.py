@@ -137,14 +137,42 @@ def normalize_native_document_units(parsed):
     return tuple(result)
 
 
+def validate_ordered_ocr_lineage(parsed, evidence):
+    from .ocr_lineage import validate_lineage
+
+    if parsed.ocr_lineage is None:
+        raise ValueError("Missing ordered OCR cell lineage")
+    validate_lineage(parsed.units, evidence, parsed.ocr_lineage)
+
+
+class OcrOriginError(ValueError):
+    """An origin contract failure, distinguishable at the parser boundary."""
+
+
 def validate_ocr_origins(parsed):
+    try:
+        _validate_ocr_origins(parsed)
+    except (ValueError, KeyError, TypeError, IndexError) as exc:
+        raise OcrOriginError(str(exc)) from exc
+
+
+def _validate_ocr_origins(parsed):
     from hashlib import sha256
 
     from tychora.application.pdf_processing import policy_sha256
-    from tychora.contracts.identity import canonical_bytes
+    from tychora.contracts.identity import canonical_bytes, digest
     from tychora.contracts.pdf_policy import PdfProcessingPolicy
 
     policy = PdfProcessingPolicy.model_validate(dict(parsed.pdf_processing))
+    if parsed.parser_fingerprint != digest(
+        "docling-pdf-policy-parser-v1", policy_sha256(policy)
+    ):
+        raise ValueError("PDF origin policy differs from parser identity")
+    captured_policy = parsed.registration.capture.source.get("pdf_processing")
+    if captured_policy is not None and canonical_bytes(
+        captured_policy
+    ) != canonical_bytes(policy.model_dump(mode="json")):
+        raise ValueError("PDF origin policy differs from captured request")
     if parsed.registration.format != "pdf":
         raise ValueError("PDF policy on non-PDF extraction")
     if tuple(page.physical_page for page in parsed.ocr_pages) != policy.ocr_pages:
@@ -180,7 +208,7 @@ def validate_ocr_origins(parsed):
             raise ValueError("Document origin differs from retained page evidence")
         if not pages and (unit.text.strip() or unit.cells):
             raise ValueError("PDF text has no page evidence")
-        if ocr:
+        if ocr and policy.origin_proof is None:
             # A full-page scan must contain only OCR cells. Each textual field
             # must be supported by retained transcription, not geometry overlap.
             available = "".join(
@@ -200,12 +228,20 @@ def validate_ocr_origins(parsed):
                 normalized = "".join(value.split())
                 if normalized and normalized not in available:
                     raise ValueError("Document text has no exact OCR cell evidence")
+    if policy.origin_proof is not None:
+        validate_ordered_ocr_lineage(parsed, evidence)
+    elif parsed.ocr_lineage is not None:
+        raise ValueError("Legacy PDF cannot carry ordered OCR cell lineage")
+    from .ocr_lineage import evidence_document
+
     if parsed.image_representation != "scan-external-images@1":
         raise ValueError("Explicit PDF image representation missing")
     for ref, data in (
         (
             parsed.ocr_evidence_ref,
-            [page.model_dump(mode="json") for page in parsed.ocr_pages],
+            evidence_document(
+                parsed.ocr_pages, parsed.ocr_lineage, policy.origin_proof
+            ),
         ),
         (
             parsed.image_bindings_ref,
