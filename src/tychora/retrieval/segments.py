@@ -441,6 +441,9 @@ def _physical_ranges(
     ]
     if not fragments:
         return ((start, end),)
+    if start >= end:
+        # Textless units (pictures) keep zero-width locators; nothing to excerpt.
+        return ()
     ranges = tuple(
         (max(start, locator.char_start), min(end, locator.char_end))
         for locator in fragments
