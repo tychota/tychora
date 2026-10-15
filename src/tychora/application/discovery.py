@@ -181,7 +181,7 @@ def _scoped_cursor(
         limit,
     ]
     mac = hmac.new(
-        owner._runtime.record["token"].encode(),
+        owner._runtime.instance_secret,
         canonical_bytes(binding),
         hashlib.sha256,
     ).hexdigest()
@@ -212,7 +212,7 @@ def _scoped_after(
         ):
             raise ValueError
         expected = hmac.new(
-            owner._runtime.record["token"].encode(),
+            owner._runtime.instance_secret,
             canonical_bytes(value[:4]),
             hashlib.sha256,
         ).hexdigest()

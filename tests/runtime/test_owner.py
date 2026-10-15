@@ -166,7 +166,8 @@ except TychoraError as error:
     with WorkspaceOwner.open(root, settings, scope) as successor:
         replacement = json.loads(endpoint.read_text())
         assert successor.workspace_id == record["workspace_id"]
-        assert replacement["token"] != record["token"]
+        # The bearer token is stable across restarts; the instance is not.
+        assert replacement["token"] == record["token"]
         assert replacement["instance_id"] != record["instance_id"]
         assert (root / ".runtime/owner.lock").stat().st_ino == inode
     assert child() == "OPEN"
