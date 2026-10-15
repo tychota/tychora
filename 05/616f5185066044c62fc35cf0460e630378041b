@@ -2,6 +2,7 @@ src/tychora/contracts/documents.py
   s_ab847b2c6c265a::t_c53d8cfaccef20 278-280
 tests/ingestion/test_docling_mapping.py
   s_ab847b2c6c265a::t_c21ca4c8a573e6 544-545,654-670
+  s_ab847b2c6c265a::t_032a733edaea62 651-653
 ---
 {
   "schema_version": "authorship/3.0.0",
