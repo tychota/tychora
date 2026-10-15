@@ -198,6 +198,14 @@ def run_pdf_batches(call, paths, report):
     paths[0].rename(original)
     _check_pdf_image_capacity(original)
     captures = {}
+    from .ocr_lineage import merge_lineage
+    from .ocr_lineage_capture import (
+        LineageCapture,
+        LineageTableStage,
+        instrument_reading_order,
+    )
+
+    lineage = LineageCapture(captures)
 
     class OcrStage:
         def __init__(self, model):
@@ -230,6 +238,7 @@ def run_pdf_batches(call, paths, report):
                     )
                 record["cells"] = [
                     {
+                        **({"index": cell.index} if policy.origin_proof else {}),
                         "text": cell.text,
                         "from_ocr": cell.from_ocr,
                         "confidence": cell.confidence,
@@ -241,6 +250,14 @@ def run_pdf_batches(call, paths, report):
                 yield page
 
     class EvidencePipeline(StandardPdfPipeline):
+        def _init_models(self):
+            super()._init_models()
+            if policy.origin_proof:
+                self.table_model = LineageTableStage(self.table_model, lineage)
+                self.reading_order_model = instrument_reading_order(
+                    self.reading_order_model, lineage
+                )
+
         def _make_ocr_model(self, art_path):
             return OcrStage(super()._make_ocr_model(art_path))
 
@@ -326,7 +343,7 @@ def run_pdf_batches(call, paths, report):
                 page.close()
     for start in range(1, count + 1, 16):
         stop = min(start + 15, count)
-        exports, evidence, outputs = [], [], []
+        exports, evidence, outputs, proofs = [], [], [], []
 
         def stage(name, payload, media, outputs=outputs):
             target = original.with_name(name)
@@ -366,6 +383,11 @@ def run_pdf_batches(call, paths, report):
                     if picture is not None:
                         table.image = ImageRef.from_pil(picture, dpi=72)
                 raw = converted.document.export_to_dict()
+                proofs.append(
+                    list(lineage.records.values())
+                    if ocr and policy.origin_proof
+                    else []
+                )
                 if ocr:
                     for number in range(current, end + 1):
                         record = captures.pop(number)
@@ -435,12 +457,23 @@ def run_pdf_batches(call, paths, report):
                     )
                     image["uri"] = "urn:tychora:artifact:sha256:" + ref["sha256"]
                 exports.append(FrozenJsonMap(raw))
+                lineage.tables.clear()
                 del converted, raw, nodes
             current = end + 1
         merged = merge_pdf_page_exports(tuple(exports))
         stage(
             f"batch-{start}.json",
-            canonical_bytes({"document": merged, "evidence": evidence}),
+            canonical_bytes(
+                {
+                    "document": merged,
+                    "evidence": evidence,
+                    **(
+                        {"lineage": merge_lineage(exports, proofs)}
+                        if policy.origin_proof
+                        else {}
+                    ),
+                }
+            ),
             "application/json",
         )
         report(ParserOutputBatch(tuple(outputs), tuple(range(start, stop + 1))))

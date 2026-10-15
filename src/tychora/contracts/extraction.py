@@ -136,10 +136,13 @@ class ExtractionArtifact(Contract):
     ocr_pages: tuple[OcrPageEvidence, ...] = ()
     ocr_evidence_ref: ArtifactRef | None = None
     image_bindings_ref: ArtifactRef | None = None
+    ocr_lineage: tuple[FrozenJsonMap, ...] | None = None
 
     @model_serializer(mode="wrap")
     def legacy_pdf_fields(self, handler):
         data = handler(self)
+        if self.ocr_lineage is None:
+            data.pop("ocr_lineage", None)
         if self.pdf_processing is None:
             for key in (
                 "pdf_processing",
@@ -201,6 +204,7 @@ class ExtractionArtifact(Contract):
                 validate_ocr_origins(self)
             elif (
                 self.ocr_pages
+                or self.ocr_lineage is not None
                 or self.image_bindings
                 or self.image_representation
                 or any(u.text_origin != "source" for u in document_units)

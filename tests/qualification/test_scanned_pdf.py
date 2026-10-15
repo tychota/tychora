@@ -52,6 +52,28 @@ def generated_scan(mode="scan"):
     ):
         draw.text((130, 740 + row * 120), left, font=font, fill="black")
         draw.text((550, 740 + row * 120), right, font=font, fill="black")
+    if mode == "columns":
+        draw.rectangle((0, 0, 1199, 650), fill="white")
+        for column, lines in enumerate(
+            (
+                (
+                    "The reader’s algo-",
+                    "rithms preserve",
+                    "every violet record.",
+                    "Review the evidence.",
+                ),
+                (
+                    "Copper column.",
+                    "A separate sequence",
+                    "contains amber notes.",
+                    "Keep each source.",
+                ),
+            )
+        ):
+            for row, line in enumerate(lines):
+                draw.text(
+                    (80 + column * 600, 120 + row * 85), line, font=font, fill="black"
+                )
     if mode in ("gap", "empty"):
         draw.rectangle((0, 0, 1199, 1499), fill="white")
         for y in range(0, 1500, 40):
@@ -78,7 +100,9 @@ def generated_scan(mode="scan"):
 
 
 @pytest.mark.qualification
-@pytest.mark.parametrize("mode", ["scan", "native", "gap", "empty"])
+@pytest.mark.parametrize(
+    "mode", ["scan", "columns", "legacy", "native", "gap", "empty"]
+)
 def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
     model_root = os.environ.get("TYCHORA_TEST_DOCLING_MODELS")
     if not model_root:
@@ -93,6 +117,7 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
         Path(model_root), mode != "native"
     )
     policy = PdfProcessingPolicy(
+        origin_proof=None if mode == "legacy" else "ordered-ocr-cells@1",
         mode="native" if mode == "native" else "local_ocr",
         native_pages=(
             (1, 2, *range(4, 18))
@@ -188,11 +213,47 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
             )
             return
         parsed = parser.extract(capture.original_ref, config, ctx)
+        if mode == "columns":
+            from tychora.contracts.extraction import ExtractionArtifact
+            from tychora.contracts.identity import canonical_bytes
+
+            for mutation in (
+                "missing",
+                "wrong_cell",
+                "wrong_page",
+                "recipe",
+                "policy",
+                "invocation",
+            ):
+                altered = parsed.model_dump(mode="json")
+                if mutation == "missing":
+                    altered.pop("ocr_lineage")
+                elif mutation == "policy":
+                    altered["pdf_processing"].pop("origin_proof")
+                elif mutation == "invocation":
+                    altered["ocr_pages"][0]["policy_sha256"] = "a" * 64
+                else:
+                    record = next(
+                        item
+                        for item in altered["ocr_lineage"]
+                        if item["kind"] == "text"
+                    )
+                    segment = record["segments"][0]
+                    if mutation == "wrong_cell":
+                        segment["cells"] = [100000]
+                    elif mutation == "wrong_page":
+                        segment["page"] = 2
+                    else:
+                        segment["join"] = "approximate"
+                with pytest.raises(ValueError, match="lineage|policy|provenance"):
+                    ExtractionArtifact.model_validate_json(canonical_bytes(altered))
         assert accepted == list(range(1, 18))
         assert owner.config.config_sha == config.config_sha
         assert parsed.original_ref == capture.original_ref
-        if mode == "scan":
-            assert "violet engine" in parsed.ocr_pages[0].transcript.lower()
+        if mode in ("scan", "columns", "legacy"):
+            assert (
+                "violet record" if mode == "columns" else "violet engine"
+            ) in parsed.ocr_pages[0].transcript.lower()
             assert "margin note" in parsed.ocr_pages[0].transcript.lower()
             assert any(
                 unit.unit_type == "table"
@@ -200,6 +261,25 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
                 for unit in parsed.units
             )
             assert any(unit.text_origin == "ocr" for unit in parsed.units)
+            if mode == "columns":
+                available = "".join(
+                    "".join(cell["text"].split()) for cell in parsed.ocr_pages[0].cells
+                )
+                transformed = [
+                    unit
+                    for unit in parsed.units
+                    if unit.text_origin == "ocr"
+                    and unit.text
+                    and not unit.cells
+                    and "".join(unit.text.split()) not in available
+                ]
+                assert transformed, (
+                    "Generated columns must exercise the former rejection"
+                )
+                assert parsed.ocr_lineage
+            if mode == "legacy":
+                assert parsed.ocr_lineage is None
+                assert "ocr_lineage" not in parsed.model_dump(mode="json")
         elif mode in ("gap", "empty"):
             assert parsed.ocr_pages[0].diagnostic == "no-text-detected"
             assert parsed.ocr_pages[0].detected_boxes == 0
@@ -229,6 +309,9 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
             proxies, regions = plan_pdf_ocr(
                 owner, parsed, ctx, budget=parser.retention_budget
             )
+            assert [proxy.text for proxy in proxies] == [
+                page.transcript for page in parsed.ocr_pages if page.transcript.strip()
+            ]
             return compose_document(
                 parsed,
                 Registry.from_config(config),
@@ -265,7 +348,7 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
             for ref in {ref.sha256: ref for ref in composed.bundle.artifacts}.values()
         )
         ocr = [unit for unit in composed.bundle.units if unit.text_origin == "ocr"]
-        assert bool(ocr) == (mode == "scan")
+        assert bool(ocr) == (mode in ("scan", "columns", "legacy"))
         assert all(
             not unit.citable and unit.review_state == "needs_review" for unit in ocr
         )

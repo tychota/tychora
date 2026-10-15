@@ -109,7 +109,7 @@ async def test_qualified_http_pdf_submission_publishes_and_reports_batches(tmp_p
         original_config = owner.config
         assert original_config.values.extraction.parser == "markdown"
         async with client_for(app_for(kb)) as client:
-            data = generated_scan()
+            data = generated_scan("columns")
             receipt = (
                 await client.post("/v1/pdf-intakes", json=descriptor(kb, len(data)))
             ).json()
@@ -121,6 +121,7 @@ async def test_qualified_http_pdf_submission_publishes_and_reports_batches(tmp_p
             assert response.status_code == 200, response.text
             analysis = response.json()["analysis"]
             assert analysis["blockers"] == []
+            assert analysis["proposed_policy"]["origin_proof"] == "ordered-ocr-cells@1"
             submitted = {
                 name: analysis[name] for name in ("analysis_sha256", "policy_sha256")
             }
@@ -157,8 +158,9 @@ async def test_qualified_http_pdf_submission_publishes_and_reports_batches(tmp_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["limit", "lineage"])
 async def test_pdf_composition_limit_is_durable_nonretryable_job_failure(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, fault
 ):
     from types import SimpleNamespace
 
@@ -171,6 +173,10 @@ async def test_pdf_composition_limit_is_durable_nonretryable_job_failure(
     with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
 
         async def oversized_parser_output(*args, **kwargs):
+            if fault == "lineage":
+                from tychora.adapters.docling.ocr_lineage import validate_parser_lineage
+
+                validate_parser_lineage((), {}, None)
             # Only descriptors; exercise the authoritative input admission and real
             # source-job failure mapping without allocating 256 MiB or loading models.
             ref = ArtifactRef(
@@ -212,7 +218,9 @@ async def test_pdf_composition_limit_is_durable_nonretryable_job_failure(
                 response.json()["id"], ExecutionContext()
             )
             assert status.state == "failed"
-            assert status.error_code == "LIMIT_EXCEEDED"
+            assert status.error_code == (
+                "LIMIT_EXCEEDED" if fault == "limit" else "INTEGRITY_ERROR"
+            )
             assert status.captured_inputs is not None
             retry_class = await kb._workspace.owner.run_blocking(
                 lambda: kb._workspace.owner.db.execute(

@@ -410,6 +410,8 @@ class DoclingParser:
         self.progress = progress
         self._exports = []
         self._evidence = []
+        self._lineages = []
+        self._lineage = None
         self._external_refs = {}
         self._metadata_bytes = 0
         self.retention_budget = None
@@ -655,6 +657,10 @@ class DoclingParser:
             raise TychoraError("INDEX_INCOMPLETE", "PDF batch page coverage differs")
         self._exports.append(FrozenJsonMap(metadata["document"]))
         self._evidence.extend(metadata["evidence"])
+        if self.policy.origin_proof:
+            if "lineage" not in metadata or not isinstance(metadata["lineage"], list):
+                raise TychoraError("INTEGRITY_ERROR", "Missing PDF OCR lineage batch")
+            self._lineages.append(metadata["lineage"])
         if self.progress:
             self.progress(pages)
 
@@ -666,6 +672,17 @@ class DoclingParser:
     def _finish_pdf(self, original, config, registry, kind, inventory):
         from .pdf_batches import merge_pdf_page_exports
 
+        assert self.policy is not None
+        if self.policy.origin_proof:
+            from .ocr_lineage import merge_lineage
+
+            try:
+                self._lineage = merge_lineage(self._exports, self._lineages)
+            except (ValueError, KeyError, IndexError, TypeError) as exc:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Invalid PDF OCR lineage references"
+                ) from exc
+            self._lineages.clear()
         payload = canonical_bytes(merge_pdf_page_exports(tuple(self._exports)))
         self._exports.clear()
         result = self._retain(
@@ -920,6 +937,14 @@ class DoclingParser:
             from .ocr_evidence import collect_ocr_page_evidence
 
             evidence = collect_ocr_page_evidence(self._evidence, original, self.policy)
+            from .ocr_lineage import evidence_document, validate_parser_lineage
+
+            if self.policy.origin_proof:
+                validate_parser_lineage(
+                    mapped.units,
+                    {page.physical_page: page for page in evidence},
+                    self._lineage,
+                )
             bindings = tuple(
                 DocumentImageBinding(
                     native_ref=asset.native_ref, artifact_ref=asset.artifact_ref
@@ -927,7 +952,7 @@ class DoclingParser:
                 for asset in assets
             )
             evidence_payload = canonical_bytes(
-                [page.model_dump(mode="json") for page in evidence]
+                evidence_document(evidence, self._lineage, self.policy.origin_proof)
             )
             bindings_payload = canonical_bytes(
                 {
@@ -983,6 +1008,8 @@ class DoclingParser:
                     diagnostic.model_dump(mode="json") for diagnostic in diagnostics
                 ],
             )
+            if self.policy.origin_proof:
+                data["ocr_lineage"] = self._lineage
         encoded = extraction_document(data)
         if self.policy is not None:
             self._reserve_metadata(encoded)
@@ -992,12 +1019,26 @@ class DoclingParser:
                 "Extraction manifest exceeds16MiB; no document content was truncated",
             )
         retained = artifacts.put_stream(io.BytesIO(encoded), "application/json")
-        return ExtractionArtifact.model_validate_json(
-            canonical_bytes(
-                {
-                    **data,
-                    "document_json": document_json,
-                    "raw_document_ref": retained.model_dump(mode="json"),
-                }
+        from pydantic import ValidationError
+
+        from .ocr_evidence import OcrOriginError
+
+        try:
+            return ExtractionArtifact.model_validate_json(
+                canonical_bytes(
+                    {
+                        **data,
+                        "document_json": document_json,
+                        "raw_document_ref": retained.model_dump(mode="json"),
+                    }
+                )
             )
-        )
+        except ValidationError as exc:
+            if self.policy is not None and any(
+                isinstance(error.get("ctx", {}).get("error"), OcrOriginError)
+                for error in exc.errors()
+            ):
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "PDF OCR origin proof is invalid"
+                ) from exc
+            raise

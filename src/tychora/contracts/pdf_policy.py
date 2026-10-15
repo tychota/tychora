@@ -2,7 +2,7 @@
 
 from typing import Literal, Self
 
-from pydantic import model_validator
+from pydantic import model_serializer, model_validator
 
 from .base import Contract, FrozenJsonMap, Sha256
 
@@ -18,6 +18,14 @@ class PdfProcessingPolicy(Contract):
     model_inventory_sha256: Sha256
     options: FrozenJsonMap
     limits: FrozenJsonMap
+    origin_proof: Literal["ordered-ocr-cells@1"] | None = None
+
+    @model_serializer(mode="wrap")
+    def legacy_origin_proof(self, handler):
+        data = handler(self)
+        if self.origin_proof is None:
+            data.pop("origin_proof", None)
+        return data
 
     @model_validator(mode="after")
     def page_partition(self) -> Self:
