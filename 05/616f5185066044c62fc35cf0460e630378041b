@@ -1,0 +1,21 @@
+src/tychora/contracts/documents.py
+  s_ab847b2c6c265a::t_c53d8cfaccef20 278-280
+tests/ingestion/test_docling_mapping.py
+  s_ab847b2c6c265a::t_c21ca4c8a573e6 544-545,654-670
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "05616f5185066044c62fc35cf0460e630378041b",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
