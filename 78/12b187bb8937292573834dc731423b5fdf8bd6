@@ -1,0 +1,22 @@
+src/tychora/adapters/docling/ocr_lineage.py
+  s_346481235fa7eb::t_597497cf264a88 254-265,268-269
+tests/ingestion/test_ocr_lineage.py
+  s_346481235fa7eb::t_6dad7862b886c1 381-400
+  s_346481235fa7eb::t_dea34130a79f6e 401-413
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7812b187bb8937292573834dc731423b5fdf8bd6",
+  "prompts": {},
+  "sessions": {
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
