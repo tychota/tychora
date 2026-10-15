@@ -13,6 +13,11 @@ import {
   OriginalInspection,
   type EvidenceSelectionRole,
 } from "../components/EvidenceReader";
+import { ReturnedPassage } from "../components/ReturnedPassage";
+import { VisualPassage } from "../components/VisualPassage";
+import { StoredChunks } from "../components/StoredChunks";
+import { effectiveMode, reviewAdmission } from "./search/review";
+import { RouteLink } from "../routing";
 import { Relations } from "../components/Relations";
 import { ErrorNotice, Status } from "../components/Status";
 import { JsonDetails, downloadJson } from "../components/JsonDetails";
@@ -21,6 +26,7 @@ export function Search() {
   const { client, handshake } = useSession();
   const [question, setQuestion] = useState("");
   const [limit, setLimit] = useState(8);
+  const [maxTokens, setMaxTokens] = useState(6000);
   const [mode, setMode] = useState("");
   const [revisionSelector, setRevisionSelector] = useState<"current" | "all">(
     "current",
@@ -45,10 +51,14 @@ export function Search() {
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
   const [selection, setSelection] = useState<{
-    unitId: string;
+    unitId: string | null;
     segment: Segment | null;
     selectionRole: EvidenceSelectionRole;
   } | null>(null);
+  const [readerView, setReaderView] = useState<"passage" | "chunks" | "full">(
+    "passage",
+  );
+  const [submittedMode, setSubmittedMode] = useState<string | null>(null);
   const request = useRef<AbortController | null>(null);
   useEffect(() => {
     if (!client) return;
@@ -82,7 +92,7 @@ export function Search() {
       request.current?.abort();
     };
   }, [client]);
-  const submit = async (event?: FormEvent) => {
+  const submit = async (event?: FormEvent, overrideMode?: string) => {
     event?.preventDefault();
     if (!client || !question.trim()) return;
     const selectedFacet = discovery.facets?.definitions.find(
@@ -115,6 +125,9 @@ export function Search() {
     setResult(null);
     setSelection(null);
     setRelationSeed(null);
+    setReaderView("passage");
+    const requestMode = overrideMode ?? mode;
+    setSubmittedMode(requestMode || effectiveMode(discovery.settings));
     const body: QueryRequest = {
       input: { type: "question", text: question.trim() },
       limit: Math.max(1, Math.min(50, limit)),
@@ -126,7 +139,16 @@ export function Search() {
         .slice(0, 20),
       unknown_dates: unknownDates,
       trace: true,
-      ...(mode ? { mode } : {}),
+      ...(maxTokens !== 6000
+        ? {
+            budgets: {
+              max_tokens: maxTokens,
+              tokenizer_id: "cl100k_base",
+              max_response_bytes: 1048576,
+            },
+          }
+        : {}),
+      ...(requestMode ? { mode: requestMode } : {}),
       ...(asOf ? { as_of: asOf } : {}),
       ...(cutoff ? { cutoff } : {}),
       ...(facet && facetValue
@@ -174,17 +196,15 @@ export function Search() {
     const unitId =
       segment.matched_unit_ids[0] ?? segment.context_only_unit_ids[0];
     setRelationSeed(unitId ?? null);
-    setSelection(
-      unitId
-        ? {
-            unitId,
-            segment,
-            selectionRole: segment.matched_unit_ids.includes(unitId)
-              ? "matched"
-              : "context",
-          }
-        : null,
-    );
+    setReaderView("passage");
+    setSelection({
+      unitId: unitId ?? null,
+      segment,
+      selectionRole:
+        unitId && segment.matched_unit_ids.includes(unitId)
+          ? "matched"
+          : "context",
+    });
   };
   const kinds = discovery.kinds?.definitions ?? [];
   const facets =
@@ -197,6 +217,14 @@ export function Search() {
   const facetType = facets.find((value) => value.id === facet)?.definition
     .value_type;
   const selectedSegment = selection?.segment;
+  const modeId = submittedMode ?? (mode || effectiveMode(discovery.settings));
+  const admission = reviewAdmission(
+    discovery.profiles?.definitions.find((d) => d.id === modeId),
+    handshake?.scope,
+  );
+  const inclusionMode = discovery.profiles?.definitions.find(
+    (d) => reviewAdmission(d, handshake?.scope) === "included",
+  );
   if (!client) return null;
   return (
     <>
@@ -233,9 +261,54 @@ export function Search() {
             {loading ? "Searching…" : "Search evidence"}
           </button>
         </div>
+        <p className="review-query-state" role="status">
+          {admission === "unknown"
+            ? `Review policy is unavailable for ${modeId || "the configured default"}. Select a registered retrieval mode when available.`
+            : `Review-required content: ${admission} by ${modeId}. Inclusion does not accept evidence or change citable status.`}
+        </p>
+        {admission === "excluded" && (
+          <div className="status status-warning">
+            <p>
+              This mode excludes indexed review-required OCR. No
+              excluded-document count is available.
+            </p>
+            {inclusionMode ? (
+              <>
+                <p>
+                  Switching to {inclusionMode.label || inclusionMode.id} also
+                  changes that mode’s retrieval policy; other query settings are
+                  preserved.
+                </p>
+                <button
+                  type="button"
+                  disabled={loading || !question.trim()}
+                  onClick={() => {
+                    setMode(inclusionMode.id);
+                    void submit(undefined, inclusionMode.id);
+                  }}
+                >
+                  Include review-required content
+                </button>
+              </>
+            ) : (
+              <p>No authorized registered mode currently permits inclusion.</p>
+            )}
+          </div>
+        )}
         <details className="search-options">
           <summary>Filters & retrieval options</summary>
           <div className="filter-row">
+            <label>
+              Response token budget
+              <input
+                type="number"
+                min={1}
+                max={6000}
+                required
+                value={maxTokens}
+                onChange={(e) => setMaxTokens(Number(e.target.value))}
+              />
+            </label>
             <label>
               Result limit
               <input
@@ -249,7 +322,11 @@ export function Search() {
             </label>
             <label>
               Retrieval mode
-              <select value={mode} onChange={(e) => setMode(e.target.value)}>
+              <select
+                aria-label="Retrieval mode"
+                value={mode}
+                onChange={(e) => setMode(e.target.value)}
+              >
                 <option value="">Configured default</option>
                 {discovery.profiles?.definitions.map((definition) => (
                   <option key={definition.id} value={definition.id}>
@@ -363,24 +440,28 @@ export function Search() {
             facet schema supports them.
           </p>
         </details>
-        <div className="provider-context">
-          <span>
-            Profile: <strong>{discovery.settings?.profile ?? "Unknown"}</strong>
-          </span>
-          {discovery.settings?.values.providers &&
-            Object.entries(discovery.settings.values.providers).map(
-              ([name, provider]) => (
-                <span key={name}>
-                  {name}: <strong>{provider.provider}</strong>
-                  {provider.model ? ` / ${provider.model}` : ""}
-                </span>
-              ),
-            )}
-          <span>
-            Upload grant:{" "}
-            {handshake?.scope.upload_providers.join(", ") || "None"}
-          </span>
-        </div>
+        <details>
+          <summary>Configured providers and upload permission</summary>
+          <div className="provider-context">
+            <span>
+              Profile:{" "}
+              <strong>{discovery.settings?.profile ?? "Unknown"}</strong>
+            </span>
+            {discovery.settings?.values.providers &&
+              Object.entries(discovery.settings.values.providers).map(
+                ([name, provider]) => (
+                  <span key={name}>
+                    {name}: <strong>{provider.provider}</strong>
+                    {provider.model ? ` / ${provider.model}` : ""}
+                  </span>
+                ),
+              )}
+            <span>
+              Upload grant:{" "}
+              {handshake?.scope.upload_providers.join(", ") || "None"}
+            </span>
+          </div>
+        </details>
         <details className="kind-discovery">
           <summary>
             Available kinds {kinds.length > 0 && `(${kinds.length})`}
@@ -424,8 +505,16 @@ export function Search() {
           <div className="result-toolbar">
             <div>
               <strong>
-                {result.segments.length}{" "}
-                {result.segments.length === 1 ? "segment" : "segments"}
+                {result.segments.length > 0 &&
+                  `${result.segments.length} ${result.segments.length === 1 ? "segment" : "segments"}`}
+                {result.segments.length > 0 &&
+                  result.visuals.length > 0 &&
+                  " · "}
+                {result.visuals.length > 0 &&
+                  `${result.visuals.length} ${result.visuals.length === 1 ? "visual result" : "visual results"}`}
+                {!result.segments.length &&
+                  !result.visuals.length &&
+                  "No returned evidence"}
               </strong>
               <span className={`coverage coverage-${result.coverage.status}`}>
                 Coverage: {result.coverage.status}
@@ -471,7 +560,7 @@ export function Search() {
                 : "Trace details are included in the response JSON."}
             </p>
           </div>
-          {result.segments.length === 0 && (
+          {result.segments.length === 0 && result.visuals.length === 0 && (
             <div className="empty-state">
               <h2>No matching evidence</h2>
               <p>
@@ -535,22 +624,38 @@ export function Search() {
                 {selection ? (
                   <>
                     {selectedSegment && (
-                      <div className="segment-context">
-                        <p className="eyebrow">
-                          {selectedSegment.kind} · {selectedSegment.role} ·{" "}
-                          {selectedSegment.lane}
-                        </p>
+                      <>
+                        <div
+                          className="detail-toolbar"
+                          aria-label="Evidence views"
+                        >
+                          <button
+                            aria-pressed={readerView === "passage"}
+                            onClick={() => setReaderView("passage")}
+                          >
+                            Returned passage
+                          </button>
+                          <button
+                            aria-pressed={readerView === "chunks"}
+                            onClick={() => setReaderView("chunks")}
+                          >
+                            Stored chunks
+                          </button>
+                          <button
+                            aria-pressed={readerView === "full"}
+                            disabled={!selection.unitId}
+                            onClick={() => setReaderView("full")}
+                          >
+                            Full unit
+                          </button>
+                        </div>
                         <div className="unit-actions">
                           {[
                             ...selectedSegment.matched_unit_ids,
                             ...selectedSegment.context_only_unit_ids,
                           ].map((id) => (
                             <button
-                              type="button"
                               key={id}
-                              className={
-                                selection.unitId === id ? "selected" : ""
-                              }
                               aria-pressed={selection.unitId === id}
                               onClick={() => {
                                 setRelationSeed(id);
@@ -573,34 +678,46 @@ export function Search() {
                             </button>
                           ))}
                         </div>
-                        {selectedSegment.context_excerpts.map(
-                          (excerpt, index) => (
-                            <details key={index}>
-                              <summary>
-                                Context excerpt · {excerpt.unit_id} ·{" "}
-                                {excerpt.char_start}–{excerpt.char_end}
-                              </summary>
-                              <p className="evidence-text">{excerpt.text}</p>
-                            </details>
-                          ),
+                        {readerView === "passage" && (
+                          <ReturnedPassage segment={selectedSegment} />
+                        )}
+                        {readerView === "chunks" && (
+                          <StoredChunks
+                            key={`${selectedSegment.segment_id}-${selection.unitId}`}
+                            client={client}
+                            segment={selectedSegment}
+                            unitId={selection.unitId}
+                          />
                         )}
                         <JsonDetails
                           value={selectedSegment}
                           label="Segment excerpts, anchors, omissions and records"
                         />
-                      </div>
+                      </>
                     )}
-                    <EvidenceReader
-                      key={selection.unitId}
-                      client={client}
-                      unitId={selection.unitId}
-                      citation={selectedSegment?.citations.find(
-                        (citation) => citation.unit_id === selection.unitId,
+                    {selection.unitId &&
+                      (readerView === "full" || !selectedSegment) && (
+                        <EvidenceReader
+                          key={selection.unitId}
+                          client={client}
+                          unitId={selection.unitId}
+                          citation={selectedSegment?.citations.find(
+                            (c) => c.unit_id === selection.unitId,
+                          )}
+                          sourceId={selectedSegment?.source_id}
+                          revisionId={selectedSegment?.revision_id}
+                          selectionRole={selection.selectionRole}
+                        />
                       )}
-                      sourceId={selectedSegment?.source_id}
-                      revisionId={selectedSegment?.revision_id}
-                      selectionRole={selection.selectionRole}
-                    />
+                    {relationSeed && (
+                      <p>
+                        <RouteLink
+                          to={`/dashboard/explore?unit=${encodeURIComponent(relationSeed)}`}
+                        >
+                          Open selected evidence in Explore
+                        </RouteLink>
+                      </p>
+                    )}
                     {relationSeed && (
                       <Relations
                         key={`relations-${relationSeed}`}
@@ -632,9 +749,20 @@ export function Search() {
           {result.visuals.length > 0 && (
             <section className="visual-results">
               <h2>Visual evidence</h2>
-              {result.visuals.map((visual) => (
+              {result.visuals.map((visual, index) => (
                 <article key={visual.asset_id}>
-                  <h3>{visual.caption ?? visual.asset_id}</h3>
+                  <h3>
+                    {visual.caption ||
+                      ("physical_page" in visual.locator &&
+                      visual.locator.physical_page
+                        ? `Page ${visual.locator.physical_page}`
+                        : `Visual evidence ${index + 1}`)}
+                  </h3>
+                  <VisualPassage
+                    key={visual.asset_id}
+                    client={client}
+                    visual={visual}
+                  />
                   <OriginalInspection
                     client={client}
                     assetId={visual.asset_id}

@@ -12,6 +12,7 @@ import { OriginalInspection } from "../../components/EvidenceReader";
 import { useSession } from "../../session";
 import type { ApiClient } from "../../api/client";
 import type { Json } from "../../api/contracts";
+import { PdfCoverage } from "../../components/PdfCoverage";
 function StageSummary({ stages }: { stages: Record<string, Json> }) {
   return (
     <dl className="identity">
@@ -95,6 +96,7 @@ export function RevisionCoverage({
           <article key={`${e.extraction_id}-${i}`}>
             <h4 className="object-id">{e.extraction_id}</h4>
             <StageSummary stages={e.stages} />
+            <PdfCoverage value={e.stages.pdf_coverage} />
             <JsonDetails
               value={e.stages}
               label="Extraction stages and counts"

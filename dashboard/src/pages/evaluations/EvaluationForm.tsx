@@ -77,7 +77,8 @@ export function EvaluationForm() {
       <h2>Submit evaluation</h2>
       <p>
         Use an already registered dataset ID and an existing snapshot. Dataset
-        registration and label editing are unavailable here.
+        registration is available on the evaluation list. Label editing is
+        unavailable.
       </p>
       <form onSubmit={(e) => void submit(e)}>
         <fieldset disabled={busy}>

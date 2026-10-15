@@ -1,69 +1,112 @@
 # Local evidence workbench
 
-The bundled dashboard has Search, Sources, Jobs, Evaluations, Activity and Settings, backed by the same authenticated services as the Python and HTTP clients. Node is required only to develop or rebuild the frontend; the wheel and executable resource collector include the compiled application.
+The bundled dashboard uses the same authenticated services as Python and HTTP clients. One connection represents one workspace with multiple named collections. Knowledge pages use your selected active collections; workspace administration uses your complete granted authority, still capped by the server. Restricted credentials never become owners through navigation.
 
 ## Start and connect
 
-Install the `server` extra (from a checkout, `uv sync --locked --extra server`) and prepare a workspace and verified output tokenizer following [getting started](getting-started.md). Start one owner process:
+Follow [getting started](getting-started.md) to install the server and prepare a workspace and verified output tokenizer. Start the owner with `python -m tychora.interfaces.http.server ./knowledge --port 8765`, then open **http://127.0.0.1:8765/dashboard/**. Use the numeric loopback host: `localhost` is a different authority. If the port is omitted, the private `.runtime/endpoint.json` records the actual authority.
 
-```bash
-python -m tychora.interfaces.http.server ./knowledge --port 8765
-```
+Retrieve only the token from that owner's private runtime record through a trusted clipboard/editor. Do not print the full record or place tokens in shell arguments or reports. On macOS, this copies only the token without printing it:
 
-Open **http://127.0.0.1:8765/dashboard/**. Use the numeric loopback host: `localhost` is a different authority and is rejected. If you omit `--port`, the actual bound port is recorded privately in `knowledge/.runtime/endpoint.json`.
-
-The running owner's `.runtime/endpoint.json` contains the actual `token` and `authority`. Do not print the whole record, paste it into a report, or copy the token into shell arguments. On macOS, this command reads that record and sends only the token directly to the local clipboard without printing it:
-
-```bash
-python - <<'PY'
+```python
 import json
 import subprocess
 from pathlib import Path
 record = json.loads(Path("knowledge/.runtime/endpoint.json").read_text())
 subprocess.run(["pbcopy"], input=record["token"].encode(), check=True)
-PY
 ```
 
-Paste it into the dashboard's **Bearer token** input. Clear the clipboard after connecting (on macOS, `printf '' | pbcopy`). On other systems, use a trusted local clipboard tool or private editor to retrieve only the token. Keep the runtime directory and record owner-only; retrieve it only from the workspace you started. The server's client-side identity validation is described in [HTTP](http.md).
+Paste into **Bearer token**, connect, then clear the clipboard. Credentials, queries, imported contents, files and configuration drafts stay in browser memory; refreshing requires reconnecting. Disconnect clears session state and aborts requests/streams. It does not cancel an accepted durable job. Reopen its job URL and reconnect to inspect the persisted outcome.
 
-The dashboard keeps the token only in session component memory. It uses authenticated, scoped fetches and stores neither credentials nor workspace data in cookies, local storage or session storage. Refreshing requires reconnection. Disconnect clears workspace data and cancels pending requests and event streams; it does not cancel accepted source jobs. Opening a job URL and reconnecting restores its persisted status. Every API operation remains scope-bound and server-authorized.
+## Collections and documents
 
-## Supported workflows and limits
+**Collections** owns named destinations, lifecycle and provider upload consent. Creation requires the server's explicitly managed owner, rather than an arbitrary credential with similar capabilities. UUIDs remain stable across title/slug edits. Archive preserves evidence, excludes the collection from ordinary search and blocks new indexing. Authorized retained revision inspection and durable jobs remain available. Reactivation restores eligible retained coverage. Static/restricted grants never expand after creation or consent changes.
 
-- **Search:** real retrieval, bounded result counts, registered facet/date/revision filters, exact evidence IDs and locators, stable citation copy and authoritative response JSON export. Inline original rendering is limited to text and safe raster images; other retained media is downloaded. PDFs have retained bytes and locators, without a bounding-box overlay.
-- **Sources:** granted collections, bounded inventory, revision/extraction/channel coverage, original inspection, pasted text, user-selected files and explicit server paths within configured ingest roots. Review destination and enabled providers before confirming. The HTTP request limit is **1 MiB**, including metadata and JSON/base64 overhead; the form rejects an encoded request at or above that limit before sending it. File content base64 expansion means the usable raw file size is smaller. This interface is for small sources; it never silently truncates uploads.
-- **Jobs:** durable receipt/status/events, authenticated SSE reconnection and server-supported recovery, retry and cancellation. Event counts are actual events, not estimated progress. Closing the page leaves durable work running.
-- **Relations:** explicit exploration from selected evidence, at most 30 edges and up to two hops, accessible returned edge/provenance details. Missing channels and empty/truncated results remain explicit. This is not a full-corpus graph.
-- **Evaluations:** managers can inspect real reports/cases, submit runs against registered datasets, and compare common numeric metrics. The list considers at most 100 recent records before authorization, with no continuation. Context differences are shown and arithmetic deltas alone do not establish comparable quality. Dataset registration and label editing use the API; the UI does not provide them.
-- **Activity:** bounded retrieval metadata, separate from jobs. Default metadata-only history says **Query text not retained** and cannot replay. Replay appears only for reported retained requests. Trace generation, enforced expiry/purge and complete history configuration remain engine follow-ups.
-- **Settings:** redacted effective configuration, origins, kinds and capabilities. Managers can explicitly activate complete workspace TOML with a registered profile. Activation may reject incompatible or busy changes and does not automatically queue a rebuild. Credentials remain references. Reader grants have no write/management controls.
+Select one, several or all granted active collections for **Documents**, **Search**, **Explore** and exact-scope **Activity**. Add documents always names one destination. Inventory sorting/filtering describes loaded rows only; unknown counts/status stay unknown and continuation remains explicit.
 
-One connection represents one workspace and its granted collection IDs. Collection lifecycle and document inventory now have backend HTTP contracts and session refresh support. The redesigned Collections/Documents pages and guided settings UI are subsequent work; the current navigation remains as described above. Global workspace discovery, aggregate evaluation analytics and automatic rebuild planning remain unavailable. Consult [implementation limits](review-assessment.md) before relying on unimplemented engine work.
+**Documents** offers content previews, complete stored chunks, deliberate Full unit inspection, relationships, revisions/channels and safe retained-original access. Source-only direct links can require bounded inventory continuation. Explicit retained revision links retain their authorized inspection context, including archived collections.
+
+**Add documents** supports pasted text, small selected files and authorized server paths. The ordinary JSON request limit is **1 MiB including metadata and base64 expansion**; oversized requests are rejected before sending. Draft title/text/File/destination/kind and retry identity survive Models/Collections setup navigation in memory. Known missing/corrupt assets, unavailable packages, unsupported models, offline conflicts and missing collection consent/caller permission block processing. Incomplete bounded readiness remains unknown and delegates complete asset verification to the server; it does not prove installed assets or force an impossible full hash check in the browser.
+
+PDF intake has a separate streamed backend and explicit native/local OCR policy with authoritative analysis/policy hashes. Its choose/analyze/review browser flow is delivered separately; this page does not imply that the small JSON file form bypasses its size limit. Selected retained PDF coverage distinguishes native/OCR/blank physical pages and detector-relative gaps. “Processed” means page-processing coverage, not complete transcription. OCR is derived, `needs_review` and noncitable. See [HTTP](http.md) for the actual intake contract.
+
+## Search and exact evidence
+
+Search starts with the query, named collection scope and one Search action. Registered filters, revision/date policy, retrieval mode, output budget, provider context and technical JSON are progressive details. Results are evidence, without a generated-answer/chat claim.
+
+The selected reader has three deliberate representations:
+
+- **Returned passage** displays exact query excerpt blocks, separate matched/context roles, returned bounds, omissions, completeness and structured records. It does not silently fetch a complete unit.
+- **Stored chunks** resolves the actual returned window ID through the retained extraction API. Stored text/bounds may be larger than the clipped returned anchor. Null window IDs remain null. Stored token counts are reported counts; no tokenizer identity or active-index membership is inferred.
+- **Full unit** explicitly fetches complete authorized evidence, or explains partial/unavailable inspection. Native citable evidence retains citation copying. Noncitable OCR retains provenance-reference access without becoming a verified source quote.
+
+Text, including markup and non-BMP Unicode, renders literally; server text is not regenerated or sliced with browser UTF-16 offsets. Citations, locators, original bytes and response export preserve actual identities. Text/safe raster originals may render inline; other media remains downloadable. Missing/removed originals and bounded responses remain explicit.
+
+A visible label describes whether the **submitted retrieval mode** includes review-required derived content. Inclusion is mode policy, not a nonexistent `review_state` query facet. Where excluded, the supported inclusion action switches to an authorized registered mode, discloses the policy change and preserves other query settings. It never accepts evidence or changes citable status. If no permitted mode exists, the UI explains that restriction. Unknown inventory never becomes an excluded-document count. All bundled compose/audit/lookup modes currently include `needs_review`; exclusion/inclusion qualification uses explicitly registered synthetic modes.
+
+## Explore, jobs and activity
+
+**Explore** selects actual source units or follows a unit from Search, then requests bounded relations. Lists and keyboard-accessible graph nodes contain only returned paths/provenance. The default UI requests at most 30 edges and two hops. Successful empty means no returned paths; typed missing-capability/error states are distinct. Truncation and continuation do not imply a complete corpus graph.
+
+**Jobs** lists durable source/maintenance state and opens actual stage/events, counters, errors, retry budget and snapshots. Authenticated SSE reconnects with consumed sequence and deduplicates events; persisted status remains authoritative. Source add/sync recovery/retry requires retained capture and server-verified eligibility. Maintenance retry is unavailable because the source scheduler cannot execute it. Cancellation is a separate action from disconnect. Historical job DTOs do not expose source identity; their unavailable lineage is stated instead of guessed from artifact hashes. Document acceptance links use actual returned job identities.
+
+**Activity** lists bounded retrieval metadata for the exact selected query scope, not a workspace-wide history union. An empty selection scope may have no matching history while other scopes retain runs. Metadata-only history says **Query text not retained** and cannot replay. Replay appears only for retained requests and may fail when dependencies are unavailable. Trace, expiry/history purge and unmeasured analytics are not operational controls.
+
+## Models and workspace operations
+
+**Models** is the canonical configuration editor. Extraction/OCR, text/image embedding and reranking are distinct sections. Catalog/package availability, configured model, current assets, credential references and collection upload consent are separate facts. Readiness GET is bounded; `not_checked`/incomplete is not installed, and historical setup receipts do not prove current assets. Explicit local setup reviews asset hashes/licenses and uses verified cache or an explicit server bundle, without automatic download.
+
+Guided fields include workspace `offline`, text/image `index.*.backend`, actual provider/model/reference choices and supported processing/retrieval defaults. Set and inherit differ; inherit removes the override rather than setting null. Preview uses the exact current workspace digest, shows effective changes/blockers, and is required before guided activation. Successful preview does not guarantee runtime preparation. Busy/stale/incompatible changes remain typed and preserve drafts. The expert complete TOML path remains available. Credential **values must be supplied to the server process**; the UI edits only `env:`/`secret:` references and never verifies a live connection.
+
+Retained indexed configuration can constrain query defaults, limits and network policy as well as embedding generations. Incompatible preview blocks activation with `PROFILE_INCOMPATIBLE`; no automatic rebuild is queued. Use a fresh workspace configured before first indexing or a separately qualified publication/migration path. Compatible-channel recovery cannot convert parser/model generations. See [configuration](configuration.md).
+
+**Settings** displays workspace context and links canonical Models/collection-consent editors. Whole-workspace health reports measured payload/native/recovery facts; compatible-channel rebuild uses selected supported text/image/graph channels. Backup exports to an explicit **server path**, not a browser download. Restore verifies a server archive into a clean separate destination without switching the current connection. Missing archive gives a sanitized typed `NOT_FOUND`; paths stay editable. Completed receipts show their actual manifest/target/time; only actual returned jobs link to Jobs.
+
+Advanced retention first requests the original-purge reference-cut plan, then requires explicit destructive confirmation. Derived evidence remains retained; shared/leased/pending bytes are distinguished in the actual result. No fake trace/history purge or model migration button is supplied. Server complete-workspace authorization governs global operations even while one knowledge collection is selected.
+
+**Evaluations** registers manifest/cases bytes under the ordinary 1 MiB boundary, submits real dataset/split/snapshot/configuration variants, inspects measured report/cases and compares common numeric metrics. The list considers at most 100 recent records before authorization, without continuation. Context differences remain visible; numeric deltas alone do not establish comparable quality. Missing metrics/denominators and unavailable reports remain explicit. No quality charts are inferred from configuration.
+
+## Reproducible remote-provider smoke journey
+
+Use a **fresh disposable workspace before first indexing**. Provider/index settings are workspace-wide, consent is per collection. Prepare verified local `output-tokenizer`, `voyage-context-4` and `rerank-2.5` assets and installed required packages beforehand. No model download or user document is part of this smoke journey.
+
+1. In Models set `offline=false`, `providers.text.provider=voyage`, `providers.text.model=voyage-context-4`, `providers.text.credential_ref=env:TYCHORA_SMOKE_VOYAGE_KEY`, `providers.rerank.provider=voyage`, `providers.rerank.model=rerank-2.5`, the corresponding reference, and `index.text.backend=chroma`. Review preview, then activate. Image indexing has its own supported backend field and is not implied by text configuration.
+2. The named environment value belongs to the server process. Real usage must supply it privately before starting the owner. Never paste a key into Models or TOML. Catalog/readiness do not resolve or qualify credentials.
+3. Separately grant the destination collection's Voyage upload consent. Confirm the current caller permission. Configuration alone must not grant it; denial and later revocation block dispatch.
+4. Index a small synthetic text through Add documents, follow durable acceptance to success, query the text and inspect its exact passage/chunk/unit. Observe actual completed retrieval channels.
+5. A successful rerank has no current response success marker. The qualified automated journey records actual invocation/model/candidate payload at the injected provider-transport boundary. Configuration, complete coverage and lack of warnings do not prove rerank execution or live provider qualification.
+
+The automated version uses **explicitly simulated Voyage transport**, real already-installed tokenizers, local Chroma, dashboard, authenticated HTTP and durable jobs. A synthetic server-only environment sentinel is accepted only by that transport. No actual provider transport is constructed or contacted; synthetic outputs do not qualify connectivity, credentials, live quality or paid service behavior.
 
 ## Develop and verify
 
-The pinned frontend source and lockfile ship in the sdist. From `dashboard/`:
+Frontend dependencies/browser must already be installed for offline local verification. From the repository root:
 
-```bash
-npm ci --ignore-scripts
-npm test
-npm run typecheck
-npm run build
-npm run check:build
-npx playwright install chromium
+```sh
+npm --prefix dashboard test
+npm --prefix dashboard run typecheck
+npm --prefix dashboard run build
+npm --prefix dashboard run check:build
+```
+
+Build writes deterministic notices and compiled package resources; commit them with source. Resource/distribution tests cover wheel/sdist inclusion, not platform executable qualification.
+
+The default Playwright suite starts a disposable model-free local server. Its deterministic synthetic index/output counters have distinct declared identities, so ordinary indexing persists a window larger than the returned query excerpt; this qualifies clipped-anchor resolution, not real tokenizer sizing or retrieval quality. It binds neither the user's workspace nor the running preview. Specify an installed Chromium with `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`, a Python with server/test dependencies with `TYCHORA_E2E_PYTHON`, and an absolute `PYTHONPATH` (the config otherwise resolves the repository source path). Screenshots/fixtures live under ignored `.superpowers/verification/dashboard-e2e/`; traces are off and screenshots are taken after token input clears.
+
+```sh
+export PYTHONPATH="$(pwd)/src"
+cd dashboard
 TYCHORA_E2E_PYTHON=../.venv/bin/python npm run e2e
 ```
 
-`build` writes deterministic production dependency notices and compiled resources into `src/tychora/resources/dashboard`. Commit rebuilt resources with source changes; `check:build` rejects drift, including new untracked resources. Playwright serves the ordinary `create_app` and compiled bundle from a disposable offline synthetic workspace, without browser API mocks or live providers. Browser screenshots and failure records live in ignored verification artifacts; traces are disabled to keep authorization headers out of recordings. An optional `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` supports an existing local browser; CI installs the pinned revision. Python packaging regression builds a wheel and sdist and checks resources, notices, frontend sources and exclusions. Executable resources use the existing `collect_data_files("tychora")`; this wheel check does not qualify platform executables.
+Model-dependent qualification is **opt-in**, separate from thin CI. An explicit selected scenario fails on missing prerequisites; an unselected qualified test is reported as skipped, not executed. Use a new output/fixture directory when preserving prior evidence. Paths below refer to already-verified local assets; no CI trigger/download is implied.
 
-The session layer retains a credential-only administrative client separately from the selected collection client. After creation or consent, `refreshGrant` obtains a fresh handshake without a stale scope header, replaces selected clients and cancels their requests/streams. Selection survives when still granted and active; creation selects its returned UUID. Static sessions retain their original token limits. Tokens stay only in session memory. Synthetic server-generated collection and inventory examples are in `dashboard/contracts/task2-*.json`; unknown counts and job status must remain explicit in future UI work.
+```sh
+export TYCHORA_MODEL_CACHE=/path/to/already-verified/cache
+TYCHORA_E2E_SCENARIO=remote npm run e2e -- --grep 'task5 qualified simulated Voyage'
+export TYCHORA_TEST_DOCLING_MODELS="$TYCHORA_MODEL_CACHE"
+export TYCHORA_TEST_OCR_MODELS="$TYCHORA_MODEL_CACHE/rapidocr/3.9.2"
+TYCHORA_E2E_SCENARIO=ocr npm run e2e -- --grep 'task5 qualified actual OCR'
+```
 
-The administration API now provides guided settings fields/preview/apply and
-qualified Models inventory/setup-plan/readiness DTOs. Captured synthetic HTTP
-responses live in `dashboard/contracts/task3-*`; TypeScript mirrors are in
-`src/api/contracts.ts`. Models/Settings page wiring is a separate dashboard task.
-Forms must preserve the server base digest, distinguish inheritance from setting
-null, and display preview blockers without suggesting a queued rebuild. Model
-pages must distinguish optional packages, consent, current asset hashes and
-historical setup receipts; `not_checked` calls for deliberate full verification,
-not an automatic download loop. Credential checks remain explicitly unchecked.
+The OCR journey generates a synthetic raster/native PDF, performs streamed authenticated HTTP intake, runs actual local OCR, queries real registered exclude/include modes and verifies noncitable evidence, stored chunks and scope denial. This tests an operable path and provenance, not transcription accuracy or full-book capacity. The ordinary CI workflow intentionally installs only thin server/development dependencies and runs the model-free scenario; a separately provisioned runner can execute these explicit qualification commands.

@@ -8,6 +8,7 @@ import {
 import { SessionProvider, useSession } from "./session";
 import { publicError } from "./api/client";
 import { ErrorNotice } from "./components/Status";
+import { ModelDraftProvider } from "./pages/models/draft";
 import { Search } from "./pages/Search";
 import { OperationsRouter } from "./pages/OperationsRouter";
 import { useRoute, RouteLink } from "./routing";
@@ -124,100 +125,102 @@ function Shell({ renderRoute }: AppProps) {
     !/^\/dashboard\/(?:documents|sources)\/[^/]+\/revisions\/[^/]+$/.test(path);
   return (
     <AddDocumentDraftProvider key={session.connectionKey}>
-      <div className="app-shell">
-        <aside className="sidebar">
-          <RouteLink className="wordmark" to="/dashboard/collections">
-            tychora<span>Evidence workbench</span>
-          </RouteLink>
-          <button
-            className="navigation-toggle"
-            type="button"
-            aria-expanded={navigationOpen}
-            aria-controls="workbench-navigation"
-            onClick={() => setNavigationOpen((v) => !v)}
-          >
-            Navigation
-          </button>
-          <nav
-            id="workbench-navigation"
-            className={navigationOpen ? "navigation-open" : ""}
-            aria-label="Workbench"
-          >
-            {[
-              { label: "Knowledge", pages: destinations.slice(0, 4) },
-              { label: "Administration", pages: destinations.slice(4) },
-            ].map((group) => (
-              <div className="navigation-group" key={group.label}>
-                <p className="eyebrow">{group.label}</p>
-                {group.pages.map((destination) => (
-                  <RouteLink
-                    key={destination}
-                    to={`/dashboard/${destination.toLowerCase()}`}
-                    aria-current={
-                      page === destination.toLowerCase() ? "page" : undefined
-                    }
-                  >
-                    {destination}
-                  </RouteLink>
-                ))}
-              </div>
-            ))}
-          </nav>
-          <div className="workspace-context">
-            <p className="eyebrow">Connected workspace</p>
-            <details>
-              <summary>Workspace identity</summary>
-              <p className="workspace-id">{session.handshake.workspace_id}</p>
-            </details>
-            <button type="button" onClick={session.disconnect}>
-              Disconnect
-            </button>
-          </div>
-          <p className="sidebar-footer">Evidence before conclusions.</p>
-        </aside>
-        <div className="workspace-body">
-          <header className="workspace-bar">
-            <span>Local workspace</span>
-            <WorkspaceScope key={session.sessionKey} />
-            {administration && (
-              <p className="authority-context">
-                {page === "jobs"
-                  ? "All jobs within your full granted scope"
-                  : "Entire workspace · server authorization applies"}
-              </p>
-            )}
-            {page === "activity" && (
-              <p className="authority-context">
-                History for this exact selected query scope
-              </p>
-            )}
-          </header>
-          <main id="main" className="main-content" tabIndex={-1}>
-            <div
-              key={`${session.sessionKey}-${administration ? "admin" : session.selectionKey}-${routeKey}`}
+      <ModelDraftProvider>
+        <div className="app-shell">
+          <aside className="sidebar">
+            <RouteLink className="wordmark" to="/dashboard/collections">
+              tychora<span>Evidence workbench</span>
+            </RouteLink>
+            <button
+              className="navigation-toggle"
+              type="button"
+              aria-expanded={navigationOpen}
+              aria-controls="workbench-navigation"
+              onClick={() => setNavigationOpen((v) => !v)}
             >
-              {noScope ? (
-                <section className="empty-state">
-                  <h1>No active collection selected</h1>
-                  <p>
-                    Select a granted active collection, or create or reactivate
-                    one in Collections.
-                  </p>
-                  <RouteLink to="/dashboard/collections">
-                    Open Collections
-                  </RouteLink>
-                </section>
-              ) : page === "search" ? (
-                <Search />
-              ) : renderRoute ? (
-                renderRoute(path)
-              ) : (
-                <OperationsRouter path={path} />
-              )}
+              Navigation
+            </button>
+            <nav
+              id="workbench-navigation"
+              className={navigationOpen ? "navigation-open" : ""}
+              aria-label="Workbench"
+            >
+              {[
+                { label: "Knowledge", pages: destinations.slice(0, 4) },
+                { label: "Administration", pages: destinations.slice(4) },
+              ].map((group) => (
+                <div className="navigation-group" key={group.label}>
+                  <p className="eyebrow">{group.label}</p>
+                  {group.pages.map((destination) => (
+                    <RouteLink
+                      key={destination}
+                      to={`/dashboard/${destination.toLowerCase()}`}
+                      aria-current={
+                        page === destination.toLowerCase() ? "page" : undefined
+                      }
+                    >
+                      {destination}
+                    </RouteLink>
+                  ))}
+                </div>
+              ))}
+            </nav>
+            <div className="workspace-context">
+              <p className="eyebrow">Connected workspace</p>
+              <details>
+                <summary>Workspace identity</summary>
+                <p className="workspace-id">{session.handshake.workspace_id}</p>
+              </details>
+              <button type="button" onClick={session.disconnect}>
+                Disconnect
+              </button>
             </div>
-          </main>
+            <p className="sidebar-footer">Evidence before conclusions.</p>
+          </aside>
+          <div className="workspace-body">
+            <header className="workspace-bar">
+              <span>Local workspace</span>
+              <WorkspaceScope key={session.sessionKey} />
+              {administration && (
+                <p className="authority-context">
+                  {page === "jobs"
+                    ? "All jobs within your full granted scope"
+                    : "Entire workspace · server authorization applies"}
+                </p>
+              )}
+              {page === "activity" && (
+                <p className="authority-context">
+                  History for this exact selected query scope
+                </p>
+              )}
+            </header>
+            <main id="main" className="main-content" tabIndex={-1}>
+              <div
+                key={`${session.sessionKey}-${administration ? "admin" : session.selectionKey}-${routeKey}`}
+              >
+                {noScope ? (
+                  <section className="empty-state">
+                    <h1>No active collection selected</h1>
+                    <p>
+                      Select a granted active collection, or create or
+                      reactivate one in Collections.
+                    </p>
+                    <RouteLink to="/dashboard/collections">
+                      Open Collections
+                    </RouteLink>
+                  </section>
+                ) : page === "search" ? (
+                  <Search />
+                ) : renderRoute ? (
+                  renderRoute(path)
+                ) : (
+                  <OperationsRouter path={path} />
+                )}
+              </div>
+            </main>
+          </div>
         </div>
-      </div>
+      </ModelDraftProvider>
     </AddDocumentDraftProvider>
   );
 }

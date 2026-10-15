@@ -1,7 +1,7 @@
 """Gold upload is bounded data, never a server-selected filesystem path."""
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, Response
 
 from tychora.interfaces.http.app import create_app
 from tychora.interfaces.http.auth import LocalAuth
@@ -88,8 +88,8 @@ async def test_http_evaluation_list_and_detail_serialize_real_runs_and_deny_read
             client.get(f"/v1/evaluations/{evaluation_id}"),
             return_exceptions=True,
         )
-        assert not isinstance(listing, Exception), repr(listing)
-        assert not isinstance(detail, Exception), repr(detail)
+        assert isinstance(listing, Response), repr(listing)
+        assert isinstance(detail, Response), repr(detail)
         assert listing.status_code == 200, listing.text
         assert evaluation_id in {entry["evaluation_id"] for entry in listing.json()}
         assert detail.status_code == 200, detail.text

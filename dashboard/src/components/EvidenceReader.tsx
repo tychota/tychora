@@ -243,6 +243,7 @@ export interface EvidenceReaderProps {
   revisionId?: string;
   /** Match/context roles require explicit membership in returned query metadata. */
   selectionRole?: EvidenceSelectionRole;
+  onInspected?: (value: Inspection) => void;
 }
 export function EvidenceReader({
   client,
@@ -251,6 +252,7 @@ export function EvidenceReader({
   sourceId,
   revisionId,
   selectionRole = "direct",
+  onInspected,
 }: EvidenceReaderProps) {
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -268,7 +270,10 @@ export function EvidenceReader({
         signal: controller.signal,
       })
       .then((value) => {
-        if (!controller.signal.aborted) setInspection(value);
+        if (!controller.signal.aborted) {
+          setInspection(value);
+          onInspected?.(value);
+        }
       })
       .catch((error) => {
         if (!controller.signal.aborted) setError(publicError(error));
@@ -364,9 +369,17 @@ export function EvidenceReader({
           {exactCitation && (
             <div className="citation-actions">
               <button type="button" onClick={() => void copy()}>
-                Copy citation
+                {unit && !unit.citable
+                  ? "Copy provenance reference"
+                  : "Copy citation"}
               </button>
-              {copied && <span role="status">Citation copied.</span>}
+              {copied && (
+                <span role="status">
+                  {unit && !unit.citable
+                    ? "Provenance reference copied."
+                    : "Citation copied."}
+                </span>
+              )}
               {copyError && (
                 <span role="status">
                   Clipboard unavailable. Select the citation below to copy.
@@ -374,7 +387,11 @@ export function EvidenceReader({
               )}
               <JsonDetails
                 value={exactCitation}
-                label="Citation identity and locators"
+                label={
+                  unit && !unit.citable
+                    ? "Noncitable provenance identity and locators"
+                    : "Citation identity and locators"
+                }
               />
             </div>
           )}

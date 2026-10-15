@@ -23,6 +23,8 @@ export function Relations({ client, unitIds, onSelectUnit }: RelationsProps) {
   useEffect(() => {
     setResult(null);
     setError(null);
+    setSelected(null);
+    setLoading(false);
     return () => request.current?.abort();
   }, [client, identity]);
   const explore = async (cursor?: string) => {

@@ -360,7 +360,7 @@ async def test_filter_change_retrieves_again_from_real_fts(tmp_path: Path) -> No
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
         await owner.run_blocking(
             lambda: owner.db.execute(
-                "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,'{}')",
+                'INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
                 (collection, owner.workspace_id, "manuals", "Manuals"),
             ),
             ExecutionContext(),
@@ -532,7 +532,7 @@ async def test_offline_degraded_retained_lexical_replay_does_not_require_reranke
         await owner.run_blocking(
             lambda: owner.db.execute(
                 "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) "
-                "VALUES (?,?,?,?,0,'{}')",
+                'VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
                 (collection, owner.workspace_id, "manuals", "Manuals"),
             ),
             ExecutionContext(),

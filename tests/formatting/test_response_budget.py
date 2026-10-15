@@ -245,7 +245,7 @@ def test_reserved_visual_proxy_can_be_omitted_while_asset_remains():
                 label="OCR",
                 text="derived " * 1500,
                 origin="derived",
-                dependencies=frozenset({"unit-1"}),
+                dependencies=frozenset({"unit-1", "asset-1"}),
                 review_state="accepted",
             ),
         ),
@@ -272,6 +272,7 @@ def test_reserved_visual_proxy_can_be_omitted_while_asset_remains():
         counter=counter(),
         profiles=(OutputProfile(renderer="canonical-json@1"),),
         eligible_unit_ids=frozenset({"unit-1"}),
+        eligible_asset_ids=frozenset({"asset-1"}),
         visuals=(visual,),
     )
     delivered = ResponseAssembler().assemble(

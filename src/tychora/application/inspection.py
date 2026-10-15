@@ -417,15 +417,25 @@ class InspectionService:
                 raise TychoraError(
                     "INTEGRITY_ERROR", "Retained source range is unavailable."
                 )
-            mode_name = owner.config.values.mode or owner.config.values.default_mode
-            if mode_name is None:
-                raise TychoraError(
-                    "PROFILE_INCOMPATIBLE", "Inspection mode is unavailable."
+            if unit.unit_type == "asset_proxy":
+                # The compiled retained attempt already applies the selected
+                # (including caller-use fallback) mode's derived review policy
+                # and the complete source/asset dependency closure. Proxies are
+                # atomic; a ranged read cannot bypass their admission.
+                if request.id not in attempt.view.proxy_unit_ids:
+                    _deny()
+            else:
+                mode_name = owner.config.values.mode or owner.config.values.default_mode
+                if mode_name is None:
+                    raise TychoraError(
+                        "PROFILE_INCOMPATIBLE", "Inspection mode is unavailable."
+                    )
+                mode = cast(FrozenJsonMap, owner.store.registry.modes[mode_name])
+                allowed_reviews = set(
+                    cast(tuple[str, ...], mode["original_review_states"])
                 )
-            mode = cast(FrozenJsonMap, owner.store.registry.modes[mode_name])
-            allowed_reviews = set(cast(tuple[str, ...], mode["original_review_states"]))
-            if unit.review_state not in allowed_reviews:
-                _deny()
+                if unit.review_state not in allowed_reviews:
+                    _deny()
             for interval in selected:
                 dependencies = frozenset(
                     dependency

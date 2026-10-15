@@ -1349,3 +1349,56 @@ fieldset {
     flex-basis: 100%;
   }
 }
+
+/* Evidence representations and focused administration forms. */
+.passage-panel {
+  padding: 1.25rem;
+  min-width: 0;
+}
+.passage-panel article {
+  margin-block: 1.25rem;
+  padding-block-end: 1rem;
+  border-bottom: 1px solid var(--line, #d8d5c9);
+}
+.passage-panel .evidence-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.setting-field {
+  min-width: 0;
+  padding-block: 0.5rem;
+}
+.setting-field small {
+  display: block;
+  color: var(--muted, #68685c);
+}
+.setting-field > label:first-child {
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+.setting-field input:not([type="checkbox"]),
+.setting-field select {
+  width: 100%;
+  min-width: 0;
+}
+[aria-label="Guided workspace settings"] > details {
+  padding-block: 0.7rem;
+  border-block-start: 1px solid var(--line, #d8d5c9);
+}
+.operation-panel form + form {
+  margin-block-start: 1.5rem;
+  padding-block-start: 1rem;
+  border-block-start: 1px solid var(--line, #d8d5c9);
+}
+.operation-panel label:not(.collection-option) {
+  display: block;
+  margin-block: 0.75rem;
+}
+.operation-panel input:not([type="checkbox"]),
+.operation-panel textarea {
+  width: 100%;
+}
+.review-query-state {
+  margin-block: 0.75rem;
+  font-size: 0.85rem;
+}

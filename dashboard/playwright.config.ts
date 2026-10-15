@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { defineConfig } from "@playwright/test";
 
 // Optional executable override supports a preinstalled browser without machine-specific paths.
@@ -25,7 +26,16 @@ export default defineConfig({
   webServer: {
     command: `${process.env.TYCHORA_E2E_PYTHON ?? "python"} e2e/server.py --port ${port}`,
     url: `http://127.0.0.1:${port}/dashboard/`,
-    env: { PYTHONPATH: "../src" },
+    env: {
+      PYTHONPATH:
+        process.env.PYTHONPATH || resolve(import.meta.dirname, "../src"),
+      TYCHORA_E2E_FIXTURE_DIR:
+        process.env.TYCHORA_E2E_FIXTURE_DIR ||
+        resolve(
+          import.meta.dirname,
+          "../.superpowers/verification/dashboard-e2e/task5-fixtures",
+        ),
+    },
     reuseExistingServer: false,
     timeout: 30_000,
   },

@@ -1,8 +1,8 @@
 import { Documents } from "./Documents";
 import { Collections } from "./Collections";
 import { AddDocuments } from "./AddDocuments";
-import { PageHeading, RouteLink } from "../components/Operations";
-import { useAddDocumentDraft } from "./documents/draft";
+import { Models } from "./Models";
+import { Explore } from "./Explore";
 import { Jobs } from "./Jobs";
 import { Evaluations } from "./Evaluations";
 import { Activity } from "./Activity";
@@ -12,7 +12,6 @@ export function OperationsRouter({ path }: { path: string }) {
     .replace(/^\/dashboard\/?/, "")
     .split("/")
     .map(decodeURIComponent);
-  const { draft } = useAddDocumentDraft();
   switch (parts[0]) {
     case "":
     case "collections":
@@ -24,34 +23,9 @@ export function OperationsRouter({ path }: { path: string }) {
         <Documents sourceId={parts[1]} revisionId={parts[3]} />
       );
     case "models":
-      return (
-        <>
-          <PageHeading title="Models">
-            <p>Provider and model configuration for the entire workspace.</p>
-          </PageHeading>
-          <RouteLink to="/dashboard/settings">
-            Open configuration settings
-          </RouteLink>
-          {draft.setupReturn && (
-            <p>
-              <RouteLink to={draft.setupReturn.route}>
-                Return to Add documents
-              </RouteLink>
-            </p>
-          )}
-        </>
-      );
+      return <Models />;
     case "explore":
-      return (
-        <>
-          <PageHeading title="Explore" />
-          <p>
-            Select a document’s Relationships view or follow evidence from
-            Search to explore authorized relationships.
-          </p>
-          <RouteLink to="/dashboard/documents">Open Documents</RouteLink>
-        </>
-      );
+      return <Explore />;
     case "sources":
       return <Documents sourceId={parts[1]} revisionId={parts[3]} />;
     case "jobs":

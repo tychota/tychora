@@ -241,6 +241,7 @@ describe("connected workbench", () => {
     fireEvent.click(
       await screen.findByRole("button", { name: /Record synthetic/ }),
     );
+    fireEvent.click(screen.getByRole("button", { name: "Full unit" }));
     expect(await screen.findByText("Matched evidence")).toBeInTheDocument();
     fireEvent.click(
       await screen.findByRole("button", { name: "Explore relations" }),
@@ -471,6 +472,7 @@ describe("connected workbench", () => {
     await search();
     const row = await screen.findByRole("button", { name: /<img src=x/ });
     fireEvent.click(row);
+    fireEvent.click(screen.getByRole("button", { name: "Full unit" }));
     await waitFor(() =>
       expect(
         requests.some((r) => r.path === `/v1/evidence/${evidence.id}`),
@@ -497,7 +499,8 @@ describe("exact provenance", () => {
     fireEvent.click(
       screen.getByRole("button", { name: "Context · context-unit" }),
     );
-    expect(screen.getByText("Context only")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Full unit" }));
+    expect(await screen.findByText("Context only")).toBeInTheDocument();
     expect(screen.queryByText("Matched evidence")).not.toBeInTheDocument();
   });
   it("defaults direct evidence inspection to a neutral provenance label", async () => {

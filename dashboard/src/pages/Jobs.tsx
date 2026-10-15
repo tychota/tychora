@@ -21,7 +21,27 @@ import { JsonDetails } from "../components/JsonDetails";
 function JobDetail({ id }: { id: string }) {
   const { adminClient: client, handshake } = useSession();
   const data = useResource<JobStatus>(`/v1/jobs/${objectPath(id)}`, client);
+  const [after, setAfter] = useState(0);
+  const retained = useResource<JobEvent[]>(
+    `/v1/jobs/${objectPath(id)}/events/page?after=${after}`,
+    client,
+  );
   const [events, setEvents] = useState<JobEvent[]>([]);
+  useEffect(() => {
+    if (Array.isArray(retained.value))
+      setEvents((old) =>
+        Array.from(
+          new Map(
+            [...retained.value!, ...old].map((event) => [
+              event.sequence,
+              event,
+            ]),
+          ).values(),
+        )
+          .sort((a, b) => a.sequence - b.sequence)
+          .slice(-100),
+      );
+  }, [retained.value]);
   const [streamError, setStreamError] = useState<unknown>(null);
   const [streamEpoch, setStreamEpoch] = useState(0);
   const [actionBusy, setActionBusy] = useState(false);
@@ -137,6 +157,18 @@ function JobDetail({ id }: { id: string }) {
               authoritative.
             </Status>
           )}
+          <p>
+            Source lineage is unavailable in this durable status.{" "}
+            <RouteLink to="/dashboard/documents">Find the document</RouteLink>{" "}
+            using its source identity; accepted document actions link to their
+            actual jobs.
+          </p>
+          {!sourceJob && (
+            <p>
+              Retry and recovery are unavailable for this operation. The source
+              scheduler only executes add/sync recovery.
+            </p>
+          )}
           <div className="unit-actions">
             {canResume && (
               <button
@@ -185,6 +217,16 @@ function JobDetail({ id }: { id: string }) {
           </p>
           <JsonDetails value={job} label="Persisted job diagnostics" />
           <h2>Live events</h2>
+          <p>
+            At most 100 retained/received events are displayed. Persisted job
+            status is authoritative; counts are reported, not estimated.
+          </p>
+          <LoadState {...retained} retry={() => void retained.load()} />
+          {Array.isArray(retained.value) && retained.value.length === 100 && (
+            <button onClick={() => setAfter(retained.value!.at(-1)!.sequence)}>
+              Load later retained events
+            </button>
+          )}
           <ol className="compact-list">
             {events.map((event) => (
               <li key={event.sequence}>
@@ -258,6 +300,7 @@ function JobList() {
               <th>Operation</th>
               <th>State</th>
               <th>Retries</th>
+              <th>Reported error</th>
             </tr>
           </thead>
           <tbody>
@@ -273,6 +316,7 @@ function JobList() {
                   <td>{job.operation}</td>
                   <td>{job.state}</td>
                   <td>{job.retry_count}</td>
+                  <td>{job.error_code ?? "None reported"}</td>
                 </tr>
               ))}
           </tbody>
