@@ -1,0 +1,176 @@
+dashboard/src/pages/Search.tsx
+  s_346481235fa7eb::t_2abf53fa681407 29
+  s_346481235fa7eb::t_0a851e3b7f3418 17,58-60,142-150,201-206,221-227,264,266-297,301-310,443-461,563,627-651,681-690,696,698-710,712-713
+  s_346481235fa7eb::t_850d11f53f6407 265,325-327
+  s_346481235fa7eb::t_adcc6ae3ec8781 16,18-20,54,61,95,128-130,151,199-200,207,220,462
+  s_346481235fa7eb::t_c846d410be6a6d 311,328-329,463-464,508-517,714-720,752,754-765
+dashboard/e2e/dashboard.spec.ts
+  s_346481235fa7eb::t_7cf2fd1934ebf7 347-349,351-358,479
+  s_346481235fa7eb::t_991f94fa982845 148
+  s_346481235fa7eb::t_198b1f4342dce4 359
+dashboard/src/pages/evaluations/DatasetForm.tsx
+  s_346481235fa7eb::t_adcc6ae3ec8781 1-9
+  s_346481235fa7eb::t_cef62329af857a 10-87
+dashboard/src/pages/Models.tsx
+  s_346481235fa7eb::t_e4bd5872b55482 4-9,11-14,19-20,24-26,28-42,44-166,168-250,252-260,265-278
+  s_346481235fa7eb::t_dcc67aa893ba37 1-3,10,15-18,21-23,27,43,279
+  s_346481235fa7eb::t_7905f15d4f0f3f 167,251,261-264
+  s_346481235fa7eb::t_ff054966dafa0d 280-286
+tests/transports/test_dashboard_restore.py
+  s_346481235fa7eb::t_0305d8333b5a9e 1-24,28-42
+  s_346481235fa7eb::t_f5ec57511356b6 25-27,43
+  s_346481235fa7eb::t_df34e3ce48d0b7 44-75
+dashboard/src/pages/Evaluations.tsx
+  s_346481235fa7eb::t_adcc6ae3ec8781 16,45
+dashboard/src/pages/search/review.ts
+  s_346481235fa7eb::t_5228b6db08ca7e 1-13
+  s_346481235fa7eb::t_0efd44fdaec1c1 14-27
+dashboard/src/components/StoredChunks.tsx
+  s_346481235fa7eb::t_5228b6db08ca7e 1-26
+  s_346481235fa7eb::t_c8c426a2d82ee7 27-89
+src/tychora/application/restore.py
+  s_346481235fa7eb::t_9abf7029f5cba0 564-568
+tests/formatting/test_visual_dependencies.py
+  s_346481235fa7eb::t_6ac9fc76500e63 1-38
+  s_346481235fa7eb::t_8d25a4a2bf90d4 39-81
+src/tychora/retrieval/response.py
+  s_346481235fa7eb::t_d9c21fd31778d0 57,179-181
+dashboard/src/pages/Activity.tsx
+  s_346481235fa7eb::t_adcc6ae3ec8781 70
+  s_346481235fa7eb::t_d63ec16066f928 71-73
+dashboard/src/pages/Jobs.tsx
+  s_346481235fa7eb::t_9385c689574a1f 24-28
+  s_346481235fa7eb::t_774ed5a9c2cc76 30-44,160-171,220-229,303,319
+dashboard/src/pages/models/GuidedSettings.tsx
+  s_346481235fa7eb::t_290a8e3e12474e 2-7,10,19-22,24-32,36-44,48-51,53-60,67-75,77-91,96-98,100-119,121-123,129-134,136-157,159-267
+  s_346481235fa7eb::t_850d11f53f6407 15-18,124-128,135,158
+  s_346481235fa7eb::t_df523608155b1a 1,8-9,11-14,23,33-35,45-47,52,61-66,76,92-95,99,120,268
+  s_346481235fa7eb::t_01739cddf76384 269-286
+dashboard/src/components/Administration.tsx
+  s_346481235fa7eb::t_df523608155b1a 1-35
+  s_346481235fa7eb::t_214f163b2d742b 36-92
+dashboard/src/pages/settings/WorkspaceOperations.tsx
+  s_346481235fa7eb::t_ca3b8de1a4b578 1-5,7-45,48-91,94-177,180-266
+  s_346481235fa7eb::t_dcc67aa893ba37 6,46-47,92-93,178-179,267
+src/tychora/application/query.py
+  s_346481235fa7eb::t_d9c21fd31778d0 1373
+dashboard/e2e/qualification.py
+  s_346481235fa7eb::t_64c34326cc8e27 1-6,8-13,22-23,27-35,39-42,53,58-60,67-71,74,81-87,92-97,99-100
+  s_346481235fa7eb::t_850d11f53f6407 7,72-73
+  s_346481235fa7eb::t_991f94fa982845 14-21,24-26,36-38,43-52,54-57,61-66,75-80,88-91,98,101-107
+  s_346481235fa7eb::t_d2d38557460ae3 108-109
+dashboard/e2e/server.py
+  s_346481235fa7eb::t_991f94fa982845 16,25,89-96,115-120,122-123,132-136
+  s_346481235fa7eb::t_64c34326cc8e27 7,111
+  s_346481235fa7eb::t_28ea21392cae6c 18,26-29,125,127-131,137-139
+  s_346481235fa7eb::t_96585eb35e5d90 24,112-113
+  s_346481235fa7eb::t_ca3b8de1a4b578 104
+  s_346481235fa7eb::t_1060bc56876680 97-98,124,140-141,151,161
+dashboard/src/pages/Explore.tsx
+  s_346481235fa7eb::t_adcc6ae3ec8781 1-22
+  s_346481235fa7eb::t_724f0d85a8bddc 23-126
+dashboard/src/pages/sources/Coverage.tsx
+  s_346481235fa7eb::t_2abf53fa681407 15,99
+dashboard/src/api/administration.ts
+  s_346481235fa7eb::t_df523608155b1a 1-21
+  s_346481235fa7eb::t_a3afff2e6fb615 22-81
+dashboard/e2e/task5.spec.ts
+  s_346481235fa7eb::t_850d11f53f6407 303,335,364-366
+  s_346481235fa7eb::t_290a8e3e12474e 114
+  s_346481235fa7eb::t_95d59a5402e687 554-555,560
+  s_346481235fa7eb::t_346e8b8839d685 1-3,10,23,30,83,110,152,315-316,350,375,489-490,622
+  s_346481235fa7eb::t_939852bf7077cb 4-9,11-22,24-29,31-82,84-109,111-113,135-151,153-172,174-184,186-244,254-297,310-314,317-334,336-349,351-362,367-374,376-422,424-460,468-480,484-488,491-531,537,542,547-549,561-563,575-577,579,583-597,599-600,604-614
+  s_346481235fa7eb::t_6790ac196f9171 115-129,245-253,423,532-536,538-541,543-546,550-553,556-559,564-574,578,580-582,598,601-603,615-621
+  s_346481235fa7eb::t_7ebc021e7a29d8 130-134,173,185,298-302,304-309,363,461-467,482
+  s_346481235fa7eb::t_991f94fa982845 481,483
+dashboard/src/pages/evaluations/EvaluationForm.tsx
+  s_346481235fa7eb::t_adcc6ae3ec8781 80
+  s_346481235fa7eb::t_bae30d6502f296 81
+dashboard/src/pages/models/draft.tsx
+  s_346481235fa7eb::t_e4bd5872b55482 1-32
+  s_346481235fa7eb::t_b5b78ff6d486c1 33-37
+dashboard/src/components/VisualPassage.tsx
+  s_346481235fa7eb::t_0a851e3b7f3418 1-21
+  s_346481235fa7eb::t_bff1126c6df0f8 22-155
+dashboard/src/components/PdfCoverage.tsx
+  s_346481235fa7eb::t_2abf53fa681407 1-9
+  s_346481235fa7eb::t_fe72f2fad9de23 10-39
+dashboard/src/pages/models/ExpertSettings.tsx
+  s_346481235fa7eb::t_df523608155b1a 1-9
+  s_346481235fa7eb::t_e793ba75730175 10-76
+src/tychora/application/inspection.py
+  s_346481235fa7eb::t_adb2d07dcb5ad1 420-435
+  s_346481235fa7eb::t_32092885f47541 437-438
+dashboard/src/test/task5.test.tsx
+  s_346481235fa7eb::t_08faaab2c86e9b 102-119,142-143
+  s_346481235fa7eb::t_a079171dac89b8 1-7,9,25-28,30-32,35,37-56,60,62-93,130,141,153,164,194,196-198,200-202,207-209,215-223,227-228,233-241,249-258,260-262,264-274,277-278,280-293,297-320,324-332,334-342,344-351,353-360,365-373,375-377,380-382,386-398,400-402,404-408,412-422,424-429,431-433,435-445,449-454,456-461,464-469
+  s_346481235fa7eb::t_0305d8333b5a9e 8,10-19,22,24,29,33-34,36,57-59,61,94-95,100-101,195,199,203-206,210-214,224-226,229-232,242-248,259,263,275-276,279,294-296,321-323,333,343,352,361-364,374,378-379,383-385,399,403,409-411,423,430,434,446-448,455,462-463,470
+  s_346481235fa7eb::t_4667008316080a 20-21,23,96-99,120-129,131-140,144-152,154-163,165-193
+dashboard/src/components/EvidenceReader.tsx
+  s_346481235fa7eb::t_0a851e3b7f3418 246,255,273-276,372-374,376-382,390-391
+  s_346481235fa7eb::t_373cd9779dab54 392-394
+dashboard/src/api/contracts.ts
+  s_346481235fa7eb::t_2abf53fa681407 296-305
+  s_346481235fa7eb::t_a13770124ba6fc 306-308
+dashboard/src/components/ReturnedPassage.tsx
+  s_346481235fa7eb::t_5228b6db08ca7e 1-23
+  s_346481235fa7eb::t_0cec8cb4678a3a 24-67
+dashboard/contracts/README.md
+  s_346481235fa7eb::t_44b6a857451dee 38-44
+dashboard/contracts/task5-ocr-evidence.json
+  s_346481235fa7eb::t_0595f9e911a503 1-64
+dashboard/contracts/task5-ocr-excluded-query.json
+  s_346481235fa7eb::t_d41a4098c214a9 1-48
+dashboard/contracts/task5-ocr-included-query.json
+  s_346481235fa7eb::t_04ceccbfbd60c6 1-137
+dashboard/contracts/task5-ocr-windows.json
+  s_346481235fa7eb::t_d74937dad398ea 1-36
+dashboard/playwright.config.ts
+  s_346481235fa7eb::t_3c66a4b62208d7 1,29-38
+dashboard/src/App.tsx
+  s_346481235fa7eb::t_9bd6fe8bd386bc 11,128-141,143-146,148-176,178-221,223
+dashboard/src/components/Relations.tsx
+  s_346481235fa7eb::t_fb631ec943cf69 26-27
+dashboard/src/pages/OperationsRouter.tsx
+  s_346481235fa7eb::t_3925e24d229f14 4-5,26,28
+dashboard/src/pages/Settings.tsx
+  s_346481235fa7eb::t_32a05f6d559ed3 2-4,6-11,13-14,19-20,23-35,37-39,42-44,47,49-53,55,57-64
+dashboard/src/styles.css
+  s_346481235fa7eb::t_701fc0b36a73f1 1352-1404
+dashboard/src/test/operations.test.tsx
+  s_346481235fa7eb::t_92e64f14516d6a 14,71-86,316,569,680
+dashboard/src/test/workbench.test.tsx
+  s_346481235fa7eb::t_b05ed75b9eb803 244,475,502-503
+docs/dashboard.md
+  s_346481235fa7eb::t_a72af25e9dfdfb 3,7,9,11,19-47,49,51,53,55-79,83-90,92-98,102,104-110,112
+src/tychora/resources/dashboard/assets/index-CHJSo-Jb.css
+  s_346481235fa7eb::t_a3ee7dd86eba0e 1
+src/tychora/resources/dashboard/assets/index-DwLq_BQ1.js
+  s_346481235fa7eb::t_48cee5c3287002 1,3-6,8-13
+src/tychora/resources/dashboard/index.html
+  s_346481235fa7eb::t_5d6c4691f5aca6 9-10
+tests/application/test_content_inspection.py
+  s_346481235fa7eb::t_fbbd1d74d4493e 447,450,576-590
+tests/evaluation/test_evaluation_http.py
+  s_346481235fa7eb::t_d68d572eefa137 4,91-92
+tests/formatting/test_response_budget.py
+  s_346481235fa7eb::t_63a2c1ad241565 248,275
+tests/retrieval/test_query.py
+  s_346481235fa7eb::t_2d6ba16cd3d78f 363,535
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6dbb03c32485df9055f00f1c8e5bb30952046344",
+  "prompts": {},
+  "sessions": {
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
