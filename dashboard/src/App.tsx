@@ -7,6 +7,12 @@ import {
 } from "react";
 import { SessionProvider, useSession } from "./session";
 import { publicError } from "./api/client";
+import {
+  exchangeLaunchCode,
+  isRejectedCredential,
+  readRememberedToken,
+  takeLaunchCode,
+} from "./credentials";
 import { ErrorNotice } from "./components/Status";
 import { ModelDraftProvider } from "./pages/models/draft";
 import { Search } from "./pages/Search";
@@ -27,9 +33,86 @@ export const destinations = [
   "Activity",
   "Settings",
 ] as const;
-function Connection() {
+interface Startup {
+  /** A launch-link exchange or remembered connection is in progress. */
+  starting: boolean;
+  error: unknown;
+  notice: string | null;
+  retry: (() => void) | null;
+}
+/**
+ * Runs once per page load: a launch link in the fragment wins over a
+ * remembered credential. Disconnecting later never reconnects automatically.
+ */
+function useStartup(): Startup {
+  const { connect, setRemembered } = useSession();
+  // Taken synchronously during the first render, before any request.
+  const [launchCode] = useState(takeLaunchCode);
+  const [startup, setStartup] = useState<Startup>(() => ({
+    starting: launchCode !== null || readRememberedToken() !== null,
+    error: null,
+    notice: null,
+    retry: null,
+  }));
+  const live = useRef(true);
+  const ran = useRef(false);
+  const update = (next: Partial<Startup>) => {
+    if (live.current) setStartup((previous) => ({ ...previous, ...next }));
+  };
+  const connectRemembered = async () => {
+    const stored = readRememberedToken();
+    if (!stored) return update({ starting: false });
+    update({ starting: true, error: null, notice: null, retry: null });
+    try {
+      await connect(stored);
+      update({ starting: false });
+    } catch (error) {
+      if (isRejectedCredential(error)) {
+        setRemembered(false);
+        update({
+          starting: false,
+          notice:
+            "The credential remembered on this browser was rejected, so it was removed. The owner token may have been rotated; connect again below.",
+        });
+      } else
+        update({
+          starting: false,
+          error: publicError(error),
+          retry: () => void connectRemembered(),
+        });
+    }
+  };
+  useEffect(() => {
+    live.current = true;
+    if (!ran.current) {
+      ran.current = true;
+      if (launchCode !== null) {
+        void (async () => {
+          try {
+            await connect(await exchangeLaunchCode(launchCode));
+            update({ starting: false });
+          } catch (error) {
+            update({
+              starting: false,
+              error: publicError(error),
+              notice:
+                "Launch links work once and expire after two minutes. Run `tychora manage dashboard-link` for a new one.",
+            });
+          }
+        })();
+      } else void connectRemembered();
+    }
+    return () => {
+      live.current = false;
+    };
+    // Startup runs exactly once per page load.
+  }, []);
+  return startup;
+}
+function Connection({ startup }: { startup: Startup }) {
   const { connect } = useSession();
   const [token, setToken] = useState("");
+  const [remember, setRemember] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
   const live = useRef(true);
@@ -44,14 +127,15 @@ function Connection() {
     setError(null);
     setLoading(true);
     try {
-      await connect(token);
-      setToken("");
+      await connect(token, { remember });
+      if (live.current) setToken("");
     } catch (error) {
       if (live.current) setError(publicError(error));
     } finally {
       if (live.current) setLoading(false);
     }
   };
+  const busy = loading || startup.starting;
   return (
     <main id="main" className="connection">
       <div className="wordmark">
@@ -61,10 +145,24 @@ function Connection() {
         <p className="eyebrow">Local workspace</p>
         <h1>Connect to your evidence.</h1>
         <p>
-          Use the bearer token configured for this local server. Your granted
-          workspace and collections will appear after connection.
+          Open the one-time link printed by the server, or run{" "}
+          <code>tychora manage dashboard-link</code>. You can also paste the
+          bearer token configured for this local server.
         </p>
       </div>
+      {startup.starting && (
+        <p className="muted" role="status">
+          Connecting to the local workspace…
+        </p>
+      )}
+      {startup.notice !== null && (
+        <p className="connection-notice" role="status">
+          {startup.notice}
+        </p>
+      )}
+      {startup.error !== null && (
+        <ErrorNotice error={startup.error} retry={startup.retry ?? undefined} />
+      )}
       <form onSubmit={(event) => void submit(event)}>
         <label htmlFor="bearer">Bearer token</label>
         <input
@@ -75,18 +173,31 @@ function Connection() {
           autoComplete="off"
           spellCheck={false}
           required
-          disabled={loading}
+          disabled={busy}
         />
         <button
           type="submit"
           className="primary"
-          disabled={loading || !token.trim()}
+          disabled={busy || !token.trim()}
         >
           {loading ? "Connecting…" : "Connect"}
         </button>
+        <label className="remember-choice" htmlFor="remember">
+          <input
+            id="remember"
+            type="checkbox"
+            checked={remember}
+            onChange={(e) => setRemember(e.target.checked)}
+            disabled={busy}
+            aria-describedby="remember-help"
+          />
+          Remember on this browser
+        </label>
       </form>
-      <p className="muted">
-        The token stays in memory for this connection. Disconnecting clears
+      <p className="muted" id="remember-help">
+        Without Remember, the token stays in memory for this tab only. Remember
+        stores it in this browser&apos;s local storage until you choose Forget
+        this browser; avoid it on shared machines. Disconnecting clears
         workspace data and cancels outstanding requests.
       </p>
       {error !== null && <ErrorNotice error={error} />}
@@ -99,6 +210,7 @@ export interface AppProps {
 }
 function Shell({ renderRoute }: AppProps) {
   const session = useSession();
+  const startup = useStartup();
   const { path } = useRoute();
   const rawPage =
     path.replace(/^\/dashboard\/?/, "").split("/")[0] || "collections";
@@ -110,7 +222,8 @@ function Shell({ renderRoute }: AppProps) {
         : rawPage;
   const [navigationOpen, setNavigationOpen] = useState(false);
   useEffect(() => setNavigationOpen(false), [path]);
-  if (!session.adminClient || !session.handshake) return <Connection />;
+  if (!session.adminClient || !session.handshake)
+    return <Connection startup={startup} />;
   const administration = ["jobs", "models", "evaluations", "settings"].includes(
     page,
   );
@@ -171,9 +284,25 @@ function Shell({ renderRoute }: AppProps) {
                 <summary>Workspace identity</summary>
                 <p className="workspace-id">{session.handshake.workspace_id}</p>
               </details>
-              <button type="button" onClick={session.disconnect}>
-                Disconnect
-              </button>
+              <label className="remember-choice" htmlFor="remember-session">
+                <input
+                  id="remember-session"
+                  type="checkbox"
+                  checked={session.remembered}
+                  onChange={(e) => session.setRemembered(e.target.checked)}
+                />
+                Remember on this browser
+              </label>
+              <div className="session-actions">
+                <button type="button" onClick={session.disconnect}>
+                  Disconnect
+                </button>
+                {session.remembered && (
+                  <button type="button" onClick={session.forget}>
+                    Forget this browser
+                  </button>
+                )}
+              </div>
             </div>
             <p className="sidebar-footer">Evidence before conclusions.</p>
           </aside>
