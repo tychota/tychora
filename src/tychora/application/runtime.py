@@ -6,6 +6,7 @@ import json
 import math
 import multiprocessing
 import os
+import re
 import secrets
 import stat
 import time
@@ -111,6 +112,109 @@ def private_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+OWNER_TOKEN_FILE = "owner-token"
+_OWNER_TOKEN = re.compile(r"[A-Za-z0-9_-]{43,128}")
+
+
+def _unsafe_owner_token() -> TychoraError:
+    return TychoraError(
+        "INTEGRITY_ERROR",
+        "Owner token file is unsafe; inspect or delete .runtime/owner-token "
+        "while the workspace is stopped.",
+    )
+
+
+def _create_owner_token(directory: Path, *, replace: bool) -> str:
+    """Write a fresh owner-only token file atomically, never through a link."""
+    token = secrets.token_urlsafe(32)
+    temporary = directory / (".owner-token-" + secrets.token_hex(8))
+    target = directory / OWNER_TOKEN_FILE
+    try:
+        fd = os.open(
+            temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+        )
+        with os.fdopen(fd, "w") as stream:
+            stream.write(token)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if replace:
+            os.replace(temporary, target)
+        else:
+            # link() never overwrites, so a concurrently planted file wins and
+            # is then validated like any other existing token file.
+            os.link(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return token
+
+
+def _read_owner_token(directory: Path) -> str:
+    try:
+        fd = os.open(directory / OWNER_TOKEN_FILE, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        raise
+    except OSError:
+        raise _unsafe_owner_token() from None
+    try:
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_nlink != 1
+            or stat.S_IMODE(info.st_mode) != 0o600
+            or info.st_size > 256
+        ):
+            raise _unsafe_owner_token()
+        raw = os.read(fd, 257)
+    finally:
+        os.close(fd)
+    try:
+        token = raw.decode("ascii")
+    except UnicodeDecodeError:
+        raise _unsafe_owner_token() from None
+    if not _OWNER_TOKEN.fullmatch(token):
+        raise _unsafe_owner_token()
+    return token
+
+
+def load_owner_token(directory: Path) -> str:
+    """Reuse the persisted owner token, creating it only when it is absent.
+
+    The caller must hold the workspace owner lock. Any existing but anomalous
+    file fails closed instead of being silently replaced.
+    """
+    try:
+        return _read_owner_token(directory)
+    except FileNotFoundError:
+        pass
+    try:
+        _create_owner_token(directory, replace=False)
+    except FileExistsError:
+        pass
+    except OSError:
+        raise _unsafe_owner_token() from None
+    try:
+        return _read_owner_token(directory)
+    except FileNotFoundError:
+        raise _unsafe_owner_token() from None
+
+
+def rotate_owner_token(root: Path) -> None:
+    """Replace the persisted owner token of a stopped workspace."""
+    root = Path(root)
+    if not root.is_dir():
+        raise TychoraError("NOT_FOUND", "Workspace directory does not exist.")
+    identity = RuntimeIdentity(root)
+    identity.acquire()
+    try:
+        try:
+            _create_owner_token(identity.directory, replace=True)
+        except OSError:
+            raise _unsafe_owner_token() from None
+    finally:
+        identity.close()
+
+
 class RuntimeIdentity:
     """A lock and secret coordination record; this is not a live handshake."""
 
@@ -154,14 +258,19 @@ class RuntimeIdentity:
             ) from None
 
     def publish(self, workspace_id: str) -> None:
+        if self._fd is None:
+            raise TychoraError("INTEGRITY_ERROR", "Owner runtime is not locked")
         self.instance_id = str(uuid4())
+        # Per-instance secret for owner-bound continuation cursors; the bearer
+        # token below is deliberately stable across restarts.
+        self.instance_secret = secrets.token_bytes(32)
         record = {
             "schema_version": 1,
             "workspace_id": workspace_id,
             "protocol_version": 1,
             "instance_id": self.instance_id,
             "pid": os.getpid(),
-            "token": secrets.token_urlsafe(32),
+            "token": load_owner_token(self.directory),
         }
         self.record = record
         self._write_record(record)

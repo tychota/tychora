@@ -228,3 +228,28 @@ def purge_cache(ctx: typer.Context, namespace: list[str] = typer.Argument(...)) 
 def migrate(ctx: typer.Context, target_version: str) -> None:
     """Migrate to an explicit schema version."""
     _run(ctx, {"operation": "migrate", "target_version": target_version})
+
+
+@group.command("rotate-token")
+def rotate_token(ctx: typer.Context) -> None:
+    """Replace the persisted owner token; the workspace must not be running.
+
+    Every remembered dashboard and copied credential stops working.
+    """
+    from tychora.application.runtime import rotate_owner_token
+    from tychora.contracts.errors import TychoraError
+
+    try:
+        try:
+            rotate_owner_token(state(ctx).workspace)
+        except TychoraError as error:
+            if error.code != "WORKSPACE_BUSY":
+                raise
+            raise TychoraError(
+                "WORKSPACE_BUSY",
+                "Stop the running owner before rotating its token.",
+                retryable=True,
+            ) from None
+        progress("Owner token rotated; it takes effect on the next start.")
+    except Exception as error:  # noqa: BLE001 - command boundary rethrows unknown exceptions
+        fail(error)
