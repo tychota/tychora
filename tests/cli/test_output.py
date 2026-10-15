@@ -211,7 +211,13 @@ def test_http_serve_interrupt_exits_130(tmp_path):
         process.send_signal(signal.SIGINT)
         stdout, stderr = process.communicate(timeout=10)
         assert process.returncode == 130, (stdout, stderr)
-        assert stdout == ""
+        # stdout carries only the one-time dashboard launch announcement.
+        token = (workspace / ".runtime" / "owner-token").read_text()
+        lines = stdout.splitlines()
+        assert len(lines) == 2, stdout
+        assert "/dashboard/#launch=" in lines[0]
+        assert lines[1].endswith("manage dashboard-link")
+        assert token not in stdout
     finally:
         if process.poll() is None:
             process.terminate()
