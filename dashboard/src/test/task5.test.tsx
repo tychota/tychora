@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -10,6 +11,7 @@ import type { QueryResult } from "../api/contracts";
 import { ApiClient } from "../api/client";
 import { Search } from "../pages/Search";
 import { OperationsRouter } from "../pages/OperationsRouter";
+import { ModelDraftProvider } from "../pages/models/draft";
 import { EvidenceReader } from "../components/EvidenceReader";
 import query from "../../contracts/query.json";
 import evidence from "../../contracts/evidence.json";
@@ -191,6 +193,54 @@ it("invalidates an in-flight purge plan when its source target changes", async (
   expect(
     screen.queryByRole("button", { name: "Confirm original purge" }),
   ).toBeNull();
+});
+it("ignores an old expert activation after route remount and preserves the newer draft", async () => {
+  let release!: (response: Response) => void;
+  const fallback = globalThis.fetch;
+  vi.stubGlobal("fetch", (path: string, init: RequestInit) =>
+    path === "/v1/settings" && init.method === "PUT"
+      ? new Promise<Response>((resolve) => {
+          release = resolve;
+        })
+      : fallback(path, init),
+  );
+  const route = (path: string) => (
+    <ModelDraftProvider>
+      <OperationsRouter path={path} />
+    </ModelDraftProvider>
+  );
+  const view = render(route("/dashboard/models"));
+  fireEvent.click(await screen.findByText("Expert complete TOML activation"));
+  fireEvent.change(screen.getByLabelText("Activation profile"), {
+    target: { value: "old-profile" },
+  });
+  fireEvent.change(screen.getByLabelText("Complete workspace TOML"), {
+    target: { value: "old submitted draft" },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Activate configuration" }),
+  );
+  expect(screen.getByLabelText("Complete workspace TOML")).toBeDisabled();
+  view.rerender(route("/dashboard/settings"));
+  view.rerender(route("/dashboard/models"));
+  fireEvent.click(await screen.findByText("Expert complete TOML activation"));
+  fireEvent.change(screen.getByLabelText("Activation profile"), {
+    target: { value: "new-profile" },
+  });
+  fireEvent.change(screen.getByLabelText("Complete workspace TOML"), {
+    target: { value: "new unsent draft" },
+  });
+  await act(async () => {
+    release(new Response(JSON.stringify({ activated: true })));
+  });
+  expect(screen.getByLabelText("Complete workspace TOML")).toHaveValue(
+    "new unsent draft",
+  );
+  expect(screen.getByLabelText("Activation profile")).toHaveValue(
+    "new-profile",
+  );
+  expect(screen.queryByText(/Configuration activated\./)).toBeNull();
+  expect(state.session.refreshGrant).not.toHaveBeenCalled();
 });
 async function search() {
   fireEvent.change(screen.getByLabelText("Question"), {

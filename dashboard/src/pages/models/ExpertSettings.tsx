@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useModelDraft } from "./draft";
 import { useSession } from "../../session";
 import { boundedBody } from "../../api/administration";
@@ -15,6 +15,13 @@ export function ExpertSettings({
   const setToml = (toml: string) => setDraft((d) => ({ ...d, toml }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const lifetime = useRef(new AbortController());
+  useEffect(() => {
+    lifetime.current = new AbortController();
+    setBusy(false);
+    setError(null);
+    return () => lifetime.current.abort();
+  }, [adminClient]);
   return (
     <details className="operation-panel">
       <summary>Expert complete TOML activation</summary>
@@ -27,6 +34,7 @@ export function ExpertSettings({
         onSubmit={async (e) => {
           e.preventDefault();
           if (!adminClient || busy) return;
+          const signal = lifetime.current.signal;
           setBusy(true);
           setError(null);
           setDraft((d) => ({ ...d, notice: null }));
@@ -34,7 +42,11 @@ export function ExpertSettings({
             await adminClient.request("/v1/settings", {
               method: "PUT",
               body: boundedBody({ profile, workspace_toml: toml }),
+              signal,
             });
+            // A departed editor no longer owns the shared draft or refresh.
+            // Aborting delivery does not undo a server-accepted activation.
+            if (signal.aborted) return;
             setToml("");
             setDraft((d) => ({
               ...d,
@@ -42,9 +54,9 @@ export function ExpertSettings({
             }));
             await onActivated();
           } catch (e) {
-            setError(e);
+            if (!signal.aborted) setError(e);
           } finally {
-            setBusy(false);
+            if (!signal.aborted) setBusy(false);
           }
         }}
       >
