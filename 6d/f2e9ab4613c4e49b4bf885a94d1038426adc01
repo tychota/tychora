@@ -1,0 +1,105 @@
+HANDOFF.md
+  s_346481235fa7eb::t_58404a91c2d0e1 3,7,9-13,72-79,83
+dashboard/contracts/README.md
+  s_346481235fa7eb::t_0183a4f75f82e4 45-46
+dashboard/contracts/task6-pdf-accepted.json
+  s_346481235fa7eb::t_fecce0f253ece9 1-5
+dashboard/contracts/task6-pdf-analysed.json
+  s_346481235fa7eb::t_9b3417e845a65e 1-86
+dashboard/contracts/task6-pdf-blank-status.json
+  s_219afc08798c44::t_b5d8b848dc0618 1-72
+dashboard/contracts/task6-pdf-coverage.json
+  s_346481235fa7eb::t_11c6b1d8458915 1-25
+dashboard/contracts/task6-pdf-diagnostics.json
+  s_346481235fa7eb::t_284733938b141e 1-31
+dashboard/contracts/task6-pdf-events.json
+  s_346481235fa7eb::t_72477df3b96a53 1-157
+dashboard/contracts/task6-pdf-evidence.json
+  s_346481235fa7eb::t_7847981c8b5818 1-64
+dashboard/contracts/task6-pdf-excluded.json
+  s_346481235fa7eb::t_d7cecb84087041 1-48
+dashboard/contracts/task6-pdf-included.json
+  s_346481235fa7eb::t_9e1491a6162863 1-137
+dashboard/contracts/task6-pdf-mixed-status.json
+  s_219afc08798c44::t_eecfaff68ef6a4 1-86
+dashboard/contracts/task6-pdf-native-status.json
+  s_219afc08798c44::t_3790d0d43b69de 1-72
+dashboard/contracts/task6-pdf-scan-status.json
+  s_219afc08798c44::t_d18b9a16210722 1-86
+dashboard/contracts/task6-pdf-units.json
+  s_346481235fa7eb::t_20bc74c410694f 1-90
+dashboard/contracts/task6-pdf-windows.json
+  s_346481235fa7eb::t_3363574fbd2f0c 1-36
+dashboard/e2e/pdf_fixture.py
+  s_346481235fa7eb::t_f2a39af6534799 1-39
+dashboard/e2e/qualification.py
+  s_346481235fa7eb::t_4a190f28aa1865 87-93
+dashboard/e2e/server.py
+  s_346481235fa7eb::t_a04a82c291d56d 132-135,142-145
+dashboard/e2e/task6.spec.ts
+  s_346481235fa7eb::t_ddfabe9a5d51bc 1-436
+dashboard/e2e/test_server.py
+  s_219afc08798c44::t_740661dbb01e22 46-61
+dashboard/scripts/generate_contracts.py
+  s_219afc08798c44::t_6a78486774847d 12,197-265,269-299
+dashboard/src/api/contracts.ts
+  s_346481235fa7eb::t_e1487dbd47a59b 551-610
+dashboard/src/components/EvidenceReader.tsx
+  s_346481235fa7eb::t_4525c4246283a9 349-391
+dashboard/src/pages/AddDocuments.tsx
+  s_346481235fa7eb::t_da89481bbad087 8
+dashboard/src/pages/Jobs.tsx
+  s_346481235fa7eb::t_75017213fb639f 240-243
+dashboard/src/pages/documents/draft.tsx
+  s_346481235fa7eb::t_35fbc5fa35eedb 13,42,69-77,80-87
+dashboard/src/pages/sources/PdfIntakePanel.tsx
+  s_346481235fa7eb::t_9c9a6b4e638ec1 1-526
+dashboard/src/pages/sources/pdfIntake.ts
+  s_219afc08798c44::t_375cd6c1724673 1-82
+dashboard/src/test/documents.test.tsx
+  s_346481235fa7eb::t_88f88c1468815c 784-942
+dashboard/src/test/operations.test.tsx
+  s_346481235fa7eb::t_0356d622e60d70 1049,1058,1115
+dashboard/src/test/pdf-intake.test.tsx
+  s_346481235fa7eb::t_9f783109f3befb 1-451
+docs/dashboard.md
+  s_346481235fa7eb::t_b1560678ada6b9 29,31-39,121-122
+src/tychora/resources/dashboard/assets/index-Bzyjo2LY.js
+  s_219afc08798c44::t_959169ee4341d3 1,3-6,8-13
+src/tychora/resources/dashboard/index.html
+  s_219afc08798c44::t_ab8697cb943caa 9
+dashboard/src/pages/sources/SourceForm.tsx
+  s_d618e7a387a8ce::t_99e8ee7b78851b 11-12,28,34,78,107-117,213,228-229,247-254,645-654,660,670-724
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6df2e9ab4613c4e49b4bf885a94d1038426adc01",
+  "prompts": {},
+  "sessions": {
+    "s_219afc08798c44": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    },
+    "s_346481235fa7eb": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a137eb-c1f2-78f0-962e-cc28ea8df81c",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    },
+    "s_d618e7a387a8ce": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a13cae-2b96-78d3-9b5e-074817119708",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
