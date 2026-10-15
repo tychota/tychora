@@ -1736,6 +1736,9 @@ class SourceService:
                         self.owner.store.registry,
                         DocumentCompositionPlan(
                             base_normalizer_fingerprint=parsed.normalizer_fingerprint,
+                            input_strategy="pdf-streamed-images@1"
+                            if parsed.pdf_processing is not None
+                            else None,
                             proxies=tuple(proxies),
                             pixel_regions=pixel_regions,
                             vision_gaps=tuple(gaps),

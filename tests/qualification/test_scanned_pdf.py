@@ -325,6 +325,9 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
                 Registry.from_config(config),
                 DocumentCompositionPlan(
                     base_normalizer_fingerprint=parsed.normalizer_fingerprint,
+                    input_strategy=None
+                    if mode == "legacy"
+                    else "pdf-streamed-images@1",
                     proxies=proxies,
                     pixel_regions=regions,
                 ),
