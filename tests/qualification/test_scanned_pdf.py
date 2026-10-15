@@ -226,7 +226,9 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
                 return stream.read(ref.size_bytes + 1)
 
         def compose():
-            proxies, regions = plan_pdf_ocr(owner, parsed, ctx)
+            proxies, regions = plan_pdf_ocr(
+                owner, parsed, ctx, budget=parser.retention_budget
+            )
             return compose_document(
                 parsed,
                 Registry.from_config(config),
@@ -237,6 +239,7 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
                 ),
                 owner.artifacts,
                 ctx,
+                pdf_budget=parser.retention_budget,
             )
 
         def verify_clean_raster():
@@ -257,6 +260,10 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
         if mode != "native":
             owner.run_blocking_sync(verify_clean_raster, ctx)
         composed = owner.run_blocking_sync(compose, ctx)
+        assert parser.retention_budget.retained_bytes == sum(
+            ref.size_bytes
+            for ref in {ref.sha256: ref for ref in composed.bundle.artifacts}.values()
+        )
         ocr = [unit for unit in composed.bundle.units if unit.text_origin == "ocr"]
         assert bool(ocr) == (mode == "scan")
         assert all(

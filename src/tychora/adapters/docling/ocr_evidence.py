@@ -249,7 +249,7 @@ def collect_ocr_page_evidence(pages, original, policy):
     return tuple(result)
 
 
-def retain_ocr_page_observation(owner, region, evidence, ctx):
+def retain_ocr_page_observation(owner, region, evidence, ctx, *, budget=None):
     from tychora.adapters.vision.local import retain_local_ocr_observation
 
     ctx.checkpoint()
@@ -270,6 +270,7 @@ def retain_ocr_page_observation(owner, region, evidence, ctx):
         },
         model="docling-rapidocr:" + evidence.policy_sha256,
         prompt_schema_version="local-ocr-v1",
+        before_retain=budget.reserve_payload if budget is not None else None,
     )
 
 
@@ -329,13 +330,16 @@ def validate_external_images(parsed, read):
                     raise ValueError("OCR exact raster pixel identity differs")
 
 
-def plan_pdf_ocr(owner, parsed, ctx):
+def plan_pdf_ocr(owner, parsed, ctx, *, budget=None):
     """Build existing local receipts and composition inputs from retained evidence."""
+    from tychora.adapters.vision.local import local_ocr_identities
+    from tychora.application.pdf_processing import PdfRetentionBudget
     from tychora.contracts.composition import PlannedRegion
     from tychora.contracts.evidence import Geometry
     from tychora.ingestion.vision import planned_vision_proxy
     from tychora.ports.vision import RegionInput, vision_context_identity
 
+    budget = PdfRetentionBudget.for_extraction(parsed, budget)
     proxies, regions = [], []
     for evidence in parsed.ocr_pages:
         ctx.checkpoint()
@@ -364,15 +368,20 @@ def plan_pdf_ocr(owner, parsed, ctx):
             task="ocr",
             dependency_ids=frozenset({parsed.registration.source.source_id}),
         )
-        observation = retain_ocr_page_observation(owner, region, evidence, ctx)
+        # Detector-zero pages retain pixels and evidence, but have no observation
+        # to cite; constructing their region must not create an orphan receipt.
+        task_schema_sha, prompt_identity = local_ocr_identities("local-ocr-v1")
         planned = PlannedRegion(
             **region.model_dump(exclude={"image", "source_context"}),
-            model=observation.model,
-            prompt_schema_version=observation.prompt_schema_version,
-            task_schema_sha256=observation.task_schema_sha256,
-            prompt_identity=observation.prompt_identity,
+            model="docling-rapidocr:" + evidence.policy_sha256,
+            prompt_schema_version="local-ocr-v1",
+            task_schema_sha256=task_schema_sha,
+            prompt_identity=prompt_identity,
         )
         regions.append(planned)
         if evidence.transcript.strip():
+            observation = retain_ocr_page_observation(
+                owner, region, evidence, ctx, budget=budget
+            )
             proxies.append(planned_vision_proxy(region, observation))
     return tuple(proxies), tuple(regions)

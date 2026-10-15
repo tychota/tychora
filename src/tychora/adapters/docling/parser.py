@@ -412,7 +412,16 @@ class DoclingParser:
         self._evidence = []
         self._external_refs = {}
         self._metadata_bytes = 0
-        self._retained_bytes = self.registration.capture.original_ref.size_bytes
+        self.retention_budget = None
+        if self.policy is not None:
+            from tychora.application.pdf_processing import PdfRetentionBudget
+
+            self.retention_budget = PdfRetentionBudget(
+                self.policy.limits["max_retained_bytes"]
+            )
+            self.retention_budget.reserve_refs(
+                (self.registration.capture.original_ref,)
+            )
 
     def _prepare(
         self, original: ArtifactRef, config: ResolvedConfig, ctx: ExecutionContext
@@ -631,11 +640,8 @@ class DoclingParser:
                 payload = stream.read(MAX_PARSER_OUTPUT_BYTES + 1)
                 hashed = sha256(payload).hexdigest()
                 if hashed not in self._external_refs:
-                    self._retained_bytes += len(payload)
-                    if self._retained_bytes > self.policy.limits["max_retained_bytes"]:
-                        raise TychoraError(
-                            "LIMIT_EXCEEDED", "PDF retained closure exceeds capacity"
-                        )
+                    assert self.retention_budget is not None
+                    self.retention_budget.reserve_payload(payload, "image/png")
                     self._external_refs[hashed] = self.owner.artifacts.put_stream(
                         io.BytesIO(payload), "image/png"
                     )
@@ -654,11 +660,8 @@ class DoclingParser:
 
     def _reserve_metadata(self, payload):
         assert self.policy is not None
-        self._retained_bytes += len(payload)
-        if self._retained_bytes > self.policy.limits["max_retained_bytes"]:
-            raise TychoraError(
-                "LIMIT_EXCEEDED", "PDF retained closure exceeds capacity"
-            )
+        assert self.retention_budget is not None
+        self.retention_budget.reserve_payload(payload, "application/json")
 
     def _finish_pdf(self, original, config, registry, kind, inventory):
         from .pdf_batches import merge_pdf_page_exports

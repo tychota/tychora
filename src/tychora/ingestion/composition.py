@@ -190,6 +190,12 @@ def _input_references(
             raise ValueError("Conflicting composition input artifact declarations")
         references.setdefault(ref.sha256, ref)
     if sum(ref.size_bytes for ref in references.values()) > MAX_COMPOSITION_INPUT_BYTES:
+        if parsed.pdf_processing is not None:
+            from tychora.contracts.errors import TychoraError
+
+            raise TychoraError(
+                "LIMIT_EXCEEDED", "PDF composition inputs exceed capacity"
+            )
         raise ValueError("Composition retained inputs exceed aggregate capacity")
     return references
 
@@ -724,6 +730,8 @@ def compose_document(
     plan: DocumentCompositionPlan,
     artifacts: Artifacts,
     ctx: ExecutionContext,
+    *,
+    pdf_budget=None,
 ) -> ComposedDocument:
     """Materialize all composed products before the caller's first corpus commit."""
     ctx.checkpoint()
@@ -735,16 +743,17 @@ def compose_document(
         with artifacts.open_verified(ref) as stream:
             return stream.read(ref.size_bytes + 1)
 
-    if (
-        parsed.pdf_processing is not None
-        and sum(ref.size_bytes for ref in refs.values()) > MAX_COMPOSITION_INPUT_BYTES
-    ):
-        from tychora.contracts.errors import TychoraError
+    if parsed.pdf_processing is not None:
+        from tychora.application.pdf_processing import PdfRetentionBudget
 
-        raise TychoraError("LIMIT_EXCEEDED", "PDF composition inputs exceed capacity")
+        pdf_budget = PdfRetentionBudget.for_extraction(parsed, pdf_budget)
+        pdf_budget.reserve_refs(refs.values())
     inputs = DeclaredPayloads(refs, read, MAX_COMPOSITION_INPUT_BYTES)
     result = build_composed_document(parsed, registry, plan, inputs)
     bound_refs = {ref.sha256: ref for ref in result.bundle.artifacts}
+    if pdf_budget is not None:
+        # Admit the complete new batch before any composition payload is persisted.
+        pdf_budget.reserve_refs(bound_refs.values())
     for sha, payload in result.payloads.items():
         ctx.checkpoint()
         if (

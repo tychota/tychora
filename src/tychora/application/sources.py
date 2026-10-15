@@ -1685,7 +1685,7 @@ class SourceService:
                 raise TychoraError(
                     "CAPABILITY_MISSING", "Docling model path is not provisioned"
                 )
-            parsed = await DoclingParser(
+            parser = DoclingParser(
                 self.owner,
                 registration,
                 self.docling_models,
@@ -1693,7 +1693,9 @@ class SourceService:
                 progress=(lambda pages: self._pdf_progress(job_id, pages))
                 if job_id
                 else None,
-            ).aextract(capture.original_ref, self.owner.config, ctx)
+            )
+            parsed = await parser.aextract(capture.original_ref, self.owner.config, ctx)
+            pdf_budget = parser.retention_budget
             if source.root.vision and canonical_bytes(
                 capture.source.get("vision")
             ) != canonical_bytes(
@@ -1706,13 +1708,22 @@ class SourceService:
                 from tychora.adapters.docling.ocr_evidence import plan_pdf_ocr
 
                 initial_proxies, pixel_regions = await self.owner.run_blocking(
-                    lambda: plan_pdf_ocr(self.owner, parsed, ctx), ctx
+                    lambda: plan_pdf_ocr(self.owner, parsed, ctx, budget=pdf_budget),
+                    ctx,
                 )
                 proxies.extend(initial_proxies)
             gaps = []
             for selected in source.root.vision:
                 proxy, gap = await self._selected_vision_proxy(
-                    parsed, selected, scope, ctx
+                    parsed,
+                    selected,
+                    scope,
+                    ctx,
+                    **(
+                        {"before_retain": pdf_budget.reserve_payload}
+                        if pdf_budget is not None
+                        else {}
+                    ),
                 )
                 if proxy is not None:
                     proxies.append(proxy)
@@ -1731,6 +1742,9 @@ class SourceService:
                         ),
                         self.owner.artifacts,
                         ctx,
+                        **(
+                            {"pdf_budget": pdf_budget} if pdf_budget is not None else {}
+                        ),
                     ).bundle
                 ),
                 ctx,
@@ -1784,6 +1798,8 @@ class SourceService:
         selected: VisionSelection,
         scope: RequestScope,
         ctx: ExecutionContext,
+        *,
+        before_retain=None,
     ):
         from tychora.adapters.vision.anthropic import (
             dispatch_captured_vision,
@@ -1812,7 +1828,17 @@ class SourceService:
         schema = dict(selected.task_schema)
         response_schema(schema, frozenset())
         region, proof = await self.owner.run_blocking(
-            lambda: derive_selected_region(self.owner, parsed, selected), ctx
+            lambda: derive_selected_region(
+                self.owner,
+                parsed,
+                selected,
+                **(
+                    {"before_retain": before_retain}
+                    if before_retain is not None
+                    else {}
+                ),
+            ),
+            ctx,
         )
         observation = None
         if selected.task == "ocr":
@@ -1822,9 +1848,15 @@ class SourceService:
             )
             try:
                 observation = await asyncio.to_thread(
-                    lambda: LocalOcrProvider(self.owner, model_root).interpret(
-                        region, schema, ctx
-                    )
+                    lambda: LocalOcrProvider(
+                        self.owner,
+                        model_root,
+                        **(
+                            {"before_retain": before_retain}
+                            if before_retain is not None
+                            else {}
+                        ),
+                    ).interpret(region, schema, ctx)
                 )
             except TychoraError as error:
                 if error.code not in {"CAPABILITY_MISSING", "PROVIDER_FAILURE"}:
@@ -1891,7 +1923,17 @@ class SourceService:
                     return None, gap("provider_unavailable")
                 raise
             observation = await self.owner.run_blocking(
-                lambda: retain_remote_observation(self.owner, region, observation), ctx
+                lambda: retain_remote_observation(
+                    self.owner,
+                    region,
+                    observation,
+                    **(
+                        {"before_retain": before_retain}
+                        if before_retain is not None
+                        else {}
+                    ),
+                ),
+                ctx,
             )
         asset_native_ref = region.source_native_ref
         if parsed.original_image is not None:

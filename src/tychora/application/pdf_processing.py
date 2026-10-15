@@ -1,6 +1,13 @@
 """Owner-resolved qualified PDF policy shared by intake and retained replay."""
 
+from collections.abc import Iterable
 from importlib.metadata import PackageNotFoundError, version
+from typing import TYPE_CHECKING, Self
+
+from tychora.contracts.artifacts import ArtifactRef, physical_identity
+
+if TYPE_CHECKING:
+    from tychora.contracts.extraction import ExtractionArtifact
 
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
@@ -190,3 +197,78 @@ def revalidate_pdf_policy(owner, services, descriptor, facts, policy):
         )
     if resolved != policy:
         raise TychoraError("SCOPE_CHANGED", "PDF processing runtime or policy changed.")
+
+
+class PdfRetentionBudget:
+    """One execution's deduplicated original-plus-derived admission ledger."""
+
+    def __init__(self, max_bytes: int) -> None:
+        if type(max_bytes) is not int or not 0 < max_bytes <= 1073741824:
+            raise ValueError("Invalid PDF retention allowance")
+        self.max_bytes = max_bytes
+        self.retained_bytes = 0
+        self._refs: dict[str, ArtifactRef] = {}
+
+    def reserve_refs(self, refs: Iterable[ArtifactRef]) -> None:
+        additions: dict[str, ArtifactRef] = {}
+        for ref in refs:
+            previous = self._refs.get(ref.sha256) or additions.get(ref.sha256)
+            if previous is not None:
+                if physical_identity(previous) != physical_identity(ref):
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "PDF retained artifact declarations conflict"
+                    )
+            else:
+                additions[ref.sha256] = ref
+        total = self.retained_bytes + sum(ref.size_bytes for ref in additions.values())
+        if total > self.max_bytes:
+            raise TychoraError(
+                "LIMIT_EXCEEDED", "PDF retained closure exceeds capacity"
+            )
+        self._refs.update(additions)
+        self.retained_bytes = total
+
+    def reserve_payload(self, payload: bytes, media_type: str) -> None:
+        from hashlib import sha256
+
+        hashed = sha256(payload).hexdigest()
+        self.reserve_refs(
+            (
+                ArtifactRef(
+                    sha256=hashed,
+                    storage_key=hashed,
+                    size_bytes=len(payload),
+                    media_type=media_type,
+                ),
+            )
+        )
+
+    @classmethod
+    def for_extraction(
+        cls, parsed: "ExtractionArtifact", budget: Self | None = None
+    ) -> Self:
+        """Seed retained/replay callers, or extend the live parser's same ledger."""
+        assert parsed.pdf_processing is not None
+        limits = parsed.pdf_processing["limits"]
+        assert isinstance(limits, FrozenJsonMap)
+        maximum = limits["max_retained_bytes"]
+        assert isinstance(maximum, int)
+        if budget is None:
+            budget = cls(maximum)
+        elif budget.max_bytes != maximum:
+            raise TychoraError(
+                "INTEGRITY_ERROR", "PDF retention allowance differs from policy"
+            )
+        budget.reserve_refs(
+            ref
+            for ref in (
+                parsed.original_ref,
+                parsed.docling_json_ref,
+                parsed.raw_document_ref,
+                parsed.ocr_evidence_ref,
+                parsed.image_bindings_ref,
+                *(asset.artifact_ref for asset in parsed.assets),
+            )
+            if ref is not None
+        )
+        return budget
