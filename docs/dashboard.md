@@ -4,9 +4,28 @@ The bundled dashboard uses the same authenticated services as Python and HTTP cl
 
 ## Start and connect
 
-Follow [getting started](getting-started.md) to install the server and prepare a workspace and verified output tokenizer. Start the owner with `python -m tychora.interfaces.http.server ./knowledge --port 8765`, then open **http://127.0.0.1:8765/dashboard/**. Use the numeric loopback host: `localhost` is a different authority. If the port is omitted, the private `.runtime/endpoint.json` records the actual authority.
+Follow [getting started](getting-started.md) to install the server and prepare a workspace and verified output tokenizer. Start the owner with `tychora --workspace ./knowledge serve --port 8765` (or `python -m tychora.interfaces.http.server ./knowledge --port 8765`). At startup it prints one **launch link** such as `http://127.0.0.1:8765/dashboard/#launch=…`; open it within two minutes and the dashboard connects without pasting anything. Use the numeric loopback host: `localhost` is a different authority.
 
-Retrieve only the token from that owner's private runtime record through a trusted clipboard/editor. Do not print the full record or place tokens in shell arguments or reports. On macOS, this copies only the token without printing it:
+Need another link, for a second browser or after the first expired? While the owner runs:
+
+```bash
+tychora --workspace ./knowledge manage dashboard-link          # print a fresh link
+tychora --workspace ./knowledge manage dashboard-link --open   # macOS: also open it
+```
+
+Each link is single-use, expires after **120 seconds**, and stops working when the owner exits. The code lives only in the URL fragment (after `#`), which browsers never send to the server, write to request logs or put in a `Referer`. The dashboard removes the fragment from the address bar and history before it contacts the server, exchanges the code once for the owner's bearer token, then connects. An expired, reused or mistyped link shows a generic error and the normal connection form.
+
+### Remember on this browser
+
+By default the token stays in the tab's memory: reloading the page or restarting the server needs a new launch link. Tick **Remember on this browser** (on the connection form, or in the sidebar after a launch link) to keep it in this browser's `localStorage` for this exact origin (`http://127.0.0.1:PORT`) under `tychora.dashboard.v1.rememberedToken`. Later loads of that origin then connect automatically, including after the owner restarts, because the owner token is now stable across restarts. Remembering is always opt-in and the box starts unchecked.
+
+- **Disconnect** clears workspace data from memory and aborts requests and streams, but keeps a remembered token; the page does not reconnect until you reload it. It does not cancel an accepted durable job: reopen its job URL and reconnect to inspect the persisted outcome.
+- **Forget this browser** (shown while remembered), or unticking the sidebar box, removes the stored token; Forget also disconnects.
+- If the server rejects a remembered token (for example after rotation), the dashboard deletes it, explains why and shows the connection form. If the server is merely unreachable, the token is kept and **Retry** is offered.
+
+### Pasting a token
+
+You can still connect by pasting the bearer token from the owner's private runtime record. Do not print the full record or place tokens in shell arguments or reports. On macOS, this copies only the token without printing it:
 
 ```python
 import json
@@ -17,7 +36,22 @@ record = json.loads(Path("knowledge/.runtime/endpoint.json").read_text())
 subprocess.run(["pbcopy"], input=record["token"].encode(), check=True)
 ```
 
-Paste into **Bearer token**, connect, then clear the clipboard. Credentials, queries, imported contents, files and configuration drafts stay in browser memory; refreshing requires reconnecting. Disconnect clears session state and aborts requests/streams. It does not cancel an accepted durable job. Reopen its job URL and reconnect to inspect the persisted outcome.
+Paste into **Bearer token**, connect, then clear the clipboard. If the port was omitted at startup, the same record holds the actual authority.
+
+### Credential storage and revocation
+
+| What | Where | Lifetime |
+| --- | --- | --- |
+| Owner bearer token | `<workspace>/.runtime/owner-token` (owner-only `0600` in a `0700` directory) and the `endpoint.json` record while serving | Until rotated |
+| Launch codes | Owner process memory only, as SHA-256 digests | 120 s, one use, at most eight outstanding, lost on exit |
+| Dashboard token, default | Tab memory | Until reload, Disconnect or tab close |
+| Dashboard token, remembered | `localStorage` of `http://127.0.0.1:PORT` | Until Forget, rotation or clearing site data |
+
+Tokens never go in cookies, `sessionStorage` or URLs; only the short-lived launch code appears in a URL fragment. Queries, imported contents, files and configuration drafts always stay in browser memory.
+
+To revoke every remembered browser and copied credential, stop the owner and run `tychora --workspace ./knowledge manage rotate-token` (or delete `.runtime/owner-token` while stopped); the next start uses a new token and rejects the old one. If the owner refuses to start because the token file is unsafe (wrong owner, mode, link or contents), inspect it, then rotate or delete it: Tychora never silently replaces a suspicious file.
+
+Remembering is a convenience trade-off. Anyone who can use your OS account and browser profile can read the remembered token and act with full owner authority on that workspace while it is served. Do not remember on shared or untrusted machines or browser profiles. Pages from other origins cannot read it, and the server binds only to loopback with exact Host and Origin checks. Because the origin includes the port, a fixed `--port` keeps the remembered token usable across restarts.
 
 ## Collections and documents
 
