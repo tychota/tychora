@@ -441,14 +441,15 @@ def _physical_ranges(
     ]
     if not fragments:
         return ((start, end),)
-    if start >= end:
-        # Textless units (pictures) keep zero-width locators; nothing to excerpt.
-        return ()
     ranges = tuple(
         (max(start, locator.char_start), min(end, locator.char_end))
         for locator in fragments
         if locator.char_start < end and locator.char_end > start
     )
+    if not ranges and (start >= end or unit.text[start:end].isspace()):
+        # Textless units (pictures) and separators between fragments (table
+        # cell tabs) have no physical extent; there is nothing to excerpt.
+        return ()
     if not ranges:
         raise TychoraError(
             "INTEGRITY_ERROR", "Document excerpt has no physical fragment."
