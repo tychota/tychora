@@ -1341,3 +1341,40 @@ def test_clipped_code_citation_uses_validated_capture_descriptor_map():
     assert clipped.byte_start == len(text[:6].encode())
     assert clipped.byte_end == len(text[:10].encode())
     assert clipped.line_start == clipped.line_end == 2
+
+
+def test_empty_range_on_textless_picture_locator_yields_no_fragment():
+    # Pictures retain zero-width document locators; an empty anchor range has
+    # nothing to excerpt and must not be reported as an integrity failure.
+    import pytest
+
+    from tychora.contracts.errors import TychoraError
+    from tychora.contracts.evidence import DocumentLocator
+    from tychora.retrieval.segments import _physical_ranges
+
+    text = "caption"
+    bundle, prepared, ranked, _view = case(
+        text, (RerankMatch(None, "placeholder", 0, len(text), "lexical", 1, 1.0),)
+    )
+    unit = bundle.units[0].model_copy(
+        update={
+            "locators": (
+                DocumentLocator(
+                    artifact_ref=bundle.revision.original_sha,
+                    native_ref="#/pictures/0",
+                    char_start=0,
+                    char_end=0,
+                    physical_page=3,
+                ),
+            )
+        }
+    )
+    prepared = prepared.model_copy(
+        update={"units": (prepared.units[0].model_copy(update={"unit": unit}),)}
+    )
+    item = replace(
+        ranked.items[0], facts=replace(ranked.items[0].facts, prepared=prepared)
+    )
+    assert _physical_ranges(item, unit.unit_id, 0, 0) == ()
+    with pytest.raises(TychoraError, match="no physical fragment"):
+        _physical_ranges(item, unit.unit_id, 0, len(text))
