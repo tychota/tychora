@@ -11,6 +11,7 @@ import sources from "../../contracts/sources.json";
 import documents from "../../contracts/task2-documents.json";
 import documentSchema from "../../contracts/task4-document-metadata-schema.json";
 import manualSchema from "../../contracts/task4-manual-metadata-schema.json";
+import settingsFields from "../../contracts/task3-settings-fields.json";
 import models from "../../contracts/task3-models.json";
 import readiness from "../../contracts/task3-model-readiness.json";
 import revisions from "../../contracts/source-revisions.json";
@@ -67,20 +68,22 @@ beforeEach(() => {
                           capability_status: [],
                           next_cursor: null,
                         }
-                      : path === "/v1/settings"
-                        ? {
-                            profile: "local",
-                            values: {
-                              providers: { text: { provider: "none" } },
-                            },
-                          }
-                        : path.includes("/revisions")
-                          ? revisions
-                          : path.startsWith("/v1/sources")
-                            ? sources
-                            : path.startsWith("/v1/jobs")
-                              ? { jobs: [job], next_cursor: null }
-                              : historyPage,
+                      : path === "/v1/settings/fields"
+                        ? settingsFields
+                        : path === "/v1/settings"
+                          ? {
+                              profile: "local",
+                              values: {
+                                providers: { text: { provider: "none" } },
+                              },
+                            }
+                          : path.includes("/revisions")
+                            ? revisions
+                            : path.startsWith("/v1/sources")
+                              ? sources
+                              : path.startsWith("/v1/jobs")
+                                ? { jobs: [job], next_cursor: null }
+                                : historyPage,
     );
   vi.stubGlobal("fetch", async (path: string, init: RequestInit = {}) => {
     requests.push({ path, init });
@@ -310,7 +313,7 @@ it("preserves settings draft on busy rejection", async () => {
     init.method === "PUT"
       ? json({ code: "WORKSPACE_BUSY", message: "Busy", retryable: true }, 409)
       : fallback(path, init);
-  await open("/dashboard/settings");
+  await open("/dashboard/models");
   const draft = await screen.findByLabelText("Complete workspace TOML");
   fireEvent.change(draft, { target: { value: '[workspace]\nname="draft"' } });
   fireEvent.change(screen.getByLabelText("Activation profile"), {
@@ -563,7 +566,7 @@ it("blocks manager and writer forms for reader scope without issuing evaluation 
       : fallback(path, init);
   await open("/dashboard/settings");
   await screen.findByText(
-    "Configuration activation requires manage capability.",
+    "Workspace mutations require complete management authority.",
   );
   expect(screen.queryByLabelText("Complete workspace TOML")).toBeNull();
   fireEvent.click(screen.getByRole("link", { name: "Evaluations" }));
@@ -674,7 +677,7 @@ it("clears secret-bearing settings draft after successful activation", async () 
           values: { providers: { text: { provider: "none" } } },
         })
       : fallback(path, init);
-  await open("/dashboard/settings");
+  await open("/dashboard/models");
   fireEvent.change(await screen.findByLabelText("Complete workspace TOML"), {
     target: { value: 'secret = "private-secret"' },
   });

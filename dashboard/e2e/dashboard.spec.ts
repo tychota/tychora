@@ -145,6 +145,7 @@ test("real ingestion, durable jobs, provenance, coverage, history and evaluation
     .getByRole("button")
     .first()
     .click();
+  await page.getByRole("button", { name: "Full unit", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Exact evidence" }),
   ).toBeVisible();
@@ -343,8 +344,19 @@ test("real ingestion, durable jobs, provenance, coverage, history and evaluation
   ).toBeVisible();
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await expect(
-    page.getByText("Redacted effective configuration", { exact: true }),
+    page.getByText("Redacted effective configuration and origins", {
+      exact: true,
+    }),
   ).toBeVisible();
+  await page
+    .getByRole("link", {
+      name: "Edit model and processing configuration",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByText("Expert complete TOML activation", { exact: true })
+    .click();
   await expect(
     page.getByLabel("Complete workspace TOML", { exact: true }),
   ).toBeVisible();
@@ -464,6 +476,7 @@ test("narrow-screen keyboard, empty query and reconnect", async ({
     .getByRole("button")
     .first()
     .click();
+  await page.getByRole("button", { name: "Full unit", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Exact evidence" }),
   ).toBeVisible();

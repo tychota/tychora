@@ -54,6 +54,7 @@ class ResponseContext:
     counter: TokenCounter
     profiles: tuple[OutputProfile, ...] = (OutputProfile(),)
     eligible_unit_ids: frozenset[str] = frozenset()
+    eligible_asset_ids: frozenset[str] = frozenset()
     relations: tuple[RelationPath, ...] = ()
     visuals: tuple[VisualEvidence, ...] = ()
     coverage: Coverage = field(default_factory=lambda: Coverage(status="complete"))
@@ -175,7 +176,9 @@ class ResponseAssembler:
                 )
         for visual in visuals:
             if any(
-                not proxy.dependencies <= ctx.eligible_unit_ids
+                visual.asset_id not in ctx.eligible_asset_ids
+                or visual.asset_id not in proxy.dependencies
+                or not (proxy.dependencies - {visual.asset_id}) <= ctx.eligible_unit_ids
                 for proxy in visual.proxies
             ):
                 raise TychoraError(

@@ -1370,6 +1370,7 @@ class QueryService:
                 counter=self.counter,
                 profiles=self.profiles,
                 eligible_unit_ids=attempt.view.graph_eligible_unit_ids,
+                eligible_asset_ids=attempt.view.asset_ids,
                 relations=prepared.relations,
                 visuals=prepared.visuals,
                 coverage=prepared.coverage,

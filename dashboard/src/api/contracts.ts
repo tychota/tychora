@@ -293,6 +293,19 @@ export interface QueryRequest {
   unknown_dates: "strict" | "permissive";
   limit: number;
   trace: boolean;
+  budgets?: {
+    max_tokens: number;
+    tokenizer_id: string;
+    max_response_bytes: number;
+  };
+}
+
+export interface PdfCoverage {
+  page_count: number;
+  native_pages: number[];
+  ocr_pages: number[];
+  blank_pages: number[];
+  no_text_detected_pages: number[];
 }
 
 export interface CollectionSummary {

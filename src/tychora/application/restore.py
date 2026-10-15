@@ -561,9 +561,11 @@ class RestoreService:
         ctx: ExecutionContext,
     ) -> RestoreReceipt:
         source, destination = source.absolute(), destination.absolute()
-        if destination.resolve(strict=False).is_relative_to(
-            source.resolve(strict=True)
-        ):
+        try:
+            resolved_source = source.resolve(strict=True)
+        except FileNotFoundError:
+            raise TychoraError("NOT_FOUND", "Restore archive is unavailable.") from None
+        if destination.resolve(strict=False).is_relative_to(resolved_source):
             raise TychoraError(
                 "INVALID_REQUEST", "Restore destination is inside archive"
             )

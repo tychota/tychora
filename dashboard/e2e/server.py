@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import tempfile
 import threading
 from pathlib import Path
@@ -12,12 +13,20 @@ import uvicorn
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from tychora import Tychora
+from tychora.application.acquired_source import AcquiredSource
 from tychora.configuration.resolve import resolve_config
+from tychora.contracts.errors import TychoraError
 from tychora.contracts.operations import JobHandle
 from tychora.contracts.requests import RequestScope, SourceInput
 from tychora.interfaces.http.app import create_app
 from tychora.interfaces.http.auth import LocalAuth
 from tychora.ports.execution import ExecutionContext
+from tychora.retrieval.segments import OutputTokenCounter
+
+try:
+    from dashboard.e2e.qualification import prepare
+except ModuleNotFoundError:
+    from qualification import prepare
 
 
 class StreamGate:
@@ -77,24 +86,59 @@ class SyntheticCounter:
         return len(text)
 
 
+class SyntheticIndexCounter:
+    """Distinct test tokenizer makes stored windows larger than returned excerpts."""
+
+    model = "synthetic-index-characters-4"
+    tokenizer_id = "synthetic-index-characters-4"
+
+    def count(self, text: str) -> int:
+        return (len(text) + 3) // 4
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", type=int, default=8765)
     args = parser.parse_args()
     with tempfile.TemporaryDirectory(prefix="tychora-dashboard-e2e-") as temporary:
-        workspace = Path(temporary) / "knowledge"
+        workspace = (Path(temporary) / "knowledge").resolve()
         # Initialize the standard workspace before resolving its explicit offline configuration.
         with Tychora.open(workspace, token_counter=SyntheticCounter()):
             pass
         configuration = workspace / "workspace.toml"
         with configuration.open("a") as stream:
             stream.write("\n[configuration]\noffline = true\n")
+        fixtures = Path(os.environ.get("TYCHORA_E2E_FIXTURE_DIR", temporary))
+        scenario = os.environ.get("TYCHORA_E2E_SCENARIO", "local")
+        prepare(scenario, workspace, fixtures)
         config = resolve_config(configuration, "local", {})
-        with Tychora.open(
-            workspace, config=config, token_counter=SyntheticCounter()
-        ) as kb:
+        counter = (
+            OutputTokenCounter(Path(os.environ["TYCHORA_MODEL_CACHE"]))
+            if scenario in {"remote", "ocr"}
+            else SyntheticCounter()
+        )
+        with Tychora.open(workspace, config=config, token_counter=counter) as kb:
             assert kb._workspace.owner.config.values.offline
+            if scenario == "local":
+                kb._workspace.services.sources.coordinator.counter = (
+                    SyntheticIndexCounter()
+                )
             gate = StreamGate()
+            original_extract = kb._workspace.services.sources._extract
+            failed_recovery = set()
+
+            async def transient_extract(registration, capture, ctx, source, scope):
+                key = source.root.source_key
+                if key == "synthetic-recovery" and key not in failed_recovery:
+                    failed_recovery.add(key)
+                    raise TychoraError(
+                        "PROVIDER_FAILURE",
+                        "Synthetic transient fixture failure",
+                        retryable=True,
+                    )
+                return await original_extract(registration, capture, ctx, source, scope)
+
+            kb._workspace.services.sources._extract = transient_extract
             execute = kb._workspace.services.sources.execute_accepted
 
             async def execute_after_stream(
@@ -104,6 +148,7 @@ def main() -> None:
                 *,
                 ctx: ExecutionContext | None = None,
                 retained_capture_sha: str | None = None,
+                acquired: AcquiredSource | None = None,
             ) -> JobHandle:
                 if source.root.source_key == "synthetic-browser-manual":
                     await gate.wait_for_stream(handle.id)
@@ -113,6 +158,7 @@ def main() -> None:
                     scope,
                     ctx=ctx,
                     retained_capture_sha=retained_capture_sha,
+                    acquired=acquired,
                 )
 
             kb._workspace.services.sources.execute_accepted = execute_after_stream

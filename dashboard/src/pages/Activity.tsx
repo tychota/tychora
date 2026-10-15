@@ -67,6 +67,10 @@ function RunList() {
         data.pages.every((p) => !p.definitions.length) && (
           <p>No retained run metadata in this scope.</p>
         )}
+      <p className="muted">
+        Only runs with this exact selected query scope are listed. Other scopes
+        may retain history.
+      </p>
     </>
   );
 }

@@ -1,0 +1,36 @@
+{
+  "source_id": "ed08112c-c07e-51a9-b392-cc1e2b40e87f",
+  "revision_id": "29104697d37f532d060b398681512637f70911eb680a402dcd13aeb839e194fc",
+  "extraction_id": "1170bf39290d3b404799a958c178156239f65e5d5ed375d74a8496fd841b7fdb",
+  "windows": [
+    {
+      "id": "a9259f4b6c1a7fbf5cc9f4fa45aaa5bb77d84f8a1d3100853a35da0892b5fd57",
+      "unit_id": "7c6488bbf253f4fcd5441dfc5e3df11518c6fa297fb1208aaaecdec10c522366",
+      "extraction_id": "1170bf39290d3b404799a958c178156239f65e5d5ed375d74a8496fd841b7fdb",
+      "char_start": 0,
+      "char_end": 191,
+      "text": "The reader's algo-\nCopper column.\nrithms preserve\nA separate sequence\nevery violet record.\ncontains amber notes.\nReview the evidence.\nKeep each source.\nItem\nCount\nViolet\n7\nAmber\n9\nMargin note",
+      "token_count": 50,
+      "chunker_fingerprint": "6e07c1eb95a3bf4af3d1a56706e77c6bea8ee612c8f37399bb6dcf12a3f24340",
+      "context_group_key": "45a8d903cea3bcac0d525a8002439c106bb393d7f030476b9d97a5460eb5bd70",
+      "locators": [
+        {
+          "type": "image",
+          "artifact_ref": "9713c4b030e8bf378805b99ee81067ec71be690207c68a989294a0c6ed333529",
+          "native_ref": "synthetic-task5-scan",
+          "physical_page": 1,
+          "printed_page": null,
+          "geometry": {
+            "domain": "points",
+            "x0": 0,
+            "y0": 0,
+            "x1": 400,
+            "y1": 500
+          }
+        }
+      ]
+    }
+  ],
+  "next_cursor": null,
+  "scope_limited": false
+}

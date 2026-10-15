@@ -444,9 +444,10 @@ async def test_cursor_cannot_move_to_other_retained_lineage_or_resource(long_con
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("review_state", ["unreviewed", "needs_review"])
 @pytest.mark.parametrize("denied_dependency", ["source", "asset"])
 async def test_proxy_window_preserves_image_locator_only_with_readable_dependencies(
-    published, denied_dependency
+    published, denied_dependency, review_state
 ):
     import json
     from hashlib import sha256
@@ -572,6 +573,21 @@ async def test_proxy_window_preserves_image_locator_only_with_readable_dependenc
     window_id, locator, asset_id = await owner.run_blocking(
         install_proxy, ExecutionContext()
     )
+    if review_state == "needs_review":
+        await owner.run_blocking(
+            lambda: owner.store.record_review(
+                ReviewTarget(
+                    unit_id=owner.db.execute(
+                        "SELECT unit_id FROM chunks WHERE chunk_id=?", (window_id,)
+                    ).fetchone()[0]
+                ),
+                "needs_review",
+                "synthetic-reviewer",
+            ),
+            ExecutionContext(),
+        )
+    # Force the supported fallback from configured compose to caller-authorized lookup.
+    scope = scope.model_copy(update={"uses": frozenset({"lookup"})})
     service = InspectionService(owner)
     request = request.model_copy(update={"chunk_id": window_id})
     allowed = await service.extraction_windows(request, scope, ExecutionContext())

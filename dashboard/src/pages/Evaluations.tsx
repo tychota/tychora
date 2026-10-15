@@ -13,6 +13,7 @@ import { EvaluationForm } from "./evaluations/EvaluationForm";
 import { Metrics } from "./evaluations/Metrics";
 import { QueryInspection } from "./evaluations/QueryInspection";
 import { compareEvaluations } from "./evaluations/compare";
+import { DatasetForm } from "./evaluations/DatasetForm";
 export function Evaluations({ id }: { id?: string }) {
   const { handshake } = useSession();
   if (!handshake?.scope.capabilities.includes("manage"))
@@ -41,6 +42,7 @@ function EvaluationList() {
         Submit evaluation
       </button>
       {showForm && <EvaluationForm />}
+      <DatasetForm />
       <LoadState {...data} retry={() => void data.load()} />
       <div className="table-scroll">
         <table>

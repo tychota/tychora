@@ -1,0 +1,64 @@
+{
+  "subject": "evidence",
+  "id": "7c6488bbf253f4fcd5441dfc5e3df11518c6fa297fb1208aaaecdec10c522366",
+  "evidence": {
+    "unit_id": "7c6488bbf253f4fcd5441dfc5e3df11518c6fa297fb1208aaaecdec10c522366",
+    "extraction_id": "1170bf39290d3b404799a958c178156239f65e5d5ed375d74a8496fd841b7fdb",
+    "parent_id": null,
+    "ordinal": 16,
+    "unit_type": "asset_proxy",
+    "native_ref": "asset-proxy:29ca470158bd8f9d9b1712fa2c169204660bc71c060cb472ea0efc0b0bdb14cc",
+    "boundary_key": "asset-proxy:29ca470158bd8f9d9b1712fa2c169204660bc71c060cb472ea0efc0b0bdb14cc",
+    "heading_path": [],
+    "text": "The reader's algo-\nCopper column.\nrithms preserve\nA separate sequence\nevery violet record.\ncontains amber notes.\nReview the evidence.\nKeep each source.\nItem\nCount\nViolet\n7\nAmber\n9\nMargin note",
+    "text_sha": "74b34cccdbafc0e0b8c0194c42e34a8fe1adb7914c6a71f1daefbbfff5d53808",
+    "text_origin": "ocr",
+    "citable": false,
+    "review_state": "needs_review",
+    "locators": [
+      {
+        "type": "image",
+        "artifact_ref": "9713c4b030e8bf378805b99ee81067ec71be690207c68a989294a0c6ed333529",
+        "native_ref": "synthetic-task5-scan",
+        "physical_page": 1,
+        "printed_page": null,
+        "geometry": {
+          "domain": "points",
+          "x0": 0,
+          "y0": 0,
+          "x1": 400,
+          "y1": 500
+        }
+      }
+    ],
+    "attributes": {
+      "asset_id": "4850ee99be1ed46ac88446557245b330329d0f33f46423c6e056413fe73fdf58",
+      "proxy_kind": "ocr"
+    }
+  },
+  "partial_evidence": null,
+  "excerpts": [],
+  "records": [
+    {
+      "id": "7c6488bbf253f4fcd5441dfc5e3df11518c6fa297fb1208aaaecdec10c522366",
+      "record_type": "vision_derivation",
+      "schema_id": "vision-derivation@1",
+      "value": {
+        "dependency_ids": ["ed08112c-c07e-51a9-b392-cc1e2b40e87f"],
+        "image_sha256": "3cd6d8fecd0b46801ce737156a3754fc78493321c2e69c4f0770abad9c1abb71",
+        "interpretation": null,
+        "literal_transcription": "The reader's algo-\nCopper column.\nrithms preserve\nA separate sequence\nevery violet record.\ncontains amber notes.\nReview the evidence.\nKeep each source.\nItem\nCount\nViolet\n7\nAmber\n9\nMargin note",
+        "model": "docling-rapidocr:5f779f527681d46313e933e363dc40425278e507a74212642151638bbef0a372",
+        "prompt_identity": "903f794c71ea3f79516239d5b68d9b4f6054f062d76d3636f68405d2c2780c70",
+        "source_context_sha256": "33fcb559797a99cff97f4e6485c2a6c25a0b111d2d4d058fd078e35f94d70c67",
+        "target_id": null,
+        "task": "ocr",
+        "uncertainties": ["OCR model scores are uncalibrated."]
+      }
+    }
+  ],
+  "original_ref": null,
+  "payload": null,
+  "media_type": null,
+  "truncated": false
+}
