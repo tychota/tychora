@@ -1,0 +1,22 @@
+tests/retrieval/test_segments.py
+  s_ab847b2c6c265a::t_33846f9a08df06 1349-1351,1374-1376
+  s_ab847b2c6c265a::t_ae74577b085076 1344-1348,1352-1373,1377-1380
+src/tychora/retrieval/segments.py
+  s_ab847b2c6c265a::t_33846f9a08df06 444-446
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6eb331f1f17f2ba0e0ec53005c89eb7e790b62ac",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
