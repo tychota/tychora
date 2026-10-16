@@ -67,6 +67,10 @@ def select(group: str, ids: str = "", *, fast: bool = False) -> list[Gate]:
         and (not wanted or gate.id in wanted)
         and (not fast or gate.fast)
     ]
+    if not chosen:
+        raise SystemExit(
+            f"no gate selected (group={group!r}, ids={ids!r}, fast={fast})"
+        )
     if wanted - {gate.id for gate in chosen}:
         raise SystemExit(
             f"unknown or unselected gates: {sorted(wanted - {g.id for g in chosen})}"
