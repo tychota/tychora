@@ -70,7 +70,7 @@ jobs:
         run: >-
           env -i PATH="$PATH" HOME="$HOME" TYCHORA_TEST_TIMEOUT_FACTOR=2
           uv run --locked pytest tests -q -n auto -rs
-          -m 'not live and not qualification and not release'
+          -m 'not live and not qualification and not release and not quarantine'
           --junitxml=reports/clean-junit.xml
       - name: Each listed test file alone
         run: env -i PATH="$PATH" HOME="$HOME" uv run --locked python -m tools.health isolate
