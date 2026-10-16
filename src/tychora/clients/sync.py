@@ -60,17 +60,20 @@ class _Sources:
 
     @_admitted
     def add(self, source: SourceInput | Mapping, *, idempotency_key: str | None = None):
+        """Register a source and start ingesting it; returns the job handle."""
         ws = self.kb._open()
         parsed = ws.parse_source(source)
         return ws.services.source_jobs.add(parsed, ws.scope, idempotency_key)
 
     @_admitted
     def sync(self, source_id: str, *, idempotency_key: str | None = None):
+        """Capture a registered source again and ingest what changed; returns the job handle."""
         ws = self.kb._open()
         return ws.services.source_jobs.sync(source_id, ws.scope, idempotency_key)
 
     @_admitted
     def revisions(self, source_id: str, *, cursor: str | None = None, limit: int = 20):
+        """Page through the retained revisions of a source."""
         ws = self.kb._open()
         return ws.services.discovery.source_revisions(
             source_id, ws.scope, cursor=cursor, limit=limit
@@ -85,6 +88,7 @@ class _Sources:
         cursor: str | None = None,
         limit: int = 20,
     ):
+        """Page through the extractions of one source revision."""
         ws = self.kb._open()
         return ws.services.discovery.source_extractions(
             source_id, revision_id, ws.scope, cursor=cursor, limit=limit
@@ -100,6 +104,7 @@ class _Sources:
         cursor: str | None = None,
         limit: int = 50,
     ):
+        """Page through the indexed channels of one extraction."""
         ws = self.kb._open()
         return ws.services.discovery.source_channels(
             source_id,
@@ -120,6 +125,7 @@ class _Sources:
         cursor: str | None = None,
         limit: int = 20,
     ):
+        """Page through the evidence selections of one extraction."""
         ws = self.kb._open()
         return ws.services.discovery.source_selections(
             source_id,
@@ -137,6 +143,7 @@ class _Evidence:
 
     @_admitted
     def get(self, unit_id: str, *, start: int | None = None, end: int | None = None):
+        """Inspect one evidence unit in full, or only its characters from start to end."""
         ws = self.kb._open()
         if (start is None) != (end is None):
             raise TychoraError("INVALID_REQUEST", "Provide both range bounds.")
@@ -160,6 +167,7 @@ class _Assets:
 
     @_admitted
     def get(self, asset_id: str):
+        """Inspect one registered asset with its metadata and payload."""
         ws = self.kb._open()
         request = InspectRequest(subject="assets", id=asset_id, view="full")
         return ws.bridge.call(
@@ -168,6 +176,7 @@ class _Assets:
 
     @_admitted
     def read(self, asset_id: str) -> bytes:
+        """Return the bytes of a registered asset; raises NOT_FOUND when the payload is gone."""
         result = self.get(asset_id)
         if result.payload is None:
             raise TychoraError("NOT_FOUND", "Registered asset payload is unavailable.")
@@ -180,6 +189,7 @@ class _Relations:
 
     @_admitted
     def traverse(self, request: RelationRequest | Mapping):
+        """Follow relations from authorized seed evidence within the caller's scope."""
         ws = self.kb._open()
         return ws.bridge.call(
             ws.services.inspection.relations(
@@ -194,11 +204,13 @@ class _Jobs:
 
     @_admitted
     def get(self, job_id: str):
+        """Return the persisted status of a job."""
         ws = self.kb._open()
         return ws.bridge.call(ws.services.jobs.get(job_id, _context()))
 
     @_admitted
     def wait(self, job_id: str, *, timeout: float | None = None):
+        """Wait until a job finishes or timeout seconds pass (default 30) and return its status."""
         ws = self.kb._open()
         return ws.bridge.call(
             ws.services.jobs.wait(
@@ -208,12 +220,14 @@ class _Jobs:
 
     @_admitted
     def cancel(self, job_id: str):
+        """Request cancellation of a job, signal its worker and return its status."""
         ws = self.kb._open()
         status = ws.bridge.call(ws.services.jobs.cancel(job_id, _context()))
         ws.services.source_jobs.signal_cancel(job_id)
         return status
 
     def events(self, job_id: str, *, after: int = 0) -> Iterator:
+        """Yield the job's events after the given sequence until the job reaches a final state."""
         ws = self.kb._open()
         if after < 0:
             raise TychoraError("INVALID_REQUEST", "Event cursor must be nonnegative.")
@@ -237,6 +251,7 @@ class _Jobs:
 
     @_admitted
     def events_after(self, job_id: str, *, after: int = 0):
+        """Return up to 100 job events after the given sequence."""
         ws = self.kb._open()
         return ws.bridge.call(
             ws.services.jobs.events_after(job_id, after, 100, _context())
@@ -249,6 +264,7 @@ class _Evaluations:
 
     @_admitted
     def run(self, request: EvaluationRequest | Mapping):
+        """Run a retrieval evaluation against a registered gold dataset; returns the job handle."""
         ws = self.kb._open()
         return ws.bridge.call(
             ws.services.evaluations.run(
@@ -258,6 +274,7 @@ class _Evaluations:
 
     @_admitted
     def register_dataset(self, path: str | Path):
+        """Register a local gold dataset directory holding manifest.json and cases.jsonl."""
         ws = self.kb._open()
         return ws.bridge.call(
             ws.services.evaluations.register_dataset(Path(path), ws.scope, _context())
@@ -265,6 +282,7 @@ class _Evaluations:
 
     @_admitted
     def get(self, evaluation_id: str):
+        """Return the report of one evaluation run."""
         ws = self.kb._open()
         return ws.bridge.call(
             ws.services.evaluations.get(evaluation_id, ws.scope, _context())
@@ -272,6 +290,7 @@ class _Evaluations:
 
     @_admitted
     def list(self):
+        """List the saved evaluation run summaries the caller may read."""
         ws = self.kb._open()
         return ws.bridge.call(ws.services.evaluations.list_runs(ws.scope, _context()))
 
@@ -287,6 +306,7 @@ class _Management:
         *,
         idempotency_key: str | None = None,
     ):
+        """Run a maintenance request, such as backup, health or rebuild, as a job."""
         ws = self.kb._open()
         parsed = _parsed(MaintenanceRequest, request)
         return ws.bridge.call(
@@ -295,6 +315,8 @@ class _Management:
 
 
 class Tychora:
+    """Synchronous client for a local workspace; use it as a context manager or call close()."""
+
     def __init__(self, workspace: LocalWorkspace) -> None:
         self._workspace = workspace
         self.restore_receipt = None
@@ -317,6 +339,7 @@ class Tychora:
         token_counter: TokenCounter | None = None,
         credential_resolver: Callable[[str], str] | None = None,
     ) -> Tychora:
+        """Open, or create, the workspace at path and return a client bound to it."""
         return cls(
             LocalWorkspace(
                 path,
@@ -349,6 +372,7 @@ class Tychora:
 
     @classmethod
     def connect(cls, endpoint: str, credential: str, workspace_id: str):
+        """Return a client for a workspace served over HTTP by `tychora serve`."""
         from tychora.interfaces.http.client import HTTPClient
 
         return HTTPClient(endpoint, credential, workspace_id)
@@ -361,6 +385,7 @@ class Tychora:
         self.close()
 
     def close(self) -> None:
+        """Close the workspace and release its resources."""
         self._workspace.close()
 
     def _open(self) -> LocalWorkspace:
@@ -369,14 +394,17 @@ class Tychora:
 
     @property
     def default_collection_id(self):
+        """Identifier of the default collection of this workspace."""
         return self._open().default_collection_id
 
     @property
     def scope(self):
+        """The request scope every call of this client runs under."""
         return self._open().scope
 
     @_admitted
     def discover(self, request: DiscoverRequest | Mapping):
+        """List kinds, sources or other discovery subjects the scope can read."""
         ws = self._open()
         parsed = _parsed(DiscoverRequest, request)
         return ws.bridge.call(
@@ -385,6 +413,7 @@ class Tychora:
 
     @_admitted
     def inspect(self, request: InspectRequest | Mapping):
+        """Inspect evidence, originals, assets, jobs or query runs by identifier."""
         ws = self._open()
         return ws.bridge.call(
             ws.services.inspection.inspect(
@@ -400,6 +429,7 @@ class Tychora:
         scope: RequestScope | None = None,
         timeout: float | None = None,
     ):
+        """Search the workspace and return cited evidence segments."""
         ws = self._open()
         parsed = _parsed(QueryRequest, request)
         granted = ws.scope if scope is None else ws.scope.narrow(scope)
