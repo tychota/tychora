@@ -2,6 +2,19 @@ import socket
 
 import pytest
 
+from tests.helpers import assets
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Skip (or, for qualification and release, fail) when declared assets are missing."""
+    assets.check_item(item)
+
+
+def pytest_runtest_teardown(item: pytest.Item) -> None:
+    """Forget the finished test's declared assets."""
+    assets.end_test()
+
 
 @pytest.fixture(autouse=True)
 def deny_network(
