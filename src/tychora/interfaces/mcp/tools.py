@@ -10,6 +10,7 @@ from typing import Annotated, Any, Literal
 
 from mcp.server import MCPServer
 from mcp.types import CallToolResult, TextContent
+
 from tychora.api import DEFAULT_COLLECTION_ID
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import QueryResult
