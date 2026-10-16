@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 from mcp import Client, StdioServerParameters
 
+from tests.helpers.timing import scaled
+
 CLI = Path(sys.executable).parent / "tychora"
 
 
@@ -187,7 +189,7 @@ def test_busy_owner_cli_delegates_discovery(tmp_path):
             assert "stage=" in added.stderr
     finally:
         process.terminate()
-        process.communicate(timeout=10)
+        process.communicate(timeout=scaled(10))
 
 
 def test_http_serve_interrupt_exits_130(tmp_path):
@@ -209,7 +211,7 @@ def test_http_serve_interrupt_exits_130(tmp_path):
         assert endpoint.exists()
         time.sleep(0.5)
         process.send_signal(signal.SIGINT)
-        stdout, stderr = process.communicate(timeout=10)
+        stdout, stderr = process.communicate(timeout=scaled(10))
         assert process.returncode == 130, (stdout, stderr)
         # stdout carries only the one-time dashboard launch announcement.
         token = (workspace / ".runtime" / "owner-token").read_text()
@@ -221,7 +223,7 @@ def test_http_serve_interrupt_exits_130(tmp_path):
     finally:
         if process.poll() is None:
             process.terminate()
-            process.communicate(timeout=10)
+            process.communicate(timeout=scaled(10))
 
 
 def test_add_request_file_routes_progress_to_stderr(tmp_path):

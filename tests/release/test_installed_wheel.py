@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.timing import scaled
+
 
 def _python(installation, code: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -39,7 +41,7 @@ class Counter:
 workspace = Path("knowledge")
 with Tychora.open(workspace, token_counter=Counter()) as kb:
     job = kb.sources.add({"type":"text", "source_key":"release-manual", "collection_id":"default", "kind":"manual@1", "format":"text", "text":"Synthetic release evidence.", "metadata":{"title":"Release", "publisher":"Example", "edition":"1"}})
-    assert kb.jobs.wait(job.id, timeout=10).state == "succeeded"
+    assert kb.jobs.wait(job.id, timeout=WAIT_SECONDS).state == "succeeded"
     assert kb.search({"question":"release", "modalities":["lexical"]}).segments
 db = workspace / "corpus.sqlite3"
 with sqlite3.connect(db) as conn:
@@ -53,6 +55,8 @@ else:
 with sqlite3.connect(db) as conn:
     assert conn.execute("SELECT collection_id FROM collections WHERE slug='default'").fetchone()[0] == "00000000-0000-4000-8000-000000000099"
 """
+    # The subprocess runs the installed wheel without the test package.
+    code = code.replace("WAIT_SECONDS", str(scaled(10)))
     result = _python(installed_base, code)
     assert result.returncode == 0, result.stderr
     help_result = subprocess.run(

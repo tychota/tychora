@@ -1,11 +1,13 @@
 """Declared synthetic corpus; labels resolve anchors from canonical SQL, never search output."""
 
 import json
+from contextlib import contextmanager
 from hashlib import sha256
 from pathlib import Path
 
 import pytest
 
+from tests.helpers.timing import scaled
 from tychora import Tychora
 from tychora.contracts.identity import canonical_bytes
 from tychora.ports.execution import ExecutionContext
@@ -21,8 +23,9 @@ class SyntheticCounter:
         return len(text)
 
 
-@pytest.fixture
-def executable_integrity_corpus(tmp_path):
+@contextmanager
+def _integrity_corpus(tmp_path: Path):
+    """Ingest the declared synthetic corpus and write its digest-pinned gold set."""
     declaration = json.loads(CORPUS.read_text())
     assert declaration["format"] == "tychora-synthetic-corpus@1"
     workspace = tmp_path / "workspace"
@@ -49,7 +52,7 @@ def executable_integrity_corpus(tmp_path):
                     },
                 }
             )
-            status = kb.jobs.wait(handle.id, timeout=10)
+            status = kb.jobs.wait(handle.id, timeout=scaled(10))
             assert status.state == "succeeded", (
                 source["source_key"],
                 status.error_code,
@@ -123,3 +126,17 @@ def executable_integrity_corpus(tmp_path):
             )
         )
         yield kb, gold, tuple(case["case_id"] for case in cases)
+
+
+@pytest.fixture
+def executable_integrity_corpus(tmp_path):
+    """A fresh corpus for tests that register datasets or run evaluations."""
+    with _integrity_corpus(tmp_path) as corpus:
+        yield corpus
+
+
+@pytest.fixture(scope="module")
+def shared_integrity_corpus(tmp_path_factory):
+    """One corpus per module for read-only tests; never register or run against it."""
+    with _integrity_corpus(tmp_path_factory.mktemp("integrity-corpus")) as corpus:
+        yield corpus

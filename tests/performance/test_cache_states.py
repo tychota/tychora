@@ -8,6 +8,7 @@ from os import getpid
 
 import pytest
 
+from tests.helpers.timing import scaled
 from tests.performance.engine_probe import run_real_benchmark
 from tychora.contracts.requests import QueryRequest
 from tychora.evaluation.benchmarks import (
@@ -135,6 +136,7 @@ def test_benchmark_rejects_in_process_cold_owner():
     "legacy_order,child_seed",
     [(("query", "document"), "2"), (("document", "query"), "1")],
 )
+@pytest.mark.slow
 def test_real_four_states_use_subprocess_and_engine_counters(
     tmp_path, legacy_order, child_seed
 ):
@@ -167,7 +169,7 @@ def test_new_family_capability_projection_is_hash_seed_independent():
             check=True,
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=scaled(10),
             env={"PATH": os.environ.get("PATH", ""), "PYTHONHASHSEED": seed},
         )
         values.append(completed.stdout.strip())

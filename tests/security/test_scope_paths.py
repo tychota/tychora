@@ -7,6 +7,7 @@ import sys
 
 import pytest
 
+from tests.helpers.timing import scaled
 from tychora import Tychora
 from tychora.application.discovery import _scoped_after, _scoped_cursor
 from tychora.configuration.resolve import resolve_config
@@ -96,7 +97,7 @@ def test_scope_identity_domains_are_hash_seed_independent():
             capture_output=True,
             text=True,
             check=False,
-            timeout=10,
+            timeout=scaled(10),
         )
         assert completed.returncode == 0, completed.stderr
         values.append(completed.stdout.strip())

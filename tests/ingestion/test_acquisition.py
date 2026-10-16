@@ -104,6 +104,7 @@ def test_binary_source_intent_hashes_without_utf8_serialization():
     assert "data" not in intent
 
 
+@pytest.mark.slow
 def test_default_ten_thousand_file_capture_has_complete_retention(tmp_path):
     from tests.security.test_acquisition import item, local_acquirer
     from tychora.adapters.files.references import required_closure

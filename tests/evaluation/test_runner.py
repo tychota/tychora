@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from tests.helpers.timing import scaled
 from tychora.contracts.operations import ConfigurationVariant
 from tychora.contracts.requests import QueryRequest
 from tychora.evaluation.dataset import GoldCase
@@ -339,7 +340,7 @@ def test_disabled_lexical_votes_do_not_escape_graph_seed_path(tmp_path, monkeypa
                 },
             }
         )
-        assert kb.jobs.wait(handle.id, timeout=10).state == "succeeded"
+        assert kb.jobs.wait(handle.id, timeout=scaled(10)).state == "succeeded"
         request = QueryRequest.from_mapping(
             {"question": "saffron marker", "modalities": ["lexical"]}
         )
