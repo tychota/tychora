@@ -37,7 +37,7 @@ interface DraftContext {
   setDraft: Dispatch<SetStateAction<AddDocumentDraft>>;
   draftId: string;
   intent: SubmissionIntent;
-  /** Task 6 retains this exact client/scope for receipt-bound PDF requests. */
+  /** PDF intake retains this exact client and scope for receipt-bound requests. */
   receiptOwner: React.RefObject<ApiClient | null>;
   pendingPdf: React.RefObject<PendingPdfSubmission | null>;
 }

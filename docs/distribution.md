@@ -34,7 +34,7 @@ The full-stack advisory audit on 2026-10-14 remains nonclean after upgrading OAu
 
 `packaging/tychora.spec` freezes the installed release wheel with the locked full runtime. `TYCHORA_BUILD_MODE=onedir` creates `dist/tychora-onedir/tychora` for dependency diagnosis; `TYCHORA_BUILD_MODE=onefile` (the default) creates `dist/tychora`. The build refuses an editable checkout import. Its entry point calls `multiprocessing.freeze_support()` before the CLI. Packaged profiles, schemas, migrations, skills, native extensions, converter resources and actual installed third-party notice texts are collected; model weights and user caches are external. In particular, `packaging/build_notices.py` copies installed license texts and adds the exact upstream Apache 2.0 license for `tokenizers==0.23.2`, whose installed wheel contains no notice path. The notice manifest records SHA-256 for each included text.
 
-Build after obtaining an audited wheel and its Task 45 inventory. Set `UV_NO_SYNC=1` for `uv run` after installing the wheel so uv does not replace it with an editable project. The feature file is generated from that inventory, not hand-edited:
+Build after obtaining an audited wheel and its release inventory. Set `UV_NO_SYNC=1` for `uv run` after installing the wheel so uv does not replace it with an editable project. The feature file is generated from that inventory, not hand-edited:
 
 ```bash
 uv sync --locked --all-extras --group build --no-default-groups --no-install-project

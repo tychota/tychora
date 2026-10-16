@@ -17,11 +17,11 @@ import { Relations } from "../components/Relations";
 import query from "../../contracts/query.json";
 import evidence from "../../contracts/evidence.json";
 import handshake from "../../contracts/handshake.json";
-import fields from "../../contracts/task3-settings-fields.json";
-import models from "../../contracts/task3-models.json";
-import readiness from "../../contracts/task3-model-readiness.json";
-import ocrQuery from "../../contracts/task5-ocr-included-query.json";
-import ocrEvidence from "../../contracts/task5-ocr-evidence.json";
+import fields from "../../contracts/settings-fields.json";
+import models from "../../contracts/models-list.json";
+import readiness from "../../contracts/models-readiness.json";
+import ocrQuery from "../../contracts/ocr-included-query.json";
+import ocrEvidence from "../../contracts/ocr-evidence.json";
 import windows from "../../contracts/extraction-windows.json";
 import jobStatus from "../../contracts/job-status.json";
 

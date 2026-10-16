@@ -87,7 +87,7 @@ def _manifest_document(plan: PublicationPlan) -> dict:
 
 
 def publication_manifest(plan: PublicationPlan) -> bytes:
-    """Exact Task 7 typed retention header for a complete snapshot plan."""
+    """Canonical bytes of the snapshot manifest, the typed retention header of a complete plan."""
     return canonical_bytes(_manifest_document(plan))
 
 

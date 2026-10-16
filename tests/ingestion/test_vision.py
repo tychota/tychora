@@ -121,7 +121,7 @@ def test_vision_cache_identity_binds_image_task_model_prompt_and_context():
     )
 
 
-def test_default_composition_plan_preserves_task13_semantic_shape():
+def test_default_composition_plan_preserves_semantic_shape():
     from tychora.contracts.composition import DocumentCompositionPlan
 
     plan = DocumentCompositionPlan(base_normalizer_fingerprint="a" * 64)

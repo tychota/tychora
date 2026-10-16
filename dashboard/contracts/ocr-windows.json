@@ -17,7 +17,7 @@
         {
           "type": "image",
           "artifact_ref": "9713c4b030e8bf378805b99ee81067ec71be690207c68a989294a0c6ed333529",
-          "native_ref": "synthetic-task5-scan",
+          "native_ref": "synthetic-ocr-scan",
           "physical_page": 1,
           "printed_page": null,
           "geometry": {

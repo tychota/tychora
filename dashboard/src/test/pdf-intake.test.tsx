@@ -9,7 +9,7 @@ import { createRef } from "react";
 import { beforeEach, expect, it, vi } from "vitest";
 import { ApiClient } from "../api/client";
 import { PdfIntake } from "../pages/sources/PdfIntakePanel";
-import handshake from "../../contracts/task2-handshake.json";
+import handshake from "../../contracts/collections-handshake.json";
 import type { PdfIntakeDescriptor, PdfIntakeStatus } from "../api/contracts";
 const descriptor: PdfIntakeDescriptor = {
   source_key: "synthetic.pdf",
@@ -384,8 +384,7 @@ it("cancels raw upload and ignores its late completion", async () => {
 });
 it("shows readable actual retained OCR input provenance without a native quote", async () => {
   const { EvidenceReader } = await import("../components/EvidenceReader");
-  const fixture = (await import("../../contracts/task5-ocr-evidence.json"))
-    .default;
+  const fixture = (await import("../../contracts/ocr-evidence.json")).default;
   respond = () => json(fixture);
   render(
     <EvidenceReader client={new ApiClient("synthetic")} unitId={fixture.id} />,
