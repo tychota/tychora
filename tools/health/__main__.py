@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 from tools.health.external import JSCPD_SCOPES, jscpd_command, run
@@ -41,11 +42,30 @@ def measure(root: Path, gates: list[Gate]) -> list[tuple[Gate, Metric]]:
     return [(gate, metric) for gate in gates for metric in gate.measure(root)]
 
 
+def _measure_each(
+    root: Path, gates: list[Gate]
+) -> Iterator[tuple[Gate, Metric | None]]:
+    """Yield each gate's metrics; a gate that raises prints an ERROR line and yields None."""
+    for gate in gates:
+        try:
+            metrics = gate.measure(root)
+        except Exception as error:  # noqa: BLE001 - any failure of one gate must not hide the others
+            print(f"{gate.id:7} {'-':34} {'':>10} {'':>10} ERROR")
+            print(f"        - {type(error).__name__}: {error}")
+            yield gate, None
+            continue
+        for metric in metrics:
+            yield gate, metric
+
+
 def check(root: Path, gates: list[Gate]) -> int:
     """Print one line per metric and return 1 when any finding exists."""
     baseline = load_baseline(root / BASELINE)
     failed = False
-    for gate, metric in measure(root, gates):
+    for gate, metric in _measure_each(root, gates):
+        if metric is None:
+            failed = True
+            continue
         findings: list[Finding] = compare(metric, baseline.get(metric.name))
         entry = baseline.get(metric.name)
         base = "-" if metric.kind == "hard" or entry is None else f"{entry['value']:g}"
@@ -61,10 +81,12 @@ def check(root: Path, gates: list[Gate]) -> int:
     return 1 if failed else 0
 
 
-def refresh_clone_allowlists(root: Path) -> None:
+def refresh_clone_allowlists(root: Path, *, missing_only: bool = False) -> None:
     """Rewrite quality/jscpd/*.json; called only when no new clone exists."""
     (root / "quality" / "jscpd").mkdir(parents=True, exist_ok=True)
     for scope in JSCPD_SCOPES:
+        if missing_only and (root / "quality" / "jscpd" / f"{scope}.json").exists():
+            continue
         result = run(jscpd_command(root, scope, update=True), root)
         if result.returncode != 0:
             raise RuntimeError(f"jscpd {scope}: {result.stdout}{result.stderr}")
@@ -73,8 +95,13 @@ def refresh_clone_allowlists(root: Path) -> None:
 def update(root: Path, gates: list[Gate], *, initial: bool) -> int:
     """Record improvements; refuse regressions, unfixed hard gates and new over-limit keys."""
     duplication = any(gate.id == "G9-G11" for gate in gates)
+    if initial and (root / BASELINE).exists():
+        print(
+            f"update refused: {BASELINE} already exists; run update without --initial"
+        )
+        return 1
     if initial and duplication:
-        refresh_clone_allowlists(root)
+        refresh_clone_allowlists(root, missing_only=True)
     measured = measure(root, gates)
     hard = [m for _, m in measured if m.kind == "hard" and m.value and not initial]
     if hard:
