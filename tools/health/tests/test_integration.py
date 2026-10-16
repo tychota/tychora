@@ -9,7 +9,7 @@ import pytest
 
 from tools.health.__main__ import main
 from tools.health.gates import Gate
-from tools.health.model import Metric
+from tools.health.model import BASELINE, Metric, load_baseline, save_baseline
 
 REPO = Path(__file__).resolve().parents[3]
 JSCPD = REPO / "dashboard" / "node_modules" / ".bin" / "jscpd"
@@ -140,28 +140,26 @@ def test_module_entry_point_prints_usage():
     assert "check" in result.stdout and "update" in result.stdout
 
 
-def test_initial_update_refuses_when_a_baseline_exists(project, capsys):
-    require_jscpd()
-    gates = "G9-G11"
-    assert main(["update", "--initial", "--gates", gates, "--root", str(project)]) == 0
-    allowlists = {
-        path: path.read_text()
-        for path in (project / "quality" / "jscpd").glob("*.json")
+def test_initial_update_adds_missing_metrics_and_keeps_existing_entries(
+    project, monkeypatch
+):
+    existing = {
+        "kept": {"value": 5, "direction": "lower", "measured_at": "old"},
     }
-    assert allowlists
-    write(
-        project,
-        "src/tychora/contracts/copy.py",
-        f'"""Copy."""\n\n\ndef again(values):\n{BLOCK}    return 0\n',
-    )
-    capsys.readouterr()
+    save_baseline(project / BASELINE, existing)
+    before = (project / BASELINE).read_text()
+    gates = [
+        Gate("G90", "Kept", "pr", lambda root: [Metric("kept", 3.0)]),
+        Gate("G91", "New", "pr", lambda root: [Metric("added", 7.0)]),
+    ]
+    monkeypatch.setattr("tools.health.__main__.select", lambda *a, **k: gates)
 
-    assert main(["update", "--initial", "--gates", gates, "--root", str(project)]) == 1
-    assert "update refused" in capsys.readouterr().out
-    assert {
-        path: path.read_text()
-        for path in (project / "quality" / "jscpd").glob("*.json")
-    } == allowlists
+    assert main(["update", "--initial", "--root", str(project)]) == 0
+
+    baseline = load_baseline(project / BASELINE)
+    assert baseline["kept"] == existing["kept"]
+    assert baseline["added"]["value"] == 7.0
+    assert before != (project / BASELINE).read_text()
 
 
 def test_a_failing_gate_prints_error_and_others_still_report(
