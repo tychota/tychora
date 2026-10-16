@@ -6,6 +6,7 @@ site_dir: site
 strict: true
 exclude_docs: |
   /superpowers/
+  /quality/
 validation:
   nav:
     omitted_files: warn
