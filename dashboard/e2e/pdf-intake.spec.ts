@@ -13,7 +13,7 @@ const artifacts =
   process.env.TYCHORA_E2E_ARTIFACT_DIR ||
   resolve(
     import.meta.dirname,
-    "../../.superpowers/verification/dashboard-e2e/task6",
+    "../../.superpowers/verification/dashboard-e2e/pdf-intake",
   );
 const headers = { Authorization: "Bearer synthetic-dashboard-owner" };
 async function api(request: APIRequestContext, path: string, data?: unknown) {
@@ -37,7 +37,7 @@ async function capture(page: Page, name: string) {
     fullPage: true,
   });
 }
-test("task6 streamed PDF above JSON cap with retry and actual OCR review", async ({
+test("PDF intake: streamed PDF above JSON cap with retry and actual OCR review", async ({
   page,
   request,
 }) => {
@@ -47,7 +47,7 @@ test("task6 streamed PDF above JSON cap with retry and actual OCR review", async
   );
   test.setTimeout(240000);
   const grant = await api(request, "/v1/handshake");
-  const data = await readFile(resolve(fixtures, "task6-mixed.pdf"));
+  const data = await readFile(resolve(fixtures, "pdf-intake-mixed.pdf"));
   expect(data.length).toBeGreaterThan(1048576);
   await connect(page);
   await page
@@ -63,7 +63,7 @@ test("task6 streamed PDF above JSON cap with retry and actual OCR review", async
   await page.getByRole("button", { name: "Files", exact: true }).click();
   await page
     .getByLabel("Source file", { exact: true })
-    .setInputFiles(resolve(fixtures, "task6-mixed.pdf"));
+    .setInputFiles(resolve(fixtures, "pdf-intake-mixed.pdf"));
   const analyseResponse = page.waitForResponse(
     (r) => r.url().endsWith("/analyse") && r.request().method() === "POST",
   );
@@ -250,7 +250,7 @@ test("task6 streamed PDF above JSON cap with retry and actual OCR review", async
   await page.getByRole("button", { name: "Files", exact: true }).click();
   await page
     .getByLabel("Source file")
-    .setInputFiles(resolve(fixtures, "task6-mixed.pdf"));
+    .setInputFiles(resolve(fixtures, "pdf-intake-mixed.pdf"));
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Network.emulateNetworkConditions", {
     offline: false,
@@ -285,7 +285,7 @@ test("task6 streamed PDF above JSON cap with retry and actual OCR review", async
   await page.getByRole("button", { name: "Files", exact: true }).click();
   await page
     .getByLabel("Source file")
-    .setInputFiles(resolve(fixtures, "task6-native.pdf"));
+    .setInputFiles(resolve(fixtures, "pdf-intake-native.pdf"));
   await page.getByRole("button", { name: "Analyse PDF" }).click();
   await expect(
     page.getByText("Native text · 1 physical pages", { exact: true }),
@@ -306,7 +306,7 @@ test("task6 streamed PDF above JSON cap with retry and actual OCR review", async
   ).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Analyse PDF" })).toBeEnabled();
 });
-test("task6 actual PDF analysis and typed failure matrix", async ({
+test("PDF intake: actual PDF analysis and typed failure matrix", async ({
   request,
   page,
 }) => {
@@ -314,7 +314,7 @@ test("task6 actual PDF analysis and typed failure matrix", async ({
   test.setTimeout(120000);
   const grant = await api(request, "/v1/handshake");
   for (const mode of ["scan", "native", "blank", "invalid"]) {
-    const bytes = await readFile(resolve(fixtures, `task6-${mode}.pdf`));
+    const bytes = await readFile(resolve(fixtures, `pdf-intake-${mode}.pdf`));
     const prepared = await api(request, "/v1/pdf-intakes", {
       source_key: `matrix-${mode}`,
       collection_id: grant.default_collection_id,
@@ -343,7 +343,7 @@ test("task6 actual PDF analysis and typed failure matrix", async ({
     }
     await request.delete(path, { headers });
   }
-  const bytes = await readFile(resolve(fixtures, "task6-native.pdf"));
+  const bytes = await readFile(resolve(fixtures, "pdf-intake-native.pdf"));
   const prepared = await api(request, "/v1/pdf-intakes", {
     source_key: "synthetic-pdf-partial",
     collection_id: grant.default_collection_id,
@@ -407,7 +407,7 @@ test("task6 actual PDF analysis and typed failure matrix", async ({
   ).toBe(200);
 });
 
-test("task6 skip link stays outside viewport except during keyboard focus", async ({
+test("PDF intake: skip link stays outside viewport except during keyboard focus", async ({
   page,
 }) => {
   await page.goto("/dashboard/");

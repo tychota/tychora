@@ -8,12 +8,12 @@ import {
 import { beforeEach, expect, it, vi } from "vitest";
 import handshake from "../../contracts/handshake.json";
 import sources from "../../contracts/sources.json";
-import documents from "../../contracts/task2-documents.json";
-import documentSchema from "../../contracts/task4-document-metadata-schema.json";
-import manualSchema from "../../contracts/task4-manual-metadata-schema.json";
-import settingsFields from "../../contracts/task3-settings-fields.json";
-import models from "../../contracts/task3-models.json";
-import readiness from "../../contracts/task3-model-readiness.json";
+import documents from "../../contracts/collections-documents.json";
+import documentSchema from "../../contracts/metadata-document-schema.json";
+import manualSchema from "../../contracts/metadata-manual-schema.json";
+import settingsFields from "../../contracts/settings-fields.json";
+import models from "../../contracts/models-list.json";
+import readiness from "../../contracts/models-readiness.json";
 import revisions from "../../contracts/source-revisions.json";
 import receipt from "../../contracts/source-add.json";
 import jobFixture from "../../contracts/job-status.json";

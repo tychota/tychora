@@ -325,7 +325,7 @@ class DocumentCompositionPlan(Contract):
         return data
 
     def semantic_data(self) -> JsonValue:
-        """Preserve the exact Task13 plan form when no region enrichment exists."""
+        """Serialize the plan unchanged when no region enrichment exists, so its digest stays stable."""
         data = self.model_dump(mode="json")
         for proxy in data["proxies"]:
             if proxy.get("region") is None:

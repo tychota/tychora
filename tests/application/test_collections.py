@@ -207,11 +207,11 @@ def test_actual_http_fixture_contracts():
 
     root = Path(__file__).resolve().parents[2] / "dashboard" / "contracts"
     for filename, model in (
-        ("task2-collection.json", CollectionSummary),
-        ("task2-collection-archived.json", CollectionSummary),
-        ("task2-collections.json", CollectionPage),
-        ("task2-collection-consent.json", CollectionConsentView),
-        ("task2-documents.json", DocumentPage),
+        ("collections-detail.json", CollectionSummary),
+        ("collections-archived.json", CollectionSummary),
+        ("collections-page.json", CollectionPage),
+        ("collections-consent.json", CollectionConsentView),
+        ("collections-documents.json", DocumentPage),
     ):
         assert model.model_validate_json((root / filename).read_bytes())
 

@@ -72,7 +72,7 @@ async def capture(output: Path) -> None:
             await request("discovery-kinds", "GET", "/v1/discovery/kinds?limit=4")
             for kind in ("document", "manual"):
                 await request(
-                    f"task4-{kind}-metadata-schema",
+                    f"metadata-{kind}-schema",
                     "GET",
                     f"/v1/discovery/kinds/{kind}@1/metadata-schema",
                 )
@@ -240,7 +240,7 @@ async def capture_pdf(output: Path) -> None:
                 analysed = await client.post(path + "/analyse")
                 analysed.raise_for_status()
                 value = redact_pdf(analysed.json())
-                (output / f"task6-pdf-{mode}-status.json").write_text(
+                (output / f"pdf-{mode}-status.json").write_text(
                     json.dumps(value, indent=2) + "\n"
                 )
                 (await client.delete(path)).raise_for_status()
@@ -274,7 +274,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--pdf-evidence",
         type=Path,
-        help="Export a synthetic Task6 real HTTP browser capture without repeating OCR",
+        help="Export a synthetic PDF intake real HTTP browser capture without repeating OCR",
     )
     args = parser.parse_args()
     if args.pdf_evidence:
@@ -292,7 +292,7 @@ if __name__ == "__main__":
             "coverage",
             "diagnostics",
         ):
-            (args.output / f"task6-pdf-{key}.json").write_text(
+            (args.output / f"pdf-{key}.json").write_text(
                 json.dumps(redact_pdf(capture_value[key]), indent=2) + "\n"
             )
     else:

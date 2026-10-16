@@ -33,7 +33,7 @@ export default defineConfig({
         process.env.TYCHORA_E2E_FIXTURE_DIR ||
         resolve(
           import.meta.dirname,
-          "../.superpowers/verification/dashboard-e2e/task5-fixtures",
+          "../.superpowers/verification/dashboard-e2e/ocr-intake-fixtures",
         ),
     },
     reuseExistingServer: false,

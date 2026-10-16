@@ -13,13 +13,13 @@ const fixtures =
   process.env.TYCHORA_E2E_FIXTURE_DIR ||
   resolve(
     import.meta.dirname,
-    "../../.superpowers/verification/dashboard-e2e/task5-fixtures",
+    "../../.superpowers/verification/dashboard-e2e/ocr-intake-fixtures",
   );
 const artifacts =
   process.env.TYCHORA_E2E_ARTIFACT_DIR ||
   resolve(
     import.meta.dirname,
-    "../../.superpowers/verification/dashboard-e2e/task5",
+    "../../.superpowers/verification/dashboard-e2e/ocr-intake",
   );
 const headers = { Authorization: "Bearer synthetic-dashboard-owner" };
 async function api(request: APIRequestContext, path: string, data?: unknown) {
@@ -75,7 +75,9 @@ async function text(request: APIRequestContext, key: string, content: string) {
 }
 test.beforeEach(async ({ page, context }) => {
   const deny = () => {
-    throw new Error("Task5 journeys require actual HTTP, no browser mocks");
+    throw new Error(
+      "OCR intake journeys require actual HTTP, no browser mocks",
+    );
   };
   page.route = deny;
   page.routeFromHAR = deny;
@@ -83,7 +85,7 @@ test.beforeEach(async ({ page, context }) => {
   context.routeFromHAR = deny;
 });
 
-test("task5 real exact passages, durable recovery, maintenance and dataset registration", async ({
+test("OCR intake: real exact passages, durable recovery, maintenance and dataset registration", async ({
   page,
   request,
 }) => {
@@ -240,15 +242,15 @@ test("task5 real exact passages, durable recovery, maintenance and dataset regis
       family_key: "anchor",
       split: "test",
       benchmark: "integrity",
-      label_provenance: "synthetic Task5 workflow",
+      label_provenance: "synthetic OCR intake workflow",
       query: { question: "Anchorrare", modalities: ["lexical"] },
       expected_source_ids: [clipped!.segments[0].source_id],
     }) + "\n";
   await page.getByLabel("Dataset manifest JSON").fill(
     JSON.stringify({
       format: "tychora-gold@1",
-      dataset_id: "task5-synthetic",
-      name: "Task5 synthetic",
+      dataset_id: "ocr-intake-synthetic",
+      name: "OCR intake synthetic",
       version_sha: createHash("sha256").update(cases).digest("hex"),
       case_count: 1,
     }),
@@ -258,7 +260,7 @@ test("task5 real exact passages, durable recovery, maintenance and dataset regis
     .getByRole("button", { name: "Register dataset", exact: true })
     .click();
   await expect(
-    page.getByText(/Registered dataset task5-synthetic/),
+    page.getByText(/Registered dataset ocr-intake-synthetic/),
   ).toBeVisible();
   const grant = await api(request, "/v1/handshake");
   await api(
@@ -316,7 +318,7 @@ test("task5 real exact passages, durable recovery, maintenance and dataset regis
   ).toBeTruthy();
 });
 
-test("task5 qualified simulated Voyage setup consent ingestion and reranking", async ({
+test("OCR intake: qualified simulated Voyage setup consent ingestion and reranking", async ({
   page,
   request,
 }) => {
@@ -490,7 +492,7 @@ test("task5 qualified simulated Voyage setup consent ingestion and reranking", a
   ).toHaveLength(posts);
 });
 
-test("task5 qualified actual OCR mode exclusion inclusion and noncitable references", async ({
+test("OCR intake: qualified actual OCR mode exclusion inclusion and noncitable references", async ({
   page,
   request,
 }) => {
@@ -502,7 +504,7 @@ test("task5 qualified actual OCR mode exclusion inclusion and noncitable referen
   const grant = await api(request, "/v1/handshake");
   const bytes = await readFile(resolve(fixtures, "synthetic-scan.pdf"));
   const receipt = await api(request, "/v1/pdf-intakes", {
-    source_key: "synthetic-task5-scan",
+    source_key: "synthetic-ocr-scan",
     collection_id: grant.default_collection_id,
     kind: "document@1",
     expected_size_bytes: bytes.length,
