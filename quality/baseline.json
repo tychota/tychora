@@ -2,7 +2,7 @@
   "metrics": {
     "cognitive_complexity": {
       "direction": "lower",
-      "measured_at": "7b476e38d6b7",
+      "measured_at": "ac43d74ff25a",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::search": 58,
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::upsert_batch": 16,
@@ -160,10 +160,9 @@
         "src/tychora/indexing/coordinator.py::ProjectionCoordinator::finalize": 51,
         "src/tychora/indexing/coordinator.py::ProjectionCoordinator::prepare": 38,
         "src/tychora/indexing/groups.py::build_groups": 27,
-        "src/tychora/indexing/representations.py::_bundle_index": 57,
         "src/tychora/indexing/representations.py::_document_facts": 20,
         "src/tychora/indexing/representations.py::_document_intervals": 20,
-        "src/tychora/indexing/representations.py::_locator_intervals": 31,
+        "src/tychora/indexing/representations.py::_locator_intervals": 19,
         "src/tychora/indexing/representations.py::_prepare_proxy_unit": 18,
         "src/tychora/indexing/representations.py::_prepare_source_unit": 16,
         "src/tychora/indexing/representations.py::_retained_code_files": 23,
@@ -234,7 +233,7 @@
         "src/tychora/retrieval/visuals.py::prepare_visual_candidates": 25,
         "src/tychora/retrieval/visuals.py::select_visuals": 61
       },
-      "value": 229
+      "value": 228
     },
     "coverage_line": {
       "direction": "higher",
@@ -273,8 +272,8 @@
     },
     "duplication_tests": {
       "direction": "lower",
-      "measured_at": "7b476e38d6b7",
-      "value": 4.76
+      "measured_at": "ac43d74ff25a",
+      "value": 4.69
     },
     "duplication_typescript": {
       "direction": "lower",
@@ -363,7 +362,7 @@
     },
     "function_length": {
       "direction": "lower",
-      "measured_at": "7b476e38d6b7",
+      "measured_at": "ac43d74ff25a",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex.search": 143,
         "src/tychora/adapters/code/capture.py::RepositoryCapture._run": 89,
@@ -478,7 +477,6 @@
         "src/tychora/indexing/coordinator.py::ProjectionCoordinator._text_batch": 91,
         "src/tychora/indexing/coordinator.py::ProjectionCoordinator.finalize": 134,
         "src/tychora/indexing/coordinator.py::ProjectionCoordinator.prepare": 142,
-        "src/tychora/indexing/representations.py::_bundle_index": 110,
         "src/tychora/indexing/representations.py::_prepare_proxy_unit": 81,
         "src/tychora/indexing/representations.py::_retained_code_files": 82,
         "src/tychora/indexing/representations.py::_validate_retained_code_records": 109,
@@ -524,7 +522,7 @@
         "src/tychora/retrieval/visuals.py::_visual": 92,
         "src/tychora/retrieval/visuals.py::select_visuals": 109
       },
-      "value": 158
+      "value": 157
     },
     "integrity_raises_without_reason": {
       "direction": "lower",
