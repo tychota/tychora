@@ -3,9 +3,13 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "format:check": "prettier --check src e2e",
     "build": "node scripts/notices.mjs && vite build",
     "e2e": "playwright test",
     "check:build": "npm run build && git diff --exit-code -- ../src/tychora/resources/dashboard && test -z \"$(git ls-files --others --exclude-standard ../src/tychora/resources/dashboard)\""
