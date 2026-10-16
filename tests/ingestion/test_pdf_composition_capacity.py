@@ -27,8 +27,6 @@ from tychora.contracts.requests import RequestScope, SourceInput
 from tychora.ingestion import composition
 
 document_kind = mapping_fixtures.document_kind
-execution = mapping_fixtures.execution
-rich_capture = mapping_fixtures.rich_capture
 pytestmark = pytest.mark.parametrize("execution", ["pdf"], indirect=True)
 
 

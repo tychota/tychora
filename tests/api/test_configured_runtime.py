@@ -2,6 +2,7 @@
 
 import pytest
 
+from tests.helpers.assets import asset_path
 from tychora import Tychora
 from tychora.configuration.resolve import resolve_config
 
@@ -324,18 +325,17 @@ def test_secret_reference_uses_explicit_resolver_only_on_operation(
         assert keys == ["synthetic-key"]
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 def test_public_add_dispatches_configured_text_only_after_policy_grant(
     tmp_path, monkeypatch
 ):
     import json
-    import os
 
     from tychora.adapters.voyage.request_types import RawVoyageResponse
     from tychora.contracts.requests import RequestScope
     from tychora.ports.execution import ExecutionContext
 
-    cache = os.environ.get("TYCHORA_TEST_MODEL_CACHE")
-    assert cache is not None
+    cache = str(asset_path("TYCHORA_TEST_MODEL_CACHE"))
     monkeypatch.setenv("TYCHORA_MODEL_CACHE", cache)
     monkeypatch.setenv("TEST_VOYAGE_KEY", "synthetic-test-key")
     posts = []
@@ -439,10 +439,10 @@ def test_public_add_dispatches_configured_text_only_after_policy_grant(
         assert result.segments
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 def test_configured_text_provider_cli_api_mcp_grant_then_revoke(tmp_path, monkeypatch):
     import asyncio
     import json
-    import os
 
     from typer.testing import CliRunner
 
@@ -451,7 +451,9 @@ def test_configured_text_provider_cli_api_mcp_grant_then_revoke(tmp_path, monkey
     from tychora.interfaces.cli import app as cli_app
     from tychora.interfaces.mcp.server import _current, build_mcp
 
-    monkeypatch.setenv("TYCHORA_MODEL_CACHE", os.environ["TYCHORA_TEST_MODEL_CACHE"])
+    monkeypatch.setenv(
+        "TYCHORA_MODEL_CACHE", str(asset_path("TYCHORA_TEST_MODEL_CACHE"))
+    )
     monkeypatch.setenv("TEST_VOYAGE_KEY", "synthetic-test-key")
     posts = []
 
@@ -591,11 +593,11 @@ def test_configured_text_provider_cli_api_mcp_grant_then_revoke(tmp_path, monkey
     assert len(posts) == 4
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 def test_public_visual_query_uses_default_binding_and_narrow_scope(
     tmp_path, monkeypatch
 ):
     import json
-    import os
     from types import SimpleNamespace
 
     from tychora.adapters.voyage.request_types import RawVoyageResponse
@@ -603,8 +605,7 @@ def test_public_visual_query_uses_default_binding_and_narrow_scope(
     from tychora.contracts.requests import RequestScope
     from tychora.ports.execution import ExecutionContext
 
-    cache = os.environ.get("TYCHORA_TEST_MODEL_CACHE")
-    assert cache is not None
+    cache = str(asset_path("TYCHORA_TEST_MODEL_CACHE"))
     monkeypatch.setenv("TYCHORA_MODEL_CACHE", cache)
     monkeypatch.setenv("TEST_VOYAGE_KEY", "synthetic-test-key")
     monkeypatch.setattr(
@@ -702,9 +703,9 @@ def test_public_visual_query_uses_default_binding_and_narrow_scope(
         assert len(posts) == 1
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 def test_public_rerank_uses_default_binding_and_narrow_scope(tmp_path, monkeypatch):
     import json
-    import os
     from types import SimpleNamespace
 
     from tychora.adapters.voyage.request_types import RawVoyageResponse
@@ -713,8 +714,7 @@ def test_public_rerank_uses_default_binding_and_narrow_scope(tmp_path, monkeypat
     from tychora.contracts.requests import QueryRequest, RequestScope
     from tychora.ports.execution import ExecutionContext
 
-    cache = os.environ.get("TYCHORA_TEST_MODEL_CACHE")
-    assert cache is not None
+    cache = str(asset_path("TYCHORA_TEST_MODEL_CACHE"))
     monkeypatch.setenv("TYCHORA_MODEL_CACHE", cache)
     monkeypatch.setenv("TEST_VOYAGE_KEY", "synthetic-test-key")
     monkeypatch.setattr(
@@ -856,16 +856,15 @@ def test_public_rerank_uses_default_binding_and_narrow_scope(tmp_path, monkeypat
         assert len(posts) == 1
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 def test_cli_add_and_search_use_configured_native_graph(tmp_path, monkeypatch):
     import json
-    import os
 
     from typer.testing import CliRunner
 
     from tychora.interfaces.cli import app
 
-    cache = os.environ.get("TYCHORA_TEST_MODEL_CACHE")
-    assert cache is not None
+    cache = str(asset_path("TYCHORA_TEST_MODEL_CACHE"))
     monkeypatch.setenv("TYCHORA_MODEL_CACHE", cache)
     workspace = tmp_path / "knowledge"
     workspace.mkdir()

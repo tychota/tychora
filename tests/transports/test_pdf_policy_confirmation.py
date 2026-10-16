@@ -14,8 +14,6 @@ from tychora.contracts.pdf_policy import PdfProcessingPolicy
 from tychora.ports.execution import ExecutionContext
 
 document_kind = mapping_fixtures.document_kind
-execution = mapping_fixtures.execution
-rich_capture = mapping_fixtures.rich_capture
 retained_case = mapping_fixtures.retained_case
 
 

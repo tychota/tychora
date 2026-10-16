@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 
 def test_import_has_no_runtime_side_effects(tmp_path):
@@ -20,7 +21,7 @@ def test_import_has_no_runtime_side_effects(tmp_path):
 
 def test_console_command_displays_help_without_creating_state(tmp_path):
     run = subprocess.run(
-        ["tychora", "--help"],
+        [str(Path(sys.executable).parent / "tychora"), "--help"],
         cwd=tmp_path,
         env={**os.environ, "HOME": str(tmp_path)},
         capture_output=True,

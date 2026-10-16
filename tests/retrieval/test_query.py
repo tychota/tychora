@@ -13,6 +13,7 @@ from uuid import UUID
 import pytest
 from PIL import Image
 
+from tests.helpers.assets import asset_path
 from tests.helpers.corpus import artifact, reader, registry, seed_bundle
 from tests.helpers.eligibility import eligibility_view
 from tests.indexing.test_publication import RecordingCounter, RecordingEmbedder
@@ -345,6 +346,7 @@ def test_image_query_descriptor_uses_registered_pixels_and_source_links(tmp_path
     db.close()
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 @pytest.mark.asyncio
 async def test_filter_change_retrieves_again_from_real_fts(tmp_path: Path) -> None:
     settings = tmp_path / "workspace.toml"
@@ -400,9 +402,7 @@ async def test_filter_change_retrieves_again_from_real_fts(tmp_path: Path) -> No
         )
         service = QueryService(
             owner,
-            output_counter=OutputTokenCounter(
-                Path(os.environ["TYCHORA_TEST_MODEL_CACHE"])
-            ),
+            output_counter=OutputTokenCounter(asset_path("TYCHORA_TEST_MODEL_CACHE")),
         )
         outputs = []
         for project in ("alpha", "beta"):
@@ -506,6 +506,7 @@ async def test_filter_change_retrieves_again_from_real_fts(tmp_path: Path) -> No
         assert timed_history.did_withdraw
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 @pytest.mark.asyncio
 async def test_offline_degraded_retained_lexical_replay_does_not_require_reranker(
     tmp_path: Path,
@@ -569,9 +570,7 @@ async def test_offline_degraded_retained_lexical_replay_does_not_require_reranke
         )
         service = QueryService(
             owner,
-            output_counter=OutputTokenCounter(
-                Path(os.environ["TYCHORA_TEST_MODEL_CACHE"])
-            ),
+            output_counter=OutputTokenCounter(asset_path("TYCHORA_TEST_MODEL_CACHE")),
             history=history,
         )
         request = QueryRequest.from_mapping({"question": "verification"})
@@ -588,6 +587,7 @@ async def test_offline_degraded_retained_lexical_replay_does_not_require_reranke
         assert "rerank" in replayed.result.coverage.unavailable_channels
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 @pytest.mark.asyncio
 async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
     tmp_path: Path,
@@ -700,9 +700,7 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
         lexical = CountingLexical()
         service = QueryService(
             owner,
-            output_counter=OutputTokenCounter(
-                Path(os.environ["TYCHORA_TEST_MODEL_CACHE"])
-            ),
+            output_counter=OutputTokenCounter(asset_path("TYCHORA_TEST_MODEL_CACHE")),
             caches=caches,
             lexical=lexical,
             text_provider=VoyageTextQueryProvider(embedder),
@@ -803,6 +801,7 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
         assert lexical.calls == lexical_before
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 @pytest.mark.asyncio
 async def test_image_only_query_uses_registered_original_and_visual_channel(
     tmp_path: Path,
@@ -899,9 +898,7 @@ async def test_image_only_query_uses_registered_original_and_visual_channel(
         )
         service = QueryService(
             owner,
-            output_counter=OutputTokenCounter(
-                Path(os.environ["TYCHORA_TEST_MODEL_CACHE"])
-            ),
+            output_counter=OutputTokenCounter(asset_path("TYCHORA_TEST_MODEL_CACHE")),
             visual_provider=VoyageVisualQueryProvider(provider),
             visual_index=index,
             caches=caches,
@@ -923,6 +920,7 @@ async def test_image_only_query_uses_registered_original_and_visual_channel(
         assert "visual" in result.result.coverage.completed_channels
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 @pytest.mark.asyncio
 async def test_vector_only_tail_window_reaches_reranker_and_delivery(
     tmp_path, monkeypatch
@@ -1047,9 +1045,7 @@ async def test_vector_only_tail_window_reaches_reranker_and_delivery(
         )
         service = QueryService(
             owner,
-            output_counter=OutputTokenCounter(
-                Path(os.environ["TYCHORA_TEST_MODEL_CACHE"])
-            ),
+            output_counter=OutputTokenCounter(asset_path("TYCHORA_TEST_MODEL_CACHE")),
             text_provider=LocalTextQueryProvider(
                 owner, scope, RecordingEmbedder(counter).capabilities, counter, caches
             ),

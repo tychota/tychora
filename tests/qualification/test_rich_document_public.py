@@ -1,12 +1,12 @@
 """Ordinary table-and-figure documents survive public source publication."""
 
 import json
-import os
 import shutil
 from pathlib import Path
 
 import pytest
 
+from tests.helpers.assets import asset_path
 from tychora import Tychora
 from tychora.configuration.resolve import resolve_config
 
@@ -19,12 +19,15 @@ class _Counter:
         return len(text)
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 @pytest.mark.qualification
 @pytest.mark.parametrize("suffix", ["pdf", "docx"])
 def test_public_rich_document_with_table_and_figure_publishes(
     tmp_path, monkeypatch, suffix
 ):
-    monkeypatch.setenv("TYCHORA_MODEL_CACHE", os.environ["TYCHORA_TEST_MODEL_CACHE"])
+    monkeypatch.setenv(
+        "TYCHORA_MODEL_CACHE", str(asset_path("TYCHORA_TEST_MODEL_CACHE"))
+    )
     source = tmp_path / ("rich." + suffix)
     shutil.copy2(Path(__file__).parents[1] / "fixtures/documents" / source.name, source)
     settings = tmp_path / "settings.toml"
