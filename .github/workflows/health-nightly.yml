@@ -123,6 +123,7 @@ jobs:
         run: uv run --locked python -m tools.health flaky reports/seed-1.xml reports/seed-2.xml reports/seed-3.xml
       - name: Record the nightly baseline (manual dispatch only)
         if: github.event_name == 'workflow_dispatch' && inputs.baseline
+        # --initial adds only the metrics missing from quality/baseline.json and keeps existing entries.
         # G22 is left out for the same reason as in the check below.
         run: uv run --locked python -m tools.health update --initial --group nightly --gates G16,G21
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
