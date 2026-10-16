@@ -1,0 +1,7 @@
+{
+  "minTokens": 50,
+  "reporters": ["json", "silent"],
+  "output": "reports/jscpd",
+  "ignore": ["**/node_modules/**", "**/__pycache__/**", "src/tychora/resources/**"],
+  "gitignore": true
+}
