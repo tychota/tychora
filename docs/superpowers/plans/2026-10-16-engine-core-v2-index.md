@@ -46,7 +46,7 @@ Every task of every phase implicitly includes these.
 
 ## Prerequisites before phase 1
 
-1. Sub-project 0 (code health) is merged on `main`: `tools/health/`, `quality/baseline.json`, the import-linter contracts in `pyproject.toml`, gate G24 (reasonless integrity errors) and the code gold set baseline (G22, criterion S8).
+1. Sub-project 0 (code health) is merged on `main`: `tools/health/`, `quality/baseline.json`, the import-linter contracts in `pyproject.toml`, gate G24 (reasonless integrity errors) and the code gold set (G22, criterion S8). The code gold set has no `baseline.json` yet: a whole-repository code extraction (about 19k rows, 19.6 MB) exceeds the evaluation retained-binding budget (16,384 rows, 16 MiB), so its test is an expected failure. Phase 1 makes repository sources fit (per-file extractions or verifying only cited units, not a larger budget), turns the expected failure into a pass, commits the baseline and investigates `definition_recall` near 0 (informational run with a 4x budget: file_recall 0.87, file_mrr 0.71, definition_recall 0.04 lexical). A search over the full repository also still takes about 13 s because each search reloads and prepares the whole extraction; phase 1's benchmark gate covers it.
 2. The Docling neighbour-context fix (`retrieval/segments.py:392,640,659`, programme §2 "Immediate fix") is merged on `main` with its regression tests.
 3. `git log -1 --format=%H b91d808` resolves: the E6 retrieval baseline is measured at that commit (phase 1, task "Evaluation baseline").
 
