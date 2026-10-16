@@ -1,6 +1,7 @@
 """Pure preparation of exact representation ownership from canonical rows."""
 
 import codecs
+import weakref
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -499,7 +500,29 @@ def _validate_retained_code_records(
                 raise ValueError("Retained code context dependencies differ")
 
 
+_BUNDLE_INDEXES: dict[int, tuple[weakref.ref[Any], _RetainedIndex]] = {}
+
+
 def _bundle_index(bundle: RepresentationRows) -> _RetainedIndex:
+    """Validate and index one immutable row bundle once for the bundle object's lifetime.
+
+    Code excerpt projection runs once per citation; rebuilding the index there costs a
+    full revalidation of every unit in the extraction, which for a repository source
+    is the whole repository. Bundles are frozen, so the index of one object never
+    changes; it is keyed by object identity (not by value, which would hash the whole
+    bundle) and dropped when the bundle is collected.
+    """
+    key = id(bundle)
+    cached = _BUNDLE_INDEXES.get(key)
+    if cached is not None and cached[0]() is bundle:
+        return cached[1]
+    index = _build_bundle_index(bundle)
+    _BUNDLE_INDEXES[key] = (weakref.ref(bundle), index)
+    weakref.finalize(bundle, _BUNDLE_INDEXES.pop, key, None)
+    return index
+
+
+def _build_bundle_index(bundle: RepresentationRows) -> _RetainedIndex:
     units = {unit.unit_id: unit for unit in bundle.units}
     if (
         len(units) != len(bundle.units)
