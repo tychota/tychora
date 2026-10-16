@@ -4,3 +4,6 @@
 [tool.coverage.run]
 branch = false
 source = ["tychora"]
+
+[tool.coverage.report]
+fail_under = 85.1

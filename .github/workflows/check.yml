@@ -5,13 +5,24 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      baseline:
+        description: Measure quality/baseline.json on the reference runner and upload it
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 jobs:
-  quality:
-    runs-on: ubuntu-22.04
+  tests:
+    name: Tests (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, macos-15]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -20,17 +31,102 @@ jobs:
         with:
           version: "0.9.28"
           enable-cache: true
-      - name: Install locked checks and resolved stack
-        run: uv sync --locked --all-extras --group dev --group audit --group test-fixtures
+      - name: Install locked stack
+        run: uv sync --locked --all-extras --group dev --group test-fixtures
       - name: Provision pinned public test assets
         run: python packaging/provision_ci_assets.py --cache "$RUNNER_TEMP/tychora-public-models" --workspace "$RUNNER_TEMP/tychora-asset-setup" --github-env "$GITHUB_ENV"
-      - name: Lint
-        run: uv run --locked ruff check .
-      - name: Format
-        run: uv run --locked ruff format --check .
-      - name: Typecheck source and tests
-        run: uv run --locked ty check src tests
-      - name: Unit and local integration tests
-        run: uv run --locked pytest tests -q -m 'not live and not qualification and not release'
-      - name: Resolved dependency advisory audit
-        run: uv run --locked --group audit pip-audit --local
+      - name: Unit and local integration tests (parallel, random order, line coverage)
+        env:
+          COVERAGE_CORE: sysmon
+          TYCHORA_TEST_TIMEOUT_FACTOR: "3"
+        run: >-
+          uv run --locked pytest tests -q -n auto
+          -m 'not live and not qualification and not release and not slow and not quarantine'
+          --cov --cov-config=quality/coverage-line.toml --cov-report=json:reports/coverage.json
+          --junitxml=reports/junit.xml
+      - name: Keep reports for the health job
+        if: always() && matrix.runner == 'ubuntu-22.04'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: test-reports
+          path: reports/
+          retention-days: 7
+
+  clean-machine:
+    name: Clean machine and isolation
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.9.28"
+          enable-cache: true
+      - name: Install locked stack
+        run: uv sync --locked --all-extras --group dev --group test-fixtures
+      - name: Default suite without assets or variables
+        run: >-
+          env -i PATH="$PATH" HOME="$HOME" TYCHORA_TEST_TIMEOUT_FACTOR=2
+          uv run --locked pytest tests -q -n auto -rs
+          -m 'not live and not qualification and not release'
+          --junitxml=reports/clean-junit.xml
+      - name: Each listed test file alone
+        run: env -i PATH="$PATH" HOME="$HOME" uv run --locked python -m tools.health isolate
+      - name: Keep the clean-machine report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: clean-reports
+          path: reports/clean-junit.xml
+          retention-days: 7
+
+  health:
+    name: Code-health gates
+    needs: [tests, clean-machine]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: dashboard/.nvmrc
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.9.28"
+          enable-cache: true
+      - name: Install locked checks and resolved stack
+        run: uv sync --locked --all-extras --group dev --group audit --group test-fixtures
+      - name: Install dashboard tools without lifecycle scripts
+        working-directory: dashboard
+        run: npm ci --ignore-scripts
+      - name: Dashboard unit coverage
+        working-directory: dashboard
+        run: npm run coverage
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: test-reports
+          path: reports
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: clean-reports
+          path: reports
+      - name: Checker self-tests
+        run: uv run --locked pytest tools/health/tests -q
+      - name: Measure the initial baseline (manual dispatch only)
+        if: github.event_name == 'workflow_dispatch' && inputs.baseline
+        run: uv run --locked python -m tools.health update --initial
+      - name: Upload the measured baseline
+        if: github.event_name == 'workflow_dispatch' && inputs.baseline
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: quality-baseline
+          path: quality/
+          retention-days: 7
+      - name: Code-health gates
+        run: uv run --locked python -m tools.health check
