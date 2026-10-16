@@ -8,13 +8,10 @@ from uuid import UUID
 import pytest
 from pydantic import ValidationError
 
-from tests.qualification import test_docling_records as qualification
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import Geometry, ImageLocator
 from tychora.ports.execution import ExecutionContext
-
-document_record_case = qualification.document_record_case
 
 
 def _region(task: str = "ocr", *, with_context: bool = True):
@@ -1632,6 +1629,7 @@ def test_registered_image_keeps_pixel_owner_docling_json_and_sql(
         ) == (original,)
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_first_pdf_context_is_authorized_from_raw_selector_and_replays(
     document_record_case,
@@ -2071,6 +2069,7 @@ def test_first_pdf_context_is_authorized_from_raw_selector_and_replays(
     )
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_selected_scanned_pdf_page_adds_ocr_proxy_without_promoting_native_text(
     document_record_case,

@@ -10,16 +10,13 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.assets import asset_path
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def _bundle(tmp_path: Path) -> Path:
-    supplied = os.environ.get("TYCHORA_TEST_TOKENIZER_ASSETS")
-    if not supplied:
-        pytest.fail(
-            "Set TYCHORA_TEST_TOKENIZER_ASSETS to the provisioned tokenizer fixture directory"
-        )
-    source = Path(supplied) / "cl100k_base.tiktoken"
+    source = asset_path("TYCHORA_TEST_TOKENIZER_ASSETS") / "cl100k_base.tiktoken"
     if not source.is_file():
         pytest.fail(
             f"TYCHORA_TEST_TOKENIZER_ASSETS has no cl100k_base.tiktoken: {source}"
@@ -38,6 +35,7 @@ def _environment(tmp_path: Path) -> dict[str, str]:
     return env
 
 
+@pytest.mark.assets("TYCHORA_TEST_TOKENIZER_ASSETS")
 def test_literal_readme_offline_recipe(tmp_path: Path) -> None:
     readme = (ROOT / "README.md").read_text()
     match = re.search(
@@ -60,6 +58,7 @@ def test_literal_readme_offline_recipe(tmp_path: Path) -> None:
     assert (tmp_path / "knowledge" / "workspace.toml").is_file()
 
 
+@pytest.mark.assets("TYCHORA_TEST_TOKENIZER_ASSETS")
 def test_public_python_quickstart(tmp_path: Path) -> None:
     env = _environment(tmp_path)
     workspace = tmp_path / "python-knowledge"
@@ -76,6 +75,7 @@ def test_public_python_quickstart(tmp_path: Path) -> None:
     assert "Record verification outcomes." in result.stdout
 
 
+@pytest.mark.assets("TYCHORA_TEST_TOKENIZER_ASSETS")
 def test_public_async_python_quickstart(tmp_path: Path) -> None:
     env = _environment(tmp_path)
     workspace = tmp_path / "async-knowledge"
@@ -97,6 +97,7 @@ def test_public_async_python_quickstart(tmp_path: Path) -> None:
     assert "Record verification outcomes." in result.stdout
 
 
+@pytest.mark.assets("TYCHORA_TEST_TOKENIZER_ASSETS")
 def test_generic_external_pack_installs_and_survives_reopen(tmp_path: Path) -> None:
     pack = tmp_path / "knowledge" / "profiles" / "workbench"
     shutil.copytree(ROOT / "examples" / "profiles" / "workbench", pack)
@@ -162,18 +163,16 @@ def test_public_relative_markdown_links_resolve() -> None:
             assert (page.parent / relative).exists(), f"{page}: broken link {target}"
 
 
-@pytest.mark.parametrize("asset_root", [None, "missing"])
+@pytest.mark.assets("TYCHORA_TEST_TOKENIZER_ASSETS")
 def test_required_tokenizer_fixture_fails_clearly(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, asset_root: str | None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    if asset_root is None:
-        monkeypatch.delenv("TYCHORA_TEST_TOKENIZER_ASSETS", raising=False)
-    else:
-        monkeypatch.setenv("TYCHORA_TEST_TOKENIZER_ASSETS", str(tmp_path / asset_root))
+    monkeypatch.setenv("TYCHORA_TEST_TOKENIZER_ASSETS", str(tmp_path / "missing"))
     with pytest.raises(pytest.fail.Exception, match="TYCHORA_TEST_TOKENIZER_ASSETS"):
         _bundle(tmp_path)
 
 
+@pytest.mark.assets("TYCHORA_TEST_TOKENIZER_ASSETS")
 def test_literal_external_pack_offline_recipe(tmp_path: Path) -> None:
     pack = tmp_path / "examples" / "profiles" / "workbench"
     pack.parent.mkdir(parents=True)
@@ -195,6 +194,7 @@ def test_literal_external_pack_offline_recipe(tmp_path: Path) -> None:
     assert (tmp_path / "knowledge" / "workspace.toml").is_file()
 
 
+@pytest.mark.assets("TYCHORA_TEST_TOKENIZER_ASSETS")
 def test_framework_adapter_keeps_complete_multiple_citations(tmp_path: Path) -> None:
     from types import SimpleNamespace
 
@@ -252,6 +252,7 @@ def test_framework_adapter_keeps_complete_multiple_citations(tmp_path: Path) -> 
     )
 
 
+@pytest.mark.assets("TYCHORA_TEST_TOKENIZER_ASSETS")
 @pytest.mark.parametrize("mode", ["sync", "async"])
 def test_optimized_quickstart_reports_failed_setup(tmp_path: Path, mode: str) -> None:
     script = """
@@ -294,6 +295,7 @@ else:
     assert "Output tokenizer setup did not succeed" in result.stderr
 
 
+@pytest.mark.assets("TYCHORA_TEST_TOKENIZER_ASSETS")
 def test_shipped_pack_project_global_history_and_hierarchy(tmp_path: Path) -> None:
     from tychora import OutputProfile, Tychora, format_result
 

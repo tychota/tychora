@@ -4,7 +4,6 @@ import asyncio
 import base64
 import hashlib
 import json
-import os
 from collections.abc import Callable
 from io import BytesIO
 from types import SimpleNamespace
@@ -16,6 +15,7 @@ from mcp.types import CallToolResult
 from PIL import Image, ImageDraw, ImageFont
 from typer.testing import CliRunner
 
+from tests.helpers.assets import asset_path
 from tychora import Tychora
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.identity import source_id as canonical_source_id
@@ -34,13 +34,14 @@ class Counter:
         return len(text)
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 def test_configured_public_add_uses_only_selected_crop_after_grant(
     tmp_path, monkeypatch
 ):
     from tychora.adapters.vision import anthropic
     from tychora.contracts.errors import TychoraError
 
-    cache = os.environ["TYCHORA_TEST_MODEL_CACHE"]
+    cache = str(asset_path("TYCHORA_TEST_MODEL_CACHE"))
     monkeypatch.setenv("TYCHORA_MODEL_CACHE", cache)
     monkeypatch.setenv("SYNTHETIC_VISION_KEY", "synthetic-key")
     picture = tmp_path / "diagram.png"
@@ -423,12 +424,13 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
         assert len(sent) == failed_calls + 2
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 def test_offline_cli_selected_ocr_uses_local_models_without_remote_call(
     tmp_path, monkeypatch
 ):
     from tychora.adapters.vision import anthropic
 
-    cache = os.environ["TYCHORA_TEST_MODEL_CACHE"]
+    cache = str(asset_path("TYCHORA_TEST_MODEL_CACHE"))
     monkeypatch.setenv("TYCHORA_MODEL_CACHE", cache)
     monkeypatch.setattr(
         anthropic,
@@ -541,6 +543,7 @@ def test_offline_cli_selected_ocr_uses_local_models_without_remote_call(
         assert derivation.value["uncertainties"]
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_target(
     tmp_path, monkeypatch
 ):
@@ -550,7 +553,9 @@ def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_targ
     from reportlab.lib.utils import ImageReader
     from reportlab.pdfgen import canvas
 
-    monkeypatch.setenv("TYCHORA_MODEL_CACHE", os.environ["TYCHORA_TEST_MODEL_CACHE"])
+    monkeypatch.setenv(
+        "TYCHORA_MODEL_CACHE", str(asset_path("TYCHORA_TEST_MODEL_CACHE"))
+    )
     monkeypatch.setenv("SYNTHETIC_VISION_KEY", "synthetic-key")
     pdf = tmp_path / "mixed.pdf"
     page = canvas.Canvas(str(pdf), pagesize=(612, 792), invariant=1)
@@ -845,6 +850,7 @@ def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_targ
         assert count == 1
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 def test_first_selected_add_retains_original_and_reports_incomplete_vision(
     tmp_path, monkeypatch
 ):
@@ -852,7 +858,9 @@ def test_first_selected_add_retains_original_and_reports_incomplete_vision(
     from tychora.contracts.artifacts import ArtifactRef
     from tychora.contracts.composition import VisionCapabilityDiagnostics
 
-    monkeypatch.setenv("TYCHORA_MODEL_CACHE", os.environ["TYCHORA_TEST_MODEL_CACHE"])
+    monkeypatch.setenv(
+        "TYCHORA_MODEL_CACHE", str(asset_path("TYCHORA_TEST_MODEL_CACHE"))
+    )
     monkeypatch.setenv("SYNTHETIC_VISION_KEY", "synthetic-key")
     image_path = tmp_path / "first.png"
     Image.new("RGB", (8, 6), "blue").save(image_path)

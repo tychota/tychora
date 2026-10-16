@@ -5,14 +5,13 @@ from hashlib import sha256
 
 import pytest
 
-from tests.qualification import test_docling_records as qualification
 from tychora.adapters.docling.mapping import map_document
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.extraction import ExtractionArtifact, extraction_document
 from tychora.contracts.identity import canonical_bytes
 from tychora.ingestion.normalize import normalize
 
-document_record_case = qualification.document_record_case
+pytestmark = pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 
 
 @pytest.fixture(scope="module")

@@ -1,10 +1,8 @@
 """Final evidence fitting counts every delivered representation."""
 
-import os
-from pathlib import Path
-
 import pytest
 
+from tests.helpers.assets import asset_path
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import (
@@ -21,9 +19,11 @@ from tychora.formatting.render import OutputProfile
 from tychora.retrieval.response import ResponseAssembler, ResponseContext
 from tychora.retrieval.segments import OutputTokenCounter, Selection
 
+pytestmark = pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
+
 
 def counter():
-    return OutputTokenCounter(Path(os.environ["TYCHORA_TEST_MODEL_CACHE"]))
+    return OutputTokenCounter(asset_path("TYCHORA_TEST_MODEL_CACHE"))
 
 
 def segment(text="quoted source"):

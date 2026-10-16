@@ -1,13 +1,13 @@
 """Async public client stays responsive while local ingestion runs."""
 
 import asyncio
-import os
 from contextlib import contextmanager
 from threading import Event
 
 import pytest
 from PIL import Image
 
+from tests.helpers.assets import asset_path
 from tychora import AsyncTychora
 from tychora.adapters.docling.parser import DoclingParser
 from tychora.configuration.resolve import resolve_config
@@ -138,11 +138,14 @@ async def test_cancelled_async_search_drains_before_returning(tmp_path):
             await search
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 @pytest.mark.asyncio
 async def test_two_public_queries_complete_while_parser_job_is_held(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("TYCHORA_MODEL_CACHE", os.environ["TYCHORA_TEST_MODEL_CACHE"])
+    monkeypatch.setenv(
+        "TYCHORA_MODEL_CACHE", str(asset_path("TYCHORA_TEST_MODEL_CACHE"))
+    )
     pdf = tmp_path / "manual.pdf"
     pdf.write_bytes(_simple_pdf())
     picture = tmp_path / "held.png"
