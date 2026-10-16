@@ -94,13 +94,12 @@ def refresh_clone_allowlists(root: Path, *, missing_only: bool = False) -> None:
 
 
 def update(root: Path, gates: list[Gate], *, initial: bool) -> int:
-    """Record improvements; refuse regressions, unfixed hard gates and new over-limit keys."""
+    """Record improvements; refuse regressions, unfixed hard gates and new over-limit keys.
+
+    With initial, only metrics that have no baseline entry yet are added and every
+    existing entry is left untouched.
+    """
     duplication = any(gate.id == "G9-G11" for gate in gates)
-    if initial and (root / BASELINE).exists():
-        print(
-            f"update refused: {BASELINE} already exists; run update without --initial"
-        )
-        return 1
     if initial and duplication:
         refresh_clone_allowlists(root, missing_only=True)
     measured = measure(root, gates)
@@ -113,6 +112,8 @@ def update(root: Path, gates: list[Gate], *, initial: bool) -> int:
     new = dict(baseline)
     try:
         for _, metric in measured:
+            if initial and metric.name in baseline:
+                continue
             if metric.kind == "ratchet":
                 new[metric.name] = updated_entry(
                     metric, baseline.get(metric.name), head, initial=initial
