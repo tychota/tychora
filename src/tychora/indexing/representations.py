@@ -43,6 +43,9 @@ class _RetainedIndex:
     asset_owners: Mapping[str, frozenset[str]]
     code_maps: Mapping[str, "_LocalCodeMap"]
     document_parts: Mapping[str, tuple[DocumentSourcePart, ...]]
+    source_locators: Mapping[
+        tuple[str, str, str], tuple[tuple[EvidenceUnit, TextLocator | CodeLocator], ...]
+    ]
 
 
 @dataclass(frozen=True)
@@ -631,7 +634,35 @@ def _build_bundle_index(bundle: RepresentationRows) -> _RetainedIndex:
         },
         code_maps=code_maps,
         document_parts=documents,
+        source_locators=_source_locators(units),
     )
+
+
+def _source_domain(locator: object) -> tuple[str, str, str] | None:
+    """The source slice a text or code locator addresses; only equal domains overlap."""
+    if isinstance(locator, TextLocator):
+        return "text", locator.artifact_ref, locator.native_ref
+    if isinstance(locator, CodeLocator):
+        return "code", locator.artifact_ref, locator.relative_path
+    return None
+
+
+def _source_locators(
+    units: Mapping[str, EvidenceUnit],
+) -> dict[
+    tuple[str, str, str], tuple[tuple[EvidenceUnit, TextLocator | CodeLocator], ...]
+]:
+    """Group source locators by domain in unit order, so ownership scans one file."""
+    grouped: dict[
+        tuple[str, str, str], list[tuple[EvidenceUnit, TextLocator | CodeLocator]]
+    ] = defaultdict(list)
+    for owner in units.values():
+        for candidate in owner.locators:
+            domain = _source_domain(candidate)
+            if domain is not None:
+                assert isinstance(candidate, (TextLocator, CodeLocator))
+                grouped[domain].append((owner, candidate))
+    return {domain: tuple(items) for domain, items in grouped.items()}
 
 
 def project_code_excerpt_locator(
@@ -694,63 +725,50 @@ def _locator_intervals(
     if len(locators) != 1:
         raise ValueError("Text/code representation requires one source locator")
     locator = locators[0]
+    domain = _source_domain(locator)
+    assert domain is not None
     result: list[tuple[int, int, str]] = []
-    for owner in index.units.values():
-        for candidate in owner.locators:
-            same_domain = (
-                isinstance(locator, TextLocator)
-                and isinstance(candidate, TextLocator)
-                and candidate.artifact_ref == locator.artifact_ref
-                and candidate.native_ref == locator.native_ref
-                or isinstance(locator, CodeLocator)
+    for owner, candidate in index.source_locators.get(domain, ()):
+        left = max(locator.char_start, candidate.char_start)
+        right = min(locator.char_end, candidate.char_end)
+        if left < right:
+            target_text = target.text[
+                left - locator.char_start : right - locator.char_start
+            ]
+            owner_text = owner.text[
+                left - candidate.char_start : right - candidate.char_start
+            ]
+            if target_text != owner_text:
+                raise ValueError("Retained source slices differ across owners")
+            if (
+                isinstance(locator, CodeLocator)
                 and isinstance(candidate, CodeLocator)
-                and candidate.artifact_ref == locator.artifact_ref
-                and candidate.relative_path == locator.relative_path
-            )
-            if not same_domain:
-                continue
-            left = max(locator.char_start, candidate.char_start)
-            right = min(locator.char_end, candidate.char_end)
-            if left < right:
-                target_text = target.text[
-                    left - locator.char_start : right - locator.char_start
-                ]
-                owner_text = owner.text[
-                    left - candidate.char_start : right - candidate.char_start
-                ]
-                if target_text != owner_text:
-                    raise ValueError("Retained source slices differ across owners")
+                and target.unit_id in index.code_maps
+            ):
+                target_map = index.code_maps[target.unit_id]
+                owner_map = index.code_maps[owner.unit_id]
+                target_start = left - locator.char_start
+                target_end = right - locator.char_start
+                owner_start = left - candidate.char_start
+                owner_end = right - candidate.char_start
                 if (
-                    isinstance(locator, CodeLocator)
-                    and isinstance(candidate, CodeLocator)
-                    and target.unit_id in index.code_maps
+                    locator.byte_start + target_map.byte_offsets[target_start]
+                    != candidate.byte_start + owner_map.byte_offsets[owner_start]
+                    or locator.byte_start + target_map.byte_offsets[target_end]
+                    != candidate.byte_start + owner_map.byte_offsets[owner_end]
+                    or locator.line_start + target_map.line_offsets[target_start]
+                    != candidate.line_start + owner_map.line_offsets[owner_start]
+                    or locator.line_start + target_map.line_offsets[target_end - 1]
+                    != candidate.line_start + owner_map.line_offsets[owner_end - 1]
                 ):
-                    target_map = index.code_maps[target.unit_id]
-                    owner_map = index.code_maps[owner.unit_id]
-                    target_start = left - locator.char_start
-                    target_end = right - locator.char_start
-                    owner_start = left - candidate.char_start
-                    owner_end = right - candidate.char_start
-                    if (
-                        locator.byte_start + target_map.byte_offsets[target_start]
-                        != candidate.byte_start + owner_map.byte_offsets[owner_start]
-                        or locator.byte_start + target_map.byte_offsets[target_end]
-                        != candidate.byte_start + owner_map.byte_offsets[owner_end]
-                        or locator.line_start + target_map.line_offsets[target_start]
-                        != candidate.line_start + owner_map.line_offsets[owner_start]
-                        or locator.line_start + target_map.line_offsets[target_end - 1]
-                        != candidate.line_start + owner_map.line_offsets[owner_end - 1]
-                    ):
-                        raise ValueError(
-                            "Retained code overlap coordinate mapping differs"
-                        )
-                result.append(
-                    (
-                        left - locator.char_start,
-                        right - locator.char_start,
-                        owner.unit_id,
-                    )
+                    raise ValueError("Retained code overlap coordinate mapping differs")
+            result.append(
+                (
+                    left - locator.char_start,
+                    right - locator.char_start,
+                    owner.unit_id,
                 )
+            )
     return result
 
 
