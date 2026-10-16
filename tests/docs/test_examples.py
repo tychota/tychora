@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from tests.helpers.assets import asset_path
+from tests.helpers.timing import scaled
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -347,7 +348,7 @@ def test_shipped_pack_project_global_history_and_hierarchy(tmp_path: Path) -> No
                     "metadata": metadata,
                 }
             )
-            status = kb.jobs.wait(job.id, timeout=10)
+            status = kb.jobs.wait(job.id, timeout=scaled(10))
             assert status.state == "succeeded", (key, status.error_code)
 
         base_metadata = {

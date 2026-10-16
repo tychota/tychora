@@ -6,6 +6,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from tests.evaluation.conftest import SyntheticCounter
+from tests.helpers.timing import scaled
 from tychora import Tychora
 from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.operations import MaintenanceRequest
@@ -32,7 +33,7 @@ def _source(text, *, source_key="dated.txt", **metadata):
 
 def _add(kb, value):
     job = kb.sources.add(value)
-    status = kb.jobs.wait(job.id, timeout=10)
+    status = kb.jobs.wait(job.id, timeout=scaled(10))
     assert status.state == "succeeded", (status.error_code, status.message)
 
 
@@ -398,7 +399,7 @@ async def test_http_source_metadata_reaches_revision_fields(tmp_path):
             )
             assert accepted.status_code == 202, accepted.text
             completed = await kb._workspace.services.jobs.wait(
-                accepted.json()["id"], ExecutionContext(), timeout=10
+                accepted.json()["id"], ExecutionContext(), timeout=scaled(10)
             )
             assert completed.state == "succeeded"
         rows = await owner.run_blocking(
@@ -437,7 +438,7 @@ def test_legacy_revision_projection_conflict_does_not_rewrite_history(tmp_path):
             )
         )
         job = kb.sources.add(source)
-        status = kb.jobs.wait(job.id, timeout=10)
+        status = kb.jobs.wait(job.id, timeout=scaled(10))
         assert status.state == "failed"
         assert status.error_code == "IDEMPOTENCY_CONFLICT"
         retained = kb._workspace.bridge.call(
@@ -462,7 +463,7 @@ def test_invalid_half_open_interval_is_rejected_before_publication(tmp_path):
                 effective_end="2025-01-01",
             )
         )
-        status = kb.jobs.wait(job.id, timeout=10)
+        status = kb.jobs.wait(job.id, timeout=scaled(10))
         assert status.state == "failed"
         assert status.error_code == "INVALID_REQUEST"
         owner = kb._workspace.owner

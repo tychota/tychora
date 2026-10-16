@@ -3,6 +3,7 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from tests.helpers.timing import scaled
 from tests.transports.test_http import Counter
 from tychora import Tychora
 from tychora.interfaces.http.app import create_app
@@ -159,7 +160,9 @@ async def test_captured_bundle_cannot_overwrite_current_collection(
                 await owner.run_blocking(consent_change, ExecutionContext())
         finally:
             release.set()
-        result = await services.jobs.wait(job.id, ExecutionContext(), timeout=10)
+        result = await services.jobs.wait(
+            job.id, ExecutionContext(), timeout=scaled(10)
+        )
         current = await services.collections.get(
             collection.collection_id, kb.scope, ExecutionContext()
         )
@@ -296,7 +299,9 @@ async def test_reuse_target_archived_after_prepared_plan_is_denied(
             )
         finally:
             release.set()
-        result = await services.jobs.wait(second.id, ExecutionContext(), timeout=10)
+        result = await services.jobs.wait(
+            second.id, ExecutionContext(), timeout=scaled(10)
+        )
         assert result.state == "failed" and result.error_code == "FORBIDDEN_SCOPE"
         assert (
             await kb._workspace.owner.run_blocking(

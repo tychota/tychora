@@ -41,6 +41,7 @@ async def test_http_gold_registration_requires_manage_and_payload_bytes(
 
 
 @pytest.mark.asyncio
+@pytest.mark.slow
 async def test_http_evaluation_list_and_detail_serialize_real_runs_and_deny_reader(
     executable_integrity_corpus,
 ):

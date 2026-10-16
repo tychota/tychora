@@ -38,8 +38,8 @@ def test_scenario_catalog_is_explicitly_unqualified_and_not_gold():
     assert not (fixture_dir / "cases.jsonl").exists()
 
 
-def test_load_versioned_immutable_dataset(executable_integrity_corpus):
-    _, gold, _ = executable_integrity_corpus
+def test_load_versioned_immutable_dataset(shared_integrity_corpus):
+    _, gold, _ = shared_integrity_corpus
     dataset = load_dataset(gold)
     assert dataset.dataset_id == "synthetic-executable-v1"
     assert {case.split for case in dataset.cases} == {"test"}
@@ -48,8 +48,8 @@ def test_load_versioned_immutable_dataset(executable_integrity_corpus):
         dataset.cases[0].__setattr__("family_key", "other")
 
 
-def test_tampered_cases_fail_version_check(tmp_path, executable_integrity_corpus):
-    _, gold, _ = executable_integrity_corpus
+def test_tampered_cases_fail_version_check(tmp_path, shared_integrity_corpus):
+    _, gold, _ = shared_integrity_corpus
     (tmp_path / "manifest.json").write_bytes((gold / "manifest.json").read_bytes())
     (tmp_path / "cases.jsonl").write_bytes(
         (gold / "cases.jsonl").read_bytes() + b"{}\n"
@@ -58,8 +58,8 @@ def test_tampered_cases_fail_version_check(tmp_path, executable_integrity_corpus
         load_dataset(tmp_path)
 
 
-def test_bytes_registration_uses_same_digest_validation(executable_integrity_corpus):
-    _, gold, _ = executable_integrity_corpus
+def test_bytes_registration_uses_same_digest_validation(shared_integrity_corpus):
+    _, gold, _ = shared_integrity_corpus
     dataset = load_dataset_bytes(
         (gold / "manifest.json").read_bytes(),
         (gold / "cases.jsonl").read_bytes(),
