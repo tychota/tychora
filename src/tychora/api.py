@@ -74,16 +74,20 @@ class _LazyOutputCounter:
         self._loaded: OutputTokenCounter | None = None
 
     def count(self, text: str) -> int:
+        """Count output tokens of text, loading the verified tokenizer on first use."""
         self.ensure_available()
         assert self._loaded is not None
         return self._loaded.count(text)
 
     def ensure_available(self) -> None:
+        """Load the verified cl100k_base tokenizer from the model cache if it is not loaded yet."""
         if self._loaded is None:
             self._loaded = OutputTokenCounter(self.path)
 
 
 class LocalWorkspace:
+    """An open local workspace: its owner, services, request scope and provider bindings."""
+
     def __init__(
         self,
         path: str | Path,
@@ -243,6 +247,7 @@ class LocalWorkspace:
 
     @property
     def default_collection_id(self) -> UUID:
+        """Identifier of the default collection; raises FORBIDDEN_SCOPE when outside the grant."""
         self.require_open()
         if str(DEFAULT_COLLECTION_ID) not in self.scope.collection_ids:
             raise TychoraError(
@@ -251,10 +256,12 @@ class LocalWorkspace:
         return DEFAULT_COLLECTION_ID
 
     def require_open(self) -> None:
+        """Raise RuntimeError if the client has been closed."""
         if self.closed:
             raise RuntimeError("Tychora client is closed")
 
     def close(self) -> None:
+        """Stop source jobs, release provider runtimes and close the workspace; safe to repeat."""
         if not self.closed:
             self.closed = True
             try:
@@ -270,6 +277,7 @@ class LocalWorkspace:
                         self._stack.close()
 
     def parse_source(self, source: SourceInput | Mapping) -> SourceInput:
+        """Return a SourceInput, resolving the collection alias "default" to its identifier."""
         if isinstance(source, SourceInput):
             return source
         normalized = dict(source)

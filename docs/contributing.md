@@ -34,6 +34,17 @@ The script accepts `--bundle PATH` for an already provisioned local bundle. Live
 
 Use focused regression tests while editing. Before proposing a runtime change, run the relevant integration and contract suites and report the precise scope, model assets, skipped cases and failures. Installed-wheel and native-executable qualification have their own instructions in [distribution](distribution.md).
 
+## Comments and docstrings
+
+Comments and docstrings say what the code does and why, in present tense, for a reader who has not seen any plan or review. They state intent, units, invariants or reasons that the code cannot show. They never cite plan tasks, plan file names or review identifiers; `python -m tools.health check` fails on a reference such as "Task 7".
+
+Two rewrites from this code base:
+
+- `publication_manifest` said "Exact Task 7 typed retention header for a complete snapshot plan." It now says "Canonical bytes of the snapshot manifest, the typed retention header of a complete plan."
+- A reranking check said "Bind every rendered span and dependency to Task19's canonical ownership." It now says "Check that every rendered span and dependency belongs to the canonical owner of its extraction."
+
+Every public class, function and method of `tychora.api` and `tychora.clients` has a docstring, because [the API reference](api.md) documents that surface and editors show it.
+
 ## Documentation and publication
 
 Run the [strict documentation build](documentation.md). Verify command examples and mark proposed capabilities as proposals. Use the [review assessment](review-assessment.md) for known implementation gaps; an existing test passing does not prove a specification requirement is implemented correctly.
