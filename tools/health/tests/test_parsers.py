@@ -2,6 +2,7 @@
 
 import datetime as dt
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -272,3 +273,50 @@ def test_register_entry_with_a_missing_field_is_rejected():
                 'reason = "Not reachable from the embedded PersistentClient."\n', ""
             )
         )
+
+
+@pytest.mark.parametrize("junit", ["<testsuites/>", '<testsuite time="1"/>'])
+def test_empty_junit_report_is_an_error_not_a_clean_run(junit):
+    with pytest.raises(ValueError, match="no test"):
+        testruns.outcomes(junit)
+
+
+def test_junit_without_testsuite_has_no_runtime():
+    with pytest.raises(ValueError, match="no testsuite"):
+        testruns.suite_seconds("<testsuites/>")
+
+
+def test_gold_report_without_lexical_recall_is_an_error(tmp_path):
+    report = tmp_path / "reports" / "code-gold.json"
+    report.parent.mkdir()
+    report.write_text(json.dumps({"variants": {"dense": {"file_mrr": 0.4}}}))
+    with pytest.raises(KeyError, match="file_recall"):
+        testruns.gold_set(tmp_path)
+
+
+def test_zero_coverage_totals_are_an_error_not_full_coverage():
+    report = coverage_report(0)
+    report["totals"]["num_statements"] = 0
+    with pytest.raises(ValueError, match="coverage totals"):
+        testruns.coverage_metrics(report, branch=False)
+    report = coverage_report(852)
+    next(iter(report["files"].values()))["summary"]["num_statements"] = 0
+    with pytest.raises(ValueError, match="zero total"):
+        testruns.coverage_metrics(report, branch=False)
+
+
+def test_waiver_is_valid_through_its_expiry_day():
+    waivers = advisories.load_register(REGISTER)
+    reported = {"PYSEC-2026-311": "chromadb"}
+    assert advisories.advisory_findings(reported, waivers, dt.date(2026, 11, 15)) == {}
+    assert advisories.advisory_findings(reported, waivers, dt.date(2026, 11, 16)) == {
+        "chromadb:PYSEC-2026-311: waiver expired 2026-11-15": 1
+    }
+
+
+def test_tool_without_json_output_fails_with_its_message():
+    result = subprocess.CompletedProcess(
+        ["knip"], 2, stdout="", stderr="boom: no config"
+    )
+    with pytest.raises(RuntimeError, match="knip failed:.*boom: no config"):
+        external.json_output(result, "knip")
