@@ -798,3 +798,55 @@ def test_mode_requirement_accepts_bounded_explicit_context(builtin_config):
         ][0]
         == requirement
     )
+
+
+def _counting_check_schema(monkeypatch):
+    from tychora.configuration import schemas as module
+
+    module._checked_schemas.clear()
+    calls: list[str] = []
+    original = module.Draft202012Validator.check_schema
+
+    def counting(schema, *args, **kwargs):
+        calls.append(schema["$id"])
+        return original(schema, *args, **kwargs)
+
+    monkeypatch.setattr(module.Draft202012Validator, "check_schema", counting)
+    return module, calls
+
+
+def test_schema_metaschema_check_runs_once_per_schema_content(monkeypatch):
+    _, calls = _counting_check_schema(monkeypatch)
+    schema = {"$id": "cached@1", "type": "integer", "minimum": 1}
+    first = LocalSchemas({"cached@1": schema}, {"cached@1": {}})
+    second = LocalSchemas({"cached@1": dict(schema)}, {"cached@1": {}})
+    assert calls == ["cached@1"]
+    assert second.validate("cached@1", 2) == first.validate("cached@1", 2) == 2
+    changed = {"$id": "cached@1", "type": "integer", "minimum": 2}
+    LocalSchemas({"cached@1": changed}, {"cached@1": {}})
+    assert calls == ["cached@1", "cached@1"]
+
+
+def test_schema_rejected_by_the_metaschema_is_rejected_every_time(monkeypatch):
+    module, calls = _counting_check_schema(monkeypatch)
+    invalid = {"$id": "invalid@1", "type": "not-a-json-type"}
+    for _ in range(2):
+        with pytest.raises(TychoraError) as err:
+            LocalSchemas({"invalid@1": invalid}, {"invalid@1": {}})
+        assert err.value.code == "INVALID_REQUEST"
+    assert calls == ["invalid@1", "invalid@1"]
+    assert not module._checked_schemas
+
+
+def test_schema_check_cache_is_bounded(monkeypatch):
+    module, calls = _counting_check_schema(monkeypatch)
+    monkeypatch.setattr(module, "_SCHEMA_CHECK_CACHE_SIZE", 2)
+    for minimum in (1, 2, 3):
+        schema = {"$id": "bounded@1", "type": "integer", "minimum": minimum}
+        LocalSchemas({"bounded@1": schema}, {"bounded@1": {}})
+    assert len(module._checked_schemas) == 2
+    LocalSchemas(
+        {"bounded@1": {"$id": "bounded@1", "type": "integer", "minimum": 1}},
+        {"bounded@1": {}},
+    )
+    assert len(calls) == 4
