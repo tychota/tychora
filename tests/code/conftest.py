@@ -5,6 +5,7 @@ from uuid import UUID
 import pytest
 
 from tychora.adapters.files.cas import LocalArtifacts
+from tychora.configuration.registry import Registry
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts import SourceInput
 from tychora.ingestion.acquire import Acquirer
@@ -17,6 +18,13 @@ def git(repo: Path, *args: str) -> None:
         check=True,
         capture_output=True,
     )
+
+
+def code_registry(tmp_path: Path) -> Registry:
+    """The registry of the built-in code profile."""
+    settings = tmp_path / "settings.toml"
+    settings.write_text('schema_version=1\n[profiles.test]\nbuiltin="code@1"\n')
+    return Registry.from_config(resolve_config(settings, "test", {}))
 
 
 def make_repo(tmp_path: Path) -> Path:
