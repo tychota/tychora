@@ -13,7 +13,7 @@ uv run --locked python -m tools.health check --fast
 
 `check --fast` runs lint, format, types, the layering contracts and the plan-reference rule in a few seconds. `uv run --locked python -m tools.health check` runs every pull-request gate; it needs the reports of a full test run (`reports/`), so it normally runs in CI. When a metric improves, run `uv run --locked python -m tools.health update` and commit `quality/baseline.json` with the change. A hand edit that makes a baseline value worse needs a one-line justification in the pull request.
 
-The full stack contains large native and document dependencies. Tests involving parsers and token budgets require provisioned assets even when they are outside the `qualification` directory. Missing assets currently fail several tests; do not interpret those failures as retrieval regressions or silently suppress them.
+The full stack contains large native and document dependencies. Tests involving parsers and token budgets require provisioned assets even when they are outside the `qualification` directory. Tests that need provisioned assets declare them with `@pytest.mark.assets(...)` and are skipped with the variable names when those are unset; qualification and release tests fail instead.
 
 ## Test assets and tests
 

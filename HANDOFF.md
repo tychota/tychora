@@ -8,7 +8,7 @@ The bundled local dashboard implements named Collections, Documents/Add document
 
 Add documents now streams chosen PDFs as raw File bodies through private prepare/upload/analyse receipts, explicit confirmation of server-issued analysis/policy hashes and the existing durable source-job scheduler. Ordinary JSON remains 1 MiB; binary PDF intake is at most 100 MiB with lower configured limits. Model/setup navigation retains File/title/text/destination/kind and renews stale receipts under current authority, while cleanup keeps the exact original receipt owner. Queued/accepted and retained page-processing progress are not indexed success. OCR remains derived, noncitable and review-required with physical page locators and retained input/derivation identities; selected coverage and registered search modes expose gaps and exclusion honestly. Original inspection remains separately bounded at 16 MiB payload/24 MiB encoded response; large retained PDFs can exceed browser inspection without being removed.
 
-Qualified browser verification uses generated synthetic content, actual disposable HTTP, installed pinned local OCR/tokenizers and explicit opt-in. Synthetic transient/partial failures are identified as test seams; simulated remote-provider journeys do not establish connectivity or quality. Thin CI does not provision model assets and explicitly skips those qualified scenarios. Current PDF intake evidence is recorded in the task report; no claim follows about private full-document OCR accuracy/capacity or hosted CI. The controller owns private corpus, backup, runtime and preview work.
+Qualified browser verification uses generated synthetic content, actual disposable HTTP, installed pinned local OCR/tokenizers and explicit opt-in. Synthetic transient/partial failures are identified as test seams; simulated remote-provider journeys do not establish connectivity or quality. Thin CI does not provision model assets and explicitly skips those qualified scenarios. Current PDF intake evidence is recorded in its verification report; no claim follows about private full-document OCR accuracy/capacity or hosted CI. The controller owns private corpus, backup, runtime and preview work.
 
 Remaining engine boundaries include bounded relations/inventory, metadata-only history without replay, unavailable trace/history-cache purge enforcement, no PDF overlays, no global workspace discovery, evaluation label editing/aggregate analytics and automatic settings rebuild planning. Earlier upstream qualification/advisory blockers below remain open; collection lifecycle and local named collection administration are implemented.
 
@@ -63,7 +63,13 @@ These are dated observations, not results automatically inherited by later chang
 - The outgoing-history audit from `c914cb2` through `8c2f8cb` passed across 506 paths. Publication of this handoff requires a fresh outgoing check.
 - Logs and preview images were saved under the ignored local `.superpowers/docs-refresh-2026-10-13/` directory. They are not a public release artifact.
 
+On 2026-10-15, 2,385 tests were collected; the default selection is now green on a clean machine (code-health baseline).
+
 The full source run does not establish live embedding/reranking quality, gold-set adequacy, a Linux or minimum-macOS qualification result, or closure of the behavior defects below. Historical dependency advisories remain disclosed in the distribution guide; rerun the current advisory audit rather than treating that older result as a waiver. Hosted CI outcomes must be checked after pushing.
+
+### Local state (2026-10-15)
+
+Local worktrees live under `.worktrees/` of the main checkout, one per branch listed by `git worktree list`: `engine` (`feat/evidence-engine`, locked, retained), `dashboard` (`feat/dashboard`), `ci-fixes` (`fix/hosted-builds`), `docling-formula` (`fix/docling-formula-spans`), `launch-link` (`feat/dashboard-launch-link`), `neighbour-fix` (`fix/docling-neighbour-context`), `program-specs` (`docs/program-specs`) and `code-health` (`feat/code-health`). The ignored `.superpowers/` directory of the code-health worktree held 1.6 MB of local records. `git worktree prune --dry-run -v` reports one prunable entry: a former `feat/evidence-engine` worktree under the system temporary directory whose directory no longer exists. It has not been pruned; ask the product owner first, because worktrees are not deleted routinely.
 
 ## Review findings and needed fixes
 
