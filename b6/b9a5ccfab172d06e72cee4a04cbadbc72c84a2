@@ -1,0 +1,33 @@
+quality/jscpd/tests.json
+  s_ab847b2c6c265a::t_59cc93b838bfef 1-251
+.github/workflows/check.yml
+  s_ab847b2c6c265a::t_50db3746ae563e 8-12,18-56,58,67-102,105-132
+quality/baseline-provenance.md
+  s_ab847b2c6c265a::t_4548b257234e01 1-5
+quality/jscpd/typescript.json
+  s_ab847b2c6c265a::t_59cc93b838bfef 1-78
+.github/pull_request_template.md
+  s_ab847b2c6c265a::t_50db3746ae563e 1-7
+quality/jscpd/python.json
+  s_ab847b2c6c265a::t_ec4e5d8bf28479 1-76
+quality/baseline.json
+  s_ab847b2c6c265a::t_59cc93b838bfef 1-1081
+quality/coverage-line.toml
+  s_ab847b2c6c265a::t_4548b257234e01 7-9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b6b9a5ccfab172d06e72cee4a04cbadbc72c84a2",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
