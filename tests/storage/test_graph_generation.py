@@ -6,6 +6,7 @@ import pytest
 
 import tychora.adapters.sqlite.graph as sqlite_graph
 from tests.helpers.corpus import artifact, reader, registry, seed_bundle
+from tests.retrieval.graph_fixture import generation_spec
 from tychora.adapters.files.cas import LocalArtifacts
 from tychora.adapters.ladybug.generation import LadybugGraphStore
 from tychora.adapters.sqlite.connection import open_corpus
@@ -103,22 +104,7 @@ def _build(tmp_path, *, method="native", status="recorded", allow_model=False):
         io.BytesIO(encode_assertions((assertion,))), "application/x-ndjson"
     )
     units = (_unit("a"), _unit("b"))
-    spec = GraphGenerationSpec(
-        generation_id="generation",
-        family_id=digest("family"),
-        config_sha=digest("config"),
-        registry_digest=digest("registry"),
-        workspace_id="workspace",
-        decision_watermark=0,
-        memberships=(
-            GraphExtraction(
-                extraction_id="extraction",
-                revision_id="revision",
-                assertion_root=root,
-                unit_ids=("a", "b"),
-            ),
-        ),
-    )
+    spec = generation_spec(root, ("a", "b"))
     build = GraphBuildInput(
         spec=spec,
         units=tuple(
@@ -175,22 +161,7 @@ def test_registered_calls_relation_admits_recursive_self_link(tmp_path):
         io.BytesIO(encode_assertions((recursive,))), "application/x-ndjson"
     )
     unit = _unit("a")
-    spec = GraphGenerationSpec(
-        generation_id="generation",
-        family_id=digest("family"),
-        config_sha=digest("config"),
-        registry_digest=digest("registry"),
-        workspace_id="workspace",
-        decision_watermark=0,
-        memberships=(
-            GraphExtraction(
-                extraction_id="extraction",
-                revision_id="revision",
-                assertion_root=root,
-                unit_ids=("a",),
-            ),
-        ),
-    )
+    spec = generation_spec(root, ("a",))
     build = GraphBuildInput(
         spec=spec,
         units=(GraphUnitBinding(unit=unit, revision_id="revision"),),

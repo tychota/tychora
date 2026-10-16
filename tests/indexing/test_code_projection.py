@@ -5,10 +5,9 @@ import gc
 
 import pytest
 
+from tests.code.conftest import code_registry
 from tests.code.test_structure import _registration
 from tychora.adapters.code.normalize import normalize_code, retain_code_extraction
-from tychora.configuration.registry import Registry
-from tychora.configuration.resolve import resolve_config
 from tychora.contracts.evidence import CodeLocator
 from tychora.indexing import representations
 from tychora.indexing.representations import (
@@ -19,9 +18,7 @@ from tychora.indexing.representations import (
 
 @pytest.fixture
 def code_bundle(tmp_path):
-    settings = tmp_path / "settings.toml"
-    settings.write_text('schema_version=1\n[profiles.test]\nbuiltin="code@1"\n')
-    registry = Registry.from_config(resolve_config(settings, "test", {}))
+    registry = code_registry(tmp_path)
     artifacts, registration, parsed = _registration(tmp_path)
     retained = retain_code_extraction(registration, parsed, registry, artifacts)
     return normalize_code(retained, registry)
@@ -112,9 +109,7 @@ class _CountingUnits(dict):
 
 
 def test_source_ownership_scans_only_its_own_file(tmp_path, monkeypatch):
-    settings = tmp_path / "settings.toml"
-    settings.write_text('schema_version=1\n[profiles.test]\nbuiltin="code@1"\n')
-    registry = Registry.from_config(resolve_config(settings, "test", {}))
+    registry = code_registry(tmp_path)
     payloads = {
         f"module_{index}.py": "".join(
             f"def function_{index}_{item}():\n    return {item}\n\n"

@@ -5,14 +5,13 @@ from types import MappingProxyType
 
 import pytest
 
+from tests.code.conftest import code_registry
 from tests.code.test_structure import _registration
 from tests.formatting.test_record_attachment import RecordOnlyReader
 from tests.formatting.test_response_budget import segment
 from tests.helpers.eligibility import eligibility_view
 from tests.typed_json import json_object
 from tychora.adapters.code.normalize import normalize_code, retain_code_extraction
-from tychora.configuration.registry import Registry
-from tychora.configuration.resolve import resolve_config
 from tychora.contracts.base import FrozenJsonMap, thaw_json
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import digest
@@ -25,9 +24,7 @@ from tychora.retrieval.segments import Selection
 
 
 def test_code_symbol_alias_requires_exact_builtin_kind_schema_and_hash(tmp_path):
-    settings = tmp_path / "settings.toml"
-    settings.write_text('schema_version=1\n[profiles.test]\nbuiltin="code@1"\n')
-    registry = Registry.from_config(resolve_config(settings, "test", {}))
+    registry = code_registry(tmp_path)
     artifacts, registration, parsed = _registration(tmp_path)
     retained = retain_code_extraction(registration, parsed, registry, artifacts)
     bundle = normalize_code(retained, registry)

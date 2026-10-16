@@ -123,16 +123,9 @@ class GraphCase:
         )
 
 
-def sealed_graph(
-    tmp_path,
-    units: tuple[EvidenceUnit, ...],
-    assertions: tuple[RelationshipAssertion, ...],
-    policy: GraphTraversalPolicy | None = None,
-) -> GraphCase:
-    root = LocalArtifacts(tmp_path / "artifacts").put_stream(
-        io.BytesIO(encode_assertions(assertions)), "application/x-ndjson"
-    )
-    spec = GraphGenerationSpec(
+def generation_spec(root, unit_ids: tuple[str, ...]) -> GraphGenerationSpec:
+    """The single-extraction generation spec the graph tests build over one assertion root."""
+    return GraphGenerationSpec(
         generation_id="generation",
         family_id=digest("family"),
         config_sha=digest("config"),
@@ -144,10 +137,22 @@ def sealed_graph(
                 extraction_id="extraction",
                 revision_id="revision",
                 assertion_root=root,
-                unit_ids=tuple(u.unit_id for u in units),
+                unit_ids=unit_ids,
             ),
         ),
     )
+
+
+def sealed_graph(
+    tmp_path,
+    units: tuple[EvidenceUnit, ...],
+    assertions: tuple[RelationshipAssertion, ...],
+    policy: GraphTraversalPolicy | None = None,
+) -> GraphCase:
+    root = LocalArtifacts(tmp_path / "artifacts").put_stream(
+        io.BytesIO(encode_assertions(assertions)), "application/x-ndjson"
+    )
+    spec = generation_spec(root, tuple(u.unit_id for u in units))
     predicates = {a.predicate for a in assertions}
     build = GraphBuildInput(
         spec=spec,
