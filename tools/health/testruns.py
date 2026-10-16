@@ -23,6 +23,9 @@ CORE_MODULES = (
     "tychora/retrieval/fusion.py",
 )
 COVERAGE_TOLERANCE = 0.1
+# Vitest timing-sensitive component tests cover a few more or fewer branches under load:
+# statements ranged 81.54-81.67 and branches 76.86-76.99 over repeated runs of one commit.
+DASHBOARD_COVERAGE_TOLERANCE = 0.15
 RUNTIME_TOLERANCE = 0.15
 DETECTED = frozenset({"killed", "timeout"})
 NOT_RUN = frozenset({"not checked", "skipped"})
@@ -87,7 +90,7 @@ def dashboard_coverage(root: Path) -> list[Metric]:
             f"dashboard_coverage_{name}",
             total[name]["pct"],
             direction="higher",
-            tolerance=COVERAGE_TOLERANCE,
+            tolerance=DASHBOARD_COVERAGE_TOLERANCE,
         )
         for name in ("statements", "branches")
     ]

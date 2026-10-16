@@ -320,3 +320,15 @@ def test_tool_without_json_output_fails_with_its_message():
     )
     with pytest.raises(RuntimeError, match="knip failed:.*boom: no config"):
         external.json_output(result, "knip")
+
+
+def test_dashboard_coverage_tolerates_the_timing_spread_of_repeated_runs(tmp_path):
+    report = tmp_path / "dashboard" / "coverage" / "coverage-summary.json"
+    report.parent.mkdir(parents=True)
+    report.write_text(
+        '{"total": {"statements": {"pct": 81.67}, "branches": {"pct": 76.99}}}'
+    )
+    metrics = {m.name: m for m in testruns.dashboard_coverage(tmp_path)}
+    # Observed spread over one commit: statements 81.54-81.67, branches 76.86-76.99.
+    assert metrics["dashboard_coverage_statements"].tolerance >= 0.13
+    assert metrics["dashboard_coverage_branches"].tolerance >= 0.13
