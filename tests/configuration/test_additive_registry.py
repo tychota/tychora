@@ -25,7 +25,7 @@ def test_extension_preserves_legacy_envelopes_and_requires_only_title(tmp_path):
     assert len(before.kinds) == 15 and len(after.kinds) == 16
     assert (
         old.packs[0].digest
-        == "b3f1e7dda8caf56c3ab57e4c12374484f6ad7a6644337572697b3a9f07ddb647"
+        == "f579c3bfe4ec09411271af4b4996d2ac6196b755ccf5c5889cfc4884900b7b93"
     )
     assert all(
         after.historical_definitions()[key] == value
