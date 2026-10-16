@@ -77,4 +77,9 @@ extend-exclude = ["docs/superpowers"]
 asyncio_mode = "auto"
 addopts = "--import-mode=importlib"
 pythonpath = ["."]
-markers = ["qualification: real local adapters", "live: explicitly authorized remote synthetic inputs", "release: installed artifact"]
+markers = [
+  "qualification: real local adapters",
+  "live: explicitly authorized remote synthetic inputs",
+  "release: installed artifact",
+  "assets(*names): TYCHORA_TEST_* variables the test needs; skipped when unset",
+]
