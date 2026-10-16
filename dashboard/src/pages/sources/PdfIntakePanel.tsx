@@ -5,7 +5,7 @@ import type {
   PdfIntakeStatus,
   Scope,
 } from "../../api/contracts";
-import type { JobHandle } from "../../api/operations";
+import type { JobHandle } from "../../api/types";
 import { ErrorNotice, Status } from "../../components/Status";
 import { JsonDetails } from "../../components/JsonDetails";
 import { SubmissionIntent } from "./submission";

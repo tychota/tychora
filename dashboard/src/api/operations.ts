@@ -1,17 +1,6 @@
 import type { Json, QueryResult } from "./contracts";
-export type JobState =
-  | "queued"
-  | "running"
-  | "succeeded"
-  | "failed"
-  | "cancelled"
-  | "interrupted";
-export interface JobHandle {
-  id: string;
-  operation: string;
-  state: JobState;
-}
-export interface Artifact {
+import type { JobHandle, JobState } from "./types";
+interface Artifact {
   sha256: string;
   size_bytes: number;
   media_type: string;
@@ -43,13 +32,13 @@ export interface JobPage {
   jobs: JobStatus[];
   next_cursor: string | null;
 }
-export interface Extraction {
+interface Extraction {
   extraction_id: string;
   stages: Record<string, Json>;
   code_resolution?: Record<string, Json> | null;
   channels_truncated: boolean;
 }
-export interface Revision {
+interface Revision {
   revision_id: string;
   kind_id: string;
   stages: Record<string, Json>;
@@ -86,7 +75,7 @@ export interface EvaluationSummary {
   created_at: string;
   available: boolean;
 }
-export interface CaseRun {
+interface CaseRun {
   variant: string;
   repetition: number;
   seed: number;

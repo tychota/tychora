@@ -1,4 +1,5 @@
 /** Browser DTOs mirror tychora.contracts and the captured HTTP contracts. */
+import type { JobHandle } from "./types";
 export type Json =
   | null
   | boolean
@@ -60,7 +61,7 @@ export interface Settings {
   };
   origins?: Record<string, Json>;
 }
-export interface Geometry {
+interface Geometry {
   domain: "pixels" | "points" | "normalized";
   x0: number;
   y0: number;
@@ -110,13 +111,13 @@ export interface Citation {
   printed_page: string | null;
   locators: Locator[];
 }
-export interface Excerpt {
+interface Excerpt {
   unit_id: string;
   char_start: number;
   char_end: number;
   text: string;
 }
-export interface EvidenceUnit {
+interface EvidenceUnit {
   unit_id: string;
   extraction_id: string;
   parent_id: string | null;
@@ -133,7 +134,7 @@ export interface EvidenceUnit {
   locators: Locator[];
   attributes: Record<string, Json>;
 }
-export interface StructuredRecord {
+interface StructuredRecord {
   record_id: string;
   unit_id: string;
   record_type: string;
@@ -168,7 +169,7 @@ export interface Segment {
   omissions: { reason: string; unit_ids: string[]; count: number }[];
   structured_records: StructuredRecord[];
 }
-export interface RelationPath {
+interface RelationPath {
   unit_ids: string[];
   assertion_ids: string[];
   predicates: string[];
@@ -270,7 +271,7 @@ export interface Inspection {
   media_type: string | null;
   truncated: boolean;
 }
-export type Filter =
+type Filter =
   | { op: "eq"; field: string; value: string | number | boolean | null }
   | { op: "in"; field: string; values: (string | number | boolean | null)[] }
   | {
@@ -311,7 +312,7 @@ export interface QueryRequest {
     render_targets?: RenderTarget[];
   };
 }
-export interface RenderTarget {
+interface RenderTarget {
   renderer: string;
   profile_digest: string;
   schema_digest: string;
@@ -475,11 +476,7 @@ export interface ModelAssetPlan {
   }[];
   total_size_bytes: number;
 }
-export type ModelAssetState =
-  | "installed"
-  | "missing"
-  | "corrupt"
-  | "not_checked";
+type ModelAssetState = "installed" | "missing" | "corrupt" | "not_checked";
 export interface ModelReadiness {
   manifest_sha256: string;
   assets: {
@@ -511,7 +508,7 @@ export interface ModelReadiness {
   receipt_checked_bytes: number;
 }
 
-export interface ExtractionUnitSummary {
+interface ExtractionUnitSummary {
   id: string;
   ordinal: number;
   unit_type: string;
@@ -522,7 +519,7 @@ export interface ExtractionUnitSummary {
   locators: Locator[];
   preview: string;
 }
-export interface ExtractionWindow {
+interface ExtractionWindow {
   id: string;
   unit_id: string;
   extraction_id: string;
@@ -576,7 +573,7 @@ export interface PdfIntakeDescriptor {
   expected_sha256?: string;
   format: "pdf";
 }
-export interface PdfProcessingPolicy {
+interface PdfProcessingPolicy {
   origin_proof?: "ordered-ocr-cells@1" | null;
   version: "pdf-processing@1";
   mode: "native" | "local_ocr";
@@ -589,7 +586,7 @@ export interface PdfProcessingPolicy {
   options: Record<string, Json>;
   limits: Record<string, Json>;
 }
-export interface PdfAnalysis {
+interface PdfAnalysis {
   original_sha256: string;
   size_bytes: number;
   page_count: number;
@@ -623,6 +620,6 @@ export interface PdfIntakeStatus {
   received_bytes: number;
   expires_at: string;
   analysis: PdfAnalysis | null;
-  job: import("./operations").JobHandle | null;
+  job: JobHandle | null;
   error: { code: string; message: string; retryable: boolean } | null;
 }

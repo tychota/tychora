@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useSession } from "../../session";
 import { ApiError } from "../../api/client";
-import type { JobHandle } from "../../api/operations";
+import type { JobHandle } from "../../api/types";
 import { encodedBody, REQUEST_LIMIT } from "../sources/submission";
 import { ErrorNotice, Status } from "../../components/Status";
 import { RouteLink } from "../../components/Operations";

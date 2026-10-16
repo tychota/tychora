@@ -8,7 +8,7 @@ import {
   type SetStateAction,
   type ReactNode,
 } from "react";
-import type { JobHandle } from "../../api/operations";
+import type { JobHandle } from "../../api/types";
 import { SubmissionIntent } from "../sources/submission";
 import type { PendingPdfSubmission } from "../sources/pdfIntake";
 import type { ApiClient } from "../../api/client";
