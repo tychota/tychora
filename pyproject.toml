@@ -320,5 +320,8 @@ only_mutate = [
   "src/tychora/retrieval/fusion.py",
 ]
 also_copy = ["tests"]
+# a mutant that hangs is killed after (test time + constant) * multiplier seconds
+timeout_multiplier = 5.0
+timeout_constant = 5.0
 pytest_add_cli_args = ["-p", "no:randomly", "-p", "no:cacheprovider"]
 pytest_add_cli_args_test_selection = ["tests/contracts", "tests/retrieval", "tests/storage", "tests/indexing"]
