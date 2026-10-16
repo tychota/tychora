@@ -531,7 +531,7 @@ for (const mobile of [false, true]) {
     await expect(page.locator(".scope-selector summary")).toContainText(title);
     await screenshot(
       page,
-      `task4-${mobile ? "mobile" : "desktop"}-collections`,
+      `documents-${mobile ? "mobile" : "desktop"}-collections`,
     );
     const row = page
       .getByRole("row")
@@ -548,7 +548,10 @@ for (const mobile of [false, true]) {
     await page
       .getByLabel("Destination", { exact: true })
       .selectOption(collection.collection_id);
-    await screenshot(page, `task4-${mobile ? "mobile" : "desktop"}-add-text`);
+    await screenshot(
+      page,
+      `documents-${mobile ? "mobile" : "desktop"}-add-text`,
+    );
     await page.getByLabel("Content", { exact: true }).press("Tab");
     const acceptedResponse = page.waitForResponse(
       (r) =>
@@ -583,7 +586,10 @@ for (const mobile of [false, true]) {
     expect(
       await page.locator(".content-unit .evidence-text strong").count(),
     ).toBe(0);
-    await screenshot(page, `task4-${mobile ? "mobile" : "desktop"}-content`);
+    await screenshot(
+      page,
+      `documents-${mobile ? "mobile" : "desktop"}-content`,
+    );
     await page
       .getByRole("tab", { name: "Content", exact: true })
       .press("ArrowRight");
@@ -594,7 +600,10 @@ for (const mobile of [false, true]) {
     await expect(chunks.first()).toContainText(
       "Cedar verification 😀 <strong>remains inert</strong>.",
     );
-    await screenshot(page, `task4-${mobile ? "mobile" : "desktop"}-documents`);
+    await screenshot(
+      page,
+      `documents-${mobile ? "mobile" : "desktop"}-documents`,
+    );
     await page
       .getByRole("button", { name: "Full unit", exact: true })
       .first()
@@ -605,7 +614,10 @@ for (const mobile of [false, true]) {
     await expect(page.locator(".evidence-reader .evidence-text")).toContainText(
       "Cedar verification 😀",
     );
-    await screenshot(page, `task4-${mobile ? "mobile" : "desktop"}-full-unit`);
+    await screenshot(
+      page,
+      `documents-${mobile ? "mobile" : "desktop"}-full-unit`,
+    );
     if (mobile) {
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth),
@@ -715,6 +727,6 @@ test("mobile source-only links continue the real inventory and preserve document
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth),
     ).toBe(390);
-    await screenshot(page, `task4-fix1-mobile-${route}-continued-detail`);
+    await screenshot(page, `documents-mobile-${route}-continued-detail`);
   }
 });

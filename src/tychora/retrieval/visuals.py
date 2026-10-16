@@ -252,7 +252,7 @@ async def prepare_visual_candidates(
     ranked: RankedEvidence,
     ctx: ExecutionContext,
 ) -> tuple[AssetCandidate, ...]:
-    """Read original assets through Task 30's bounded retained-facts loader."""
+    """Read original assets through the bounded loader of retained facts."""
     if attempt.owner is not owner or len(ranked.items) > 64:
         raise TychoraError("INTEGRITY_ERROR", "Visual attempt owner differs.")
     view = attempt.view

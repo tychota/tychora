@@ -7,18 +7,18 @@ import {
   within,
 } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
-import handshakeFixture from "../../contracts/task2-handshake.json";
-import collectionFixture from "../../contracts/task2-collections.json";
-import collection from "../../contracts/task2-collection.json";
-import archived from "../../contracts/task2-collection-archived.json";
-import consent from "../../contracts/task2-collection-consent.json";
-import documentFixture from "../../contracts/task2-documents.json";
+import handshakeFixture from "../../contracts/collections-handshake.json";
+import collectionFixture from "../../contracts/collections-page.json";
+import collection from "../../contracts/collections-detail.json";
+import archived from "../../contracts/collections-archived.json";
+import consent from "../../contracts/collections-consent.json";
+import documentFixture from "../../contracts/collections-documents.json";
 import units from "../../contracts/extraction-units.json";
 import windows from "../../contracts/extraction-windows.json";
-import documentSchema from "../../contracts/task4-document-metadata-schema.json";
-import manualSchema from "../../contracts/task4-manual-metadata-schema.json";
-import models from "../../contracts/task3-models.json";
-import readiness from "../../contracts/task3-model-readiness.json";
+import documentSchema from "../../contracts/metadata-document-schema.json";
+import manualSchema from "../../contracts/metadata-manual-schema.json";
+import models from "../../contracts/models-list.json";
+import readiness from "../../contracts/models-readiness.json";
 import evidence from "../../contracts/evidence.json";
 import receipt from "../../contracts/source-add.json";
 import assetManifest from "../../../src/tychora/resources/model-assets.json";
@@ -850,8 +850,7 @@ it("keeps a selected PDF draft through Models, and text stays submit-ready after
   expect(localStorage.length + sessionStorage.length).toBe(0);
 });
 it("keeps pending PDF recovery available while independently submitting preserved text", async () => {
-  const pdf = (await import("../../contracts/task6-pdf-mixed-status.json"))
-    .default;
+  const pdf = (await import("../../contracts/pdf-mixed-status.json")).default;
   const fallback = respond;
   let submits = 0;
   respond = (path, init) =>

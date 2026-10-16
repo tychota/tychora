@@ -4,7 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 const artifacts = resolve(
   import.meta.dirname,
-  "../../.superpowers/verification/dashboard-e2e/task7",
+  "../../.superpowers/verification/dashboard-e2e/request-and-restore",
 );
 const headers = { Authorization: "Bearer synthetic-dashboard-owner" };
 async function connect(page: Page, path: string) {
@@ -29,7 +29,9 @@ async function capture(page: Page, name: string) {
 }
 test.beforeEach(async ({ page, context }) => {
   const deny = () => {
-    throw new Error("Task7 requires real HTTP, no browser interception");
+    throw new Error(
+      "Request and restore journeys require real HTTP, no browser interception",
+    );
   };
   page.route = deny;
   page.routeFromHAR = deny;
@@ -37,7 +39,7 @@ test.beforeEach(async ({ page, context }) => {
   context.routeFromHAR = deny;
 });
 
-test("task7 real structured request, typed rejection and text-first reader", async ({
+test("Request and restore: real structured request, typed rejection and text-first reader", async ({
   page,
   request,
 }) => {
@@ -55,7 +57,7 @@ test("task7 real structured request, typed rejection and text-first reader", asy
       headers,
       data: {
         type: "text",
-        source_key: "task7-readable",
+        source_key: "restore-readable",
         kind: "document@1",
         format: "markdown",
         collection_id: grant.default_collection_id,
@@ -90,7 +92,7 @@ test("task7 real structured request, typed rejection and text-first reader", asy
   const body = {
     input: { type: "passage", text: "Coordinatecedar" },
     hints: ["retained passage"],
-    context: { purpose: "task7-local-acceptance" },
+    context: { purpose: "restore-local-acceptance" },
     modalities: ["text"],
     previous_unit_ids: [],
     exact_identifiers: [],
@@ -200,7 +202,7 @@ test("task7 real structured request, typed rejection and text-first reader", asy
   await expect(metadata).not.toHaveAttribute("open", "");
 });
 
-test("task7 missing archive remains editable after actual typed restore failure", async ({
+test("Request and restore: missing archive remains editable after actual typed restore failure", async ({
   page,
 }) => {
   test.skip(
@@ -218,8 +220,8 @@ test("task7 missing archive remains editable after actual typed restore failure"
   const destination = page.getByLabel("Clean restore destination server path", {
     exact: true,
   });
-  const missing = paths.backup + "-missing-task7";
-  const target = paths.restore + "-missing-task7";
+  const missing = paths.backup + "-missing-restore";
+  const target = paths.restore + "-missing-restore";
   await archive.fill(missing);
   await destination.fill(target);
   await page

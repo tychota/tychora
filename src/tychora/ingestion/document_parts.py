@@ -16,7 +16,7 @@ from tychora.contracts.evidence import DocumentLocator, EvidenceUnit
 from tychora.contracts.extraction import ExtractionArtifact
 from tychora.contracts.identity import canonical_bytes, digest
 
-# Task34 must disclose these aggregate semantic expansion ceilings. They count
+# Documented ingestion limits: aggregate semantic expansion ceilings. They count
 # repeated ancestor representations as output, not just distinct original items.
 MAX_SEMANTIC_WORK = 100_000
 MAX_SEMANTIC_BYTES = 256 * 1024 * 1024

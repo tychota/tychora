@@ -41,7 +41,7 @@
             "y0": 0,
             "y1": 500
           },
-          "native_ref": "synthetic-task5-scan",
+          "native_ref": "synthetic-ocr-scan",
           "physical_page": 1,
           "printed_page": null,
           "type": "image"
@@ -51,7 +51,7 @@
       "printed_page": null,
       "revision_id": "29104697d37f532d060b398681512637f70911eb680a402dcd13aeb839e194fc",
       "source_id": "ed08112c-c07e-51a9-b392-cc1e2b40e87f",
-      "source_ref": "synthetic-task5-scan",
+      "source_ref": "synthetic-ocr-scan",
       "unit_id": null
     }
   ],
@@ -87,7 +87,7 @@
                 "y0": 0,
                 "y1": 500
               },
-              "native_ref": "synthetic-task5-scan",
+              "native_ref": "synthetic-ocr-scan",
               "physical_page": 1,
               "printed_page": null,
               "type": "image"
@@ -97,7 +97,7 @@
           "printed_page": null,
           "revision_id": "29104697d37f532d060b398681512637f70911eb680a402dcd13aeb839e194fc",
           "source_id": "ed08112c-c07e-51a9-b392-cc1e2b40e87f",
-          "source_ref": "synthetic-task5-scan",
+          "source_ref": "synthetic-ocr-scan",
           "unit_id": null
         }
       ],
@@ -110,7 +110,7 @@
           "y0": 0,
           "y1": 500
         },
-        "native_ref": "synthetic-task5-scan",
+        "native_ref": "synthetic-ocr-scan",
         "physical_page": 1,
         "printed_page": null,
         "type": "image"
