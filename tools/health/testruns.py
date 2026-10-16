@@ -28,8 +28,10 @@ DETECTED = frozenset({"killed", "timeout"})
 NOT_RUN = frozenset({"not checked", "skipped"})
 
 
-def _percent(covered: int, total: int) -> float:
-    return round(100.0 * covered / total, 2) if total else 100.0
+def _percent(covered: int, total: int, what: str = "report") -> float:
+    if not total:
+        raise ValueError(f"{what} has nothing to measure (zero total)")
+    return round(100.0 * covered / total, 2)
 
 
 def _core_file(files: dict[str, Any], module: str) -> dict[str, Any]:
@@ -48,17 +50,14 @@ def coverage_metrics(report: dict[str, Any], *, branch: bool) -> list[Metric]:
         else ("covered_lines", "num_statements")
     )
     totals = report["totals"]
-    per_key = {
-        module: _percent(
-            _core_file(report["files"], module)[covered_key],
-            _core_file(report["files"], module)[total_key],
-        )
-        for module in CORE_MODULES
-    }
+    per_key: dict[str, float] = {}
+    for module in CORE_MODULES:
+        summary = _core_file(report["files"], module)
+        per_key[module] = _percent(summary[covered_key], summary[total_key], module)
     return [
         Metric(
             f"coverage_{kind}",
-            _percent(totals[covered_key], totals[total_key]),
+            _percent(totals[covered_key], totals[total_key], "coverage totals"),
             direction="higher",
             tolerance=COVERAGE_TOLERANCE,
             per_key=per_key,
@@ -105,6 +104,8 @@ def outcomes(junit: str) -> dict[str, str]:
             results[test_id] = "skipped"
         else:
             results[test_id] = "passed"
+    if not results:
+        raise ValueError("the JUnit report contains no test case")
     return results
 
 
@@ -112,6 +113,8 @@ def suite_seconds(junit: str) -> float:
     """Wall time of the session recorded by pytest's JUnit writer."""
     root = ET.fromstring(junit)
     suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+    if not suites:
+        raise ValueError("the JUnit report contains no testsuite")
     return round(sum(float(suite.get("time", 0)) for suite in suites), 1)
 
 
@@ -197,7 +200,7 @@ def gold_set(root: Path) -> list[Metric]:
         for variant, metrics in report["variants"].items()
         for metric, value in metrics.items()
     }
-    overall = per_key.get("lexical::file_recall", 0.0)
+    overall = per_key["lexical::file_recall"]
     return [
         Metric(
             "code_gold",
