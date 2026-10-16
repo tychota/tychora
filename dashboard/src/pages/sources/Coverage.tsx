@@ -29,7 +29,7 @@ function StageSummary({ stages }: { stages: Record<string, Json> }) {
     </dl>
   );
 }
-export function Channels({
+function Channels({
   path,
   client,
 }: {

@@ -5,7 +5,7 @@ import type {
   SettingsFieldView,
   ModelAssetPlan,
 } from "./contracts";
-import type { JobHandle } from "./operations";
+import type { JobHandle } from "./types";
 import { ApiClient, ApiError } from "./client";
 export interface MaintenanceResult {
   plan: {

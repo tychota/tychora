@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { usePages } from "../hooks/useResource";
 import type { DocumentPage, DocumentSummary } from "../api/contracts";
-import type { JobHandle, ExtractionPage } from "../api/operations";
+import type { ExtractionPage } from "../api/operations";
+import type { JobHandle } from "../api/types";
 import { objectPath } from "../api/operations";
 import { useSession } from "../session";
 import { useRoute } from "../routing";
