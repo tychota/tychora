@@ -39,7 +39,8 @@ def freeze_json(value: object) -> FrozenJsonValue:
 
 def thaw_json(value: FrozenJsonValue) -> PydanticJsonValue:
     if isinstance(value, FrozenJsonMap):
-        return {key: thaw_json(item) for key, item in value.items()}
+        # Mapping.items() looks each key up again, a linear scan of the entries.
+        return {key: thaw_json(item) for key, item in value._entries}
     if isinstance(value, tuple):
         return [thaw_json(item) for item in value]
     return value
