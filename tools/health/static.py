@@ -22,10 +22,19 @@ FunctionNode = ast.FunctionDef | ast.AsyncFunctionDef
 
 
 def python_files(root: Path, base: Path = SOURCE) -> list[Path]:
-    """Every Python file under base, in a stable order."""
-    return sorted(
+    """Every Python file under base, in a stable order.
+
+    A missing directory or an empty tree raises, so a wrong root cannot make a
+    gate report a perfect zero.
+    """
+    if not (root / base).is_dir():
+        raise FileNotFoundError(f"{root / base} is not a directory")
+    files = sorted(
         path for path in (root / base).rglob("*.py") if "__pycache__" not in path.parts
     )
+    if not files:
+        raise FileNotFoundError(f"no Python files under {root / base}")
+    return files
 
 
 def relative(root: Path, path: Path) -> str:
@@ -172,7 +181,10 @@ def public_api_docstrings(root: Path) -> list[Metric]:
     Methods of underscore-named resource classes count too: `kb.sources.add`
     is public even though its class is `_Sources`.
     """
-    paths = [root / PUBLIC_API[0], *sorted((root / PUBLIC_API[1]).glob("*.py"))]
+    clients = root / PUBLIC_API[1]
+    if not clients.is_dir():
+        raise FileNotFoundError(f"{clients} is not a directory")
+    paths = [root / PUBLIC_API[0], *sorted(clients.glob("*.py"))]
     missing: dict[str, float] = {}
     for path in paths:
         for name, node in _public_definitions(_parse(path)):
