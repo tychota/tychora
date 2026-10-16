@@ -1,5 +1,7 @@
 """Ratchet rules: global and per-key regressions, new keys, stale baselines."""
 
+import json
+
 import pytest
 
 from tools.health.model import (
@@ -82,14 +84,72 @@ def test_new_key_with_a_value_fails():
 
 
 def test_new_key_allowed_for_global_only_metrics():
+    base = {"value": 90, "measured_at": "x", "per_key": {}}
+
+    def metric(allowed):
+        return Metric(
+            "coverage_line_core",
+            90,
+            direction="higher",
+            per_key={"new.py": 10},
+            new_keys_allowed=allowed,
+        )
+
+    assert compare(metric(True), base) == []
+    [finding] = compare(metric(False), base)
+    assert finding.message == "new.py: new entry with value 10"
+
+
+def test_higher_metric_per_key_worse_value_fails():
+    metric = Metric("cov", 90, direction="higher", per_key={"a.py": 70})
+    [finding] = compare(metric, entry(90, {"a.py": 80}))
+    assert finding.message == "a.py: 70 is worse than 80"
+
+
+def test_higher_metric_new_key_at_or_above_the_global_value_passes():
+    metric = Metric("cov", 90, direction="higher", per_key={"a.py": 95})
+    assert compare(metric, entry(90, {})) == []
+
+
+def test_higher_metric_removed_key_is_stale():
+    metric = Metric("cov", 90, direction="higher", per_key={})
+    [finding] = compare(metric, entry(90, {"gone.py": 50}))
+    assert finding.stale
+
+
+def test_update_higher_metric_refuses_a_new_key_below_the_global_value():
+    metric = Metric("cov", 90, direction="higher", per_key={"new.py": 10})
+    with pytest.raises(UpdateRefused, match="new entries"):
+        updated_entry(metric, entry(90, {}), "c", initial=False)
+    ok = Metric("cov", 90, direction="higher", per_key={"new.py": 95})
+    result = updated_entry(ok, entry(90, {"gone.py": 50}), "c", initial=False)
+    assert result["per_key"] == {"new.py": 95}
+
+
+def test_relative_tolerance_applies_per_key():
     metric = Metric(
-        "coverage_line_core",
-        90,
-        direction="higher",
-        per_key={"new.py": 10},
-        new_keys_allowed=True,
+        "t",
+        1000,
+        relative_tolerance=0.15,
+        per_key={"a": 115},
+        stale_on_improvement=False,
     )
-    assert compare(metric, {"value": 90, "measured_at": "x", "per_key": {}}) == []
+    assert compare(metric, entry(1000, {"a": 100})) == []
+    worse = Metric("t", 1000, relative_tolerance=0.15, per_key={"a": 116})
+    assert [f for f in compare(worse, entry(1000, {"a": 100})) if not f.stale]
+
+
+def test_update_twice_is_idempotent():
+    metric = Metric("m", 5, per_key={"a": 3, "b": 2})
+    base = entry(5, {"a": 3, "b": 2})
+    once = updated_entry(metric, base, "new", initial=False)
+    twice = updated_entry(metric, once, "newer", initial=False)
+    assert json.dumps(once) == json.dumps(twice) == json.dumps(base)
+
+
+def test_value_exactly_at_the_tolerance_edge_is_not_a_regression():
+    metric = Metric("coverage_line", 85.05, direction="higher", tolerance=0.1)
+    assert compare(metric, {"value": 85.15, "measured_at": "a"}) == []
 
 
 def test_removed_key_is_a_stale_improvement():

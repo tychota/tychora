@@ -47,16 +47,19 @@ class UpdateRefused(Exception):
     """The current values cannot replace the baseline without hiding a regression."""
 
 
+_EPSILON = 1e-9
+
+
 def _worse(direction: Direction, current: float, base: float, slack: float) -> bool:
     if direction == "lower":
-        return current > base + slack
-    return current < base - slack
+        return current > base + slack + _EPSILON
+    return current < base - slack - _EPSILON
 
 
 def _better(direction: Direction, current: float, base: float, slack: float) -> bool:
     if direction == "lower":
-        return current < base - slack
-    return current > base + slack
+        return current < base - slack - _EPSILON
+    return current > base + slack + _EPSILON
 
 
 def _slack(metric: Metric, base: float) -> float:
@@ -92,28 +95,41 @@ def compare(metric: Metric, entry: dict[str, Any] | None) -> list[Finding]:
                 stale=True,
             )
         )
-    findings.extend(_compare_keys(metric, entry.get("per_key") or {}))
+    findings.extend(_compare_keys(metric, entry.get("per_key") or {}, base))
     return findings
 
 
-def _compare_keys(metric: Metric, base_keys: dict[str, float]) -> list[Finding]:
+def _new_key_regresses(metric: Metric, value: float, global_base: float) -> bool:
+    """A key absent from the baseline regresses when it starts out worse than the
+    reference: zero for lower-is-better metrics, the global baseline otherwise."""
+    if metric.new_keys_allowed:
+        return False
+    if metric.direction == "lower":
+        return _worse("lower", value, 0, 0)
+    return _worse("higher", value, global_base, _slack(metric, global_base))
+
+
+def _compare_keys(
+    metric: Metric, base_keys: dict[str, float], global_base: float
+) -> list[Finding]:
     if metric.per_key is None:
         return []
     findings: list[Finding] = []
     for key, value in sorted(metric.per_key.items()):
         if key not in base_keys:
-            if not metric.new_keys_allowed and _worse(metric.direction, value, 0, 0):
+            if _new_key_regresses(metric, value, global_base):
                 findings.append(
                     Finding(metric.name, f"{key}: new entry with value {value:g}")
                 )
             continue
         base = float(base_keys[key])
-        if _worse(metric.direction, value, base, metric.tolerance):
+        slack = _slack(metric, base)
+        if _worse(metric.direction, value, base, slack):
             findings.append(
                 Finding(metric.name, f"{key}: {value:g} is worse than {base:g}")
             )
         elif metric.stale_on_improvement and _better(
-            metric.direction, value, base, metric.tolerance
+            metric.direction, value, base, slack
         ):
             findings.append(
                 Finding(
@@ -122,9 +138,9 @@ def _compare_keys(metric: Metric, base_keys: dict[str, float]) -> list[Finding]:
                     stale=True,
                 )
             )
-    if metric.stale_on_improvement and metric.direction == "lower":
+    if metric.stale_on_improvement:
         for key in sorted(set(base_keys) - set(metric.per_key)):
-            if float(base_keys[key]) > 0:
+            if metric.direction == "higher" or float(base_keys[key]) > 0:
                 findings.append(
                     Finding(
                         metric.name,
@@ -152,34 +168,42 @@ def updated_entry(
     improved = metric.stale_on_improvement and _better(
         metric.direction, metric.value, base, slack
     )
-    value = metric.value if improved else base
+    value = metric.value if improved else entry["value"]
     per_key = None
     if metric.per_key is not None:
-        per_key = _updated_keys(metric, entry.get("per_key") or {})
+        per_key = _updated_keys(metric, entry.get("per_key") or {}, base)
     changed = value != base or per_key != entry.get("per_key")
     return _entry(metric, value, per_key, commit if changed else entry["measured_at"])
 
 
-def _updated_keys(metric: Metric, base_keys: dict[str, float]) -> dict[str, float]:
+def _updated_keys(
+    metric: Metric, base_keys: dict[str, float], global_base: float
+) -> dict[str, float]:
     current = metric.per_key or {}
     kept: dict[str, float] = {}
     for key, value in current.items():
         if key not in base_keys:
             continue
         base = float(base_keys[key])
-        if _worse(metric.direction, value, base, metric.tolerance):
+        slack = _slack(metric, base)
+        if _worse(metric.direction, value, base, slack):
             raise UpdateRefused(
                 f"{metric.name}: {key} {value:g} is worse than {base:g}"
             )
-        better = _better(metric.direction, value, base, metric.tolerance)
-        kept[key] = value if better else base
+        better = _better(metric.direction, value, base, slack)
+        kept[key] = value if better else base_keys[key]
     added = {key: value for key, value in current.items() if key not in base_keys}
     removed = {key: float(v) for key, v in base_keys.items() if key not in current}
-    if (
-        metric.direction == "lower"
-        and not metric.new_keys_allowed
-        and sum(added.values()) > sum(removed.values())
-    ):
+    if metric.direction == "higher":
+        bad = sorted(
+            k for k, v in added.items() if _new_key_regresses(metric, v, global_base)
+        )
+        if bad:
+            raise UpdateRefused(
+                f"{metric.name}: new entries {bad} are worse than the baseline "
+                f"{global_base:g}"
+            )
+    elif not metric.new_keys_allowed and sum(added.values()) > sum(removed.values()):
         raise UpdateRefused(
             f"{metric.name}: new entries {sorted(added)} outweigh the removed "
             f"ones {sorted(removed)}; only renames and moves can be recorded"
