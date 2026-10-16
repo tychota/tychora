@@ -1,0 +1,723 @@
+{
+  "co_change": {
+    "commits": 162,
+    "median_files": 3.0,
+    "share_three_or_more_packages": 0.41
+  },
+  "co_change_pairs": [
+    [
+      "src/tychora/adapters/docling/ocr_evidence.py",
+      "src/tychora/application/pdf_processing.py",
+      1.0
+    ],
+    [
+      "src/tychora/adapters/docling/pdf_batches.py",
+      "src/tychora/application/pdf_processing.py",
+      1.0
+    ],
+    [
+      "src/tychora/adapters/docling/pdf_batches.py",
+      "src/tychora/contracts/extraction.py",
+      1.0
+    ],
+    [
+      "src/tychora/application/pdf_processing.py",
+      "src/tychora/contracts/pdf_policy.py",
+      1.0
+    ],
+    [
+      "src/tychora/adapters/vision/local.py",
+      "src/tychora/ingestion/composition.py",
+      1.0
+    ],
+    [
+      "src/tychora/adapters/sqlite/eligibility.py",
+      "src/tychora/retrieval/eligibility.py",
+      1.0
+    ],
+    [
+      "src/tychora/configuration/indexed_representation.py",
+      "src/tychora/contracts/operations.py",
+      1.0
+    ],
+    [
+      "src/tychora/configuration/indexed_representation.py",
+      "src/tychora/interfaces/http/routes.py",
+      1.0
+    ],
+    [
+      "src/tychora/contracts/requests.py",
+      "src/tychora/ingestion/acquire.py",
+      1.0
+    ],
+    [
+      "src/tychora/adapters/code/normalize.py",
+      "src/tychora/contracts/code.py",
+      1.0
+    ],
+    [
+      "src/tychora/adapters/sqlite/validation.py",
+      "src/tychora/contracts/code.py",
+      1.0
+    ],
+    [
+      "src/tychora/adapters/sqlite/history.py",
+      "src/tychora/retrieval/eligibility.py",
+      1.0
+    ],
+    [
+      "src/tychora/adapters/ladybug/generation.py",
+      "src/tychora/contracts/graph.py",
+      1.0
+    ],
+    [
+      "src/tychora/adapters/ladybug/generation.py",
+      "src/tychora/ports/graph.py",
+      1.0
+    ],
+    [
+      "src/tychora/application/query.py",
+      "src/tychora/retrieval/cache.py",
+      1.0
+    ],
+    [
+      "src/tychora/contracts/graph.py",
+      "src/tychora/ports/graph.py",
+      1.0
+    ],
+    [
+      "src/tychora/contracts/operations.py",
+      "src/tychora/interfaces/commands/inspect.py",
+      1.0
+    ],
+    [
+      "src/tychora/adapters/voyage/text.py",
+      "src/tychora/application/owner.py",
+      1.0
+    ],
+    [
+      "src/tychora/adapters/voyage/text.py",
+      "src/tychora/contracts/embeddings.py",
+      1.0
+    ],
+    [
+      "src/tychora/adapters/voyage/text.py",
+      "src/tychora/ports/embeddings.py",
+      1.0
+    ]
+  ],
+  "complexity": [
+    [
+      "src/tychora/adapters/sqlite/validation.py::validate_bundle",
+      240
+    ],
+    [
+      "src/tychora/retrieval/response.py::ResponseAssembler::assemble",
+      179
+    ],
+    [
+      "src/tychora/adapters/sqlite/eligibility.py::read_eligibility_facts",
+      177
+    ],
+    [
+      "src/tychora/configuration/registry.py::_validate_definitions",
+      161
+    ],
+    [
+      "src/tychora/configuration/resolve.py::_resolve_config",
+      133
+    ],
+    [
+      "src/tychora/application/restore.py::_validate_retained_documents",
+      114
+    ],
+    [
+      "src/tychora/contracts/documents.py::validate_document_units",
+      111
+    ],
+    [
+      "src/tychora/adapters/docling/mapping.py::map_document",
+      109
+    ],
+    [
+      "src/tychora/ingestion/composition.py::build_composed_document",
+      109
+    ],
+    [
+      "src/tychora/retrieval/eligibility.py::EligibilityCompiler::_compile",
+      106
+    ],
+    [
+      "src/tychora/adapters/ladybug/traversal.py::GraphTraversal::structural_context",
+      104
+    ],
+    [
+      "src/tychora/application/query.py::QueryService::_prepare",
+      96
+    ],
+    [
+      "src/tychora/adapters/docling/pdf_batches.py::run_pdf_batches",
+      92
+    ],
+    [
+      "src/tychora/application/recovery.py::RecoveryService::_rebuild_native_on_owner",
+      91
+    ],
+    [
+      "src/tychora/adapters/docling/pdf_batches.py::merge_pdf_page_exports",
+      90
+    ],
+    [
+      "src/tychora/adapters/sqlite/publication.py::_verify_batches",
+      90
+    ],
+    [
+      "src/tychora/retrieval/rerank.py::ranking_input",
+      90
+    ],
+    [
+      "src/tychora/adapters/docling/parser.py::DoclingParser::_retain",
+      89
+    ],
+    [
+      "src/tychora/application/default_bindings.py::compose_default_bindings",
+      84
+    ],
+    [
+      "src/tychora/ingestion/document_views.py::source_views",
+      81
+    ]
+  ],
+  "complexity_over_15": 229,
+  "coupling": [
+    {
+      "a": 0.0,
+      "ca": 0,
+      "ce": 1,
+      "component": "__main__",
+      "d": 0.0,
+      "i": 1.0,
+      "modules": 1
+    },
+    {
+      "a": 0.0,
+      "ca": 0,
+      "ce": 1,
+      "component": "adapters",
+      "d": 0.0,
+      "i": 1.0,
+      "modules": 9
+    },
+    {
+      "a": 0.0,
+      "ca": 1,
+      "ce": 3,
+      "component": "adapters.chroma",
+      "d": 0.25,
+      "i": 0.75,
+      "modules": 1
+    },
+    {
+      "a": 0.0,
+      "ca": 4,
+      "ce": 4,
+      "component": "adapters.code",
+      "d": 0.5,
+      "i": 0.5,
+      "modules": 7
+    },
+    {
+      "a": 0.0,
+      "ca": 3,
+      "ce": 6,
+      "component": "adapters.docling",
+      "d": 0.33,
+      "i": 0.67,
+      "modules": 7
+    },
+    {
+      "a": 0.0,
+      "ca": 4,
+      "ce": 4,
+      "component": "adapters.files",
+      "d": 0.5,
+      "i": 0.5,
+      "modules": 5
+    },
+    {
+      "a": 0.0,
+      "ca": 2,
+      "ce": 3,
+      "component": "adapters.ladybug",
+      "d": 0.4,
+      "i": 0.6,
+      "modules": 2
+    },
+    {
+      "a": 0.0,
+      "ca": 3,
+      "ce": 9,
+      "component": "adapters.sqlite",
+      "d": 0.25,
+      "i": 0.75,
+      "modules": 13
+    },
+    {
+      "a": 0.0,
+      "ca": 2,
+      "ce": 4,
+      "component": "adapters.vision",
+      "d": 0.33,
+      "i": 0.67,
+      "modules": 2
+    },
+    {
+      "a": 0.07,
+      "ca": 3,
+      "ce": 4,
+      "component": "adapters.voyage",
+      "d": 0.36,
+      "i": 0.57,
+      "modules": 9
+    },
+    {
+      "a": 0.0,
+      "ca": 4,
+      "ce": 6,
+      "component": "api",
+      "d": 0.4,
+      "i": 0.6,
+      "modules": 1
+    },
+    {
+      "a": 0.02,
+      "ca": 15,
+      "ce": 17,
+      "component": "application",
+      "d": 0.45,
+      "i": 0.53,
+      "modules": 32
+    },
+    {
+      "a": 0.0,
+      "ca": 0,
+      "ce": 6,
+      "component": "clients",
+      "d": 0.0,
+      "i": 1.0,
+      "modules": 3
+    },
+    {
+      "a": 0.0,
+      "ca": 16,
+      "ce": 1,
+      "component": "configuration",
+      "d": 0.94,
+      "i": 0.06,
+      "modules": 9
+    },
+    {
+      "a": 0.0,
+      "ca": 22,
+      "ce": 2,
+      "component": "contracts",
+      "d": 0.92,
+      "i": 0.08,
+      "modules": 30
+    },
+    {
+      "a": 0.13,
+      "ca": 2,
+      "ce": 5,
+      "component": "evaluation",
+      "d": 0.15,
+      "i": 0.71,
+      "modules": 6
+    },
+    {
+      "a": 0.0,
+      "ca": 4,
+      "ce": 2,
+      "component": "formatting",
+      "d": 0.67,
+      "i": 0.33,
+      "modules": 4
+    },
+    {
+      "a": 0.0,
+      "ca": 5,
+      "ce": 5,
+      "component": "indexing",
+      "d": 0.5,
+      "i": 0.5,
+      "modules": 6
+    },
+    {
+      "a": 0.0,
+      "ca": 3,
+      "ce": 7,
+      "component": "ingestion",
+      "d": 0.3,
+      "i": 0.7,
+      "modules": 14
+    },
+    {
+      "a": 0.0,
+      "ca": 1,
+      "ce": 3,
+      "component": "interfaces",
+      "d": 0.25,
+      "i": 0.75,
+      "modules": 5
+    },
+    {
+      "a": 0.0,
+      "ca": 1,
+      "ce": 6,
+      "component": "interfaces.commands",
+      "d": 0.14,
+      "i": 0.86,
+      "modules": 7
+    },
+    {
+      "a": 0.0,
+      "ca": 3,
+      "ce": 8,
+      "component": "interfaces.http",
+      "d": 0.27,
+      "i": 0.73,
+      "modules": 9
+    },
+    {
+      "a": 0.0,
+      "ca": 3,
+      "ce": 8,
+      "component": "interfaces.mcp",
+      "d": 0.27,
+      "i": 0.73,
+      "modules": 3
+    },
+    {
+      "a": 0.54,
+      "ca": 19,
+      "ce": 4,
+      "component": "ports",
+      "d": 0.29,
+      "i": 0.17,
+      "modules": 16
+    },
+    {
+      "a": 0.07,
+      "ca": 5,
+      "ce": 9,
+      "component": "retrieval",
+      "d": 0.29,
+      "i": 0.64,
+      "modules": 13
+    },
+    {
+      "a": 0.0,
+      "ca": 3,
+      "ce": 0,
+      "component": "tychora",
+      "d": 1.0,
+      "i": 0.0,
+      "modules": 1
+    }
+  ],
+  "cycles": [
+    37,
+    4,
+    2,
+    2,
+    2
+  ],
+  "depth_median": 13.4,
+  "lcom4": [
+    {
+      "class": "src/tychora/adapters/docling/ocr_lineage_capture.py:107 ReadingOrder",
+      "lcom4": 8,
+      "methods": 8
+    },
+    {
+      "class": "src/tychora/adapters/sqlite/corpus.py:46 CorpusStore",
+      "lcom4": 5,
+      "methods": 18
+    },
+    {
+      "class": "src/tychora/adapters/code/python.py:27 PythonAdapter",
+      "lcom4": 3,
+      "methods": 20
+    },
+    {
+      "class": "src/tychora/adapters/voyage/runtime.py:16 VoyageRuntime",
+      "lcom4": 3,
+      "methods": 7
+    },
+    {
+      "class": "src/tychora/clients/async_.py:345 AsyncTychora",
+      "lcom4": 3,
+      "methods": 10
+    },
+    {
+      "class": "src/tychora/clients/sync.py:317 Tychora",
+      "lcom4": 3,
+      "methods": 10
+    },
+    {
+      "class": "src/tychora/configuration/registry.py:57 Registry",
+      "lcom4": 3,
+      "methods": 11
+    },
+    {
+      "class": "src/tychora/adapters/code/capture.py:67 RepositoryCapture",
+      "lcom4": 2,
+      "methods": 9
+    },
+    {
+      "class": "src/tychora/adapters/code/typescript.py:48 TypeScriptAdapter",
+      "lcom4": 2,
+      "methods": 24
+    },
+    {
+      "class": "src/tychora/adapters/voyage/rerank.py:42 VoyageReranker",
+      "lcom4": 2,
+      "methods": 3
+    },
+    {
+      "class": "src/tychora/api.py:88 LocalWorkspace",
+      "lcom4": 2,
+      "methods": 5
+    },
+    {
+      "class": "src/tychora/application/owner.py:119 WorkspaceOwner",
+      "lcom4": 2,
+      "methods": 29
+    },
+    {
+      "class": "src/tychora/application/pdf_processing.py:204 PdfRetentionBudget",
+      "lcom4": 2,
+      "methods": 3
+    },
+    {
+      "class": "src/tychora/contracts/composition.py:140 SourceContextSelection",
+      "lcom4": 2,
+      "methods": 3
+    },
+    {
+      "class": "src/tychora/contracts/composition.py:309 DocumentCompositionPlan",
+      "lcom4": 2,
+      "methods": 3
+    }
+  ],
+  "maintainability_c": [
+    {
+      "file": "src/tychora/configuration/registry.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/ingestion/composition.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/contracts/documents.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/adapters/ladybug/generation.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/adapters/ladybug/traversal.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/adapters/code/typescript.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/adapters/sqlite/jobs.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/adapters/sqlite/publication.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/adapters/sqlite/validation.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/retrieval/segments.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/retrieval/eligibility.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/indexing/coordinator.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/indexing/representations.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/application/recovery.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/application/query.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/application/discovery.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/application/owner.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/application/sources.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/ports/vision.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/interfaces/http/client.py",
+      "mi": 0.0
+    },
+    {
+      "file": "src/tychora/adapters/docling/parser.py",
+      "mi": 0.1
+    },
+    {
+      "file": "src/tychora/retrieval/response.py",
+      "mi": 0.1
+    },
+    {
+      "file": "src/tychora/application/restore.py",
+      "mi": 0.2
+    },
+    {
+      "file": "src/tychora/adapters/code/normalize.py",
+      "mi": 0.3
+    },
+    {
+      "file": "src/tychora/application/inspection.py",
+      "mi": 1.6
+    },
+    {
+      "file": "src/tychora/application/setup.py",
+      "mi": 2.1
+    },
+    {
+      "file": "src/tychora/retrieval/rerank.py",
+      "mi": 2.5
+    },
+    {
+      "file": "src/tychora/adapters/code/python.py",
+      "mi": 2.6
+    },
+    {
+      "file": "src/tychora/application/pdf_intake.py",
+      "mi": 5.0
+    },
+    {
+      "file": "src/tychora/ingestion/acquire.py",
+      "mi": 5.3
+    },
+    {
+      "file": "src/tychora/application/reranking.py",
+      "mi": 5.7
+    },
+    {
+      "file": "src/tychora/ingestion/document_records.py",
+      "mi": 7.6
+    },
+    {
+      "file": "src/tychora/contracts/code.py",
+      "mi": 8.8
+    },
+    {
+      "file": "src/tychora/adapters/chroma/index.py",
+      "mi": 8.8
+    },
+    {
+      "file": "src/tychora/configuration/resolve.py",
+      "mi": 8.9
+    }
+  ],
+  "pass_through": [
+    "src/tychora/adapters/voyage/text.py:400 _post",
+    "src/tychora/contracts/acquisition.py:35 normalized_key",
+    "src/tychora/contracts/code.py:220 normalized_path",
+    "src/tychora/contracts/code.py:233 normalized_path",
+    "src/tychora/contracts/code.py:271 normalized_path",
+    "src/tychora/contracts/code.py:324 normalized_source_path",
+    "src/tychora/contracts/code.py:387 normalized_path",
+    "src/tychora/contracts/code_storage.py:34 normalized_path",
+    "src/tychora/contracts/pdf_intake.py:27 normalize_key",
+    "src/tychora/contracts/publication.py:61 sorted_dependencies",
+    "src/tychora/contracts/requests.py:222 normalize_key",
+    "src/tychora/contracts/requests.py:397 question_convenience",
+    "src/tychora/contracts/tables.py:43 ordered_supports",
+    "src/tychora/ports/vision.py:485 pixel_identity"
+  ],
+  "shallowest": [
+    {
+      "depth": 0.9,
+      "lines": 48,
+      "module": "src/tychora/ports/jobs.py"
+    },
+    {
+      "depth": 1.5,
+      "lines": 53,
+      "module": "src/tychora/ports/graph.py"
+    },
+    {
+      "depth": 1.6,
+      "lines": 59,
+      "module": "src/tychora/ports/embeddings.py"
+    },
+    {
+      "depth": 2.0,
+      "lines": 45,
+      "module": "src/tychora/ports/query.py"
+    },
+    {
+      "depth": 2.3,
+      "lines": 112,
+      "module": "src/tychora/contracts/identity.py"
+    },
+    {
+      "depth": 2.8,
+      "lines": 59,
+      "module": "src/tychora/ports/execution.py"
+    },
+    {
+      "depth": 4.0,
+      "lines": 246,
+      "module": "src/tychora/interfaces/commands/manage.py"
+    },
+    {
+      "depth": 4.4,
+      "lines": 151,
+      "module": "src/tychora/application/jobs.py"
+    },
+    {
+      "depth": 4.5,
+      "lines": 91,
+      "module": "src/tychora/adapters/voyage/query.py"
+    },
+    {
+      "depth": 5.0,
+      "lines": 106,
+      "module": "src/tychora/adapters/code/syntax.py"
+    }
+  ]
+}
