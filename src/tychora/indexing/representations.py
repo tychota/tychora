@@ -600,22 +600,29 @@ def _validated_unit_locators(
     code_maps: dict[str, _LocalCodeMap] = {}
     for unit in bundle.units:
         for locator in unit.locators:
-            if isinstance(locator, (TextLocator, CodeLocator)):
-                local_map = _validate_locator(
-                    bundle, unit, locator, code_files, retained_code_files
-                )
-                if local_map is not None:
-                    if unit.unit_id in code_maps:
-                        raise ValueError("Code unit requires one retained file locator")
-                    code_maps[unit.unit_id] = local_map
-        for locator in unit.locators:
-            if isinstance(locator, DocumentLocator) and (
-                locator.artifact_ref != bundle.revision.original_sha
-                or locator.native_ref != bundle.source.source_key
-                or locator.char_end > len(unit.text)
-            ):
-                raise ValueError("Document locator retained binding differs")
+            if not isinstance(locator, (TextLocator, CodeLocator)):
+                continue
+            local_map = _validate_locator(
+                bundle, unit, locator, code_files, retained_code_files
+            )
+            if local_map is None:
+                continue
+            if unit.unit_id in code_maps:
+                raise ValueError("Code unit requires one retained file locator")
+            code_maps[unit.unit_id] = local_map
+        _validate_document_locators(bundle, unit)
     return code_maps
+
+
+def _validate_document_locators(bundle: RepresentationRows, unit: EvidenceUnit) -> None:
+    """Require document locators to bind the retained original and stay inside the unit."""
+    for locator in unit.locators:
+        if isinstance(locator, DocumentLocator) and (
+            locator.artifact_ref != bundle.revision.original_sha
+            or locator.native_ref != bundle.source.source_key
+            or locator.char_end > len(unit.text)
+        ):
+            raise ValueError("Document locator retained binding differs")
 
 
 def _validated_proxies(
