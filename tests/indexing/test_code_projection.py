@@ -1,5 +1,6 @@
 """Code excerpt projection validates one retained extraction once, not once per excerpt."""
 
+import dataclasses
 import gc
 
 import pytest
@@ -98,3 +99,42 @@ def test_invalid_projection_still_raises_after_caching(code_bundle):
     project_code_excerpt_locator(code_bundle, unit.unit_id, 0, 1)
     with pytest.raises(ValueError, match="outside its retained unit"):
         project_code_excerpt_locator(code_bundle, unit.unit_id, 0, len(unit.text) + 1)
+
+
+class _CountingUnits(dict):
+    """Units mapping that counts whole-extraction scans."""
+
+    scans = 0
+
+    def values(self):
+        type(self).scans += 1
+        return super().values()
+
+
+def test_source_ownership_scans_only_its_own_file(tmp_path, monkeypatch):
+    settings = tmp_path / "settings.toml"
+    settings.write_text('schema_version=1\n[profiles.test]\nbuiltin="code@1"\n')
+    registry = Registry.from_config(resolve_config(settings, "test", {}))
+    payloads = {
+        f"module_{index}.py": "".join(
+            f"def function_{index}_{item}():\n    return {item}\n\n"
+            for item in range(5)
+        ).encode()
+        for index in range(8)
+    }
+    artifacts, registration, parsed = _registration(tmp_path, payloads)
+    retained = retain_code_extraction(registration, parsed, registry, artifacts)
+    bundle = normalize_code(retained, registry)
+    build = representations._build_bundle_index
+
+    def counting(rows):
+        index = build(rows)
+        return dataclasses.replace(index, units=_CountingUnits(index.units))
+
+    monkeypatch.setattr(representations, "_build_bundle_index", counting)
+    _CountingUnits.scans = 0
+    prepared = prepare_extraction(bundle)
+    assert len(prepared.units) == len(bundle.units) > 40
+    # One scan of every unit per source unit made preparation quadratic in the
+    # extraction, which for a repository source is the whole repository.
+    assert _CountingUnits.scans <= 1
