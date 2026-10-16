@@ -23,7 +23,7 @@ from tools.health.model import (
 )
 from tools.health.testruns import flaky_tests
 
-DEFAULT_SELECTION = "not live and not qualification and not release"
+DEFAULT_SELECTION = "not live and not qualification and not release and not quarantine"
 ISOLATION_LIST = Path("tools/health/isolation.txt")
 
 
