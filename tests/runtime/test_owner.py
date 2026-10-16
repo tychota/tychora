@@ -394,7 +394,7 @@ async def test_parser_process_count_is_bounded_and_unknown_staging_is_retained(
         seen = set()
         released = set()
         try:
-            for _ in range(300):
+            for _ in range(round(scaled(3) / 0.01)):
                 active = list((root / "staging").glob("parser-*/child-started"))
                 if len(active) == 2:
                     break
@@ -402,7 +402,7 @@ async def test_parser_process_count_is_bounded_and_unknown_staging_is_retained(
             assert len(active) == 2
             await asyncio.sleep(0.05)
             assert len(list((root / "staging").glob("parser-*/child-started"))) == 2
-            for _ in range(400):
+            for _ in range(round(scaled(4) / 0.01)):
                 for marker in (root / "staging").glob("parser-*/child-started"):
                     if marker in released:
                         continue
