@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
+    inputs:
+      baseline:
+        description: Record the nightly metrics in quality/baseline.json and upload it
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -116,6 +121,16 @@ jobs:
       - name: Tests whose outcome depends on the seed
         if: always()
         run: uv run --locked python -m tools.health flaky reports/seed-1.xml reports/seed-2.xml reports/seed-3.xml
+      - name: Record the nightly baseline (manual dispatch only)
+        if: github.event_name == 'workflow_dispatch' && inputs.baseline
+        # G22 is left out for the same reason as in the check below.
+        run: uv run --locked python -m tools.health update --initial --group nightly --gates G16,G21
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: github.event_name == 'workflow_dispatch' && inputs.baseline
+        with:
+          name: nightly-baseline
+          path: quality/baseline.json
+          retention-days: 7
       # G22 (code gold set) is left out until the gold test produces reports/code-gold.json:
       # it is a strict expected failure on the evaluation budget, see
       # tests/fixtures/evaluation/code-gold/README.md. Add G22 here when that test passes.
