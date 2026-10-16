@@ -333,7 +333,7 @@ class _AsyncManagement:
         *,
         idempotency_key: str | None = None,
     ):
-        """Run a maintenance request, such as backup, health or rebuild, as a job."""
+        """Run a maintenance request, such as backup, health or rebuild, and return its MaintenanceResult; an evaluate request carries a job handle in result.job."""
         ws = self.kb._open()
         parsed = _parsed(MaintenanceRequest, request)
         ctx = _context()
@@ -474,7 +474,7 @@ class AsyncTychora:
 
     @_admitted
     async def inspect(self, request: InspectRequest | Mapping):
-        """Inspect evidence, originals, assets, jobs or query runs by identifier."""
+        """Inspect evidence, assets, revisions, jobs, query runs or diagnostics by identifier."""
         ws = self._open()
         ctx = _context()
         return await ws.bridge.acall(
