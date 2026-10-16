@@ -3,6 +3,8 @@
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from tools.health import graph, static
 
 
@@ -157,3 +159,34 @@ def test_coupling_counts_distinct_components(tmp_path):
     assert coupling["contracts"] == (1, 0)
     assert coupling["application"] == (1, 1)
     assert coupling["adapters.sqlite"] == (0, 1)
+
+
+def test_type_checking_imports_do_not_form_cycles(tmp_path):
+    write(tmp_path, "src/tychora/__init__.py", "")
+    write(
+        tmp_path,
+        "src/tychora/a.py",
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from tychora import b\n",
+    )
+    write(tmp_path, "src/tychora/b.py", "def f():\n    from tychora import a\n")
+    write(tmp_path, "src/tychora/c.py", "def f():\n    from tychora import d\n")
+    write(tmp_path, "src/tychora/d.py", "def g():\n    from tychora import c\n")
+    [ratchet] = graph.all_import_cycles(tmp_path)
+    assert ratchet.value == 2
+
+
+def test_lookalike_package_names_are_not_tychora_modules(tmp_path):
+    write(tmp_path, "src/tychora/__init__.py", "")
+    write(tmp_path, "src/tychora/a.py", "import tychoraish\n")
+    assert graph.import_graph(tmp_path, top_level_only=True)["tychora.a"] == set()
+
+
+def test_missing_or_empty_source_tree_raises(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        static.function_length(tmp_path)
+    (tmp_path / "src/tychora").mkdir(parents=True)
+    with pytest.raises(FileNotFoundError):
+        static.raw_sql(tmp_path)
+    write(tmp_path, "src/tychora/api.py", '"""API."""\n')
+    with pytest.raises(FileNotFoundError):
+        static.public_api_docstrings(tmp_path)
