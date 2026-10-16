@@ -1526,10 +1526,11 @@ def test_document_neighbors_come_from_the_same_heading_section(tmp_path):
     ).segments[0]
     assert segment.context_only_unit_ids == (units[0].unit_id, units[2].unit_id)
     # Neighbour citations keep their physical pages.
-    pages = {
-        citation.unit_id: citation.locators[0].physical_page
-        for citation in segment.citations
-    }
+    pages = {}
+    for citation in segment.citations:
+        locator = citation.locators[0]
+        assert isinstance(locator, DocumentLocator)
+        pages[citation.unit_id] = locator.physical_page
     assert pages == {units[1].unit_id: 2, units[0].unit_id: 1, units[2].unit_id: 3}
 
     edge = assemble_segments(
