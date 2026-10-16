@@ -2,7 +2,7 @@
 
 Tychora is a local evidence engine. It captures versioned documents and code, builds searchable representations, and returns source evidence with citations through Python, CLI, HTTP and MCP. The calling agent writes the final answer or review.
 
-This walkthrough describes the implemented `0.1.0a1` engine at `e7de140`, rather than treating every item in the design specification as delivered. Read the [review assessment](review-assessment.md) for remaining implementation gaps, especially history retention, traces and strict retrieval.
+This walkthrough describes the implemented `0.1.0a1` engine as of the current `main`, rather than treating every item in the design specification as delivered. Read the [review assessment](review-assessment.md) for remaining implementation gaps, especially history retention, traces and strict retrieval.
 
 ## From sources to evidence
 
@@ -239,7 +239,7 @@ The CLI verbs are `init`, `add`, `search`, `inspect`, `serve` and `manage`. Type
 
 Backup, restore, health, withdrawal and original deletion have separate semantics. History stores metadata by default; full request replay is not generally available. Expiry timestamps currently do not imply working automatic purge. See [operations](operations.md).
 
-The dashboard has a specification but no implemented UI. Its intended views cover ingestion, corpus inspection, retrieval history and evaluation. Full traces and retention controls must be completed before presenting them as dashboard features.
+The built-in dashboard, served by `tychora serve`, covers collections, documents, PDF and OCR intake, search, evidence inspection, settings and evaluations; see the [dashboard guide](dashboard.md). Query traces and retention controls are not yet available in it.
 
 ## 14. Evaluation, packaging and extension limits
 

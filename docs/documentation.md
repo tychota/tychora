@@ -40,3 +40,13 @@ The sources below informed this structure. They are references, not text copied 
 | [MkDocs](https://www.mkdocs.org/) and [Material](https://squidfunk.github.io/mkdocs-material/) | Keep editable Markdown, search and responsive navigation with a reproducible static build |
 
 These references were checked on 2026-10-13. The site describes the alpha implementation; the excluded planning archive is not a substitute for current reference material.
+
+## Accuracy audit
+
+Run this checklist once at the end of every sub-project, and whenever a page claims a number:
+
+1. Every claim with a number (tests, sizes, versions, durations) is measured again or removed.
+2. Every "not implemented", "missing" or "planned" statement is checked against the code.
+3. Every file and line reference resolves.
+4. Every command block runs. `tests/docs/test_examples.py` executes the README and example recipes and checks the command blocks of `HANDOFF.md` and `docs/contributing.md` statically (paths exist, tools are installed, markers are registered); run the blocks by hand as well.
+5. A page that names the commit it describes is updated to the current commit, or the pin is removed.

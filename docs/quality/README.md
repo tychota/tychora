@@ -22,3 +22,7 @@ Copy this section into the final review of every sub-project and fill it in.
    - Pull complexity downwards: does the callee absorb configuration instead of every caller? (constructor parameters, PLR0913)
 3. **SOLID rows** (design 4.11.3) the sub-project was expected to remove, with evidence: removed `ignore_imports` lines, lower integrity-raise count, smaller co-change sets.
 4. **Worse report metrics**, each explained. A worse report metric does not block the merge; an unexplained one blocks the review.
+
+## Baseline recording
+
+`python -m tools.health update --initial` on an existing `quality/baseline.json` adds only the metrics that have no entry and never changes an existing entry; a plain `update` is the way to move a recorded value. The code gold set (G22) is excluded from the nightly checker until its report exists; see `tests/fixtures/evaluation/code-gold/README.md`.
