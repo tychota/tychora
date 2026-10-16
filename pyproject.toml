@@ -71,6 +71,7 @@ exclude = ["dashboard/.gitignore", "dashboard/node_modules", "dashboard/test-res
 
 [tool.ruff]
 target-version = "py312"
+extend-exclude = ["docs/superpowers"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
