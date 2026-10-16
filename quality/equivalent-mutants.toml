@@ -1,0 +1,14 @@
+# Mutants that cannot change behaviour, excluded from the mutation score (gate G21).
+# Add an entry only with a reason a reviewer can check against `mutmut show <name>`.
+
+[[mutant]]
+name = "tychora.contracts.identity.x_canonical_bytes__mutmut_3"
+reason = "ensure_ascii=None is falsy, which json.dumps treats exactly like ensure_ascii=False."
+
+[[mutant]]
+name = "tychora.contracts.identity.x_canonical_bytes__mutmut_6"
+reason = "allow_nan=None is falsy, which json.dumps treats exactly like allow_nan=False."
+
+[[mutant]]
+name = "tychora.contracts.identity.x_canonical_bytes__mutmut_19"
+reason = "Codec names are case-insensitive: encode('UTF-8') is encode('utf-8')."
