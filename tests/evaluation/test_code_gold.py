@@ -65,7 +65,7 @@ def test_code_gold_set_runs_offline_with_valid_locators(tmp_path):
     settings = tmp_path / "settings.toml"
     settings.write_text(
         'schema_version=1\n[profiles.test]\nbuiltin="code@1"\n'
-        "[configuration.limits]\nmax_tokens=30000\n"
+        "[configuration.limits]\nlimit=10\nmax_tokens=30000\n"
         f'[configuration.acquisition]\nroots=["{tmp_path}"]\n'
     )
     config = resolve_config(settings, "test", {})
