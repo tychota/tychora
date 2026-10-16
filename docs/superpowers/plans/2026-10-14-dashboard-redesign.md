@@ -10,7 +10,7 @@
 
 **Related required specifications:** `2026-10-14-indexed-content-inspection-design.md` and `2026-10-14-pdf-intake-design.md` in the same specs directory.
 
-**Execution environment:** use the existing Python 3.12 environment from this worktree: `PYTHONPATH=/Users/tychota/Documents/Code/openSource/tychora/.worktrees/dashboard/src ../ci-fixes/.venv/bin/python -m pytest ...`. The absolute import path keeps subprocesses in temporary working directories on this checkout. Commands below written as `uv run pytest` describe test selection; do not install or resolve dependencies merely to run them. Use the existing environment for Ruff/typing. The only planned new direct dependency is already-locked TOMLKit for safe configuration editing; declare it in the relevant extras and update the lock without changing unrelated resolutions. Check actual test paths before invocation.
+**Execution environment:** use the existing Python 3.12 environment from this worktree: `PYTHONPATH=<this worktree>/src <existing Python 3.12 environment>/bin/python -m pytest ...`. The absolute import path keeps subprocesses in temporary working directories on this checkout. Commands below written as `uv run pytest` describe test selection; do not install or resolve dependencies merely to run them. Use the existing environment for Ruff/typing. The only planned new direct dependency is already-locked TOMLKit for safe configuration editing; declare it in the relevant extras and update the lock without changing unrelated resolutions. Check actual test paths before invocation.
 
 ## Global Constraints
 
