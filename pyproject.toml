@@ -104,3 +104,178 @@ markers = [
 [tool.coverage.run]
 branch = true
 source = ["tychora"]
+
+[tool.importlinter]
+root_package = "tychora"
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+id = "layers"
+name = "Engine layers point downwards"
+type = "layers"
+layers = [
+  "tychora.interfaces | tychora.clients",
+  "tychora.api",
+  "tychora.evaluation",
+  "tychora.application",
+  "tychora.retrieval : tychora.indexing : tychora.ingestion : tychora.formatting",
+  "tychora.configuration",
+  "tychora.ports",
+  "tychora.contracts",
+]
+# Upward edges measured on b91d808 (17), the two client-to-HTTP-client edges, and the
+# fifteen pipeline-to-adapter edges of contract "storage-through-ports", whose chains
+# through tychora.adapters reach upper layers.
+ignore_imports = [
+  "tychora.application.default_bindings -> tychora.api",  # tychora/application/default_bindings.py:27
+  "tychora.application.owner -> tychora.evaluation.runner",  # tychora/application/owner.py:56
+  "tychora.application.services -> tychora.api",  # tychora/application/services.py:33
+  "tychora.application.services -> tychora.evaluation.runner",  # tychora/application/services.py:27
+  "tychora.contracts.code -> tychora.ports.language",  # tychora/contracts/code.py:10
+  "tychora.indexing.coordinator -> tychora.application.collection_policy",  # tychora/indexing/coordinator.py:16
+  "tychora.ingestion.composition -> tychora.application.pdf_processing",  # tychora/ingestion/composition.py:271
+  "tychora.ports.acquisition -> tychora.configuration.models",  # tychora/ports/acquisition.py:6
+  "tychora.ports.parsers -> tychora.configuration.models",  # tychora/ports/parsers.py:5
+  "tychora.ports.query -> tychora.application.owner",  # tychora/ports/query.py:14
+  "tychora.ports.query -> tychora.retrieval.cache",  # tychora/ports/query.py:11
+  "tychora.retrieval.eligibility -> tychora.application.owner",  # tychora/retrieval/eligibility.py:140
+  "tychora.retrieval.rerank -> tychora.application.owner",  # tychora/retrieval/rerank.py:40
+  "tychora.retrieval.rerank -> tychora.application.reranking",  # tychora/retrieval/rerank.py:9
+  "tychora.retrieval.segments -> tychora.application.setup",  # tychora/retrieval/segments.py:38
+  "tychora.retrieval.visuals -> tychora.application.owner",  # tychora/retrieval/visuals.py:18
+  "tychora.retrieval.visuals -> tychora.application.reranking",  # tychora/retrieval/visuals.py:8
+  "tychora.clients.async_ -> tychora.interfaces.http.client",  # tychora/clients/async_.py:405
+  "tychora.clients.sync -> tychora.interfaces.http.client",  # tychora/clients/sync.py:352
+  "tychora.contracts.documents -> tychora.adapters.docling.text_coordinates",  # tychora/contracts/documents.py:304
+  "tychora.contracts.extraction -> tychora.adapters.docling.ocr_evidence",  # tychora/contracts/extraction.py:217
+  "tychora.contracts.extraction -> tychora.adapters.docling.text_coordinates",  # tychora/contracts/extraction.py:193
+  "tychora.indexing.coordinator -> tychora.adapters.sqlite.corpus",  # tychora/indexing/coordinator.py:13
+  "tychora.indexing.coordinator -> tychora.adapters.sqlite.graph",  # tychora/indexing/coordinator.py:14
+  "tychora.indexing.coordinator -> tychora.adapters.sqlite.publication",  # tychora/indexing/coordinator.py:15
+  "tychora.ingestion.acquire -> tychora.adapters.code.capture",  # tychora/ingestion/acquire.py:12
+  "tychora.ingestion.acquire -> tychora.adapters.files.cas",  # tychora/ingestion/acquire.py:13
+  "tychora.ingestion.acquire -> tychora.adapters.files.references",  # tychora/ingestion/acquire.py:14
+  "tychora.ingestion.document_parts -> tychora.adapters.docling.ocr_evidence",  # tychora/ingestion/document_parts.py:7
+  "tychora.ingestion.document_records -> tychora.adapters.docling.ocr_evidence",  # tychora/ingestion/document_records.py:9
+  "tychora.ingestion.document_views -> tychora.adapters.docling.ocr_evidence",  # tychora/ingestion/document_views.py:8
+  "tychora.ingestion.documents -> tychora.adapters.docling.ocr_evidence",  # tychora/ingestion/documents.py:8
+  "tychora.retrieval.eligibility -> tychora.adapters.ladybug.traversal",  # tychora/retrieval/eligibility.py:118
+  "tychora.retrieval.rerank -> tychora.adapters.voyage.rerank",  # tychora/retrieval/rerank.py:39
+]
+
+[[tool.importlinter.contracts]]
+id = "adapters-implement-ports"
+name = "Adapters implement ports and never import the layers that use them"
+type = "forbidden"
+source_modules = ["tychora.adapters"]
+forbidden_modules = [
+  "tychora.application",
+  "tychora.retrieval",
+  "tychora.indexing",
+  "tychora.ingestion",
+  "tychora.evaluation",
+  "tychora.formatting",
+  "tychora.interfaces",
+  "tychora.clients",
+  "tychora.api",
+]
+ignore_imports = [
+  "tychora.adapters.chroma.index -> tychora.indexing.receipts",  # tychora/adapters/chroma/index.py:31
+  "tychora.adapters.docling.ocr_evidence -> tychora.application.pdf_processing",  # tychora/adapters/docling/ocr_evidence.py:162
+  "tychora.adapters.docling.ocr_evidence -> tychora.ingestion.vision",  # tychora/adapters/docling/ocr_evidence.py:386
+  "tychora.adapters.docling.parser -> tychora.application.owner",  # tychora/adapters/docling/parser.py:18
+  "tychora.adapters.docling.parser -> tychora.application.pdf_processing",  # tychora/adapters/docling/parser.py:429
+  "tychora.adapters.docling.parser -> tychora.application.runtime",  # tychora/adapters/docling/parser.py:614
+  "tychora.adapters.docling.parser -> tychora.ingestion.document_records",  # tychora/adapters/docling/parser.py:964
+  "tychora.adapters.docling.pdf_batches -> tychora.application.owner",  # tychora/adapters/docling/pdf_batches.py:195
+  "tychora.adapters.docling.pdf_batches -> tychora.application.runtime",  # tychora/adapters/docling/pdf_batches.py:196
+  "tychora.adapters.files.url_acquisition -> tychora.application.runtime",  # tychora/adapters/files/url_acquisition.py:13
+  "tychora.adapters.sqlite.corpus -> tychora.application.collection_policy",  # tychora/adapters/sqlite/corpus.py:8
+  "tychora.adapters.sqlite.corpus -> tychora.application.leases",  # tychora/adapters/sqlite/corpus.py:9
+  "tychora.adapters.sqlite.eligibility -> tychora.application.collection_policy",  # tychora/adapters/sqlite/eligibility.py:9
+  "tychora.adapters.sqlite.eligibility -> tychora.indexing.representations",  # tychora/adapters/sqlite/eligibility.py:39
+  "tychora.adapters.sqlite.eligibility -> tychora.retrieval.eligibility",  # tychora/adapters/sqlite/eligibility.py:40
+  "tychora.adapters.sqlite.evaluations -> tychora.evaluation.dataset",  # tychora/adapters/sqlite/evaluations.py:14
+  "tychora.adapters.sqlite.history -> tychora.retrieval.response",  # tychora/adapters/sqlite/history.py:23
+  "tychora.adapters.sqlite.lexical -> tychora.retrieval.lexical_query",  # tychora/adapters/sqlite/lexical.py:12
+  "tychora.adapters.sqlite.publication -> tychora.application.collection_policy",  # tychora/adapters/sqlite/publication.py:15
+  "tychora.adapters.sqlite.publication -> tychora.indexing.receipts",  # tychora/adapters/sqlite/publication.py:31
+  "tychora.adapters.vision.anthropic -> tychora.application.owner",  # tychora/adapters/vision/anthropic.py:10
+  "tychora.adapters.vision.local -> tychora.application.owner",  # tychora/adapters/vision/local.py:12
+  "tychora.adapters.voyage.query -> tychora.application.owner",  # tychora/adapters/voyage/query.py:17
+  "tychora.adapters.voyage.query -> tychora.application.query",  # tychora/adapters/voyage/query.py:53
+  "tychora.adapters.voyage.query -> tychora.application.visual",  # tychora/adapters/voyage/query.py:9
+  "tychora.adapters.voyage.query -> tychora.retrieval.cache",  # tychora/adapters/voyage/query.py:14
+  "tychora.adapters.voyage.rerank -> tychora.application.reranking",  # tychora/adapters/voyage/rerank.py:24
+  "tychora.adapters.voyage.runtime -> tychora.retrieval.cache",  # tychora/adapters/voyage/runtime.py:11
+  "tychora.adapters.voyage.visual -> tychora.application.visual",  # tychora/adapters/voyage/visual.py:15
+]
+
+[[tool.importlinter.contracts]]
+id = "storage-through-ports"
+name = "Pipeline, configuration, ports and contracts reach storage only through ports"
+type = "forbidden"
+source_modules = [
+  "tychora.contracts",
+  "tychora.ports",
+  "tychora.configuration",
+  "tychora.ingestion",
+  "tychora.indexing",
+  "tychora.retrieval",
+  "tychora.formatting",
+]
+forbidden_modules = ["tychora.adapters"]
+# The fifteen pipeline-to-adapter edges, then the upward edges into tychora.application
+# of contract "layers", whose chains continue from the composition root into adapters.
+ignore_imports = [
+  "tychora.contracts.documents -> tychora.adapters.docling.text_coordinates",  # tychora/contracts/documents.py:304
+  "tychora.contracts.extraction -> tychora.adapters.docling.ocr_evidence",  # tychora/contracts/extraction.py:217
+  "tychora.contracts.extraction -> tychora.adapters.docling.text_coordinates",  # tychora/contracts/extraction.py:193
+  "tychora.indexing.coordinator -> tychora.adapters.sqlite.corpus",  # tychora/indexing/coordinator.py:13
+  "tychora.indexing.coordinator -> tychora.adapters.sqlite.graph",  # tychora/indexing/coordinator.py:14
+  "tychora.indexing.coordinator -> tychora.adapters.sqlite.publication",  # tychora/indexing/coordinator.py:15
+  "tychora.ingestion.acquire -> tychora.adapters.code.capture",  # tychora/ingestion/acquire.py:12
+  "tychora.ingestion.acquire -> tychora.adapters.files.cas",  # tychora/ingestion/acquire.py:13
+  "tychora.ingestion.acquire -> tychora.adapters.files.references",  # tychora/ingestion/acquire.py:14
+  "tychora.ingestion.document_parts -> tychora.adapters.docling.ocr_evidence",  # tychora/ingestion/document_parts.py:7
+  "tychora.ingestion.document_records -> tychora.adapters.docling.ocr_evidence",  # tychora/ingestion/document_records.py:9
+  "tychora.ingestion.document_views -> tychora.adapters.docling.ocr_evidence",  # tychora/ingestion/document_views.py:8
+  "tychora.ingestion.documents -> tychora.adapters.docling.ocr_evidence",  # tychora/ingestion/documents.py:8
+  "tychora.retrieval.eligibility -> tychora.adapters.ladybug.traversal",  # tychora/retrieval/eligibility.py:118
+  "tychora.retrieval.rerank -> tychora.adapters.voyage.rerank",  # tychora/retrieval/rerank.py:39
+  "tychora.indexing.coordinator -> tychora.application.collection_policy",  # tychora/indexing/coordinator.py:16
+  "tychora.ingestion.composition -> tychora.application.pdf_processing",  # tychora/ingestion/composition.py:271
+  "tychora.ports.query -> tychora.application.owner",  # tychora/ports/query.py:14
+  "tychora.retrieval.eligibility -> tychora.application.owner",  # tychora/retrieval/eligibility.py:140
+  "tychora.retrieval.rerank -> tychora.application.owner",  # tychora/retrieval/rerank.py:40
+  "tychora.retrieval.rerank -> tychora.application.reranking",  # tychora/retrieval/rerank.py:9
+  "tychora.retrieval.segments -> tychora.application.setup",  # tychora/retrieval/segments.py:38
+  "tychora.retrieval.visuals -> tychora.application.owner",  # tychora/retrieval/visuals.py:18
+  "tychora.retrieval.visuals -> tychora.application.reranking",  # tychora/retrieval/visuals.py:8
+]
+
+[[tool.importlinter.contracts]]
+id = "pure-contracts"
+name = "Contracts import no frameworks, database clients or SDKs"
+type = "forbidden"
+source_modules = ["tychora.contracts"]
+forbidden_modules = [
+  "sqlite3",
+  "fastapi",
+  "typer",
+  "rich",
+  "chromadb",
+  "ladybug",
+  "voyageai",
+  "anthropic",
+  "docling",
+  "mcp",
+  "httpx",
+]
+# The three Docling adapter edges of contract "storage-through-ports"; every chain to a
+# framework starts with one of them.
+ignore_imports = [
+  "tychora.contracts.documents -> tychora.adapters.docling.text_coordinates",  # tychora/contracts/documents.py:304
+  "tychora.contracts.extraction -> tychora.adapters.docling.ocr_evidence",  # tychora/contracts/extraction.py:217
+  "tychora.contracts.extraction -> tychora.adapters.docling.text_coordinates",  # tychora/contracts/extraction.py:193
+]
