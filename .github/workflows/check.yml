@@ -120,7 +120,9 @@ jobs:
         run: uv run --locked pytest tools/health/tests -q
       - name: Measure the initial baseline (manual dispatch only)
         if: github.event_name == 'workflow_dispatch' && inputs.baseline
-        run: uv run --locked python -m tools.health update --initial
+        run: |
+          rm -f quality/baseline.json quality/jscpd/*.json
+          uv run --locked python -m tools.health update --initial
       - name: Upload the measured baseline
         if: github.event_name == 'workflow_dispatch' && inputs.baseline
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
