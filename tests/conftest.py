@@ -4,6 +4,8 @@ import pytest
 
 from tests.helpers import assets
 
+pytest_plugins = ["tests.fixtures.docling"]
+
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item: pytest.Item) -> None:

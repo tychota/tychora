@@ -3,11 +3,11 @@
 import json
 import math
 import os
-from pathlib import Path
 
 import pytest
 from tokenizers import Tokenizer
 
+from tests.helpers.assets import asset_path
 from tychora.adapters.voyage.text import (
     HttpxVoyageTransport,
     VoyageRuntime,
@@ -41,6 +41,7 @@ def _live_enabled() -> bool:
     )
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 @pytest.mark.skipif(
     not _live_enabled(),
     reason="requires explicit live opt-in, credential, and provisioned tokenizer cache",
@@ -56,7 +57,7 @@ def _live_enabled() -> bool:
 def test_live_synthetic_document_shape_and_capability_receipt(
     tmp_path, model, contextualization
 ):
-    cache = Path(os.environ["TYCHORA_TEST_MODEL_CACHE"])
+    cache = asset_path("TYCHORA_TEST_MODEL_CACHE")
     counter = ProvisionedCounter(model, load_voyage_tokenizer(cache, model))
     capabilities = qualify_voyage_capabilities(
         model=model,

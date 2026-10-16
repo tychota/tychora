@@ -11,6 +11,7 @@ from mcp import Client, StdioServerParameters
 from mcp.types import CallToolResult, TextContent, TextResourceContents
 from PIL import Image
 
+from tests.helpers.assets import asset_path
 from tychora import Tychora
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.artifacts import ArtifactRef
@@ -33,10 +34,13 @@ def _text_content(result: CallToolResult) -> str:
     return block.text
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 @pytest.mark.asyncio
 @pytest.mark.qualification(loopback=True)
 async def test_stdio_sdk_reads_authorized_binary_asset_resource(tmp_path, monkeypatch):
-    monkeypatch.setenv("TYCHORA_MODEL_CACHE", os.environ["TYCHORA_TEST_MODEL_CACHE"])
+    monkeypatch.setenv(
+        "TYCHORA_MODEL_CACHE", str(asset_path("TYCHORA_TEST_MODEL_CACHE"))
+    )
     picture = tmp_path / "synthetic.png"
     out = BytesIO()
     Image.new("RGB", (8, 6), "blue").save(out, format="PNG")

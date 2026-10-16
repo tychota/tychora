@@ -20,8 +20,6 @@ ORIGINAL = ArtifactRef(
     sha256="0" * 64, storage_key="0" * 64, size_bytes=0, media_type="application/pdf"
 )
 document_kind = mapping_fixtures.document_kind
-execution = mapping_fixtures.execution
-rich_capture = mapping_fixtures.rich_capture
 
 
 def sdk_document(label, segments, *, from_ocr=True, page_start=1):

@@ -6,7 +6,10 @@ import tarfile
 import zipfile
 from pathlib import Path
 
+import pytest
 
+
+@pytest.mark.release
 def test_dashboard_in_built_wheel_and_sdist(tmp_path):
     root = Path(__file__).parents[2]
     subprocess.run(

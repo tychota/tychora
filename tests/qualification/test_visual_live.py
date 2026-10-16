@@ -3,11 +3,11 @@
 import math
 import os
 from io import BytesIO
-from pathlib import Path
 
 import pytest
 from PIL import Image, ImageDraw
 
+from tests.helpers.assets import asset_path
 from tests.helpers.corpus import COLLECTION
 from tests.providers.test_visual import _descriptor, _install
 from tychora.adapters.voyage.request import HttpxVoyageTransport
@@ -58,13 +58,14 @@ def _diagram():
     return out.getvalue()
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 @pytest.mark.skipif(
     not _live_enabled(),
     reason="requires explicit visual live opt-in, credential, and provisioned model cache",
 )
 @pytest.mark.asyncio
 async def test_live_synthetic_diagram_and_distinctly_phrased_text_query(tmp_path):
-    cache = Path(os.environ["TYCHORA_TEST_MODEL_CACHE"])
+    cache = asset_path("TYCHORA_TEST_MODEL_CACHE")
     counter = ProvisionedCounter(load_voyage_tokenizer(cache, "voyage-multimodal-3.5"))
     capabilities = qualify_voyage_visual_capabilities(
         counter=counter, limits=load_voyage_multimodal_accounting(cache)

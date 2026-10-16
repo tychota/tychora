@@ -236,9 +236,7 @@ def test_detector_zero_keeps_pixel_region_without_orphan_receipt(tmp_path, monke
 
 # Reuse the synthetic retained-parser fixture; these checks load no OCR model.
 document_kind = mapping_fixtures.document_kind
-execution = mapping_fixtures.execution
 retained_case = mapping_fixtures.retained_case
-rich_capture = mapping_fixtures.rich_capture
 
 
 @pytest.mark.parametrize("execution", ["pdf"], indirect=True)

@@ -136,6 +136,7 @@ def test_pure_reformat_rejects_over_budget_without_pruning():
     assert before.coverage.status == "complete"
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 def test_frozen_representations_and_no_formatter_io(monkeypatch):
     from pathlib import Path
 

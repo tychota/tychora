@@ -126,16 +126,10 @@ def test_document_manifest_externalizes_raw_item_json():
 
 import pytest
 
-from tests.qualification import test_docling as qualification
-
 
 @pytest.fixture
 def document_kind():
     return "manual@1"
-
-
-execution = qualification.execution
-rich_capture = qualification.rich_capture
 
 
 @pytest.mark.parametrize(
