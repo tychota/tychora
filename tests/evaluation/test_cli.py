@@ -6,6 +6,7 @@ from hashlib import sha256
 
 from typer.testing import CliRunner
 
+from tests.helpers.timing import scaled
 from tychora import Tychora
 from tychora.interfaces.cli import app
 from tychora.ports.execution import ExecutionContext
@@ -37,7 +38,7 @@ def test_cli_evaluates_explicit_local_gold_directory(tmp_path, monkeypatch):
                 },
             }
         )
-        status = kb.jobs.wait(accepted.id, timeout=10)
+        status = kb.jobs.wait(accepted.id, timeout=scaled(10))
         assert status.state == "succeeded", status.error_code
         owner = kb._workspace.owner
         source_id, revision_id, unit_id = kb._workspace.bridge.call(

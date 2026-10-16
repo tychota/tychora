@@ -17,6 +17,7 @@ import pytest
 from tests.acceptance.graph_crash_probe import fixture as graph_fixture
 from tests.acceptance.source_crash_probe import service, source
 from tests.acceptance.vector_crash_probe import family
+from tests.helpers.timing import scaled
 from tests.operations.test_removal import _add, _Counter, _original_sha
 from tests.performance.engine_probe import _config, _scope, setup_corpus
 from tychora import Tychora
@@ -31,6 +32,8 @@ from tychora.configuration.resolve import resolve_config
 from tychora.contracts.graph import GraphBatchReceipt, GraphManifest
 from tychora.contracts.requests import RequestScope
 from tychora.ports.execution import ExecutionContext
+
+pytestmark = pytest.mark.slow
 
 
 def _kill_test_child(root, point, module):
@@ -404,7 +407,7 @@ def test_graph_v2_reopens_across_hash_seeds_and_v1_preserves_legacy_proof(tmp_pa
             ],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=scaled(10),
             check=False,
             env={"PATH": os.environ.get("PATH", ""), "PYTHONHASHSEED": seed},
         )

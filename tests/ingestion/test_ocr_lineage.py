@@ -181,6 +181,7 @@ def sdk_case(texts):
     "label",
     ["text", "list_item", "formula", "code", "caption", "footnote", "section_header"],
 )
+@pytest.mark.slow
 def test_real_sdk_emission_binds_exact_cells_and_fields(label):
     from docling.models.stages.reading_order.readingorder_model import (
         ReadingOrderModel,

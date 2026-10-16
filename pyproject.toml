@@ -42,10 +42,25 @@ full = [
 tychora = "tychora.interfaces.cli:main"
 
 [dependency-groups]
-dev = ["pytest", "pytest-asyncio", "httpx", "ruff", "ty"]
+dev = [
+  "pytest==9.1.1",
+  "pytest-asyncio==1.4.0",
+  "pytest-cov==7.1.0",
+  "coverage==7.16.2",
+  "pytest-randomly==5.0.0",
+  "pytest-xdist==3.8.0",
+  "httpx",
+  "ruff==0.16.7",
+  "ty==0.0.80",
+  "import-linter==2.15",
+  "vulture==2.16",
+  "complexipy==8.0.1",
+  "radon==5.1.0",
+]
 build = ["hatchling==1.32.4", "pyinstaller"]
 test-fixtures = ["reportlab", "python-docx"]
-audit = ["pip-audit", "pip-licenses"]
+audit = ["pip-audit==2.10.1", "pip-licenses"]
+mutation = ["mutmut==3.8.0"]
 
 [tool.hatch.build.targets.wheel]
 only-include = ["src/tychora"]
@@ -82,4 +97,10 @@ markers = [
   "live: explicitly authorized remote synthetic inputs",
   "release: installed artifact",
   "assets(*names): TYCHORA_TEST_* variables the test needs; skipped when unset",
+  "slow: slower than 30 s locally; excluded from the pull-request test job, run nightly",
+  "quarantine(reason, issue): outcome differs between random seeds; excluded from blocking runs, kept nightly",
 ]
+
+[tool.coverage.run]
+branch = true
+source = ["tychora"]

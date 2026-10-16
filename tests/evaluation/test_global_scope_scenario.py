@@ -5,6 +5,7 @@ from hashlib import sha256
 import pytest
 
 from tests.evaluation.conftest import SyntheticCounter
+from tests.helpers.timing import scaled
 from tychora import Tychora
 from tychora.application.backup import BackupService
 from tychora.contracts.errors import TychoraError
@@ -67,7 +68,7 @@ def test_public_global_facet_requires_explicit_include_and_binding(tmp_path):
             ),
         ):
             job = kb.sources.add(source)
-            status = kb.jobs.wait(job.id, timeout=10)
+            status = kb.jobs.wait(job.id, timeout=scaled(10))
             assert status.state == "succeeded", status
         base = {
             "question": "cobalt",
@@ -218,7 +219,7 @@ def test_global_declaration_rejects_duplicates_and_non_global_facets(tmp_path):
         for names in (["project", "scope.project"], ["code.language"]):
             source = _source("invalid.txt", "cobalt", {"global_facets": names})
             job = kb.sources.add(source)
-            status = kb.jobs.wait(job.id, timeout=10)
+            status = kb.jobs.wait(job.id, timeout=scaled(10))
             assert status.state == "failed"
             assert status.error_code == "INVALID_REQUEST"
 
@@ -229,7 +230,7 @@ def test_global_binding_backup_restore_requires_exact_artifact(tmp_path):
     source = _source("global.txt", "cobalt global", {"global_facets": ["project"]})
     with Tychora.open(workspace, token_counter=SyntheticCounter()) as kb:
         job = kb.sources.add(source)
-        assert kb.jobs.wait(job.id, timeout=10).state == "succeeded"
+        assert kb.jobs.wait(job.id, timeout=scaled(10)).state == "succeeded"
         owner = kb._workspace.owner
         marker_sha = kb._workspace.bridge.call(
             owner.run_blocking(
@@ -270,7 +271,7 @@ def test_legacy_global_revision_without_binding_fails_closed(tmp_path):
     source = _source("global.txt", "cobalt global", {"global_facets": ["project"]})
     with Tychora.open(workspace, token_counter=SyntheticCounter()) as kb:
         job = kb.sources.add(source)
-        assert kb.jobs.wait(job.id, timeout=10).state == "succeeded"
+        assert kb.jobs.wait(job.id, timeout=scaled(10)).state == "succeeded"
         owner = kb._workspace.owner
 
         def remove_binding():
@@ -302,7 +303,7 @@ def test_legacy_metadata_facet_cannot_be_silently_backfilled(tmp_path):
     source = _source("local.txt", "cobalt local", {"project": "alpha"})
     with Tychora.open(tmp_path / "workspace", token_counter=SyntheticCounter()) as kb:
         job = kb.sources.add(source)
-        assert kb.jobs.wait(job.id, timeout=10).state == "succeeded"
+        assert kb.jobs.wait(job.id, timeout=scaled(10)).state == "succeeded"
         owner = kb._workspace.owner
 
         def remove_facet():
@@ -316,6 +317,6 @@ def test_legacy_metadata_facet_cannot_be_silently_backfilled(tmp_path):
             )
         )
         retry = kb.sources.add(source)
-        result = kb.jobs.wait(retry.id, timeout=10)
+        result = kb.jobs.wait(retry.id, timeout=scaled(10))
         assert result.state == "failed"
         assert result.error_code == "PROFILE_INCOMPATIBLE"

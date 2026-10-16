@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.helpers.timing import scaled
 from tychora import Tychora
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import CodeLocator, ImageLocator, VisualEvidence
@@ -42,7 +43,7 @@ def test_real_retained_text_locator_rejects_wrong_identity_and_binding(tmp_path)
                 },
             }
         )
-        assert kb.jobs.wait(handle.id, timeout=10).state == "succeeded"
+        assert kb.jobs.wait(handle.id, timeout=scaled(10)).state == "succeeded"
         result = kb.search({"question": "saffron marker", "modalities": ["lexical"]})
         owner = kb._workspace.owner
 
@@ -91,6 +92,7 @@ def test_real_retained_text_locator_rejects_wrong_identity_and_binding(tmp_path)
             assert assess(bad_result).valid < assess(bad_result).total
 
 
+@pytest.mark.slow
 def test_selected_bindings_are_bounded_and_reused_without_snapshot_rehydration(
     tmp_path,
     monkeypatch,
@@ -111,7 +113,7 @@ def test_selected_bindings_are_bounded_and_reused_without_snapshot_rehydration(
                     "metadata": {"title": key, "publisher": "Example", "edition": "1"},
                 }
             )
-            assert kb.jobs.wait(handle.id, timeout=10).state == "succeeded"
+            assert kb.jobs.wait(handle.id, timeout=scaled(10)).state == "succeeded"
         result = kb.search({"question": "saffron", "modalities": ["lexical"]})
         other_result = kb.search({"question": "indigo", "modalities": ["lexical"]})
         owner = kb._workspace.owner
@@ -169,7 +171,7 @@ def test_selected_text_budget_rejects_before_materialization(tmp_path, monkeypat
                 },
             }
         )
-        assert kb.jobs.wait(handle.id, timeout=10).state == "succeeded"
+        assert kb.jobs.wait(handle.id, timeout=scaled(10)).state == "succeeded"
         result = kb.search({"question": "saffron", "modalities": ["lexical"]})
         owner = kb._workspace.owner
         monkeypatch.setattr("tychora.evaluation.provenance.MAX_BINDING_BYTES", 5_000)
@@ -208,7 +210,7 @@ def test_mismatched_retained_locator_artifact_fails_before_hydration(
                 },
             }
         )
-        assert kb.jobs.wait(handle.id, timeout=10).state == "succeeded"
+        assert kb.jobs.wait(handle.id, timeout=scaled(10)).state == "succeeded"
         result = kb.search({"question": "saffron", "modalities": ["lexical"]})
         unit_id = next(
             citation.unit_id

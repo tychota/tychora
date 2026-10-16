@@ -1,0 +1,6 @@
+# Pull-request coverage measures lines only, so COVERAGE_CORE=sysmon applies on
+# Python 3.12 (sys.monitoring cannot measure branches before 3.14). Branch
+# coverage runs nightly with [tool.coverage.run] from pyproject.toml.
+[tool.coverage.run]
+branch = false
+source = ["tychora"]

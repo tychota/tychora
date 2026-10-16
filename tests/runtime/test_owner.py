@@ -4,6 +4,7 @@ import time
 
 import pytest
 
+from tests.helpers.timing import scaled
 from tychora.application.owner import WorkspaceOwner
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.errors import TychoraError
@@ -146,7 +147,7 @@ except TychoraError as error:
             capture_output=True,
             text=True,
             check=True,
-            timeout=10,
+            timeout=scaled(10),
         ).stdout.strip()
 
     with WorkspaceOwner.open(root, settings, scope) as owner:
