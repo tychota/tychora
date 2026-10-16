@@ -4,7 +4,7 @@ import type {
   PdfIntakeStatus,
   PdfIntakeSubmission,
 } from "../../api/contracts";
-import type { JobHandle } from "../../api/operations";
+import type { JobHandle } from "../../api/types";
 import { encodedBody, REQUEST_LIMIT } from "./submission";
 export const PDF_LIMIT = 104857600;
 const path = (id: string) => `/v1/pdf-intakes/${encodeURIComponent(id)}`;

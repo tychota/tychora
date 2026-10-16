@@ -7,9 +7,9 @@ import {
   type JobPage,
   type JobStatus,
   type JobEvent,
-  type JobHandle,
 } from "../api/operations";
 import { watchJob } from "../api/events";
+import type { JobHandle } from "../api/types";
 import { ErrorNotice, Status } from "../components/Status";
 import {
   PageHeading,

@@ -91,7 +91,7 @@ export async function parseEvents(
     reader.releaseLock();
   }
 }
-export function delay(ms: number, signal: AbortSignal): Promise<void> {
+function delay(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const abort = () => {
       clearTimeout(timer);

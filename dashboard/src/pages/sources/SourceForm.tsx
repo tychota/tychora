@@ -11,7 +11,7 @@ import type {
   PdfIntakeDescriptor,
   Json,
 } from "../../api/contracts";
-import type { JobHandle } from "../../api/operations";
+import type { JobHandle } from "../../api/types";
 import { ApiError, publicError } from "../../api/client";
 import { ErrorNotice, Status } from "../../components/Status";
 import { JsonDetails } from "../../components/JsonDetails";

@@ -22,7 +22,7 @@ import { WorkspaceScope } from "./components/WorkspaceScope";
 import { AddDocumentDraftProvider } from "./pages/documents/draft";
 export { useRoute } from "./routing";
 
-export const destinations = [
+const destinations = [
   "Collections",
   "Documents",
   "Search",
