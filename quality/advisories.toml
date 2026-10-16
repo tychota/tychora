@@ -1,0 +1,36 @@
+# Waiver register for dependency advisories that have no fixed release (gate G19).
+# Each entry is approved by the product owner (programme decision 2026-10-15), expires after at most 30
+# days and is reviewed monthly. The gate fails on an unlisted or expired advisory and
+# on an entry whose advisory is no longer reported.
+
+[[advisory]]
+id = "PYSEC-2026-311"
+package = "chromadb"
+reason = "No fixed release on PyPI. Not reachable: Tychora uses the embedded PersistentClient and never starts the Chroma HTTP server. Upgrade to 1.6.0 when published."
+reviewer = "product owner, programme decision 2026-10-15 (resolved question 5)"
+approved = 2026-10-16
+expires = 2026-11-15
+
+[[advisory]]
+id = "PYSEC-2026-3813"
+package = "chromadb"
+reason = "No fixed release on PyPI. Not reachable: Tychora uses the embedded PersistentClient and never starts the Chroma HTTP server. Upgrade to 1.6.0 when published."
+reviewer = "product owner, programme decision 2026-10-15 (resolved question 5)"
+approved = 2026-10-16
+expires = 2026-11-15
+
+[[advisory]]
+id = "PYSEC-2026-3814"
+package = "chromadb"
+reason = "No fixed release on PyPI. Not reachable: Tychora uses the embedded PersistentClient and never starts the Chroma HTTP server. Upgrade to 1.6.0 when published."
+reviewer = "product owner, programme decision 2026-10-15 (resolved question 5)"
+approved = 2026-10-16
+expires = 2026-11-15
+
+[[advisory]]
+id = "PYSEC-2026-3815"
+package = "chromadb"
+reason = "No fixed release on PyPI. Not reachable: Tychora uses the embedded PersistentClient and never starts the Chroma HTTP server. Upgrade to 1.6.0 when published."
+reviewer = "product owner, programme decision 2026-10-15 (resolved question 5)"
+approved = 2026-10-16
+expires = 2026-11-15
