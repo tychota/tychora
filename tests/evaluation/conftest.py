@@ -9,6 +9,7 @@ import pytest
 
 from tests.helpers.timing import scaled
 from tychora import Tychora
+from tychora.configuration.resolve import resolve_config
 from tychora.contracts.identity import canonical_bytes
 from tychora.ports.execution import ExecutionContext
 
@@ -21,6 +22,31 @@ class SyntheticCounter:
 
     def count(self, text: str) -> int:
         return len(text)
+
+
+def code_profile_config(tmp_path: Path, limits: str):
+    """Resolve the built-in code profile with the given limits, acquiring under tmp_path."""
+    settings = tmp_path / "settings.toml"
+    settings.write_text(
+        'schema_version=1\n[profiles.test]\nbuiltin="code@1"\n'
+        f"[configuration.limits]\n{limits}\n"
+        f'[configuration.acquisition]\nroots=["{tmp_path}"]\n'
+    )
+    return resolve_config(settings, "test", {})
+
+
+def add_repository(kb: Tychora, repo: Path, source_key: str, title: str):
+    """Register a git repository as a code source and return its job handle."""
+    return kb.sources.add(
+        {
+            "type": "repository",
+            "path": str(repo),
+            "source_key": source_key,
+            "collection_id": "default",
+            "kind": "code_file@1",
+            "metadata": {"title": title},
+        }
+    )
 
 
 @contextmanager

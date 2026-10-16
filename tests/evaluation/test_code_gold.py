@@ -9,7 +9,11 @@ from pathlib import Path
 import pytest
 
 from tests.code.conftest import git
-from tests.evaluation.conftest import SyntheticCounter
+from tests.evaluation.conftest import (
+    SyntheticCounter,
+    add_repository,
+    code_profile_config,
+)
 from tests.helpers.assets import asset_path
 from tests.helpers.code_gold import (
     DATASET_ID,
@@ -20,7 +24,6 @@ from tests.helpers.code_gold import (
 )
 from tests.helpers.timing import scaled
 from tychora import Tychora
-from tychora.configuration.resolve import resolve_config
 from tychora.contracts.errors import TychoraError
 from tychora.ports.execution import ExecutionContext
 
@@ -75,26 +78,11 @@ def _wait(kb, job_id, budget):
 )
 def test_code_gold_set_runs_offline_with_valid_locators(tmp_path):
     repo = _repository(tmp_path)
-    settings = tmp_path / "settings.toml"
-    settings.write_text(
-        'schema_version=1\n[profiles.test]\nbuiltin="code@1"\n'
-        "[configuration.limits]\nlimit=10\nmax_tokens=30000\n"
-        f'[configuration.acquisition]\nroots=["{tmp_path}"]\n'
-    )
-    config = resolve_config(settings, "test", {})
+    config = code_profile_config(tmp_path, "limit=10\nmax_tokens=30000")
     with Tychora.open(
         tmp_path / "workspace", config=config, token_counter=SyntheticCounter()
     ) as kb:
-        handle = kb.sources.add(
-            {
-                "type": "repository",
-                "path": str(repo),
-                "source_key": "tychora",
-                "collection_id": "default",
-                "kind": "code_file@1",
-                "metadata": {"title": "Tychora source"},
-            }
-        )
+        handle = add_repository(kb, repo, "tychora", "Tychora source")
         status = _wait(kb, handle.id, scaled(900))
         assert status.state == "succeeded", status.error_code
         owner = kb._workspace.owner

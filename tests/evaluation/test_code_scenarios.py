@@ -4,11 +4,14 @@ import json
 from hashlib import sha256
 
 from tests.code.conftest import git, make_repo
-from tests.evaluation.conftest import SyntheticCounter
+from tests.evaluation.conftest import (
+    SyntheticCounter,
+    add_repository,
+    code_profile_config,
+)
 from tychora import Tychora
 from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.application import query as query_module
-from tychora.configuration.resolve import resolve_config
 from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.operations import ConfigurationVariant, EvaluationRequest
 from tychora.evaluation.provenance import verify_result_locators
@@ -28,26 +31,11 @@ def test_declared_code_definitions_and_graph_ablation(tmp_path, monkeypatch):
     )
     git(repo, "add", ".")
     git(repo, "commit", "-qm", "Declared synthetic definitions")
-    settings = tmp_path / "settings.toml"
-    settings.write_text(
-        'schema_version=1\n[profiles.test]\nbuiltin="code@1"\n'
-        "[configuration.limits]\nmax_tokens=30000\n"
-        f'[configuration.acquisition]\nroots=["{tmp_path}"]\n'
-    )
-    config = resolve_config(settings, "test", {})
+    config = code_profile_config(tmp_path, "max_tokens=30000")
     with Tychora.open(
         tmp_path / "workspace", config=config, token_counter=SyntheticCounter()
     ) as kb:
-        handle = kb.sources.add(
-            {
-                "type": "repository",
-                "path": str(repo),
-                "source_key": "code",
-                "collection_id": "default",
-                "kind": "code_file@1",
-                "metadata": {"title": "Synthetic Repository"},
-            }
-        )
+        handle = add_repository(kb, repo, "code", "Synthetic Repository")
         status = kb.jobs.wait(handle.id, timeout=20)
         assert status.state == "succeeded", (status.error_code, status.message)
         owner = kb._workspace.owner
