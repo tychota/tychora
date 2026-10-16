@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 from collections import defaultdict
+from collections.abc import Iterator
 from pathlib import Path
 
 from tools.health.model import Metric
@@ -31,8 +32,32 @@ def _targets(node: ast.Import | ast.ImportFrom, package: list[str]) -> list[str]
     return [module, *(f"{module}.{alias.name}" for alias in node.names)]
 
 
-def import_graph(root: Path, *, top_level_only: bool) -> Graph:
-    """Edges between tychora modules; top_level_only keeps module-body imports."""
+def _is_type_checking(test: ast.expr) -> bool:
+    return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+        isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+    )
+
+
+def _runtime_nodes(node: ast.AST) -> Iterator[ast.AST]:
+    """Every node below node except the bodies of `if TYPE_CHECKING:` blocks."""
+    for child in ast.iter_child_nodes(node):
+        yield child
+        if isinstance(child, ast.If) and _is_type_checking(child.test):
+            for other in child.orelse:
+                yield other
+                yield from _runtime_nodes(other)
+        else:
+            yield from _runtime_nodes(child)
+
+
+def import_graph(
+    root: Path, *, top_level_only: bool, include_type_checking: bool = True
+) -> Graph:
+    """Edges between tychora modules; top_level_only keeps module-body imports.
+
+    include_type_checking=False drops imports under `if TYPE_CHECKING:`, which
+    never run.
+    """
     trees: dict[str, tuple[ast.Module, list[str]]] = {}
     for path in python_files(root):
         name = module_name(root, path)
@@ -48,11 +73,16 @@ def import_graph(root: Path, *, top_level_only: bool) -> Graph:
 
     graph: Graph = {name: set() for name in trees}
     for name, (tree, package) in trees.items():
-        nodes = tree.body if top_level_only else list(ast.walk(tree))
+        if top_level_only:
+            nodes: list[ast.AST] = list(tree.body)
+        elif include_type_checking:
+            nodes = list(ast.walk(tree))
+        else:
+            nodes = list(_runtime_nodes(tree))
         for node in nodes:
             if isinstance(node, ast.Import | ast.ImportFrom):
                 for target in _targets(node, package):
-                    if not target.startswith("tychora"):
+                    if target != "tychora" and not target.startswith("tychora."):
                         continue
                     resolved = resolve(target)
                     if resolved and resolved != name:
@@ -114,8 +144,13 @@ def module_level_cycles(root: Path) -> list[Metric]:
 
 
 def all_import_cycles(root: Path) -> list[Metric]:
-    """G27: modules in cycles when function-body imports count too."""
-    components = strongly_connected(import_graph(root, top_level_only=False))
+    """G27: modules in cycles when function-body imports count too.
+
+    Imports under `if TYPE_CHECKING:` are excluded: they never run, so they
+    cannot form a runtime cycle.
+    """
+    graph = import_graph(root, top_level_only=False, include_type_checking=False)
+    components = strongly_connected(graph)
     return [Metric("modules_in_import_cycles", sum(len(c) for c in components))]
 
 
