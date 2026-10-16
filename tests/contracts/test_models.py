@@ -533,3 +533,28 @@ def test_exported_schema_validates_populated_nested_instances(model_name):
         )
     schema = public_schemas()[model_name]
     Draft202012Validator(schema).validate(instance.model_dump(mode="json"))
+
+
+def test_thawing_a_frozen_map_reads_entries_without_key_lookups(monkeypatch):
+    from tychora.contracts.base import FrozenJsonMap, thaw_json
+
+    frozen = FrozenJsonMap(
+        {
+            f"key-{index:04}": {"nested": [index, {"leaf": index}]}
+            for index in range(500)
+        }
+    )
+    lookups = []
+    lookup = FrozenJsonMap.__getitem__
+
+    def counting(self, key):
+        lookups.append(key)
+        return lookup(self, key)
+
+    monkeypatch.setattr(FrozenJsonMap, "__getitem__", counting)
+    thawed = thaw_json(frozen)
+    # A key lookup scans the entries, so thawing by lookup is quadratic in map size.
+    assert lookups == []
+    assert isinstance(thawed, dict)
+    assert list(thawed) == sorted(thawed)
+    assert thawed["key-0042"] == {"nested": [42, {"leaf": 42}]}
