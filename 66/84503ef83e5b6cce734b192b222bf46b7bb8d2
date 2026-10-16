@@ -1,0 +1,32 @@
+tools/health/isolation.txt
+  s_ab847b2c6c265a::t_c0e1f6f1eb8495 1-12
+tools/health/tests/test_gates.py
+  s_ab847b2c6c265a::t_c0e1f6f1eb8495 1-14,22-34
+  s_ab847b2c6c265a::t_c76115fa9362c0 15-21
+tools/health/__main__.py
+  s_ab847b2c6c265a::t_c0e1f6f1eb8495 1-176
+tools/health/tests/test_integration.py
+  s_ab847b2c6c265a::t_c0e1f6f1eb8495 1-58,69-87,89-103,113,117-128
+  s_ab847b2c6c265a::t_c76115fa9362c0 59-68,104-112,114-116
+  s_ab847b2c6c265a::t_48ebaa3cb3822f 88
+tools/health/gates.py
+  s_ab847b2c6c265a::t_c0e1f6f1eb8495 1-74
+docs/contributing.md
+  s_ab847b2c6c265a::t_16b4b4f1717bbb 11,14-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6684503ef83e5b6cce734b192b222bf46b7bb8d2",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
