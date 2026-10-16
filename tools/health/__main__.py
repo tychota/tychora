@@ -8,6 +8,7 @@ import sys
 from collections.abc import Iterator
 from pathlib import Path
 
+from tools.health.architecture import write_report
 from tools.health.external import JSCPD_SCOPES, jscpd_command, run
 from tools.health.gates import Gate, select
 from tools.health.model import (
@@ -178,6 +179,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         if name == "update":
             command.add_argument("--initial", action="store_true")
+        if name == "report":
+            command.add_argument("--architecture", type=Path, metavar="MARKDOWN")
+            command.add_argument("--previous", type=Path, metavar="MARKDOWN")
     flaky = commands.add_parser("flaky")
     flaky.add_argument("reports", nargs="+", type=Path)
     isolation = commands.add_parser("isolate")
@@ -191,6 +195,9 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if differing else 0
     if args.command == "isolate":
         return isolate(args.root)
+    if args.command == "report" and args.architecture:
+        write_report(args.root, args.architecture, args.previous)
+        return 0
     gates = select(args.group, args.gates, fast=args.fast)
     if args.command == "check":
         return check(args.root, gates)
