@@ -43,6 +43,17 @@ The distinction between canonical evidence and derived indexes lets the engine c
 
 The engine uses explicit orchestration rather than a general RAG framework. Python 3.12 is the supported interpreter. The base package is small relative to the optional document, model and native-index stack. Exact resolved versions live in `uv.lock`; optional dependencies are declared in `pyproject.toml`.
 
+### Dependency direction
+
+Four import-linter contracts in `pyproject.toml` (`[tool.importlinter]`) are the source of truth; `python -m tools.health check` runs them on every pull request.
+
+1. **Layers.** Higher packages may import lower ones, never the reverse: `interfaces` and `clients` (independent of each other), then `api`, `evaluation`, `application`, then `retrieval`, `indexing`, `ingestion` and `formatting` (which may import each other), then `configuration`, `ports` and `contracts`. Evaluation sits above application because it drives the production query path.
+2. **Adapters implement ports.** `adapters` never imports `application`, `retrieval`, `indexing`, `ingestion`, `evaluation`, `formatting`, `interfaces`, `clients` or `api`. The application layer and `api` are the composition root and may import adapters.
+3. **Storage through ports.** `contracts`, `ports`, `configuration`, `ingestion`, `indexing`, `retrieval` and `formatting` never import `adapters`.
+4. **Pure contracts.** `contracts` imports no database client, web framework, command-line library or model SDK.
+
+Today's violations are listed in each contract's `ignore_imports`, one line per import with its file and line. The list may only shrink.
+
 ## 2. Identity and versioning
 
 ```text
