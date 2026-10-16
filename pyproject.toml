@@ -86,7 +86,7 @@ exclude = ["dashboard/.gitignore", "dashboard/node_modules", "dashboard/test-res
 
 [tool.ruff]
 target-version = "py312"
-extend-exclude = ["docs/superpowers"]
+extend-exclude = ["docs/superpowers", "quality/vulture_whitelist.py"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -278,4 +278,31 @@ ignore_imports = [
   "tychora.contracts.documents -> tychora.adapters.docling.text_coordinates",  # tychora/contracts/documents.py:304
   "tychora.contracts.extraction -> tychora.adapters.docling.ocr_evidence",  # tychora/contracts/extraction.py:217
   "tychora.contracts.extraction -> tychora.adapters.docling.text_coordinates",  # tychora/contracts/extraction.py:193
+]
+
+[tool.vulture]
+paths = ["src/tychora", "quality/vulture_whitelist.py"]
+min_confidence = 60
+ignore_decorators = [
+  "@field_validator",
+  "@model_validator",
+  "@field_serializer",
+  "@model_serializer",
+  "@computed_field",
+  "@property",
+  "@contextmanager",
+  "@asynccontextmanager",
+  "@app.*",
+  "@router.*",
+  "@*.command",
+  "@*.callback",
+  "@*.tool",
+  "@*.resource",
+  "@*.get",
+  "@*.post",
+  "@*.put",
+  "@*.delete",
+  "@*.patch",
+  "@*.websocket",
+  "@*.checks",
 ]

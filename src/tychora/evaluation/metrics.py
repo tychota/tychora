@@ -38,12 +38,6 @@ def ndcg(grades: list[int], ideal_grades: list[int]) -> float | None:
     return gain(grades) / ideal if ideal else None
 
 
-def span_coverage(
-    expected: set[tuple[str, int, int]], returned: set[tuple[str, int, int]]
-) -> float | None:
-    return len(expected & returned) / len(expected) if expected else None
-
-
 def _value(name: str, numerator: int, denominator: int) -> MetricValue:
     return MetricValue(
         name=name,
