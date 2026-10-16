@@ -1417,3 +1417,168 @@ def test_separator_between_table_cell_fragments_yields_no_fragment():
     item = replace(item, facts=replace(item.facts, prepared=prepared))
     with pytest.raises(TychoraError, match="no physical fragment"):
         _physical_ranges(item, unit.unit_id, 5, 9)
+
+
+def _document_case(spans):
+    """Docling-shaped units: per-paragraph boundary keys, shared heading paths."""
+    from hashlib import sha256
+
+    from tychora.contracts.evidence import DocumentLocator
+    from tychora.contracts.indexing import PreparedExtraction, RepresentationUnit
+
+    text = "|".join(piece for _, piece, _ in spans)
+    bundle = seed_bundle(text)
+    original = bundle.units[0]
+    units = []
+    cursor = 0
+    for ordinal, (uid, piece, heading) in enumerate(spans):
+        units.append(
+            original.model_copy(
+                update={
+                    "unit_id": uid,
+                    "ordinal": ordinal,
+                    "native_ref": f"#/texts/{ordinal}",
+                    "boundary_key": f"#/texts/{ordinal}",
+                    "heading_path": heading,
+                    "text": piece,
+                    "text_sha": sha256(piece.encode()).hexdigest(),
+                    "locators": (
+                        DocumentLocator(
+                            artifact_ref=bundle.revision.original_sha,
+                            native_ref=f"#/texts/{ordinal}",
+                            char_start=0,
+                            char_end=len(piece),
+                            physical_page=ordinal + 1,
+                        ),
+                    ),
+                }
+            )
+        )
+        cursor += len(piece) + 1
+    units = tuple(units)
+    prepared = PreparedExtraction(
+        extraction_id=bundle.extraction.extraction_id,
+        revision_id=bundle.revision.revision_id,
+        units=tuple(
+            RepresentationUnit(
+                unit=unit,
+                revision_id=bundle.revision.revision_id,
+                title=bundle.revision.title,
+                kind_id="manual@1",
+                ownership=(
+                    OwnedInterval(
+                        char_start=0,
+                        char_end=len(unit.text),
+                        dependency_ids=frozenset(
+                            {bundle.revision.revision_id, unit.unit_id}
+                        ),
+                    ),
+                ),
+            )
+            for unit in units
+        ),
+    )
+    rows = bundle.model_copy(update={"units": units})
+    view = eligibility_view(
+        revision_ids=frozenset({bundle.revision.revision_id}),
+        context_unit_ids=frozenset(unit.unit_id for unit in units),
+        chunk_ids=frozenset(),
+    )
+    return units, rows, prepared, view
+
+
+def _ranked(rows, prepared, matched_units):
+    return RankedEvidence(
+        tuple(
+            RankedEvidenceItem(
+                FusedCandidate(
+                    ("unit", unit.unit_id), order, 1 / order, {"lexical": order}
+                ),
+                None,
+                RerankFacts(
+                    rows,
+                    prepared,
+                    (
+                        RerankMatch(
+                            None, unit.unit_id, 0, len(unit.text), "lexical", order, 1.0
+                        ),
+                    ),
+                ),
+                "disabled",
+            )
+            for order, unit in enumerate(matched_units, 1)
+        )
+    )
+
+
+def test_document_neighbors_come_from_the_same_heading_section(tmp_path):
+    section, other = ("Pumps", "Seals"), ("Pumps", "Impellers")
+    units, rows, prepared, view = _document_case(
+        (
+            ("before", "Check the housing.", section),
+            ("match", "Inspect seals quarterly.", section),
+            ("after", "Record the outcome.", section),
+            ("next-section", "Replace worn impellers.", other),
+        )
+    )
+    segment = assemble_segments(
+        _ranked(rows, prepared, (units[1],)), view, config(tmp_path), Counter()
+    ).segments[0]
+    assert segment.context_only_unit_ids == (units[0].unit_id, units[2].unit_id)
+    # Neighbour citations keep their physical pages.
+    pages = {
+        citation.unit_id: citation.locators[0].physical_page
+        for citation in segment.citations
+    }
+    assert pages == {units[1].unit_id: 2, units[0].unit_id: 1, units[2].unit_id: 3}
+
+    edge = assemble_segments(
+        _ranked(rows, prepared, (units[2],)), view, config(tmp_path), Counter()
+    ).segments[0]
+    assert edge.context_only_unit_ids == (units[1].unit_id,)
+
+
+def test_document_matches_join_across_an_eligible_gap_in_one_section(tmp_path):
+    section, other = ("Pumps",), ("Valves",)
+    units, rows, prepared, view = _document_case(
+        (
+            ("left", "Seal checks are quarterly.", section),
+            ("gap", "Use the approved form.", section),
+            ("right", "Seal records are kept.", section),
+            ("elsewhere", "Seal valves yearly.", other),
+        )
+    )
+    joined = assemble_segments(
+        _ranked(rows, prepared, (units[0], units[2])), view, config(tmp_path), Counter()
+    )
+    assert len(joined.segments) == 1
+    assert joined.segments[0].matched_unit_ids == (units[0].unit_id, units[2].unit_id)
+
+    split = assemble_segments(
+        _ranked(rows, prepared, (units[2], units[3])), view, config(tmp_path), Counter()
+    )
+    assert len(split.segments) == 2
+
+
+def test_document_tables_never_join_as_plain_neighbors(tmp_path):
+    section = ("Results",)
+    units, rows, prepared, view = _document_case(
+        (
+            ("intro", "Measured values follow.", section),
+            ("table", "Pump\tHours", section),
+        )
+    )
+    units = (units[0], units[1].model_copy(update={"unit_type": "table"}))
+    prepared = prepared.model_copy(
+        update={
+            "units": tuple(
+                rep.model_copy(update={"unit": unit})
+                for rep, unit in zip(prepared.units, units)
+            )
+        }
+    )
+    rows = rows.model_copy(update={"units": units})
+    segment = assemble_segments(
+        _ranked(rows, prepared, (units[0],)), view, config(tmp_path), Counter()
+    ).segments[0]
+    assert segment.context_only_unit_ids == ()
