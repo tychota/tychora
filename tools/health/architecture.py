@@ -293,6 +293,8 @@ def render(data: dict[str, Any], previous: dict[str, Any] | None) -> str:
         "",
         "## Coupling (Martin metrics)",
         "",
+        "The coupling table counts every import, including those under `if TYPE_CHECKING:`; the cycles section counts runtime imports only.",
+        "",
         "| Component | Modules | Ca | Ce | I | A | D |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
@@ -322,7 +324,13 @@ def render(data: dict[str, Any], previous: dict[str, Any] | None) -> str:
         f"- `{row['class']}`: LCOM4 {row['lcom4']} over {row['methods']} methods"
         for row in data["lcom4"]
     ]
-    lines += ["", "## Maintainability index rank C", ""]
+    lines += [
+        "",
+        "## Maintainability index rank C",
+        "",
+        "Radon clamps the index at 0, so the order within the 0.0 group carries no meaning.",
+        "",
+    ]
     lines += [f"- `{row['file']}`: {row['mi']}" for row in data["maintainability_c"]]
     lines += [
         "",
