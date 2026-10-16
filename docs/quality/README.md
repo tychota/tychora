@@ -25,4 +25,4 @@ Copy this section into the final review of every sub-project and fill it in.
 
 ## Baseline recording
 
-`python -m tools.health update --initial` on an existing `quality/baseline.json` adds only the metrics that have no entry and never changes an existing entry; a plain `update` is the way to move a recorded value. The code gold set (G22) is excluded from the nightly checker until its report exists; see `tests/fixtures/evaluation/code-gold/README.md`.
+`python -m tools.health update --initial` on an existing `quality/baseline.json` adds only the metrics that have no entry and never changes an existing entry; a plain `update` is the way to move a recorded value. A `baseline=true` dispatch of `check.yml` rebuilds the PR baseline from scratch, so the nightly entries (branch coverage and mutation score) must be re-recorded afterwards with the nightly workflow's baseline dispatch. The code gold set (G22) is excluded from the nightly checker until its report exists; see `tests/fixtures/evaluation/code-gold/README.md`.

@@ -67,10 +67,6 @@ On 2026-10-15, 2,385 tests were collected; the default selection is now green on
 
 The full source run does not establish live embedding/reranking quality, gold-set adequacy, a Linux or minimum-macOS qualification result, or closure of the behavior defects below. Historical dependency advisories remain disclosed in the distribution guide; rerun the current advisory audit rather than treating that older result as a waiver. Hosted CI outcomes must be checked after pushing.
 
-### Local state (2026-10-15)
-
-Local worktrees live under `.worktrees/` of the main checkout, one per branch listed by `git worktree list`: `engine` (`feat/evidence-engine`, locked, retained), `dashboard` (`feat/dashboard`), `ci-fixes` (`fix/hosted-builds`), `docling-formula` (`fix/docling-formula-spans`), `launch-link` (`feat/dashboard-launch-link`), `neighbour-fix` (`fix/docling-neighbour-context`), `program-specs` (`docs/program-specs`) and `code-health` (`feat/code-health`). The ignored `.superpowers/` directory of the code-health worktree held 1.6 MB of local records. `git worktree prune --dry-run -v` reports one prunable entry: a former `feat/evidence-engine` worktree under the system temporary directory whose directory no longer exists. It has not been pruned; ask the product owner first, because worktrees are not deleted routinely.
-
 ## Review findings and needed fixes
 
 The earlier review was checked against `e7de140`. Preserve the distinctions below when turning it into issues. The [full assessment](docs/review-assessment.md) has exact source references and the remaining review inventory.
