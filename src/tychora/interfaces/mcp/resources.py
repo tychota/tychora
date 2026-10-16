@@ -6,6 +6,7 @@ import asyncio
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ResourceError
+
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.operations import InspectRequest

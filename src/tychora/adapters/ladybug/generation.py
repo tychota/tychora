@@ -6,10 +6,10 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Literal, NoReturn, cast
 
-from pydantic import ValidationError
-
 from ladybug import Connection, Database
 from ladybug.query_result import QueryResult
+from pydantic import ValidationError
+
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit
