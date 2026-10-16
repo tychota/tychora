@@ -32,3 +32,8 @@ def test_nightly_group_holds_branch_coverage_mutation_and_gold():
 def test_unknown_gate_is_rejected():
     with pytest.raises(SystemExit, match="G99"):
         select("pr", "G99")
+
+
+def test_empty_selection_is_rejected():
+    with pytest.raises(SystemExit, match="no gate selected"):
+        select("nightly", fast=True)

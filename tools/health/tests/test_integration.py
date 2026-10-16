@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 
 from tools.health.__main__ import main
+from tools.health.gates import Gate
+from tools.health.model import Metric
 
 REPO = Path(__file__).resolve().parents[3]
 JSCPD = REPO / "dashboard" / "node_modules" / ".bin" / "jscpd"
@@ -72,10 +74,18 @@ def project(tmp_path: Path) -> Path:
     return tmp_path
 
 
-@pytest.mark.skipif(
-    not JSCPD.exists(), reason="run `npm ci` in dashboard/ to install jscpd"
-)
+def require_jscpd() -> None:
+    """Skip locally when jscpd is not installed; fail under CI where it must be."""
+    if JSCPD.exists():
+        return
+    message = "jscpd is missing: run `npm ci` in dashboard/"
+    if os.environ.get("CI"):
+        pytest.fail(message)
+    pytest.skip(message)
+
+
 def test_three_injected_regressions_fail_with_named_gates(project, capsys):
+    require_jscpd()
     gates = "G5,G7,G9-G11"
     assert main(["update", "--initial", "--gates", gates, "--root", str(project)]) == 0
     assert main(["check", "--gates", gates, "--root", str(project)]) == 0
@@ -112,7 +122,9 @@ def test_three_injected_regressions_fail_with_named_gates(project, capsys):
     assert status("G5", "function_length") == "FAIL"
     assert "src/tychora/contracts/long.py::long: new entry with value 90" in output
     assert status("G7", "layering") == "FAIL"
+    assert "1 finding(s); this gate allows none" in output
     assert status("G9-G11", "new_clones_python") == "FAIL"
+    assert output.count("1 finding(s); this gate allows none") == 2
     assert status("G9-G11", "new_clones_typescript") == "ok"
 
 
@@ -126,3 +138,45 @@ def test_module_entry_point_prints_usage():
     )
     assert result.returncode == 0
     assert "check" in result.stdout and "update" in result.stdout
+
+
+def test_initial_update_refuses_when_a_baseline_exists(project, capsys):
+    require_jscpd()
+    gates = "G9-G11"
+    assert main(["update", "--initial", "--gates", gates, "--root", str(project)]) == 0
+    allowlists = {
+        path: path.read_text()
+        for path in (project / "quality" / "jscpd").glob("*.json")
+    }
+    assert allowlists
+    write(
+        project,
+        "src/tychora/contracts/copy.py",
+        f'"""Copy."""\n\n\ndef again(values):\n{BLOCK}    return 0\n',
+    )
+    capsys.readouterr()
+
+    assert main(["update", "--initial", "--gates", gates, "--root", str(project)]) == 1
+    assert "update refused" in capsys.readouterr().out
+    assert {
+        path: path.read_text()
+        for path in (project / "quality" / "jscpd").glob("*.json")
+    } == allowlists
+
+
+def test_a_failing_gate_prints_error_and_others_still_report(
+    tmp_path, capsys, monkeypatch
+):
+    def broken(root):
+        raise RuntimeError("tool crashed")
+
+    gates = [
+        Gate("G90", "Broken", "pr", broken),
+        Gate("G91", "Fine", "pr", lambda root: [Metric("fine_metric", 0.0)]),
+    ]
+    monkeypatch.setattr("tools.health.__main__.select", lambda *a, **k: gates)
+    assert main(["check", "--root", str(tmp_path)]) == 1
+    lines = capsys.readouterr().out.splitlines()
+    assert any(l.startswith("G90") and l.endswith("ERROR") for l in lines)
+    assert "        - RuntimeError: tool crashed" in lines
+    assert any(l.startswith("G91") and "fine_metric" in l for l in lines)
