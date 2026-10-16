@@ -132,3 +132,28 @@ def test_ci_setup_stops_after_bounded_transient_failures(monkeypatch):
         provisioner.run_setup(["uv", "run"], {})
     assert len(calls) == 3
     assert len(delays) == 2
+
+
+def test_code_corpus_export_is_pinned_by_git_tree(tmp_path: Path):
+    module = _provisioner()
+    repo = tmp_path / "repo"
+    (repo / "src/tychora").mkdir(parents=True)
+    (repo / "src/tychora/a.py").write_text("VALUE = 1\n")
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(repo), *args], check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+    git("init", "-q")
+    git("add", ".")
+    git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-qm", "c")
+    commit, tree = git("rev-parse", "HEAD"), git("rev-parse", "HEAD:src/tychora")
+    exported = module.provision_code_corpus(
+        repo, tmp_path / "corpus", commit=commit, tree=tree
+    )
+    assert (exported / "src/tychora/a.py").read_text() == "VALUE = 1\n"
+    with pytest.raises(SystemExit, match="differs from the pinned tree"):
+        module.provision_code_corpus(
+            repo, tmp_path / "other", commit=commit, tree="0" * 40
+        )
