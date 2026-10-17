@@ -85,10 +85,13 @@ def test_projection_index_is_released_with_its_bundle(code_bundle):
     [unit, *_] = _code_units(code_bundle)
     copy = code_bundle.model_copy()
     project_code_excerpt_locator(copy, unit.unit_id, 0, 1)
-    cached = len(representations._BUNDLE_INDEXES)
+    # Track this bundle's own entry: other tests' bundles may be collected by the same
+    # gc.collect() under coverage/xdist, so the table's size is not a stable signal.
+    key = id(copy)
+    assert key in representations._BUNDLE_INDEXES
     del copy
     gc.collect()
-    assert len(representations._BUNDLE_INDEXES) == cached - 1
+    assert key not in representations._BUNDLE_INDEXES
 
 
 def test_invalid_projection_still_raises_after_caching(code_bundle):
