@@ -208,6 +208,12 @@ _ENTRIES = (
     ),
     Reason(
         "INVALID_REQUEST",
+        "review.time_naive",
+        False,
+        "Pass the review decision time as a timezone-aware datetime in UTC.",
+    ),
+    Reason(
+        "INVALID_REQUEST",
         "cursor.invalid",
         False,
         "Restart paging without a cursor.",

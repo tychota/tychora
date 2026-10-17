@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 from contextlib import AbstractContextManager
+from datetime import datetime
 from hashlib import sha256
 from typing import BinaryIO, cast
 
@@ -388,6 +389,23 @@ def test_invalid_review_never_advances_epoch(corpus, case):
         )
     assert epoch(corpus) == 0
     assert corpus.db.execute("SELECT COUNT(*) FROM review_events").fetchone()[0] == 0
+
+
+def test_naive_decision_time_is_refused_with_a_reason(corpus):
+    b = seed_bundle()
+    corpus.commit_extraction(b)
+    with pytest.raises(TychoraError) as error:
+        corpus.record_review(
+            ReviewTarget(unit_id=b.units[0].unit_id),
+            "accepted",
+            "reviewer",
+            decided_at=datetime(2026, 1, 1),  # noqa: DTZ001
+        )
+    assert (error.value.code, error.value.reason) == (
+        "INVALID_REQUEST",
+        "review.time_naive",
+    )
+    assert epoch(corpus) == 0
 
 
 def test_registration_access_floor_can_only_rise(corpus):
