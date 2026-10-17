@@ -1,0 +1,4 @@
+# Budget verdicts fail only on this runner class; elsewhere they are informational.
+runner_class = "github-ubuntu-22.04"
+os_prefix = "Linux"
+min_cores = 4
