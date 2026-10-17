@@ -16,16 +16,18 @@ class SqliteGoldLabelResolver:
         return tuple(row[0] for row in self._db.execute(statement, parameters))
 
     def source_ids(self, collection: str, source_key: str) -> tuple[str, ...]:
-        """Return the live sources of a collection carrying this source key."""
+        """Return the sources of the snapshot in a collection carrying this source key."""
         try:
             key = normalize_source_key(source_key)
         except ValueError:
             return ()
         return self._ids(
-            "SELECT s.source_id FROM sources s JOIN collections c USING(collection_id) "
-            "WHERE (c.slug=? OR c.collection_id=?) AND s.source_key=? "
-            "AND s.withdrawn_at IS NULL ORDER BY s.source_id",
-            (collection, collection, key),
+            "SELECT DISTINCT s.source_id FROM sources s "
+            "JOIN collections c USING(collection_id) "
+            "JOIN snapshot_members m ON m.source_id=s.source_id "
+            "WHERE m.snapshot_id=? AND (c.slug=? OR c.collection_id=?) "
+            "AND s.source_key=? ORDER BY s.source_id",
+            (self._snapshot_id, collection, collection, key),
         )
 
     def revision_ids(self, source_id: str, edition_key: str | None) -> tuple[str, ...]:
