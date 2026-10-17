@@ -48,13 +48,60 @@ def test_http_client_rebuilds_reason():
     )
 
 
-def test_http_client_treats_unknown_reason_as_invalid_response():
+def test_http_client_keeps_code_and_message_for_unknown_reason():
     response = httpx.Response(
-        400, json={"code": "INVALID_REQUEST", "message": "x", "reason": "nope.never"}
+        503,
+        json={
+            "code": "PROVIDER_FAILURE",
+            "message": "Newer server detail.",
+            "retryable": True,
+            "reason": "nope.never",
+        },
     )
     with pytest.raises(TychoraError) as error:
         _checked(response)
+    assert (error.value.code, error.value.message, error.value.reason) == (
+        "PROVIDER_FAILURE",
+        "Newer server detail.",
+        None,
+    )
+    assert error.value.retryable is True
+
+
+def test_http_client_drops_reason_registered_for_another_code():
+    response = httpx.Response(
+        400,
+        json={
+            "code": "INVALID_REQUEST",
+            "message": "Mismatch.",
+            "retryable": False,
+            "reason": "owner.live",
+        },
+    )
+    with pytest.raises(TychoraError) as error:
+        _checked(response)
+    assert (error.value.code, error.value.message, error.value.reason) == (
+        "INVALID_REQUEST",
+        "Mismatch.",
+        None,
+    )
+    assert error.value.retryable is False
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"message": "no code"},
+        {"code": "NOT_A_CODE", "message": "x"},
+        {"code": "INVALID_REQUEST", "message": "x", "reason": 7},
+        ["not", "an", "object"],
+    ],
+)
+def test_http_client_maps_malformed_body_to_provider_failure(body):
+    with pytest.raises(TychoraError) as error:
+        _checked(httpx.Response(400, json=body))
     assert error.value.code == "PROVIDER_FAILURE"
+    assert error.value.reason is None
 
 
 def test_mcp_tool_error_carries_reason():

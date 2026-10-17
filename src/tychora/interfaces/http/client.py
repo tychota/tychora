@@ -18,6 +18,7 @@ from uuid import UUID
 import httpx
 from pydantic import TypeAdapter
 
+from tychora.contracts.error_reasons import reason_for
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import QueryResult
 from tychora.contracts.jobs import JobStatus
@@ -59,21 +60,37 @@ def _endpoint(value: str) -> str:
     return f"http://{parsed.netloc}"
 
 
+def _error_from_body(value: Mapping) -> TychoraError:
+    """Rebuild the server's error, dropping a reason this client cannot trust.
+
+    An unknown reason (a newer server) or one registered for another code keeps
+    the server's code and message with no reason.
+    """
+    code, message, reason = value["code"], value["message"], value.get("reason")
+    if reason is not None:
+        if not isinstance(reason, str):
+            raise TypeError("Error reason must be a string")
+        try:
+            reason_for(code, reason)
+        except ValueError:
+            reason = None
+    return TychoraError(
+        code,
+        message,
+        retryable=None if reason else value.get("retryable", False),
+        reason=reason,
+    )
+
+
 def _checked(response: httpx.Response) -> httpx.Response:
     if response.status_code >= 400:
         try:
-            value = response.json()
-            reason = value.get("reason")
-            raise TychoraError(
-                value["code"],
-                value["message"],
-                retryable=None if reason else value.get("retryable", False),
-                reason=reason,
-            )
+            error = _error_from_body(response.json())
         except (ValueError, KeyError, TypeError, AttributeError):
             raise TychoraError(
                 "PROVIDER_FAILURE", "Local HTTP response is invalid."
             ) from None
+        raise error
     return response
 
 
