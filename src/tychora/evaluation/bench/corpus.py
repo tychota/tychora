@@ -176,13 +176,26 @@ def synth_queries(
     return tuple(queries)
 
 
+def _under_root(root: Path, relative: str, corpus: Path) -> Path:
+    """Return a path named by a corpus file, refusing one outside the root."""
+    named = Path(relative)
+    target = root / named
+    if (
+        named.is_absolute()
+        or ".." in named.parts
+        or not target.resolve().is_relative_to(root.resolve())
+    ):
+        raise BenchCorpusError(f"{corpus} names {relative} outside the benchmarks root")
+    return target
+
+
 def load_corpus(name: str, root: Path) -> BenchCorpus:
-    """Read ``<root>/<name>.toml`` and the query file it names."""
+    """Read ``<root>/<name>.toml`` and the query file it names under ``root``."""
     path = root / f"{name}.toml"
     try:
         data = tomllib.loads(path.read_text())
         lines = (
-            (root / data["queries"]).read_text().splitlines()
+            _under_root(root, data["queries"], path).read_text().splitlines()
             if "queries" in data
             else []
         )
