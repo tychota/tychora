@@ -73,3 +73,8 @@ def test_dashboard_audit_accepts_source_but_rejects_caches():
         assert not _allowed_path(
             PurePosixPath(f"tychora-0.1.0/dashboard/{part}/output.txt"), "sdist"
         )
+    # The pinned Node version file ships in the sdist; no other dashboard dotfile does.
+    assert _allowed_path(PurePosixPath("tychora-0.1.0/dashboard/.nvmrc"), "sdist")
+    assert not _allowed_path(PurePosixPath("tychora-0.1.0/dashboard/.env"), "sdist")
+    assert not _allowed_path(PurePosixPath("tychora-0.1.0/other/.nvmrc"), "sdist")
+    assert not _allowed_path(PurePosixPath("tychora-0.1.0/dashboard/.nvmrc"), "wheel")
