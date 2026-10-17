@@ -63,10 +63,14 @@ def _checked(response: httpx.Response) -> httpx.Response:
     if response.status_code >= 400:
         try:
             value = response.json()
+            reason = value.get("reason")
             raise TychoraError(
-                value["code"], value["message"], retryable=value.get("retryable", False)
+                value["code"],
+                value["message"],
+                retryable=None if reason else value.get("retryable", False),
+                reason=reason,
             )
-        except (ValueError, KeyError, TypeError):
+        except (ValueError, KeyError, TypeError, AttributeError):
             raise TychoraError(
                 "PROVIDER_FAILURE", "Local HTTP response is invalid."
             ) from None
