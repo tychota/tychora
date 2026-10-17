@@ -237,19 +237,25 @@ class LocalArtifacts:
             info = os.fstat(stream.fileno())
             if not stat.S_ISREG(info.st_mode) or info.st_size != ref.size_bytes:
                 raise TychoraError(
-                    "INTEGRITY_ERROR", "Artifact payload failed verification"
+                    "INTEGRITY_ERROR",
+                    "Artifact payload failed verification",
+                    reason="payload.hash_mismatch",
                 )
             digest, size = sha256(), 0
             while block := stream.read(_BLOCK_SIZE):
                 size += len(block)
                 if size > ref.size_bytes:
                     raise TychoraError(
-                        "INTEGRITY_ERROR", "Artifact payload failed verification"
+                        "INTEGRITY_ERROR",
+                        "Artifact payload failed verification",
+                        reason="payload.hash_mismatch",
                     )
                 digest.update(block)
             if digest.hexdigest() != ref.sha256 or size != ref.size_bytes:
                 raise TychoraError(
-                    "INTEGRITY_ERROR", "Artifact payload failed verification"
+                    "INTEGRITY_ERROR",
+                    "Artifact payload failed verification",
+                    reason="payload.hash_mismatch",
                 )
             stream.seek(0)
             yield stream
@@ -265,7 +271,9 @@ class LocalArtifacts:
                 stream = stack.enter_context(self._verified(directory, ref))
             except FileNotFoundError:
                 raise TychoraError(
-                    "INTEGRITY_ERROR", "Required artifact payload is missing"
+                    "INTEGRITY_ERROR",
+                    "Required artifact payload is missing",
+                    reason="payload.missing",
                 ) from None
             yield stream
 
