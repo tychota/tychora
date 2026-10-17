@@ -201,7 +201,7 @@ def test_unstable_file_retries_then_fails_without_returning_manifest(
     def move(stream, media_type):
         ref = original_put(stream, media_type)
         captures.append(ref)
-        path.write_bytes(b"changed" + str(len(captures)).encode())
+        path.write_bytes(b"changed" + b"x" * len(captures))  # size differs every time
         return ref
 
     monkeypatch.setattr(artifacts, "put_stream", move)
