@@ -35,3 +35,7 @@ dashboard/public/assets/THIRD-PARTY-NOTICES.txt
 .worktrees/
 mutants/
 dashboard/coverage/
+
+# Benchmark results (published to the bench-results branch); baselines are committed
+bench-results/*
+!bench-results/baseline/
