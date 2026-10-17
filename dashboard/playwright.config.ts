@@ -4,6 +4,12 @@ import { defineConfig } from "@playwright/test";
 // Optional executable override supports a preinstalled browser without machine-specific paths.
 // Playwright sets FORCE_COLOR for workers; remove a conflicting inherited setting.
 delete process.env.NO_COLOR;
+// Single source of truth for the fixture directory: the config is also evaluated in the test
+// worker, so the spec and the webServer (which inherits this env) agree on it.
+process.env.TYCHORA_E2E_FIXTURE_DIR ||= resolve(
+  import.meta.dirname,
+  "../.superpowers/verification/dashboard-e2e/ocr-intake-fixtures",
+);
 const port = Number(process.env.TYCHORA_E2E_PORT ?? 8765);
 export default defineConfig({
   testDir: "./e2e",
@@ -29,12 +35,7 @@ export default defineConfig({
     env: {
       PYTHONPATH:
         process.env.PYTHONPATH || resolve(import.meta.dirname, "../src"),
-      TYCHORA_E2E_FIXTURE_DIR:
-        process.env.TYCHORA_E2E_FIXTURE_DIR ||
-        resolve(
-          import.meta.dirname,
-          "../.superpowers/verification/dashboard-e2e/ocr-intake-fixtures",
-        ),
+      TYCHORA_E2E_FIXTURE_DIR: process.env.TYCHORA_E2E_FIXTURE_DIR,
     },
     reuseExistingServer: false,
     timeout: 30_000,
