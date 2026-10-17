@@ -1,5 +1,6 @@
 """Immutable artifact identity shared by corpus verification and byte storage."""
 
+from collections.abc import Sequence
 from typing import Literal, Self
 
 from pydantic import model_validator
@@ -14,6 +15,20 @@ class ArtifactRef(Contract):
     size_bytes: NonNegativeInt
     media_type: NonEmptyStr
     storage_key: NonEmptyStr
+
+    @classmethod
+    def from_row(cls, row: Sequence[object]) -> Self:
+        """Build a reference from a (sha256, size_bytes, media_type, storage_key) row."""
+        if len(row) < 4:
+            raise ValueError("Artifact row needs four columns")
+        return cls.model_validate(
+            {
+                "sha256": row[0],
+                "size_bytes": row[1],
+                "media_type": row[2],
+                "storage_key": row[3],
+            }
+        )
 
 
 def physical_identity(ref: ArtifactRef | None) -> tuple[str, int, str] | None:
