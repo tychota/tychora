@@ -7,6 +7,7 @@ workspace owner may decide which terminal capture originals became provenance.
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
+from tychora.adapters.sqlite.repositories import artifact_ref
 from tychora.contracts.artifacts import (
     CAPTURE_TYPES,
     ArtifactRef,
@@ -253,9 +254,7 @@ def from_backup(db, *, artifacts) -> BackupInventory:
         "SELECT artifact_sha,size_bytes,media_type,storage_key,payload_state FROM artifacts"
     ):
         try:
-            ref = ArtifactRef(
-                sha256=sha, size_bytes=size, media_type=media, storage_key=key
-            )
+            ref = artifact_ref((sha, size, media, key))
         except ValueError:
             raise _fail("Invalid copied artifact registration") from None
         if ref.storage_key != ref.sha256:

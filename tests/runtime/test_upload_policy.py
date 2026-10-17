@@ -101,6 +101,7 @@ async def test_upload_rechecks_canonical_grants_and_epoch(tmp_path):
         "empty",
         "ambiguous",
         "foreign",
+        "dangling_workspace",
         "malformed_kind",
     ],
 )
@@ -144,6 +145,11 @@ async def test_upload_denies_missing_or_invalid_permission(tmp_path, change):
                     "UPDATE evidence_units SET unit_id=?",
                     (bundle.revision.revision_id,),
                 )
+            if change == "dangling_workspace":
+                owner.db.commit()
+                owner.db.execute("PRAGMA foreign_keys=OFF")
+                owner.db.execute("UPDATE collections SET workspace_id='missing'")
+                owner.db.commit()
             if change == "foreign":
                 owner.db.execute(
                     "INSERT INTO workspaces (workspace_id,schema_version,created_at) VALUES ('foreign',1,'2024')"
