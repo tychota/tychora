@@ -1,6 +1,8 @@
 """Deterministic synthetic documents, corpus files and verified downloads."""
 
+import http.client
 import io
+import urllib.request
 from hashlib import sha256
 from pathlib import Path
 from typing import Literal
@@ -12,11 +14,13 @@ from tychora.evaluation.bench.corpus import (
     BenchCorpus,
     BenchCorpusError,
     BenchDocument,
+    GuardedRedirect,
     all_queries,
     document_bytes,
     fetch_corpus,
     load_corpus,
     synth_queries,
+    write_atomic,
 )
 from tychora.evaluation.bench.synth import (
     PROBE_QUESTION,
@@ -76,6 +80,7 @@ def _corpus(
     return BenchCorpus(
         name="tiny",
         synthetic=SynthSpec(seed=1, count=0),
+        allowed_hosts=("example.org",),
         documents=(
             BenchDocument(
                 source_key="public/one",
@@ -178,3 +183,118 @@ def test_document_bytes_derives_and_caches_the_rasterized_scan(tmp_path, monkeyp
     assert document_bytes(document, tmp_path) == b"%PDF- scan"
     assert document_bytes(document, tmp_path) == b"%PDF- scan"
     assert calls == [original]
+
+
+def _unread(url):
+    raise AssertionError("no bytes may be requested")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///etc/passwd",
+        "http://example.org/one.txt",
+        "https://elsewhere.example.net/one.txt",
+    ],
+)
+def test_fetch_refuses_urls_outside_the_allowlist_before_reading(tmp_path, url):
+    corpus = _corpus(b"pinned bytes")
+    document = corpus.documents[0].model_copy(update={"url": url})
+    bad = corpus.model_copy(update={"documents": (document,)})
+    with pytest.raises(BenchCorpusError, match="public/one"):
+        fetch_corpus(bad, tmp_path, _unread)
+
+
+def test_corpus_validation_refuses_urls_outside_the_allowlist():
+    corpus = _corpus(b"x")
+    document = corpus.documents[0].model_dump() | {"url": "http://example.org/a"}
+    with pytest.raises(ValueError, match="public/one"):
+        BenchCorpus.from_mapping(
+            corpus.model_dump(mode="json") | {"documents": [document]}
+        )
+    other = corpus.documents[0].model_dump(mode="json") | {
+        "url": "https://elsewhere.example.net/a"
+    }
+    with pytest.raises(ValueError, match="public/one"):
+        BenchCorpus.from_mapping(
+            corpus.model_dump(mode="json") | {"documents": [other]}
+        )
+
+
+@pytest.mark.parametrize(
+    "target", ["http://example.org/b", "https://elsewhere.example.net/b"]
+)
+def test_redirects_leaving_https_or_the_allowlist_are_refused(target):
+    handler = GuardedRedirect(("example.org",))
+    request = urllib.request.Request("https://example.org/a")
+    with pytest.raises(BenchCorpusError, match="redirect"):
+        handler.redirect_request(request, None, 302, "Found", {}, target)
+    allowed = handler.redirect_request(
+        request, None, 302, "Found", {}, "https://example.org/b"
+    )
+    assert allowed is not None
+
+
+def test_fetch_names_the_document_when_the_transfer_fails(tmp_path):
+    corpus = _corpus(b"pinned bytes")
+
+    class Broken:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, amount):
+            raise http.client.IncompleteRead(b"pin")
+
+    def refuses(url):
+        raise TimeoutError("timed out")
+
+    for opener in (refuses, lambda url: Broken()):
+        with pytest.raises(BenchCorpusError, match="public/one"):
+            fetch_corpus(corpus, tmp_path, opener)
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_failed_store_is_named_by_document(tmp_path, monkeypatch):
+    corpus = _corpus(b"pinned bytes")
+
+    def failing(path, data):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("tychora.evaluation.bench.corpus.write_atomic", failing)
+    with pytest.raises(BenchCorpusError, match="public/one"):
+        fetch_corpus(corpus, tmp_path, lambda url: io.BytesIO(b"pinned bytes"))
+
+
+def test_write_atomic_removes_the_partial_file_on_failure(tmp_path, monkeypatch):
+    def boom(descriptor):
+        raise OSError("fsync failed")
+
+    monkeypatch.setattr("os.fsync", boom)
+    with pytest.raises(OSError, match="fsync"):
+        write_atomic(tmp_path / "target", b"data")
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_a_tampered_derived_scan_is_regenerated(tmp_path, monkeypatch):
+    original = b"%PDF- original"
+    corpus = _corpus(original, transform="rasterize@150dpi")
+    fetch_corpus(corpus, tmp_path, lambda url: io.BytesIO(original))
+    monkeypatch.setattr(
+        "tychora.evaluation.bench.corpus.rasterize_pdf", lambda data: b"%PDF- scan"
+    )
+    document = corpus.documents[0]
+    assert document_bytes(document, tmp_path) == b"%PDF- scan"
+    derived = next(path for path in tmp_path.glob("*.pdf"))
+    derived.write_bytes(b"tampered")
+    assert document_bytes(document, tmp_path) == b"%PDF- scan"
+
+
+def test_rasterize_pdf_refuses_a_pdf_without_pages():
+    pdfium = pytest.importorskip("pypdfium2")
+    empty = io.BytesIO()
+    pdfium.PdfDocument.new().save(empty)
+    with pytest.raises(curation.UnusablePdf):
+        curation.rasterize_pdf(empty.getvalue())
