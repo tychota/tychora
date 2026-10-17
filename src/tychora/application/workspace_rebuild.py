@@ -163,8 +163,8 @@ def _not_empty() -> TychoraError:
     )
 
 
-def require_complete_workspace(root: Path) -> None:
-    """Refuse a workspace whose rebuild did not finish; it holds a partial copy."""
+def require_complete_workspace(root: Path) -> Path:
+    """Return ``root`` unless its rebuild did not finish, which leaves a partial copy."""
     if (root / INCOMPLETE_MARKER).exists():
         raise TychoraError(
             "INVALID_REQUEST",
@@ -172,6 +172,7 @@ def require_complete_workspace(root: Path) -> None:
             "Delete it and rerun `tychora --workspace NEW manage rebuild workspace --from OLD`.",
             reason="rebuild.incomplete",
         )
+    return root
 
 
 def _checked_paths(old: Path, destination: Path) -> tuple[Path, Path]:
