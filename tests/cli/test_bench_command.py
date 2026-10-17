@@ -4,7 +4,11 @@ import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
+import pytest
+
 from tychora.contracts.operations import JobEvent
+from tychora.evaluation.bench.results import Assertion, load_result
+from tychora.interfaces import bench
 from tychora.interfaces.bench import TychoraBenchClient, main
 
 
@@ -152,3 +156,87 @@ def test_incomparable_results_are_reported_cleanly(tmp_path, capsys):
         == 2
     )
     assert "bench.incomparable" in capsys.readouterr().err
+
+
+def _args(tmp_path, *extra, suite="ingest", corpus="bench-small", profile="offline"):
+    return [
+        "run",
+        "--corpus",
+        corpus,
+        "--suite",
+        suite,
+        "--profile",
+        profile,
+        "--limit",
+        "2",
+        "--out",
+        str(tmp_path / "results"),
+        "--cache",
+        str(tmp_path / "cache"),
+        *extra,
+    ]
+
+
+def _real_result(tmp_path):
+    assert main(_args(tmp_path)) == 0
+    [path] = (tmp_path / "results").rglob("ingest-offline.json")
+    return load_result(path)
+
+
+def test_online_profile_needs_a_credential_before_any_workspace(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
+    assert main(_args(tmp_path, profile="online")) == 2
+    assert "VOYAGE_API_KEY" in capsys.readouterr().err
+    assert not (tmp_path / "cache" / "workspaces").exists()
+    monkeypatch.setenv("VOYAGE_API_KEY", "")
+    assert main(_args(tmp_path, profile="online")) == 2
+
+
+def test_missing_corpus_exits_with_usage_code(tmp_path, capsys):
+    assert main(_args(tmp_path, corpus="does-not-exist")) == 2
+    assert capsys.readouterr().err
+
+
+def test_over_budget_stage_exits_one(tmp_path, monkeypatch, capsys):
+    result = _real_result(tmp_path)
+    failing = result.model_copy(
+        update={
+            "stages": {
+                name: stats.model_copy(update={"verdict": "fail"})
+                for name, stats in result.stages.items()
+            }
+        }
+    )
+    monkeypatch.setattr(bench, "run_suite", lambda *_: failing)
+    assert main(_args(tmp_path)) == 1
+    assert "over budget" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("update", "expected"),
+    [
+        ({"failures": ("doc-1: job failed",)}, "doc-1: job failed"),
+        ({"assertions": (Assertion(name="probe-1", passed=False),)}, "probe-1"),
+        ({"aborted": True}, "aborted"),
+    ],
+)
+def test_invalid_measurements_exit_one(tmp_path, update, expected):
+    result = _real_result(tmp_path).model_copy(update=update)
+    assert any(expected in problem for problem in bench._problems(result, None))
+
+
+def test_invalid_measurement_fails_the_command(tmp_path, monkeypatch, capsys):
+    result = _real_result(tmp_path).model_copy(update={"aborted": True})
+    monkeypatch.setattr(bench, "run_suite", lambda *_: result)
+    assert main(_args(tmp_path)) == 1
+    assert "aborted" in capsys.readouterr().err
+
+
+def test_auto_workspace_is_removed_and_explicit_one_is_kept(tmp_path):
+    assert main(_args(tmp_path)) == 0
+    assert not list((tmp_path / "cache" / "workspaces").iterdir())
+    kept = tmp_path / "kept"
+    assert main(_args(tmp_path, "--workspace", str(kept))) == 0
+    assert (kept / "workspace.toml").exists()

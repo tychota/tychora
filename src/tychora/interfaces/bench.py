@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -27,6 +28,7 @@ from tychora.evaluation.bench.harness import (
     run_suite,
 )
 from tychora.evaluation.bench.results import (
+    BenchResult,
     is_reference,
     load_result,
     machine_fingerprint,
@@ -197,23 +199,38 @@ def _open(workspace: Path, profile: str, benchmarks: Path) -> tuple[Tychora, str
     return kb, config.config_sha
 
 
-def _problems(result, compare: Path | None) -> list[str]:
+def _problems(result: BenchResult, compare: Path | None) -> list[str]:
+    """Everything that makes a run fail: regressions, budgets, failed jobs or probes, aborts."""
     found = list(regressions(result, load_result(compare))) if compare else []
     found += [
         f"{name}: over budget"
         for name, stats in result.stages.items()
         if stats.verdict == "fail"
     ]
+    found += [f"failed: {failure}" for failure in result.failures]
+    found += [
+        f"assertion failed: {assertion.name} {assertion.detail}".rstrip()
+        for assertion in result.assertions
+        if not assertion.passed
+    ]
+    if result.aborted:
+        found.append("run aborted before completing: not a valid measurement")
     return found
+
+
+def _require_credential(profile: str) -> None:
+    if profile == "online" and not os.environ.get("VOYAGE_API_KEY"):
+        raise BenchUnavailable("The online profile needs VOYAGE_API_KEY to be set.")
 
 
 def _run(args: argparse.Namespace) -> int:
     require_available(args.suite)
+    _require_credential(args.profile)
     corpus = load_corpus(args.corpus, args.benchmarks)
-    workspace = (
-        args.workspace
-        or args.cache / "workspaces" / f"{args.suite}-{args.profile}-{time.time_ns()}"
+    scratch = (
+        args.cache / "workspaces" / f"{args.suite}-{args.profile}-{time.time_ns()}"
     )
+    workspace = args.workspace or scratch
     if workspace.exists() and any(workspace.iterdir()):
         raise BenchUnavailable(f"{workspace} must be a new, empty directory")
     machine = machine_fingerprint()
@@ -246,6 +263,8 @@ def _run(args: argparse.Namespace) -> int:
         )
     finally:
         kb.close()
+        if args.workspace is None:
+            shutil.rmtree(scratch, ignore_errors=True)
     print(write_result(result, args.out))
     problems = _problems(result, args.compare)
     for problem in problems:
