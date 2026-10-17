@@ -15,6 +15,9 @@ from tychora.configuration.resolve import resolve_config
 from tychora.contracts.identity import source_id
 from tychora.ports.execution import ExecutionContext
 
+# Parser and OCR jobs are slow on loaded CI runners; the API caps one wait at 300 s.
+JOB_WAIT = min(scaled(60), 300)
+
 
 class CharacterCounter:
     model = "synthetic-output-test-counter"
@@ -77,7 +80,9 @@ async def test_async_public_ingestion_and_heartbeat(tmp_path):
                 await asyncio.sleep(0.01)
                 beats += 1
 
-        status, _ = await asyncio.gather(kb.jobs.wait(job.id), heartbeat())
+        status, _ = await asyncio.gather(
+            kb.jobs.wait(job.id, timeout=JOB_WAIT), heartbeat()
+        )
         assert status.state == "succeeded"
         assert beats == 3
         result = await kb.search(
@@ -115,7 +120,7 @@ async def test_cancelled_async_search_drains_before_returning(tmp_path):
                 },
             }
         )
-        assert (await kb.jobs.wait(job.id)).state == "succeeded"
+        assert (await kb.jobs.wait(job.id, timeout=JOB_WAIT)).state == "succeeded"
         started, release = Event(), Event()
         original = kb._workspace.services.query._prepare
 
@@ -249,7 +254,7 @@ async def test_cancelled_public_original_inspection_keeps_payload_pinned(
                 },
             }
         )
-        assert (await kb.jobs.wait(job.id)).state == "succeeded"
+        assert (await kb.jobs.wait(job.id, timeout=JOB_WAIT)).state == "succeeded"
         sid = source_id(kb.default_collection_id, "leased-original")
         revision = (await kb.sources.revisions(sid)).revisions[0].revision_id
         owner = kb._workspace.owner

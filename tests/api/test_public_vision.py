@@ -26,6 +26,9 @@ from tychora.interfaces.http.auth import LocalAuth
 from tychora.interfaces.mcp.server import _current, build_mcp
 from tychora.ports.execution import ExecutionContext
 
+# Parser and OCR jobs are slow on loaded CI runners; the API caps one wait at 300 s.
+JOB_WAIT = min(scaled(60), 300)
+
 
 class Counter:
     model = "synthetic-counter"
@@ -119,7 +122,7 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
     )
     with Tychora.open(workspace, config=config, token_counter=Counter()) as kb:
         first = kb.sources.add(source)
-        assert kb.jobs.wait(first.id).state == "succeeded"
+        assert kb.jobs.wait(first.id, timeout=JOB_WAIT).state == "succeeded"
         source_identity = canonical_source_id(
             UUID(str(kb.default_collection_id)), "diagram"
         )
@@ -166,7 +169,7 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
         }
         captured_static_scope = kb.scope
         denied = kb.sources.add(selected)
-        assert kb.jobs.wait(denied.id).state == "failed"
+        assert kb.jobs.wait(denied.id, timeout=JOB_WAIT).state == "failed"
         assert sent == []
         kb.management.run(
             {
@@ -193,7 +196,7 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
     with Tychora.open(workspace, config=config, token_counter=Counter()) as kb:
         fail_next[0] = True
         interrupted = kb.sources.add(selected)
-        interrupted_status = kb.jobs.wait(interrupted.id)
+        interrupted_status = kb.jobs.wait(interrupted.id, timeout=JOB_WAIT)
         assert interrupted_status.state == "succeeded", (interrupted_status, sent)
         failed_calls = len(sent)
         assert failed_calls >= 1
@@ -211,7 +214,7 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
     fail_next[0] = False
     with Tychora.open(workspace, config=config, token_counter=Counter()) as kb:
         second = kb.sources.add(selected, idempotency_key="selected-once")
-        status = kb.jobs.wait(second.id)
+        status = kb.jobs.wait(second.id, timeout=JOB_WAIT)
         assert status.state == "succeeded", status
         assert len(sent) == failed_calls + 1
         assert kb.sources.add(selected, idempotency_key="selected-once").id == second.id
@@ -325,7 +328,7 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
             interrupt_after_selected_cache,
         )
         variant = kb.sources.add(changed_schema, idempotency_key="selected-retry")
-        failed_variant = kb.jobs.wait(variant.id)
+        failed_variant = kb.jobs.wait(variant.id, timeout=JOB_WAIT)
         assert failed_variant.state == "failed"
         assert failed_variant.error_code == "PROVIDER_FAILURE"
         assert len(sent) == failed_calls + 2
@@ -345,7 +348,7 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
 
         retry_response = asyncio.run(retry_selected_job(variant.id))
         assert retry_response.status_code == 202, retry_response.text
-        assert kb.jobs.wait(variant.id).state == "succeeded"
+        assert kb.jobs.wait(variant.id, timeout=JOB_WAIT).state == "succeeded"
         assert len(sent) == failed_calls + 2
         count = kb._workspace.bridge.call(
             kb._workspace.owner.run_blocking(
@@ -357,10 +360,10 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
         )
         assert count == 4  # Initial, capability-gap, recovered, changed-schema.
         synced = kb.sources.sync(source_identity)
-        assert kb.jobs.wait(synced.id).state == "succeeded"
+        assert kb.jobs.wait(synced.id, timeout=JOB_WAIT).state == "succeeded"
         Image.new("RGB", (8, 6), "green").save(picture)
         stale = kb.sources.add(selected)
-        stale_state = kb.jobs.wait(stale.id)
+        stale_state = kb.jobs.wait(stale.id, timeout=JOB_WAIT)
         assert stale_state.state == "failed"
         assert stale_state.error_code == "INVALID_REQUEST"
         assert len(sent) == failed_calls + 2
@@ -401,7 +404,7 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
             interrupt_before_uncached_dispatch,
         )
         pending = kb.sources.add(revoked_schema, idempotency_key="selected-revoke")
-        pending_state = kb.jobs.wait(pending.id)
+        pending_state = kb.jobs.wait(pending.id, timeout=JOB_WAIT)
         assert pending_state.state == "failed"
         assert pending_state.captured_inputs is not None
         assert len(sent) == failed_calls + 2
@@ -415,13 +418,13 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
         )
         denied_retry = asyncio.run(retry_selected_job(pending.id))
         assert denied_retry.status_code == 202, denied_retry.text
-        retry_state = kb.jobs.wait(pending.id)
+        retry_state = kb.jobs.wait(pending.id, timeout=JOB_WAIT)
         assert retry_state.state == "failed"
         assert retry_state.error_code in {"SCOPE_CHANGED", "FORBIDDEN_SCOPE"}
         assert len(sent) == failed_calls + 2
     with Tychora.open(workspace, config=config, token_counter=Counter()) as kb:
         revoked = kb.sources.add(revoked_schema)
-        assert kb.jobs.wait(revoked.id).state == "failed"
+        assert kb.jobs.wait(revoked.id, timeout=JOB_WAIT).state == "failed"
         assert len(sent) == failed_calls + 2
 
 
@@ -466,7 +469,7 @@ def test_offline_cli_selected_ocr_uses_local_models_without_remote_call(
     }
     with Tychora.open(workspace, token_counter=Counter()) as kb:
         original = kb.sources.add(source)
-        assert kb.jobs.wait(original.id).state == "succeeded"
+        assert kb.jobs.wait(original.id, timeout=JOB_WAIT).state == "succeeded"
         sid = canonical_source_id(
             UUID(str(kb.default_collection_id)), source["source_key"]
         )
@@ -994,7 +997,7 @@ def test_first_selected_add_retains_original_and_reports_incomplete_vision(
             == 0
         )
         omitted_again = kb.sources.add(selected)
-        assert kb.jobs.wait(omitted_again.id).state == "failed"
+        assert kb.jobs.wait(omitted_again.id, timeout=JOB_WAIT).state == "failed"
         assert len(sent) == 1
         inspected = kb.sources.selections(sid, revision, extraction.extraction_id)
         response_mode[0] = "valid"
@@ -1008,7 +1011,7 @@ def test_first_selected_add_retains_original_and_reports_incomplete_vision(
             ],
         }
         completed = kb.sources.add(retry_intent)
-        assert kb.jobs.wait(completed.id).state == "succeeded"
+        assert kb.jobs.wait(completed.id, timeout=JOB_WAIT).state == "succeeded"
         assert len(sent) == 2
         outcomes = kb.sources.extractions(sid, revision).extractions
         assert len(outcomes) == 2
