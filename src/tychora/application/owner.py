@@ -182,9 +182,7 @@ class WorkspaceOwner:
         ):
             raise TychoraError("INTEGRITY_ERROR", "Canonical database path is unsafe")
         try:
-            self.db = open_corpus(
-                self.path / "corpus.sqlite3", initialize=True, format_checked=True
-            )
+            self.db = open_corpus(database, initialize=True, format_checked=True)
         except sqlite3.DatabaseError:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Canonical database cannot be opened"
