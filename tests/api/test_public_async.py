@@ -8,6 +8,7 @@ import pytest
 from PIL import Image
 
 from tests.helpers.assets import asset_path
+from tests.helpers.timing import scaled
 from tychora import AsyncTychora
 from tychora.adapters.docling.parser import DoclingParser
 from tychora.configuration.resolve import resolve_config
@@ -183,7 +184,7 @@ async def test_two_public_queries_complete_while_parser_job_is_held(
                 },
             }
         )
-        first_status = await kb.jobs.wait(first.id)
+        first_status = await kb.jobs.wait(first.id, timeout=scaled(120))
         assert first_status.state == "succeeded", first_status.error_code
         monkeypatch.setattr(DoclingParser, "aextract", held_parser)
         parser_job = await kb.sources.add(
