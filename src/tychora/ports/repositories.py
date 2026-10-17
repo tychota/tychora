@@ -67,10 +67,6 @@ class WorkspaceRepository(Protocol):
         """Return the current policy epoch."""
         ...
 
-    def format_version(self) -> int:
-        """Return the storage format recorded for the workspace."""
-        ...
-
     def lexical_epoch(self) -> int:
         """Return the current lexical statistics epoch."""
         ...

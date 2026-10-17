@@ -51,8 +51,12 @@ def test_incompatible_open_never_migrates(tmp_path, tamper):
     with pytest.raises(TychoraError) as error:
         open_corpus(path, initialize=True)
     assert error.value.code == "PROFILE_INCOMPATIBLE"
-    if tamper in ("checksum", "version"):
-        assert error.value.reason == "workspace.format_old"
+    expected_reason = {
+        "version": "workspace.format_old",
+        "checksum": "workspace.schema_mismatch",
+    }
+    if tamper in expected_reason:
+        assert error.value.reason == expected_reason[tamper]
     with sqlite3.connect(path) as check:
         assert (
             check.execute(

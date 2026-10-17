@@ -24,11 +24,8 @@ def format_old_error() -> TychoraError:
 
 
 def receipt_is_older(rows: list[tuple[int, str]]) -> bool:
-    """True when a migration receipt names format 1, or format 2 with older DDL."""
-    return len(rows) == 1 and (
-        rows[0][0] < SCHEMA_VERSION
-        or (rows[0][0] == SCHEMA_VERSION and rows[0][1] != SCHEMA_CHECKSUM)
-    )
+    """True when a migration receipt names a format older than the packaged one."""
+    return len(rows) == 1 and rows[0][0] < SCHEMA_VERSION
 
 
 def _disable_extension_loading(db: sqlite3.Connection) -> None:
@@ -95,7 +92,8 @@ def open_verified_import(path: Path) -> sqlite3.Connection:
                 )
         finally:
             expected.close()
-        # The only read from an imported user table occurs after exact object comparison.
+        # The receipt is the only user table read before integrity_check; the exact
+        # object comparison above has already vouched for the schema around it.
         rows = db.execute(
             "SELECT version,checksum FROM schema_migrations ORDER BY version"
         ).fetchall()

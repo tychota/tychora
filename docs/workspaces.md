@@ -43,4 +43,4 @@ older Tychora is refused with `PROFILE_INCOMPATIBLE` and reason
 
     tychora --workspace ./knowledge-v2 manage rebuild workspace --from ./knowledge
 
-The old workspace is opened read-only and is never modified.
+Opening an older workspace never modifies it: the format check reads a private copy of its database and write-ahead log, or opens it read-only and immutable when no log files exist.

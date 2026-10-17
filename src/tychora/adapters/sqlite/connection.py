@@ -13,32 +13,18 @@ from .migrations import (
     migration_sql,
     receipt_is_older,
 )
+from .receipt import read_receipt_untouched
 
 
-def _refuse_older_format(path: Path) -> None:
-    """Refuse an older-format database without writing a byte of it.
+def refuse_older_format(path: Path) -> None:
+    """Refuse an older-format database before anything is written next to it.
 
-    The check opens the file read-only, so closing it neither checkpoints nor
-    removes a -wal left by a crashed owner. Without such sidecar files the open
-    is also immutable, which stops SQLite from creating a -shm.
+    The receipt is read through `read_receipt_untouched`, so the old file, its
+    -wal and its -shm keep their exact bytes.
     """
     if not path.is_file() or path.stat().st_size == 0:
         return
-    sidecars = any(
-        path.with_name(path.name + suffix).exists() for suffix in ("-wal", "-shm")
-    )
-    uri = path.as_uri() + ("?mode=ro" if sidecars else "?mode=ro&immutable=1")
-    try:
-        db = sqlite3.connect(uri, uri=True)
-        try:
-            rows = db.execute(
-                "SELECT version, checksum FROM schema_migrations ORDER BY version"
-            ).fetchall()
-        finally:
-            db.close()
-    except sqlite3.DatabaseError:
-        return
-    if receipt_is_older(rows):
+    if receipt_is_older(read_receipt_untouched(path)):
         raise format_old_error()
 
 
@@ -49,14 +35,14 @@ def open_corpus(path: Path, *, initialize: bool = False) -> sqlite3.Connection:
             "Corpus database does not exist",
             reason="workspace.absent",
         )
-    _refuse_older_format(path)
+    refuse_older_format(path)
     db = sqlite3.connect(path, isolation_level=None)
     try:
         if sqlite3.sqlite_version_info < (3, 38, 0):
             raise TychoraError(
                 "CAPABILITY_MISSING",
                 "SQLite 3.38 or newer is required",
-                reason="sqlite.version_unsupported",
+                reason="storage.version_unsupported",
             )
         db.execute("PRAGMA foreign_keys=ON")
         db.execute("PRAGMA busy_timeout=2000")
