@@ -71,6 +71,12 @@ def _allowed_path(path: PurePosixPath, kind: str) -> bool:
         return False
     if kind == "sdist" and len(path.parts) == 2 and path.name == ".gitignore":
         return re.fullmatch(r"tychora-[^/]+", path.parts[0]) is not None
+    if (
+        kind == "sdist"
+        and len(path.parts) == 3
+        and path.parts[1:] == ("dashboard", ".nvmrc")
+    ):
+        return re.fullmatch(r"tychora-[^/]+", path.parts[0]) is not None
     if any(part.startswith(".") or part in _DENIED_PARTS for part in path.parts):
         return False
     if path.name.lower().endswith(_DENIED_SUFFIXES) or path.name.lower() in {
