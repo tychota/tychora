@@ -202,6 +202,12 @@ _ENTRIES = (
     ),
     Reason(
         "INVALID_REQUEST",
+        "bench.incomparable",
+        False,
+        "Compare results of the same suite, profile and runner class; pick a baseline from that runner.",
+    ),
+    Reason(
+        "INVALID_REQUEST",
         "cursor.invalid",
         False,
         "Restart paging without a cursor.",

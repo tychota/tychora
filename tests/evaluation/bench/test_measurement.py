@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from tychora.contracts.errors import TychoraError
 from tychora.contracts.operations import JobEvent
 from tychora.evaluation.bench.budgets import (
     INGEST_STAGE_BUDGETS_S,
@@ -151,3 +152,35 @@ def test_reference_machine_requires_the_declared_runner_class():
     assert is_reference(machine, spec, "github-ubuntu-22.04")
     assert not is_reference(machine, spec, None)
     assert not is_reference(machine, spec, "laptop")
+
+
+def test_regressions_refuse_incomparable_runs():
+    other = _result(100.0).model_copy(update={"profile": "online"})
+    with pytest.raises(TychoraError) as error:
+        regressions(_result(100.0), other)
+    assert error.value.reason == "bench.incomparable"
+    shared = _result(100.0).model_copy(update={"reference_machine": True})
+    with pytest.raises(TychoraError):
+        regressions(_result(100.0), shared)
+
+
+def test_regressions_compare_the_asserted_quantile_and_floor_zero_baselines():
+    ingest = stage_stats(
+        [1.0] * 9 + [10.0], unit="s", budget=None, reference=False, quantile=0.90
+    )
+    assert (ingest.quantile, ingest.asserted) == (0.90, 1.0)
+    base = _result(0.0)
+    assert regressions(_result(0.5), base) == ()
+    assert regressions(_result(5.0), base) == ("total: p95 5.0 ms > 1.0 ms",)
+
+
+def test_write_result_replaces_atomically(tmp_path):
+    path = write_result(_result(100.0), tmp_path)
+    write_result(_result(110.0), tmp_path)
+    assert load_result(path) == _result(110.0)
+    assert [item.name for item in path.parent.iterdir()] == [path.name]
+
+
+def test_unknown_ingest_stages_map_to_unbudgeted_buckets():
+    assert ingest_bucket("accepted") == "queue"
+    assert ingest_bucket("something_new") == "other"
