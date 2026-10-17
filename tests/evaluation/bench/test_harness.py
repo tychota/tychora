@@ -171,3 +171,23 @@ def test_families_suite_is_unavailable(tmp_path):
             _context(),
             SuiteInputs(tmp_path, WallClockStageSource(client.events)),
         )
+
+
+def test_failed_searches_are_failures_not_latency_samples(tmp_path):
+    class Failing(FakeClient):
+        def search(self, question: str) -> SearchOutcome:
+            super().search(question)
+            return SearchOutcome(
+                run_id=None, unit_ids=(), error_code="INTERNAL", duration_ms=1.0
+            )
+
+    client = Failing()
+    result = run_suite(
+        client,
+        _corpus(),
+        "query",
+        _context(),
+        SuiteInputs(tmp_path, WallClockStageSource(client.events)),
+    )
+    assert result.failures
+    assert result.stages["total"].n == 0

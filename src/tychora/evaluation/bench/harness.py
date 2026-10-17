@@ -185,6 +185,16 @@ def run_ingest(
     return samples
 
 
+def _record_query(
+    samples: Samples, outcome: SearchOutcome, stage_source: StageSource
+) -> None:
+    stages = stage_source.query_stages(outcome.run_id) if outcome.run_id else ()
+    for sample in stages:
+        samples.stages[sample.stage].append(sample.duration_ms)
+    if not any(sample.stage == "total" for sample in stages):
+        samples.stages["total"].append(outcome.duration_ms)
+
+
 def run_queries(
     client: BenchClient, queries: Iterable[BenchQuery], stage_source: StageSource
 ) -> Samples:
@@ -195,13 +205,10 @@ def run_queries(
     samples = Samples()
     for query in selected:
         outcome = client.search(query.question)
-        stages = stage_source.query_stages(outcome.run_id) if outcome.run_id else ()
-        for sample in stages:
-            samples.stages[sample.stage].append(sample.duration_ms)
-        if not any(sample.stage == "total" for sample in stages):
-            samples.stages["total"].append(outcome.duration_ms)
         if outcome.error_code:
             samples.failures.append(f"{query.query_id}: {outcome.error_code}")
+        else:
+            _record_query(samples, outcome, stage_source)
         if query.probe:
             samples.assertions.append(
                 Assertion(
@@ -243,15 +250,29 @@ class _Growth:
         return latencies
 
 
+def _search_latencies(
+    client: BenchClient, questions: list[str], failures: list[str]
+) -> list[float]:
+    """Latencies of the searches that succeeded; failed ones are recorded as failures."""
+    latencies = []
+    for question in questions:
+        outcome = client.search(question)
+        if outcome.error_code:
+            failures.append(f"search {question}: {outcome.error_code}")
+        else:
+            latencies.append(outcome.duration_ms)
+    return latencies
+
+
 def _checkpoint(
     client: BenchClient,
     documents: int,
     latencies: list[float],
     before: Footprint,
-    questions: list[str],
+    searches: list[float],
 ) -> ScalePoint:
     after = client.footprint()
-    searches = [client.search(question).duration_ms for question in questions] or [0.0]
+    searches = searches or [0.0]
     return ScalePoint(
         documents=documents,
         add_p50_ms=nearest_rank(latencies, 0.5),
@@ -285,7 +306,11 @@ def run_scale(client: BenchClient, spec: SynthSpec, context: RunContext) -> Samp
                     checkpoint,
                     latencies,
                     before,
-                    questions[: min(checkpoint, SCALE_WINDOW)],
+                    _search_latencies(
+                        client,
+                        questions[: min(checkpoint, SCALE_WINDOW)],
+                        samples.failures,
+                    ),
                 )
             )
     return samples
