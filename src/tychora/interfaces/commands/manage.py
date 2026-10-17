@@ -3,6 +3,8 @@
 # ruff: noqa: B008 - Typer declares CLI options in function defaults.
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import typer
@@ -270,9 +272,6 @@ def dashboard_link(
     ),
 ) -> None:
     """Print a one-time dashboard link (expires in 120 s) from the running owner."""
-    import subprocess
-    import sys
-
     from tychora.contracts.errors import TychoraError
     from tychora.interfaces.http.client import connect_local
 
