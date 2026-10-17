@@ -16,7 +16,7 @@ from tychora.contracts.base import Contract, NonEmptyStr, Sha256
 from tychora.contracts.identity import digest
 from tychora.evaluation.dataset import CharRangeAnchor, GoldLabel
 
-from .curation import rasterize_pdf
+from .curation import UnusablePdf, rasterize_pdf
 from .synth import PROBE_QUESTION, SynthDocument, SynthSpec, generate
 
 Category = Literal[
@@ -74,10 +74,23 @@ class BenchCorpusError(ValueError):
     """A corpus file or a download that cannot be used as pinned."""
 
 
-def check_url(source_key: str, url: str, allowed_hosts: Sequence[str]) -> None:
-    """Raise unless ``url`` is https on one of the allowed hosts."""
+def _allowed(url: str, allowed_hosts: Sequence[str]) -> bool:
+    """Tell whether ``url`` is https on the default port of an allowed host."""
     parts = urlsplit(url)
-    if parts.scheme != "https" or parts.hostname not in allowed_hosts:
+    try:
+        port = parts.port
+    except ValueError:
+        return False
+    return (
+        parts.scheme == "https"
+        and parts.hostname in allowed_hosts
+        and port in (None, 443)
+    )
+
+
+def check_url(source_key: str, url: str, allowed_hosts: Sequence[str]) -> None:
+    """Raise unless ``url`` is https on the default port of an allowed host."""
+    if not _allowed(url, allowed_hosts):
         raise BenchCorpusError(
             f"{source_key}: {url} is not an https URL on an allowed host"
         )
@@ -89,13 +102,16 @@ class GuardedRedirect(urllib.request.HTTPRedirectHandler):
     def __init__(self, allowed_hosts: Sequence[str]):
         self.allowed_hosts = tuple(allowed_hosts)
 
-    def redirect_request(self, req, *details, **options):
-        """Refuse a redirect that leaves https or the allowed hosts."""
-        newurl = details[-1] if details else options["newurl"]
-        parts = urlsplit(newurl)
-        if parts.scheme != "https" or parts.hostname not in self.allowed_hosts:
+    def redirect_request(self, req, *details):  # ty: ignore[invalid-method-override]
+        """Refuse a redirect that leaves https or the allowed hosts.
+
+        urllib calls this positionally as ``(req, fp, code, msg, headers, newurl)``;
+        the details stay variadic to keep the override within the argument limit.
+        """
+        fp, code, msg, headers, newurl = details
+        if not _allowed(newurl, self.allowed_hosts):
             raise BenchCorpusError(f"redirect to {newurl} is not allowed")
-        return super().redirect_request(req, *details, **options)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def write_atomic(path: Path, data: bytes) -> None:
@@ -278,7 +294,10 @@ def document_bytes(document: BenchDocument, cache: Path) -> bytes:
         scan = derived.read_bytes()
         if hashlib.sha256(scan).hexdigest() == seal.read_text().strip():
             return scan
-    scan = rasterize_pdf(data)
+    try:
+        scan = rasterize_pdf(data)
+    except UnusablePdf as error:
+        raise BenchCorpusError(f"{document.source_key}: {error}") from None
     write_atomic(derived, scan)
     write_atomic(seal, hashlib.sha256(scan).hexdigest().encode())
     return scan
