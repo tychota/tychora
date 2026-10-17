@@ -168,7 +168,7 @@ Commit `refactor: run queries as typed stages without configuration dumps`.
 
 ### Task 14: Gate and ratchet
 
-Steps: concurrency test `tests/acceptance/test_concurrency.py::test_add_of_300_pages_with_20_queries` (query p95 ≤ 1.5× idle; 33 concurrent callers succeed); strict regression `tests/acceptance/test_strict_scale.py` ("verification outcome" at 20, 1,000, 10,000 synthetic documents, the 10,000 case `@pytest.mark.slow`); evaluation versus the phase-1 baseline per stage (`python -m tychora.interfaces.bench run --corpus bench-small --suite query --profile offline` plus the evaluation command recorded in phase 1); phase-4 gate from the index (E1 local, E4, E5, E6); `uv run --locked python -m tools.health check` and `update`. Commit `chore: record phase 4 benchmark and health baseline`.
+Steps: concurrency test `tests/acceptance/test_concurrency.py::test_add_of_300_pages_with_20_queries` (query p95 ≤ 1.5× idle; 33 concurrent callers succeed); strict regression `tests/acceptance/test_strict_scale.py` ("verification outcome" at 20, 1,000, 10,000 synthetic documents, the 10,000 case `@pytest.mark.slow`); evaluation versus the phase-1 baselines per stage (E6 at `b91d808` and the code gold set at phase-1 HEAD; `python -m tychora.interfaces.bench run --corpus bench-small --suite query --profile offline` plus the evaluation command recorded in phase 1); phase-4 gate from the index (E1 local, E4, E5, E6); `uv run --locked python -m tools.health check` and `update`. Commit `chore: record phase 4 benchmark and health baseline`.
 
 ## Self-review (outline level)
 

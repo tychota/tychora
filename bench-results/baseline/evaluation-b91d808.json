@@ -1,0 +1,34 @@
+{
+  "commit": "b91d808edd9b9f1d085636314738e16979aee193",
+  "dataset": "synthetic-executable-v1",
+  "schema": "tychora.evaluation-baseline",
+  "unavailable": {
+    "hybrid": "needs a text family: run with an online Voyage profile",
+    "reranked": "needs a text family and a reranker: run with an online Voyage profile"
+  },
+  "variants": {
+    "lexical": {
+      "asset_recall": null,
+      "definition_mrr": null,
+      "definition_recall": null,
+      "document_recall": null,
+      "file_mrr": null,
+      "file_ndcg": null,
+      "file_recall": null,
+      "forbidden_leakage": 0.0,
+      "image_ndcg": null,
+      "judged_edge_precision": null,
+      "locator_precision": null,
+      "locator_validity": 1.0,
+      "path_precision": null,
+      "path_recall": null,
+      "resolution_rate": null,
+      "revision_recall": 1.0,
+      "source_recall": 1.0,
+      "span_completeness": null,
+      "unit_recall": 1.0,
+      "version_precision": 1.0
+    }
+  },
+  "version": 1
+}

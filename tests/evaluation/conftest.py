@@ -50,7 +50,7 @@ def add_repository(kb: Tychora, repo: Path, source_key: str, title: str):
 
 
 @contextmanager
-def _integrity_corpus(tmp_path: Path):
+def integrity_corpus(tmp_path: Path):
     """Ingest the declared synthetic corpus and write its digest-pinned gold set."""
     declaration = json.loads(CORPUS.read_text())
     assert declaration["format"] == "tychora-synthetic-corpus@1"
@@ -157,12 +157,12 @@ def _integrity_corpus(tmp_path: Path):
 @pytest.fixture
 def executable_integrity_corpus(tmp_path):
     """A fresh corpus for tests that register datasets or run evaluations."""
-    with _integrity_corpus(tmp_path) as corpus:
+    with integrity_corpus(tmp_path) as corpus:
         yield corpus
 
 
 @pytest.fixture(scope="module")
 def shared_integrity_corpus(tmp_path_factory):
     """One corpus per module for read-only tests; never register or run against it."""
-    with _integrity_corpus(tmp_path_factory.mktemp("integrity-corpus")) as corpus:
+    with integrity_corpus(tmp_path_factory.mktemp("integrity-corpus")) as corpus:
         yield corpus
