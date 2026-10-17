@@ -253,8 +253,8 @@ def test_text_sources_pin_commits_tags_and_licence_filters(tmp_path):
             f"https://api.github.com/repos/python/peps/contents/peps?ref={commit}": json.dumps(
                 pep_listing
             ).encode(),
-            f"{raw}/python/peps/{commit}/peps/pep-0008.rst": b"This document has been placed in the public domain.",
-            f"{raw}/python/peps/{commit}/peps/pep-0009.rst": b"Copyright held by the author.",
+            f"{raw}/python/peps/{commit}/peps/pep-0008.rst": b"This document is placed in the public domain or under the CC0-1.0-Universal license.",
+            f"{raw}/python/peps/{commit}/peps/pep-0009.rst": b"Copyright held by the author; it cites the public domain and CC0 only in passing.",
             f"https://api.github.com/repos/python/cpython/contents/Lib?ref={curate.CPYTHON_TAG}": json.dumps(
                 cpython_listing
             ).encode(),
@@ -397,6 +397,7 @@ def test_run_writes_a_corpus_that_fetches_offline_from_the_cache(tmp_path):
     assert corpus.synthetic.count == curate.TARGET_DOCUMENTS - 12
     assert summary["curated_queries"] == len(corpus.queries) == 4
     assert corpus.allowed_hosts == ("www.gutenberg.org", "www.legislation.gov.uk")
+    assert set(corpus.allowed_hosts) <= set(curate.DOCUMENT_HOSTS)
     assert (
         fetch_corpus(corpus, tmp_path / "cache", opener=lambda url: pytest.fail(url))
         == 0
@@ -411,3 +412,80 @@ def test_run_writes_a_corpus_that_fetches_offline_from_the_cache(tmp_path):
         )
         == 2
     )
+
+
+def test_a_rate_limited_request_waits_for_retry_after_then_succeeds(tmp_path):
+    waits: list[float] = []
+    calls: list[str] = []
+    headers = Message()
+    headers["Retry-After"] = "7"
+
+    def opener(url: str):
+        calls.append(url)
+        if len(calls) == 1:
+            raise urllib.error.HTTPError(url, 429, "Too Many", headers, None)
+        return Response(b"body", [])
+
+    fetcher = curate.Fetcher(
+        opener, tmp_path, curate.DOCUMENT_HOSTS, pause=waits.append, delay=0
+    )
+    assert fetcher.save(ACT.format(2020, 1)).size == 4
+    assert waits[0] == 7.0 and len(calls) == 2
+
+
+def test_backoff_is_capped_and_gives_up_after_the_attempts(tmp_path):
+    waits: list[float] = []
+    headers = Message()
+    headers["Retry-After"] = "9999"
+    calls: list[str] = []
+
+    def opener(url: str):
+        calls.append(url)
+        raise urllib.error.HTTPError(url, 503, "Busy", headers, None)
+
+    fetcher = curate.Fetcher(
+        opener, tmp_path, curate.DOCUMENT_HOSTS, pause=waits.append, delay=0
+    )
+    with pytest.raises(urllib.error.HTTPError):
+        fetcher.save(ACT.format(2020, 1))
+    assert len(calls) == curate.RETRY_ATTEMPTS
+    assert max(waits) == curate.MAX_BACKOFF
+
+
+def test_other_http_errors_are_not_retried(tmp_path):
+    calls: list[str] = []
+
+    def opener(url: str):
+        calls.append(url)
+        raise urllib.error.HTTPError(url, 404, "Gone", Message(), None)
+
+    fetcher = curate.Fetcher(
+        opener, tmp_path, curate.DOCUMENT_HOSTS, pause=lambda _: None
+    )
+    with pytest.raises(urllib.error.HTTPError):
+        fetcher.save(ACT.format(2020, 1))
+    assert len(calls) == 1
+
+
+def test_arxiv_listing_pages_are_paced(tmp_path):
+    waits: list[float] = []
+    site = Site({curate.ARXIV_FIRST_PAGE: OAI.format(records="", token="").encode()})
+    meta = curate.Fetcher(
+        site, tmp_path, curate.METADATA_HOSTS, pause=waits.append, delay=0
+    )
+    ctx = curate.Context(files=meta, meta=meta, report=curate.Report())
+    curate.arxiv(ctx, 1, 3)
+    assert curate.ARXIV_DELAY in waits
+
+
+def test_an_unstable_gutenberg_book_is_skipped_and_reported(tmp_path):
+    url = "https://www.gutenberg.org/cache/epub/1342/pg1342.txt"
+    pages: dict[str, bytes | list[bytes]] = {
+        f"https://www.gutenberg.org/cache/epub/{n}/pg{n}.txt": b"Book"
+        for n in curate.GUTENBERG
+    }
+    pages[url] = [b"first edition", b"second edition"]
+    ctx = context(tmp_path, Site(pages))
+    found = curate.books(ctx)
+    assert len(found) == 9
+    assert ctx.report.skipped["unstable"] == ["public/gutenberg/1342"]

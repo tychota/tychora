@@ -63,7 +63,6 @@ jobs:
       contents: read
     env:
       TYCHORA_BENCH_RUNNER_CLASS: github-ubuntu-22.04
-      VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -79,8 +78,12 @@ jobs:
       - name: Fetch bench-v1
         run: uv run --locked python -m tychora.interfaces.bench fetch --corpus bench-v1 --cache "$RUNNER_TEMP/bench"
       - name: Online query suite
+        env:
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
         run: uv run --locked python -m tychora.interfaces.bench run --corpus bench-v1 --suite query --profile online --cache "$RUNNER_TEMP/bench"
       - name: Online ingest suite
+        env:
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
         run: uv run --locked python -m tychora.interfaces.bench run --corpus bench-v1 --suite ingest --profile online --cache "$RUNNER_TEMP/bench"
       - name: Keep the results
         if: always()
@@ -120,7 +123,9 @@ jobs:
           if git fetch "$remote" bench-results:bench-results; then
             git worktree add "$RUNNER_TEMP/results" bench-results
           else
-            git worktree add --orphan -b bench-results "$RUNNER_TEMP/results"
+            git worktree add --detach "$RUNNER_TEMP/results"
+            git -C "$RUNNER_TEMP/results" checkout --orphan bench-results
+            git -C "$RUNNER_TEMP/results" rm -rf --quiet .
           fi
           if [ -d "$RUNNER_TEMP/incoming" ]; then
             cp -R "$RUNNER_TEMP/incoming/." "$RUNNER_TEMP/results/"

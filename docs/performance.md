@@ -30,7 +30,7 @@ Vector retrieval uses logical cosine over validated unit-normalized finite float
 ## Benchmark corpus and harness
 
 `benchmarks/bench-small.toml` (100 seeded synthetic documents) needs no download.
-`benchmarks/bench-v1.toml` pins about 1,000 public documents by URL, SHA-256 and
+Once generated (see below), `benchmarks/bench-v1.toml` pins about 1,000 public documents by URL, SHA-256 and
 licence (UK legislation, CC BY arXiv papers, Project Gutenberg books, Python
 PEPs, CPython modules, CC0 images), plus synthetic fill, and 200 queries with
 stable gold labels in `benchmarks/queries/bench-v1.jsonl`. Never commit the
@@ -58,8 +58,9 @@ happened, so `fetch --corpus bench-v1` and the online jobs fail until then.
     uv run --locked python benchmarks/curate_bench_v1.py --cache .cache/bench
 
 - Hosts: `www.legislation.gov.uk` (UK Public General Acts, OGL v3.0, 1 s between
-  requests), `export.arxiv.org` and `arxiv.org` (CC BY 4.0 papers, 2 s between
-  requests), `www.gutenberg.org`, `api.github.com` and
+  requests; 429 and 503 answers are retried with bounded backoff that honours
+  Retry-After), `export.arxiv.org` and `arxiv.org` (CC BY 4.0 papers, 2 s
+  between requests, listing pages included), `www.gutenberg.org`, `api.github.com` and
   `raw.githubusercontent.com` (PEPs and CPython `Lib/`, unauthenticated, about
   three API calls), `commons.wikimedia.org` and `upload.wikimedia.org` (CC0
   images). Only https on the default port of these hosts is opened, and the
@@ -69,7 +70,7 @@ happened, so `fetch --corpus bench-v1` and the online jobs fail until then.
 - Disk: a few GB under `--cache` (an estimate; the summary does not measure
   it). Downloads stream to disk in 1 MiB chunks, so memory stays small.
 - Determinism: legislation.gov.uk may regenerate a PDF per request, so each act
-  is fetched twice and pinned only when both responses have the same SHA-256.
+  and each Gutenberg book is fetched twice and pinned only when both responses have the same SHA-256.
   Unstable acts, PDFs over 100 pages, unusable PDFs, PEPs without a
   public-domain or CC0 statement and failed requests are skipped, counted in
   the printed summary and, for unstable acts, listed by key.

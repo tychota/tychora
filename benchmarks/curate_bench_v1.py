@@ -20,7 +20,9 @@ import http.client
 import json
 import os
 import random
+import re
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
@@ -85,6 +87,12 @@ ARXIV_NS = {
 }
 CC_BY_4 = "http://creativecommons.org/licenses/by/4.0/"
 ARXIV_DELAY = 2.0
+RETRY_STATUSES = (429, 503)
+RETRY_ATTEMPTS = 3
+MAX_BACKOFF = 60.0
+PUBLIC_DOMAIN = re.compile(
+    rb"placed\s+in\s+the\s+public\s+domain\s+or\s+under\s+the\s+CC0", re.IGNORECASE
+)
 COMMONS_API = (
     "https://commons.wikimedia.org/w/api.php?action=query&generator=categorymembers"
     "&gcmtitle=Category:CC-zero&gcmtype=file&gcmlimit=200&prop=imageinfo"
@@ -106,6 +114,16 @@ class Fetched:
     size: int
 
 
+def _backoff(error: urllib.error.HTTPError, attempt: int) -> float:
+    """Seconds to wait: the server's Retry-After when numeric, else growing, capped."""
+    header = error.headers.get("Retry-After") if error.headers else None
+    try:
+        wait = float(header) if header is not None else 5.0 * attempt
+    except ValueError:
+        wait = 5.0 * attempt
+    return min(max(wait, 0.0), MAX_BACKOFF)
+
+
 class Fetcher:
     """Stream https downloads from declared hosts into a content-addressed cache."""
 
@@ -124,11 +142,22 @@ class Fetcher:
         self.delay = delay
         self.max_bytes = 512 * 1024**2
 
+    def _open(self, url: str) -> Any:
+        """Open ``url``, waiting out 429 and 503 answers with bounded backoff."""
+        for attempt in range(1, RETRY_ATTEMPTS + 1):
+            try:
+                return self.opener(url)
+            except urllib.error.HTTPError as error:
+                if error.code not in RETRY_STATUSES or attempt == RETRY_ATTEMPTS:
+                    raise
+                self.pause(_backoff(error, attempt))
+        raise AssertionError("unreachable")
+
     def _chunks(self, url: str) -> Iterator[bytes]:
         check_url(url, url, self.hosts)
         total = 0
         try:
-            with self.opener(url) as response:
+            with self._open(url) as response:
                 while chunk := response.read(CHUNK):
                     total += len(chunk)
                     if total > self.max_bytes:
@@ -260,13 +289,19 @@ def _pdf_problem(
     return None if again == fetched.sha256 else "unstable"
 
 
-def fetch_entry(ctx: Context, source: Source) -> Entry | None:
-    """Download and pin one document, reporting a failed transfer."""
+def fetch_entry(ctx: Context, source: Source, *, stable: bool = False) -> Entry | None:
+    """Download and pin one document; with ``stable`` it must hash alike on two fetches."""
     try:
-        return pin(source, ctx.files.save(source.url))
+        fetched = ctx.files.save(source.url)
+        again = ctx.files.probe(source.url) if stable else fetched.sha256
     except FETCH_ERRORS:
         ctx.report.skip("unavailable", source.key)
         return None
+    if again != fetched.sha256:
+        fetched.path.unlink(missing_ok=True)
+        ctx.report.skip("unstable", source.key)
+        return None
+    return pin(source, fetched)
 
 
 def pdf_entry(ctx: Context, source: Source, *, stable: bool = False) -> Entry | None:
@@ -310,6 +345,7 @@ def _arxiv_records(ctx: Context, max_pages: int) -> Iterator[tuple[str, str]]:
     url = ARXIV_FIRST_PAGE
     for _ in range(max_pages):
         tree = ElementTree.fromstring(ctx.meta.read(url))
+        ctx.meta.pause(ARXIV_DELAY)
         for record in tree.iterfind(".//a:arXiv", ARXIV_NS):
             if record.findtext("a:license", "", ARXIV_NS) == CC_BY_4:
                 title = record.findtext("a:title", "", ARXIV_NS)
@@ -378,7 +414,9 @@ def books(ctx: Context) -> list[Entry]:
         )
         for number, title in GUTENBERG.items()
     ]
-    return [entry for source in sources if (entry := fetch_entry(ctx, source))]
+    return [
+        entry for source in sources if (entry := fetch_entry(ctx, source, stable=True))
+    ]
 
 
 def _listing(ctx: Context, url: str, name: str) -> Any:
@@ -391,7 +429,7 @@ def _listing(ctx: Context, url: str, name: str) -> Any:
 
 
 def _is_public_domain(data: bytes) -> bool:
-    return b"public domain" in data.lower() or b"CC0" in data
+    return PUBLIC_DOMAIN.search(data) is not None
 
 
 def peps(ctx: Context, limit: int) -> list[Entry]:
@@ -585,7 +623,9 @@ def default_context(cache: Path) -> Context:
         director = urllib.request.build_opener(GuardedRedirect(hosts))
 
         def open_url(url: str) -> Any:
-            headers = {"User-Agent": "tychora-bench-curation/1"}
+            headers = {
+                "User-Agent": "tychora-bench-curation/1 (+https://github.com/tychota/tychora)"
+            }
             return director.open(
                 urllib.request.Request(url, headers=headers), timeout=120
             )
