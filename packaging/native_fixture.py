@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import struct
 from pathlib import Path
@@ -61,6 +62,32 @@ class RecordedEmbedder:
 
     def probe_queries(self, queries, ctx):
         raise AssertionError("Native fixture must not probe a provider")
+
+
+def _whole_workspace_scope(owner: WorkspaceOwner, scope: RequestScope) -> RequestScope:
+    """Widen the fixture grant to every collection and every use the workspace defines."""
+    uses = set(scope.uses)
+    for definitions in (owner.store.registry.kinds, owner.store.registry.modes):
+        for definition in definitions.values():
+            uses.update(definition.get("allowed_uses", ()))
+    for (raw,) in owner.db.execute(
+        "SELECT r.allowed_uses_json FROM revisions r JOIN sources s USING(source_id) "
+        "JOIN collections c USING(collection_id) WHERE c.workspace_id=?",
+        (owner.workspace_id,),
+    ):
+        uses.update(json.loads(raw))
+    for (definition,) in owner.db.execute("SELECT definition_json FROM kinds"):
+        uses.update(json.loads(definition)["kind"].get("allowed_uses", ()))
+    collections = {
+        cid
+        for (cid,) in owner.db.execute(
+            "SELECT collection_id FROM collections WHERE workspace_id=?",
+            (owner.workspace_id,),
+        )
+    }
+    return scope.model_copy(
+        update={"uses": frozenset(uses), "collection_ids": frozenset(collections)}
+    )
 
 
 async def create(root: Path, models: Path) -> None:
@@ -146,8 +173,14 @@ async def create(root: Path, models: Path) -> None:
         )
         assert {slot.slot for slot in snapshot.slots} >= {"text", "graph"}
         backup = root / "canonical-backup"
+        admin = await owner.run_blocking(
+            lambda: _whole_workspace_scope(owner, scope), ExecutionContext()
+        )
+        owner.scope = (
+            admin  # Backup requires whole-workspace authority, never a partial grant.
+        )
         await asyncio.to_thread(
-            BackupService(owner).export, backup, scope, ctx=ExecutionContext()
+            BackupService(owner).export, backup, admin, ctx=ExecutionContext()
         )
         print(
             f"PREPARED installed={package} snapshot={snapshot.snapshot_id} "
