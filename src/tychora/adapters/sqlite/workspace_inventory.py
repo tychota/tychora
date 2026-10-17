@@ -61,9 +61,10 @@ class InventorySource(Contract):
 
 
 class InventoryReview(Contract):
-    """The latest review state of one revision."""
+    """The latest review state of one revision, unit or asset."""
 
-    revision_id: Identifier
+    target_kind: Literal["revision", "unit", "asset"]
+    target_id: NonEmptyStr
     state: NonEmptyStr
     actor_id: NonEmptyStr
 
@@ -75,7 +76,6 @@ class WorkspaceInventory(Contract):
     collections: tuple[InventoryCollection, ...]
     sources: tuple[InventorySource, ...]
     reviews: tuple[InventoryReview, ...]
-    finer_reviews: NonNegativeInt
 
 
 _REVISIONS = (
@@ -88,10 +88,15 @@ _REVISIONS = (
     "ORDER BY r.captured_at,r.revision_id"
 )
 _LATEST_REVIEWS = (
-    "SELECT e.revision_id,e.state,e.actor_id FROM review_events e JOIN "
-    "(SELECT revision_id,MAX(review_event_id) AS latest FROM review_events "
-    "WHERE revision_id IS NOT NULL GROUP BY revision_id) l "
-    "ON l.latest=e.review_event_id ORDER BY e.review_event_id"
+    " UNION ALL ".join(
+        f"SELECT '{kind}',e.{kind}_id,e.state,e.actor_id,e.review_event_id "
+        f"FROM review_events e JOIN (SELECT {kind}_id AS target,"
+        f"MAX(review_event_id) AS latest FROM review_events "
+        f"WHERE {kind}_id IS NOT NULL GROUP BY {kind}_id) l "
+        f"ON l.latest=e.review_event_id"
+        for kind in ("revision", "unit", "asset")
+    )
+    + " ORDER BY 5"
 )
 
 
@@ -177,18 +182,16 @@ def _inventory(db: sqlite3.Connection) -> WorkspaceInventory:
             "The old workspace identity is missing or ambiguous.",
             reason="canonical.row_invalid",
         )
-    finer = db.execute(
-        "SELECT COUNT(*) FROM review_events WHERE revision_id IS NULL"
-    ).fetchone()[0]
     return WorkspaceInventory(
         workspace_id=identities[0][0],
         collections=_collections(db),
         sources=_sources(db),
         reviews=tuple(
-            InventoryReview(revision_id=row[0], state=row[1], actor_id=row[2])
+            InventoryReview(
+                target_kind=row[0], target_id=row[1], state=row[2], actor_id=row[3]
+            )
             for row in db.execute(_LATEST_REVIEWS)
         ),
-        finer_reviews=finer,
     )
 
 
@@ -245,9 +248,9 @@ def _seed_one(
     """Insert or refresh one collection; return (inserted, changed)."""
     values = (item.title, item.access_floor, item.policy_json)
     if db.execute(
-        "UPDATE collections SET title=?,access_floor=?,policy_json=? "
+        "UPDATE collections SET title=?,access_floor=max(access_floor,?),policy_json=? "
         "WHERE collection_id=? AND slug=? "
-        "AND (title<>? OR access_floor<>? OR policy_json<>?)",
+        "AND (title<>? OR access_floor<? OR policy_json<>?)",
         (*values, item.collection_id, item.slug, *values),
     ).rowcount:
         return False, True
@@ -271,8 +274,10 @@ def seed_collections(
 ) -> int:
     """Insert missing collections and refresh changed ones; return inserted count.
 
-    The policy epoch moves only when a row was inserted or changed. A workspace
-    identity that is not the destination's is refused.
+    A refreshed collection keeps the stricter of its current and the supplied
+    access floor, so seeding never lowers one. The policy epoch moves only when a
+    row was inserted or changed. A workspace identity that is not the
+    destination's is refused.
     """
     db.execute("BEGIN IMMEDIATE")
     try:
@@ -341,14 +346,16 @@ def restore_policy(
     db: sqlite3.Connection,
     workspace_id: str,
     sources: tuple[InventorySource, ...],
-    revision_ids: frozenset[str],
 ) -> int:
     """Carry an older workspace's access and review policy onto rebuilt sources.
 
     A source access floor and a revision access rank only ever rise, allowed uses
-    only ever narrow to what both workspaces permit, and a revision keeps its
-    declared review state; a rebuild never lowers confidentiality. The policy
-    epoch moves once when anything changed. Returns the number of rows changed.
+    only ever narrow to what both workspaces permit, and a revision takes the old
+    declared review state, because a re-add can only produce the default one and
+    the old state is the reviewed one. A rebuild never lowers confidentiality.
+    Rows the new workspace does not hold are skipped, so any subset of sources
+    may have been re-added. The policy epoch moves once when anything changed.
+    Returns the number of rows changed.
     """
     db.execute("BEGIN IMMEDIATE")
     try:
@@ -358,7 +365,6 @@ def restore_policy(
             changed += sum(
                 _restore_revision(db, source.source_id, revision)
                 for revision in source.revisions
-                if revision.revision_id in revision_ids
             )
         if changed:
             db.execute(

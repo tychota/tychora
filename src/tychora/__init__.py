@@ -27,7 +27,6 @@ __all__ = [
     "TychoraError",
     "__version__",
     "format_result",
-    "rebuild_workspace_from",
 ]
 
 
@@ -35,7 +34,7 @@ def __getattr__(name: str):
     """Keep command help and completion clear of runtime and provider imports."""
     if name not in __all__:
         raise AttributeError(name)
-    if name in {"LocalTextBinding", "ProviderBindings", "rebuild_workspace_from"}:
+    if name in {"LocalTextBinding", "ProviderBindings"}:
         module = ".api"
     elif name == "Tychora":
         module = ".clients.sync"

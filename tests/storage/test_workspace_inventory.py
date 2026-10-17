@@ -226,6 +226,11 @@ def test_seed_collections_inserts_and_refreshes(tmp_path):
     renamed = (rows[0].model_copy(update={"title": "Renamed"}), rows[1])
     assert seed_collections(db, "ws", renamed) == 0
     assert db.execute("SELECT policy_epoch FROM workspaces").fetchone()[0] == 2
+    stricter = (rows[0], rows[1].model_copy(update={"access_floor": 0}))
+    assert seed_collections(db, "ws", stricter) == 0
+    assert db.execute(
+        "SELECT access_floor FROM collections WHERE slug='manuals'"
+    ).fetchone() == (1,)
     with pytest.raises(TychoraError) as error:
         seed_collections(db, "other", rows)
     assert error.value.reason == "canonical.row_invalid"
