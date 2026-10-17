@@ -26,3 +26,60 @@ No universal throughput target or provider cost is asserted. A verified local pu
 
 
 Vector retrieval uses logical cosine over validated unit-normalized finite float32 values. The embedded Chroma HNSW collection physically stores `ip` with `ef_search=200`, `embedding_function=None`, and exact stored little-endian float32 byte receipts. `1-dot` is a finite-precision cosine-distance approximation for unit vectors; near ties and ANN short results can change order or mark coverage truncated. The eligible-ID search partitions at 5,000 IDs, admits at most 64 partitions and 20,000 record checks, and never falls back to an unfiltered query when eligibility is empty. These bounds and receipts protect the published view; they do not prove universal top-k recall or a latency SLA.
+
+## Benchmark corpus and harness
+
+`benchmarks/bench-small.toml` (100 seeded synthetic documents) needs no download.
+`benchmarks/bench-v1.toml` pins about 1,000 public documents by URL, SHA-256 and
+licence (UK legislation, CC BY arXiv papers, Project Gutenberg books, Python
+PEPs, CPython modules, CC0 images), plus synthetic fill, and 200 queries with
+stable gold labels in `benchmarks/queries/bench-v1.jsonl`. Never commit the
+downloaded documents.
+
+    python -m tychora.interfaces.bench fetch --corpus bench-v1 --cache .cache/bench
+    python -m tychora.interfaces.bench run --corpus bench-small --suite ingest|query|scale --profile offline
+
+Each run writes `bench-results/<commit>/<suite>-<profile>.json` with the commit,
+the machine fingerprint, the corpus digest, per-stage n, p50, p90, p95 and p99,
+and a verdict against the budgets of the engine core design. Verdicts fail only
+on the runner class named in `benchmarks/reference-machine.toml` (set
+`TYCHORA_BENCH_RUNNER_CLASS`); elsewhere they are informational, and
+`--compare <earlier result>` fails on a p95 regression above 20%. The weekly
+`Benchmarks` workflow (`.github/workflows/bench.yml`) publishes results to the
+`bench-results` branch; it needs the repository secret `VOYAGE_API_KEY` for the
+online job and the repository owner's approval of that secret and branch.
+
+### Curating `bench-v1`
+
+`benchmarks/bench-v1.toml` and its query file are generated once, by hand, and
+then committed; they are not part of the default checkout until that run has
+happened, so `fetch --corpus bench-v1` and the online jobs fail until then.
+
+    uv run --locked python benchmarks/curate_bench_v1.py --cache .cache/bench
+
+- Hosts: `www.legislation.gov.uk` (UK Public General Acts, OGL v3.0, 1 s between
+  requests), `export.arxiv.org` and `arxiv.org` (CC BY 4.0 papers, 2 s between
+  requests), `www.gutenberg.org`, `api.github.com` and
+  `raw.githubusercontent.com` (PEPs and CPython `Lib/`, unauthenticated, about
+  three API calls), `commons.wikimedia.org` and `upload.wikimedia.org` (CC0
+  images). Only https on the default port of these hosts is opened, and the
+  generated corpus file lists the document hosts as `allowed_hosts`.
+- Duration: plan one to two hours, dominated by about 1,400 to 1,800
+  legislation requests (every kept act is requested twice).
+- Disk: a few GB under `--cache` (an estimate; the summary does not measure
+  it). Downloads stream to disk in 1 MiB chunks, so memory stays small.
+- Determinism: legislation.gov.uk may regenerate a PDF per request, so each act
+  is fetched twice and pinned only when both responses have the same SHA-256.
+  Unstable acts, PDFs over 100 pages, unusable PDFs, PEPs without a
+  public-domain or CC0 statement and failed requests are skipped, counted in
+  the printed summary and, for unstable acts, listed by key.
+- Fill: when a source yields fewer documents, seeded synthetic documents bring
+  the corpus to 1,000, and synthetic marker queries plus the probe bring the
+  queries to 200.
+- Afterwards: check `load_corpus` reports 1,000 documents and 200 queries, run
+  `fetch --corpus bench-v1 --cache .cache/bench` (it must print `0` from a warm
+  cache), then commit the two generated files.
+
+The script is covered offline by `tests/evaluation/bench/test_curate_bench_v1.py`
+with injected fixtures. The queries named "2026-10-15 real-PDF probe" in the
+design were never written down; only the "verification outcome" probe exists.

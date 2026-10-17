@@ -282,7 +282,7 @@ ignore_imports = [
 ]
 
 [tool.vulture]
-paths = ["src/tychora", "quality/vulture_whitelist.py"]
+paths = ["src/tychora", "benchmarks/curate_bench_v1.py", "quality/vulture_whitelist.py"]
 min_confidence = 60
 ignore_decorators = [
   "@field_validator",
