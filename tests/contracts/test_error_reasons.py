@@ -57,7 +57,7 @@ CLASSIFIED_REASONS = {
     "WORKSPACE_BUSY": {"owner.absent"},
     "PROFILE_INCOMPATIBLE": {"workspace.schema_mismatch"},
     "INTEGRITY_ERROR": {"workspace.database_invalid", "runtime.endpoint_unsafe"},
-    "CAPABILITY_MISSING": {"sqlite.version_unsupported"},
+    "CAPABILITY_MISSING": {"storage.version_unsupported"},
 }
 
 

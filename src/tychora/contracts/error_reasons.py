@@ -142,7 +142,7 @@ _ENTRIES = (
         "PROFILE_INCOMPATIBLE",
         "workspace.schema_mismatch",
         False,
-        "Open the workspace with the Tychora version that created it, or recreate it with `tychora --workspace NEW manage rebuild workspace --from OLD`.",
+        "Use a Tychora release that matches the workspace storage format; do not edit the database by hand.",
     ),
     Reason(
         "PROFILE_INCOMPATIBLE",
@@ -164,7 +164,7 @@ _ENTRIES = (
     ),
     Reason(
         "CAPABILITY_MISSING",
-        "sqlite.version_unsupported",
+        "storage.version_unsupported",
         False,
         "Install a Python build linked against SQLite 3.38 or newer.",
     ),

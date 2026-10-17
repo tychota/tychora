@@ -4,7 +4,7 @@ import sqlite3
 
 from tychora.contracts.errors import TychoraError
 
-_ROW = "SELECT workspace_id,policy_epoch,lexical_statistics_epoch,schema_version FROM workspaces"
+_ROW = "SELECT workspace_id,policy_epoch,lexical_statistics_epoch FROM workspaces"
 
 
 def require_write(db: sqlite3.Connection, writable: bool) -> None:
@@ -23,7 +23,7 @@ class SqliteWorkspaceRepository:
     def __init__(self, db: sqlite3.Connection) -> None:
         self._db = db
 
-    def _row(self) -> tuple[str, int, int, int]:
+    def _row(self) -> tuple[str, int, int]:
         rows = self._db.execute(_ROW).fetchall()
         if len(rows) != 1:
             raise TychoraError(
@@ -40,10 +40,6 @@ class SqliteWorkspaceRepository:
     def policy_epoch(self) -> int:
         """Return the current policy epoch."""
         return self._row()[1]
-
-    def format_version(self) -> int:
-        """Return the storage format recorded for the workspace."""
-        return self._row()[3]
 
     def lexical_epoch(self) -> int:
         """Return the current lexical statistics epoch."""

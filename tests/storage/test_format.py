@@ -2,6 +2,7 @@
 
 import shutil
 import sqlite3
+from contextlib import closing
 from hashlib import sha256
 from pathlib import Path
 
@@ -19,31 +20,26 @@ from tychora.adapters.sqlite.migrations import (
     open_verified_import,
 )
 from tychora.contracts.errors import TychoraError
-from tychora.ports.execution import ExecutionContext
 
 
-def _format_version(kb) -> int:
-    owner = kb._workspace.owner
+def _format_version(root: Path) -> int:
+    with closing(sqlite3.connect(root / "corpus.sqlite3")) as db:
+        return db.execute("SELECT schema_version FROM workspaces").fetchone()[0]
 
-    def read() -> int:
-        with owner.store.uow.read() as tx:
-            return tx.workspace.format_version()
 
-    return kb._workspace.bridge.call(owner.run_blocking(read, ExecutionContext()))
+_SUFFIXES = {"": (), "-wal-shm": ("-wal", "-shm"), "-wal": ("-wal",), "-shm": ("-shm",)}
 
 
 def _fingerprint(root: Path) -> dict[str, str]:
-    """Hash the database and its log; the shared-memory index only counts as present."""
+    """Hash the database, its -wal and its -shm; extra or missing files show up."""
     return {
-        path.name: "present"
-        if path.name.endswith("-shm")
-        else sha256(path.read_bytes()).hexdigest()
+        path.name: sha256(path.read_bytes()).hexdigest()
         for path in sorted(root.glob("corpus.sqlite3*"))
     }
 
 
-def _crashed_copy(root: Path, destination: Path) -> Path:
-    """Copy a workspace as a crashed owner leaves it: format 1 with a live -wal."""
+def _crashed_copy(root: Path, destination: Path, sidecars: str) -> Path:
+    """Copy a workspace as a crashed owner leaves it: format 1 plus chosen sidecars."""
     keeper = sqlite3.connect(root / "corpus.sqlite3")
     try:
         keeper.execute("PRAGMA wal_autocheckpoint=0")
@@ -55,6 +51,16 @@ def _crashed_copy(root: Path, destination: Path) -> Path:
         shutil.copytree(root, destination)
     finally:
         keeper.close()
+    shm = (destination / "corpus.sqlite3-shm").read_bytes()
+    if "-wal" not in sidecars:
+        # Without its -wal the receipt change is lost, so write it into the file.
+        for suffix in ("-wal", "-shm"):
+            (destination / f"corpus.sqlite3{suffix}").unlink(missing_ok=True)
+        make_format_one(destination)
+    if "-shm" in sidecars:
+        (destination / "corpus.sqlite3-shm").write_bytes(shm)
+    elif "-shm" not in sidecars:
+        (destination / "corpus.sqlite3-shm").unlink(missing_ok=True)
     return destination
 
 
@@ -65,21 +71,25 @@ def test_packaged_migration_is_format_two():
 
 
 def test_new_workspace_records_format_two(tmp_path):
-    with Tychora.open(tmp_path / "ws", token_counter=Counter()) as kb:
-        assert _format_version(kb) == 2
-
-
-@pytest.mark.parametrize("crashed", [False, True])
-def test_format_one_workspace_is_refused_untouched(tmp_path, crashed):
     root = tmp_path / "ws"
     with Tychora.open(root, token_counter=Counter()):
         pass
-    if crashed:
-        root = _crashed_copy(root, tmp_path / "crashed")
-        assert (root / "corpus.sqlite3-wal").stat().st_size > 0
+    assert _format_version(root) == 2
+
+
+@pytest.mark.parametrize("sidecars", ["", "-wal-shm", "-wal", "-shm"])
+def test_format_one_workspace_is_refused_untouched(tmp_path, sidecars):
+    root = tmp_path / "ws"
+    with Tychora.open(root, token_counter=Counter()):
+        pass
+    if sidecars:
+        root = _crashed_copy(root, tmp_path / "crashed", sidecars)
     else:
         make_format_one(root)
+    present = {path.name for path in root.glob("corpus.sqlite3-*")}
+    assert present == {f"corpus.sqlite3{suffix}" for suffix in _SUFFIXES[sidecars]}
     before = _fingerprint(root)
+    runtime_before = sorted(path.name for path in root.iterdir())
     with pytest.raises(TychoraError) as error:
         Tychora.open(root, token_counter=Counter())
     assert (error.value.code, error.value.reason) == (
@@ -88,6 +98,17 @@ def test_format_one_workspace_is_refused_untouched(tmp_path, crashed):
     )
     assert "manage rebuild workspace --from" in error.value.message
     assert _fingerprint(root) == before
+    assert sorted(path.name for path in root.iterdir()) == runtime_before
+
+
+def test_unreadable_database_is_refused_not_opened_read_write(tmp_path):
+    path = tmp_path / "corpus.sqlite3"
+    path.write_bytes(b"not a database" * 100)
+    before = _fingerprint(tmp_path)
+    with pytest.raises(TychoraError) as error:
+        open_corpus(path)
+    assert error.value.reason == "workspace.database_invalid"
+    assert _fingerprint(tmp_path) == before
 
 
 @pytest.mark.parametrize("genuine_ddl", [True, False])
