@@ -917,7 +917,7 @@ async def test_metadata_only_run_remains_inspectable_without_replay(published):
                 0,
                 config_sha,
                 "partial",
-                '{"candidate_count":999}',
+                '{"candidate_count":8675309421}',
                 '{"unit_ids":["hidden"]}',
                 None,
                 "2026-01-01T00:00:00Z",
@@ -930,7 +930,8 @@ async def test_metadata_only_run_remains_inspectable_without_replay(published):
         InspectRequest(subject="runs", id="run-inspect"), scope, ExecutionContext()
     )
     assert result.records[0].value["state"] == "partial"
-    assert "999" not in result.model_dump_json()
+    # A long sentinel: short numbers can occur by chance inside random identifiers.
+    assert "8675309421" not in result.model_dump_json()
     assert "hidden" not in result.model_dump_json()
     assert result.payload is None
     assert result.records[0].value["request_retained"] is False
@@ -941,7 +942,7 @@ async def test_metadata_only_run_remains_inspectable_without_replay(published):
     )
     assert [entry.id for entry in listing.definitions] == ["run-inspect"]
     assert listing.definitions[0].definition["state"] == "partial"
-    assert "999" not in listing.model_dump_json()
+    assert "8675309421" not in listing.model_dump_json()
     assert "hidden" not in listing.model_dump_json()
     denied = scope.model_copy(update={"principal_id": "other"})
     with pytest.raises(TychoraError) as error:
