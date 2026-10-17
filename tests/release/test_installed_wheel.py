@@ -71,6 +71,104 @@ with sqlite3.connect(db) as conn:
     assert "Usage" in help_result.stdout
 
 
+_COPIED_FILES = (
+    "__init__.py",
+    "qualification/test_native_stack.py",
+    "qualification/graph_probe.py",
+    "qualification/test_sdk_surface.py",
+    "qualification/test_docling.py",
+    "helpers/__init__.py",
+    "helpers/assets.py",
+    "helpers/ladybug.py",
+    "helpers/timing.py",
+    "fixtures/docling.py",
+    "cli/test_commands.py",
+)
+_COPIED_TREES = ("fixtures/documents", "configuration/fixtures")
+# Asset checks and the Docling fixtures only: tests/conftest.py also denies loopback
+# network access, which the installed HTTP tests need.
+_INSTALLED_CONFTEST = """\
+import pytest
+
+from tests.helpers import assets
+
+pytest_plugins = ["tests.fixtures.docling"]
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item):
+    assets.check_item(item)
+
+
+def pytest_runtest_teardown(item):
+    assets.end_test()
+"""
+
+
+def _copy_installed_tests(source_tests: Path, target_tests: Path) -> None:
+    """Copy the tests run against the installed wheel, with what they import."""
+    for name in _COPIED_FILES:
+        target = target_tests / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_tests / name, target)
+    for name in _COPIED_TREES:
+        shutil.copytree(source_tests / name, target_tests / name)
+    (target_tests / "conftest.py").write_text(_INSTALLED_CONFTEST)
+
+
+def _module_file(source_tests: Path, module: str) -> Path | None:
+    relative = Path(*module.split(".")[1:])
+    for candidate in (relative.with_suffix(".py"), relative / "__init__.py"):
+        if (source_tests / candidate).is_file():
+            return candidate
+    return None
+
+
+def test_installed_test_copy_is_import_complete():
+    import ast
+
+    source_tests = Path(__file__).parents[1]
+
+    def covered(relative: Path) -> bool:
+        posix = relative.as_posix()
+        return posix in _COPIED_FILES or any(
+            posix.startswith(tree + "/") for tree in _COPIED_TREES
+        )
+
+    pending = [Path(name) for name in _COPIED_FILES if name.endswith(".py")]
+    pending.append(Path("__installed_conftest__"))
+    sources = {Path("__installed_conftest__"): _INSTALLED_CONFTEST}
+    seen: set[Path] = set()
+    missing: list[str] = []
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        text = sources.get(current) or (source_tests / current).read_text()
+        for node in ast.walk(ast.parse(text)):
+            modules = []
+            if isinstance(node, ast.Import):
+                modules = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+                modules = [node.module] + [
+                    f"{node.module}.{alias.name}" for alias in node.names
+                ]
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                modules = [node.value] if node.value.startswith("tests.") else []
+            for module in modules:
+                if module != "tests" and not module.startswith("tests."):
+                    continue
+                found = _module_file(source_tests, module)
+                if found is None:
+                    continue
+                if not covered(found):
+                    missing.append(f"{current} imports {module} ({found})")
+                else:
+                    pending.append(found)
+    assert not missing, missing
+
+
 @pytest.mark.release
 def test_full_installed_wheel_native_sdk_document_http_mcp_and_restore(
     installed_full, artifacts
@@ -78,32 +176,7 @@ def test_full_installed_wheel_native_sdk_document_http_mcp_and_restore(
     root = installed_full.working_dir
     source_tests = artifacts.source / "tests"
     target_tests = root / "tests"
-    (target_tests / "qualification").mkdir(parents=True)
-    (target_tests / "helpers").mkdir(parents=True)
-    (target_tests / "cli").mkdir(parents=True)
-    (target_tests / "fixtures").mkdir(parents=True)
-    (target_tests / "configuration").mkdir(parents=True)
-    for name in (
-        "test_native_stack.py",
-        "graph_probe.py",
-        "test_sdk_surface.py",
-        "test_docling.py",
-    ):
-        shutil.copy2(
-            source_tests / "qualification" / name, target_tests / "qualification" / name
-        )
-    shutil.copy2(source_tests / "__init__.py", target_tests / "__init__.py")
-    for name in ("__init__.py", "ladybug.py", "timing.py"):
-        shutil.copy2(source_tests / "helpers" / name, target_tests / "helpers" / name)
-    shutil.copy2(
-        source_tests / "cli/test_commands.py", target_tests / "cli/test_commands.py"
-    )
-    shutil.copytree(
-        source_tests / "fixtures/documents", target_tests / "fixtures/documents"
-    )
-    shutil.copytree(
-        source_tests / "configuration/fixtures", target_tests / "configuration/fixtures"
-    )
+    _copy_installed_tests(source_tests, target_tests)
     env = installed_full.env.copy()
     model_cache = Path(
         env.get(
