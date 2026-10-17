@@ -21,6 +21,7 @@ from tychora.contracts.requests import (
 from tychora.ports.execution import ExecutionContext
 from tychora.ports.jobs import JobRepository
 
+from .job_wait import SETTLED_STATES
 from .owner import WorkspaceOwner
 
 
@@ -156,10 +157,7 @@ class JobService:
         end = time.monotonic() + timeout
         while True:
             status = await self.get(job_id, ctx)
-            if (
-                status.state in {"succeeded", "failed", "cancelled", "interrupted"}
-                or time.monotonic() >= end
-            ):
+            if status.state in SETTLED_STATES or time.monotonic() >= end:
                 return status
             await asyncio.sleep(min(0.05, max(0.0, end - time.monotonic())))
             ctx.checkpoint()

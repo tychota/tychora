@@ -23,7 +23,8 @@ def wait_until_settled[T: _Settling](
 
     Each call waits at most ``MAX_WAIT_SECONDS``, the cap of a single job wait, so
     the overall deadline can be far longer. The last status is returned even when
-    it is not settled.
+    it is not settled. A non-positive ``overall_seconds`` makes exactly one call
+    with a zero timeout.
     """
     end = clock() + overall_seconds
     while True:

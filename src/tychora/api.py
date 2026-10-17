@@ -301,6 +301,7 @@ class LocalWorkspace:
 
 
 _REBUILD_JOB_SECONDS = 3600.0
+_REBUILD_CANCEL_SECONDS = 60.0
 
 
 class _LocalRebuildTarget:
@@ -343,23 +344,32 @@ class _LocalRebuildTarget:
 
         return wait_until_settled(wait_once, _REBUILD_JOB_SECONDS).state
 
-    def restore_policy(
-        self, sources: tuple[InventorySource, ...], revision_ids: frozenset[str]
-    ) -> int:
+    def cancel(self, job_id: str) -> str:
+        """Cancel a job, wait briefly for it to settle and return its state."""
+        workspace = self._workspace
+        workspace.bridge.call(
+            workspace.services.jobs.cancel(job_id, ExecutionContext())
+        )
+        return wait_until_settled(
+            lambda timeout: workspace.bridge.call(
+                workspace.services.jobs.wait(
+                    job_id, ExecutionContext(), timeout=timeout
+                )
+            ),
+            _REBUILD_CANCEL_SECONDS,
+        ).state
+
+    def restore_policy(self, sources: tuple[InventorySource, ...]) -> int:
         """Carry access floors, ranks, uses and declared review states over."""
         owner = self._workspace.owner
         return self._on_owner(
-            lambda: restore_policy(owner.db, owner.workspace_id, sources, revision_ids)
+            lambda: restore_policy(owner.db, owner.workspace_id, sources)
         )
 
-    def record_revision_review(self, revision_id: str, state: str, actor: str) -> None:
-        """Record a review event for a rebuilt revision."""
+    def record_review(self, target: ReviewTarget, state: str, actor: str) -> None:
+        """Record a review event for a revision, unit or asset."""
         store = self._workspace.owner.store
-        self._on_owner(
-            lambda: store.record_review(
-                ReviewTarget(revision_id=revision_id), state, actor
-            )
-        )
+        self._on_owner(lambda: store.record_review(target, state, actor))
 
     def close(self) -> None:
         """Release the new workspace."""

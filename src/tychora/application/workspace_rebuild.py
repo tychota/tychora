@@ -22,7 +22,9 @@ from tychora.adapters.sqlite.workspace_inventory import (
     read_inventory,
     read_original,
 )
+from tychora.application.job_wait import SETTLED_STATES
 from tychora.contracts.base import Contract, Identifier, NonEmptyStr, NonNegativeInt
+from tychora.contracts.corpus import ReviewTarget
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.requests import RequestScope, SourceInput
 from tychora.ports.execution import ExecutionContext
@@ -34,7 +36,8 @@ RebuildSkipReason = Literal[
     "original_removed",
     "original_missing",
     "job_failed",
-    "finer_review",
+    "timed_out",
+    "review_target_missing",
 ]
 _INLINE_DROPPED = (
     "path",
@@ -96,14 +99,16 @@ class RebuildTarget(Protocol):
         """Wait for a job to settle and return its final state."""
         ...
 
-    def restore_policy(
-        self, sources: tuple[InventorySource, ...], revision_ids: frozenset[str]
-    ) -> int:
+    def cancel(self, job_id: str) -> str:
+        """Cancel a job, wait briefly for it to settle and return its state."""
+        ...
+
+    def restore_policy(self, sources: tuple[InventorySource, ...]) -> int:
         """Carry access floors, ranks, uses and declared review states over."""
         ...
 
-    def record_revision_review(self, revision_id: str, state: str, actor: str) -> None:
-        """Record a review event for a rebuilt revision."""
+    def record_review(self, target: ReviewTarget, state: str, actor: str) -> None:
+        """Record a review event for a revision, unit or asset."""
         ...
 
     def close(self) -> None:
@@ -116,6 +121,7 @@ class _Progress:
     sources: list[RebuiltSource] = field(default_factory=list)
     skipped: list[RebuildSkip] = field(default_factory=list)
     rebuilt_revisions: set[str] = field(default_factory=set)
+    in_flight: set[str] = field(default_factory=set)
 
     def skip(
         self,
@@ -209,7 +215,14 @@ def _replay_revision(
         progress.skip("revision", revision.revision_id, "original_missing")
         return None
     job_id = replay.target.add(source_input(source, revision, kind, payload))
+    progress.in_flight.add(job_id)
     state = replay.target.wait(job_id)
+    if state not in SETTLED_STATES:
+        replay.target.cancel(job_id)
+        progress.in_flight.discard(job_id)
+        progress.skip("revision", revision.revision_id, "timed_out", state)
+        return None
+    progress.in_flight.discard(job_id)
     if state != "succeeded":
         progress.skip("revision", revision.revision_id, "job_failed", state)
         return None
@@ -253,19 +266,34 @@ def _replay_reviews(
 ) -> int:
     replayed = 0
     for review in inventory.reviews:
-        if review.revision_id in progress.rebuilt_revisions:
-            target.record_revision_review(
-                review.revision_id, review.state, review.actor_id
-            )
-            replayed += 1
-    if inventory.finer_reviews:
-        progress.skip(
-            "review",
-            "units-and-assets",
-            "finer_review",
-            f"{inventory.finer_reviews} unit or asset review events are not replayed",
+        subject = ReviewTarget.model_validate(
+            {f"{review.target_kind}_id": review.target_id}
         )
+        try:
+            target.record_review(subject, review.state, review.actor_id)
+        except TychoraError as error:
+            if error.code != "NOT_FOUND":
+                raise
+            progress.skip(
+                "review",
+                f"{review.target_kind}:{review.target_id}",
+                "review_target_missing",
+                review.state,
+            )
+        else:
+            replayed += 1
     return replayed
+
+
+def _settle_and_restore(
+    target: RebuildTarget, inventory: WorkspaceInventory, progress: _Progress
+) -> None:
+    """Cancel what is still running, then carry the old policy over."""
+    try:
+        for job_id in sorted(progress.in_flight):
+            target.cancel(job_id)
+    finally:
+        target.restore_policy(inventory.sources)
 
 
 def rebuild_workspace(
@@ -289,13 +317,12 @@ def rebuild_workspace(
     if (old_root / "workspace.toml").is_file():
         shutil.copyfile(old_root / "workspace.toml", new_root / "workspace.toml")
     target = open_target(new_root, rebuild_scope(inventory.collections))
+    progress = _Progress()
     try:
         target.seed_collections(inventory.collections)
-        replay = _Replay(old_root, target, kind_map or {}, _Progress(), ctx)
+        replay = _Replay(old_root, target, kind_map or {}, progress, ctx)
         for source in inventory.sources:
             _replay_source(replay, source)
-        progress = replay.progress
-        target.restore_policy(inventory.sources, frozenset(progress.rebuilt_revisions))
         replayed = _replay_reviews(inventory, target, progress)
         return WorkspaceRebuildReport(
             old_workspace_id=inventory.workspace_id,
@@ -306,4 +333,7 @@ def rebuild_workspace(
             reviews_replayed=replayed,
         )
     finally:
-        target.close()
+        try:
+            _settle_and_restore(target, inventory, progress)
+        finally:
+            target.close()
