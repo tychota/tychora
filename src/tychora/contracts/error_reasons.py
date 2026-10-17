@@ -240,7 +240,7 @@ _ENTRIES = (
         "LIMIT_EXCEEDED",
         "evaluation.binding_budget",
         False,
-        "Evaluate fewer cases or variants per run; one run's cited sources exceed the retained binding budget.",
+        "One cited code file or extraction exceeds the evaluation retained binding budget on its own; evaluate a snapshot without that source.",
     ),
     Reason(
         "LIMIT_EXCEEDED",

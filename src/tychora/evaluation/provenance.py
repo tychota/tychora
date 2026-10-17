@@ -78,15 +78,21 @@ class RetainedBindingCache:
             rows + self.rows_used > MAX_BINDING_ROWS
             or size + self.bytes_used > MAX_BINDING_BYTES
         ):
-            _, released = self._resident.popitem(last=False)
-            self.rows_used -= released.rows
-            self.bytes_used -= released.size
-            for unit_id in released.unit_ids:
+            self._release(next(iter(self._resident)))
+
+    def _release(self, key: tuple[str, str | None]) -> None:
+        """Drop one held binding and the units and assets it still holds."""
+        released = self._resident.pop(key)
+        self.rows_used -= released.rows
+        self.bytes_used -= released.size
+        for unit_id in released.unit_ids:
+            if self._holders.get(unit_id) == key:
                 self.units.pop(unit_id, None)
-                self._holders.pop(unit_id, None)
-            for asset_id in released.asset_ids:
+                del self._holders[unit_id]
+        for asset_id in released.asset_ids:
+            if self._holders.get(asset_id) == key:
                 self.assets.pop(asset_id, None)
-                self._holders.pop(asset_id, None)
+                del self._holders[asset_id]
 
     def _load(self, extraction_id: str, relative_path: str | None = None) -> None:
         """Bind one pinned extraction, or one code file of it, within the budget."""
@@ -96,10 +102,12 @@ class RetainedBindingCache:
         member = self.members.get(extraction_id)
         if member is None:
             return
+        key = extraction_id, relative_path
+        if key in self._resident:
+            self._release(key)
         rows, size = binding_footprint(self.owner.db, member, relative_path)
         self._release_until_fits(rows, size)
         retained = retained_rows(self.owner.store, member, relative_path)
-        key = extraction_id, relative_path
         self._resident[key] = _Resident(
             rows,
             size,
