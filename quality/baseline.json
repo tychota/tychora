@@ -2,7 +2,7 @@
   "metrics": {
     "cognitive_complexity": {
       "direction": "lower",
-      "measured_at": "09f1a79e3f52",
+      "measured_at": "73c2ec9d9ed0",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::search": 58,
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::upsert_batch": 16,
@@ -111,7 +111,7 @@
         "src/tychora/application/reranking.py::prepare_rerank_facts": 56,
         "src/tychora/application/restore.py::_validate_retained_documents": 114,
         "src/tychora/application/retained_content.py::content_page": 47,
-        "src/tychora/application/runtime.py::parser_process": 64,
+        "src/tychora/application/runtime.py::parser_process": 61,
         "src/tychora/application/services.py::SourceJobScheduler::_retry": 20,
         "src/tychora/application/services.py::build_services": 16,
         "src/tychora/application/settings.py::SettingsService::_activate_admitted": 35,
@@ -362,7 +362,7 @@
     },
     "function_length": {
       "direction": "lower",
-      "measured_at": "09f1a79e3f52",
+      "measured_at": "73c2ec9d9ed0",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex.search": 143,
         "src/tychora/adapters/code/capture.py::RepositoryCapture._run": 89,
@@ -445,7 +445,7 @@
         "src/tychora/application/restore.py::RestoreService.import_backup": 155,
         "src/tychora/application/restore.py::_validate_retained_documents": 239,
         "src/tychora/application/retained_content.py::content_page": 183,
-        "src/tychora/application/runtime.py::parser_process": 151,
+        "src/tychora/application/runtime.py::parser_process": 142,
         "src/tychora/application/services.py::SourceJobScheduler._retry": 112,
         "src/tychora/application/services.py::build_services": 112,
         "src/tychora/application/settings.py::SettingsService._activate_admitted": 184,
