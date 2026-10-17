@@ -22,7 +22,7 @@ from tychora.adapters.sqlite.migrations import (
     migration_sql,
     open_verified_import,
 )
-from tychora.adapters.sqlite.receipt import open_untouched
+from tychora.adapters.sqlite.receipt import open_untouched, require_no_live_owner
 from tychora.contracts.errors import TychoraError
 
 
@@ -176,3 +176,19 @@ def test_caller_error_inside_untouched_read_keeps_its_type(tmp_path, sidecar):
         (tmp_path / "corpus.sqlite3-shm").write_bytes(b"")
     with pytest.raises(PermissionError, match="caller"), open_untouched(path):
         raise PermissionError("caller")
+
+
+@pytest.mark.parametrize("shape", ["runtime_is_file", "lock_is_symlink"])
+def test_an_unsafe_runtime_path_is_a_typed_refusal(tmp_path, shape):
+    root = tmp_path / "ws"
+    root.mkdir()
+    if shape == "runtime_is_file":
+        (root / ".runtime").write_text("")
+    else:
+        (root / ".runtime").mkdir()
+        (tmp_path / "elsewhere").write_text("")
+        (root / ".runtime" / "owner.lock").symlink_to(tmp_path / "elsewhere")
+    with pytest.raises(TychoraError) as raised:
+        require_no_live_owner(root, "busy")
+    assert raised.value.code == "INTEGRITY_ERROR"
+    assert raised.value.reason == "runtime.path_unsafe"
