@@ -1,5 +1,7 @@
 """Read an existing database without writing any file next to it."""
 
+import fcntl
+import os
 import shutil
 import sqlite3
 import tempfile
@@ -13,6 +15,26 @@ _RECEIPT = "SELECT version, checksum FROM schema_migrations ORDER BY version"
 _HAS_RECEIPT = (
     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
 )
+
+
+def require_no_live_owner(root: Path, message: str) -> None:
+    """Refuse with WORKSPACE_BUSY when another process holds the owner lock.
+
+    The lock file is probed only when it already exists, so nothing is created
+    in the workspace, and the probe releases the lock at once when it is free.
+    """
+    try:
+        fd = os.open(root / ".runtime" / "owner.lock", os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise TychoraError("WORKSPACE_BUSY", message, reason="owner.live") from None
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
 
 
 def _stamp(path: Path) -> tuple[int, int] | None:

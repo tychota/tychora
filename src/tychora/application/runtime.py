@@ -258,7 +258,7 @@ class RuntimeIdentity:
                     raise TychoraError(
                         "WORKSPACE_BUSY",
                         "Workspace already has an owner; retry when it exits",
-                        retryable=True,
+                        reason="owner.live",
                     ) from None
                 self._fd = fd
             except BaseException:

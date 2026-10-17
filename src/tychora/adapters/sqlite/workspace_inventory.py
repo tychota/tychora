@@ -6,9 +6,7 @@ format-specific reader. The database is read through a copy when a -wal exists,
 so the old workspace is never written.
 """
 
-import fcntl
 import json
-import os
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,7 +20,7 @@ from tychora.contracts.base import Contract, Identifier, NonEmptyStr, NonNegativ
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
 
-from .receipt import open_untouched
+from .receipt import open_untouched, require_no_live_owner
 
 
 class InventoryCollection(Contract):
@@ -108,25 +106,6 @@ def _aware(value: str) -> datetime:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
-def _require_no_live_owner(root: Path) -> None:
-    lock_path = root / ".runtime" / "owner.lock"
-    if not lock_path.exists():
-        return
-    fd = os.open(lock_path, os.O_RDONLY | os.O_NOFOLLOW)
-    try:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise TychoraError(
-                "WORKSPACE_BUSY",
-                "The old workspace is open in another process; close it first.",
-                reason="owner.live",
-            ) from None
-        fcntl.flock(fd, fcntl.LOCK_UN)
-    finally:
-        os.close(fd)
-
-
 def _revisions(db: sqlite3.Connection) -> dict[str, list[InventoryRevision]]:
     grouped: dict[str, list[InventoryRevision]] = {}
     for row in db.execute(_REVISIONS):
@@ -209,7 +188,9 @@ def _inventory(db: sqlite3.Connection) -> WorkspaceInventory:
 
 def read_inventory(root: Path) -> WorkspaceInventory:
     """Enumerate an older workspace's collections, sources, originals and reviews."""
-    _require_no_live_owner(root)
+    require_no_live_owner(
+        root, "The old workspace is open in another process; close it first."
+    )
     database = root / "corpus.sqlite3"
     if database.is_symlink() or not database.is_file():
         raise TychoraError(
