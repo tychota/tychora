@@ -231,6 +231,12 @@ _ENTRIES = (
         "Choose a new, empty workspace directory as the rebuild destination.",
     ),
     Reason(
+        "INVALID_REQUEST",
+        "rebuild.incomplete",
+        False,
+        "Delete the destination directory and rerun `tychora manage rebuild workspace --from OLD`.",
+    ),
+    Reason(
         "LIMIT_EXCEEDED",
         "rebuild.original_too_large",
         False,

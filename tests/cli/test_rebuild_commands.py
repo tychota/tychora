@@ -61,3 +61,14 @@ def test_rebuild_workspace_refuses_occupied_destination(tmp_path):
     )
     assert result.exit_code == 2
     assert json.loads(result.stderr)["reason"] == "rebuild.destination_not_empty"
+
+
+def test_a_workspace_with_an_unfinished_rebuild_is_reported_by_the_cli(tmp_path):
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / ".rebuild-incomplete").write_text("")
+    result = CliRunner().invoke(
+        app, ["--workspace", str(workspace), "manage", "health"]
+    )
+    assert result.exit_code == 2
+    assert json.loads(result.stderr)["reason"] == "rebuild.incomplete"

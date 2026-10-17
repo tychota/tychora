@@ -224,6 +224,8 @@ def _strict_old(root):
 
 
 def _floors(destination: Path) -> dict[str, int]:
+    """Read a destination whose rebuild stopped early; the marker is cleared first."""
+    (destination / ".rebuild-incomplete").unlink(missing_ok=True)
     with Tychora.open(destination, token_counter=Counter()) as kb:
         return dict(_read(kb, "SELECT source_key,access_floor FROM sources"))
 
@@ -352,3 +354,38 @@ def test_a_stricter_new_value_is_never_lowered(old, tmp_path):
             "SELECT access_rank,allowed_uses_json FROM revisions WHERE revision_id=?",
             (alpha_revision,),
         ).fetchone() == (2, "[]")
+
+
+def test_an_incomplete_marker_exists_during_the_rebuild_and_goes_on_success(
+    old, tmp_path
+):
+    root, _ = old
+    destination = tmp_path / "new"
+    seen = []
+
+    def wrap(target):
+        return _Wrapped(
+            target,
+            on_wait=lambda: seen.append((destination / ".rebuild-incomplete").exists()),
+        )
+
+    _run(root, destination, wrap)
+    assert seen
+    assert all(seen)
+    assert not (destination / ".rebuild-incomplete").exists()
+    with Tychora.open(destination, token_counter=Counter()):
+        pass
+
+
+def test_a_rebuild_that_does_not_finish_leaves_a_workspace_that_will_not_open(
+    old, tmp_path
+):
+    root, _ = old
+    destination = tmp_path / "new"
+    with pytest.raises(RuntimeError, match="add failed"):
+        _run(root, destination, lambda t: _Wrapped(t, fail_add_after=1))
+    assert (destination / ".rebuild-incomplete").exists()
+    with pytest.raises(TychoraError) as error:
+        Tychora.open(destination, token_counter=Counter())
+    assert error.value.reason == "rebuild.incomplete"
+    assert "Delete it and rerun" in str(error.value)
