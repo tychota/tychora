@@ -11,7 +11,6 @@ _.hydrate  # CorpusStore port method; engine core v2 repository layer decides it
 _.purge  # retention purge path (flow review C5); owned by engine core v2
 _.purge_results  # query cache purge (flow review C5); owned by engine core v2
 _.expire_diagnostics  # retention purge path (flow review C5); owned by engine core v2
-_.record_review  # review-state write exercised by tests; engine core v2 repository layer owns it
 _.raise_access_floor  # collection policy write exercised by tests; engine core v2 owns it
 _.record_assertion_decision  # assertion decision write exercised by tests; engine core v2 owns it
 _.is_pinned  # lease query exercised by tests; engine core v2 snapshot leases own it

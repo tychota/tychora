@@ -7,6 +7,7 @@ so the old workspace is never written.
 """
 
 import fcntl
+import json
 import os
 import sqlite3
 from pathlib import Path
@@ -18,6 +19,7 @@ from tychora.adapters.files.cas import LocalArtifacts
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import Contract, Identifier, NonEmptyStr, NonNegativeInt
 from tychora.contracts.errors import TychoraError
+from tychora.contracts.identity import canonical_bytes
 
 from .receipt import open_untouched
 
@@ -291,6 +293,81 @@ def seed_collections(
             )
         db.commit()
         return sum(inserted for inserted, _ in results)
+    except BaseException:
+        db.rollback()
+        raise
+
+
+def _restore_source(db: sqlite3.Connection, source: InventorySource) -> bool:
+    return bool(
+        db.execute(
+            "UPDATE sources SET access_floor=? WHERE source_id=? AND access_floor<?",
+            (source.access_floor, source.source_id, source.access_floor),
+        ).rowcount
+    )
+
+
+def _restore_revision(
+    db: sqlite3.Connection, source_id: str, revision: InventoryRevision
+) -> bool:
+    current = db.execute(
+        "SELECT access_rank,allowed_uses_json,declared_review_state FROM revisions "
+        "WHERE revision_id=? AND source_id=?",
+        (revision.revision_id, source_id),
+    ).fetchone()
+    if current is None:
+        return False
+    uses = canonical_bytes(
+        sorted(
+            set(json.loads(current[1])) & set(json.loads(revision.allowed_uses_json))
+        )
+    ).decode()
+    wanted = (
+        max(current[0], revision.access_rank),
+        uses,
+        revision.declared_review_state,
+    )
+    if tuple(current) == wanted:
+        return False
+    db.execute(
+        "UPDATE revisions SET access_rank=?,allowed_uses_json=?,declared_review_state=? "
+        "WHERE revision_id=? AND source_id=?",
+        (*wanted, revision.revision_id, source_id),
+    )
+    return True
+
+
+def restore_policy(
+    db: sqlite3.Connection,
+    workspace_id: str,
+    sources: tuple[InventorySource, ...],
+    revision_ids: frozenset[str],
+) -> int:
+    """Carry an older workspace's access and review policy onto rebuilt sources.
+
+    A source access floor and a revision access rank only ever rise, allowed uses
+    only ever narrow to what both workspaces permit, and a revision keeps its
+    declared review state; a rebuild never lowers confidentiality. The policy
+    epoch moves once when anything changed. Returns the number of rows changed.
+    """
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        changed = 0
+        for source in sources:
+            changed += _restore_source(db, source)
+            changed += sum(
+                _restore_revision(db, source.source_id, revision)
+                for revision in source.revisions
+                if revision.revision_id in revision_ids
+            )
+        if changed:
+            db.execute(
+                "UPDATE workspaces SET policy_epoch=policy_epoch+1 "
+                "WHERE workspace_id=?",
+                (workspace_id,),
+            )
+        db.commit()
+        return changed
     except BaseException:
         db.rollback()
         raise
