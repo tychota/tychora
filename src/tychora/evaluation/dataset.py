@@ -63,7 +63,7 @@ class GoldLabelResolver(Protocol):
     """Canonical lookups a label resolution needs, scoped to one snapshot."""
 
     def source_ids(self, collection: str, source_key: str) -> tuple[str, ...]:
-        """Return the live sources of a collection carrying this source key."""
+        """Return the sources of the snapshot in a collection carrying this source key."""
 
     def revision_ids(self, source_id: str, edition_key: str | None) -> tuple[str, ...]:
         """Return the snapshot revisions of a source, the default one without edition."""
@@ -288,11 +288,8 @@ def bind_case(case: GoldCase, resolver: GoldLabelResolver) -> GoldCase:
         expected_unit_ids=merged(
             "expected_unit_ids", [unit for b in expected for unit in b.unit_ids]
         ),
-        forbidden_source_ids=merged(
-            "forbidden_source_ids", [b.source_id for b in forbidden]
-        ),
-        forbidden_revision_ids=merged(
-            "forbidden_revision_ids", [b.revision_id for b in forbidden]
+        forbidden_unit_ids=merged(
+            "forbidden_unit_ids", [unit for b in forbidden for unit in b.unit_ids]
         ),
     )
     return GoldCase.from_mapping(data)
