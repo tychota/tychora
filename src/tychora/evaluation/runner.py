@@ -11,6 +11,7 @@ from io import BytesIO
 from threading import Lock
 
 from tychora.adapters.sqlite.evaluations import EvaluationRepository
+from tychora.adapters.sqlite.gold_labels import SqliteGoldLabelResolver
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.operations import (
@@ -23,7 +24,13 @@ from tychora.contracts.operations import (
     MetricValue,
 )
 from tychora.contracts.requests import QueryRequest, RequestScope
-from tychora.evaluation.dataset import GoldCase, load_dataset, load_dataset_bytes
+from tychora.evaluation.dataset import (
+    GoldCase,
+    LabelFailure,
+    bind_cases,
+    load_dataset,
+    load_dataset_bytes,
+)
 from tychora.evaluation.metrics import metrics
 from tychora.evaluation.provenance import RetainedBindingCache, verify_result_locators
 from tychora.ports.execution import ExecutionContext
@@ -289,6 +296,63 @@ class EvaluationService:
         with self.owner.store.uow.read() as tx:
             return tx.workspace.policy_epoch(), tx.workspace.lexical_epoch()
 
+    def _bind_labels(
+        self, cases: tuple[GoldCase, ...], snapshot_id: str
+    ) -> tuple[tuple[GoldCase, ...], tuple[LabelFailure, ...]]:
+        """Resolve label-based cases on the owner thread; fail when none resolves."""
+        bound, failures = bind_cases(
+            cases, SqliteGoldLabelResolver(self.owner.db, snapshot_id)
+        )
+        if not bound:
+            raise TychoraError(
+                "INVALID_REQUEST",
+                "No gold case of this split resolves in the workspace.",
+                reason=failures[0].reason,
+            )
+        return bound, failures
+
+    def _stage_config(self) -> str:
+        """Store the registry snapshot of the running configuration as an artifact."""
+        return self.owner.artifacts.put_stream(
+            BytesIO(
+                canonical_bytes(
+                    {
+                        "type": "registry",
+                        "schema_version": "1",
+                        "data": self.owner.config.model_dump(mode="json"),
+                    }
+                )
+            ),
+            "application/json",
+        )
+
+    def _hardware(self, request: EvaluationRequest, version_sha: str) -> dict:
+        """Describe the machine, models and settings a comparison ran with."""
+        return {
+            "machine": platform.machine(),
+            "system": platform.system(),
+            "python": platform.python_version(),
+            "output_model": getattr(self.query.counter, "model", "unknown"),
+            "output_tokenizer": getattr(self.query.counter, "tokenizer_id", "unknown"),
+            "text_model": getattr(
+                getattr(self.query.text_provider, "capabilities", None),
+                "model",
+                None,
+            ),
+            "visual_model": getattr(
+                getattr(self.query.visual_provider, "capabilities", None),
+                "model",
+                None,
+            ),
+            "seed": request.seed,
+            "repetitions": request.repetitions,
+            "offline": request.offline,
+            "variants": [
+                variant.model_dump(mode="json") for variant in request.variants
+            ],
+            "dataset_version_sha": version_sha,
+        }
+
     async def run(
         self, request: EvaluationRequest, scope: RequestScope, ctx: ExecutionContext
     ) -> JobHandle:
@@ -335,30 +399,32 @@ class EvaluationService:
                     raise TychoraError(
                         "NOT_FOUND", "Evaluation snapshot is unavailable"
                     )
+                cases, label_failures = self._bind_labels(cases, request.snapshot_id)
                 for case in cases:
                     for variant in request.variants:
                         variant_query(case, variant, profile=self.owner.config.profile)
-                config_ref = self.owner.artifacts.put_stream(
-                    BytesIO(
-                        canonical_bytes(
-                            {
-                                "type": "registry",
-                                "schema_version": "1",
-                                "data": self.owner.config.model_dump(mode="json"),
-                            }
-                        )
-                    ),
-                    "application/json",
-                )
+                config_ref = self._stage_config()
                 handle = self.jobs.accept(
                     "evaluate", grant, None, request.model_dump(mode="json"), config_ref
                 )
                 self.jobs.start(handle.id)
-                return dataset, cases, self._epochs(), snapshot[0], handle
+                return (
+                    dataset,
+                    cases,
+                    label_failures,
+                    self._epochs(),
+                    snapshot[0],
+                    handle,
+                )
 
-            dataset, cases, epochs, config_sha, handle = await self.owner.run_blocking(
-                accept, ctx
-            )
+            (
+                dataset,
+                cases,
+                label_failures,
+                epochs,
+                config_sha,
+                handle,
+            ) = await self.owner.run_blocking(accept, ctx)
             case_results: dict[str, list[dict]] = {case.case_id: [] for case in cases}
             retained_case_bytes = 0
             evaluations: list[CaseEvaluation] = []
@@ -441,6 +507,7 @@ class EvaluationService:
                     snapshot_id=request.snapshot_id,
                     cases=tuple(evaluations),
                     aggregate=_aggregate(metric_sets),
+                    label_failures=label_failures,
                     created_at=datetime.now(UTC),
                 )
                 validate_retained_size(
@@ -461,32 +528,7 @@ class EvaluationService:
                 validate_retained_size(
                     0, len(canonical_bytes(report.model_dump(mode="json")))
                 )
-                hardware = {
-                    "machine": platform.machine(),
-                    "system": platform.system(),
-                    "python": platform.python_version(),
-                    "output_model": getattr(self.query.counter, "model", "unknown"),
-                    "output_tokenizer": getattr(
-                        self.query.counter, "tokenizer_id", "unknown"
-                    ),
-                    "text_model": getattr(
-                        getattr(self.query.text_provider, "capabilities", None),
-                        "model",
-                        None,
-                    ),
-                    "visual_model": getattr(
-                        getattr(self.query.visual_provider, "capabilities", None),
-                        "model",
-                        None,
-                    ),
-                    "seed": request.seed,
-                    "repetitions": request.repetitions,
-                    "offline": request.offline,
-                    "variants": [
-                        variant.model_dump(mode="json") for variant in request.variants
-                    ],
-                    "dataset_version_sha": dataset.version_sha,
-                }
+                hardware = self._hardware(request, dataset.version_sha)
 
                 def finish():
                     self.repository.persist(

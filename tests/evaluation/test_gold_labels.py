@@ -270,6 +270,50 @@ def test_sqlite_resolver_reports_missing_and_ambiguous(tmp_path):
     assert found["absent_edition"] == ()
 
 
+def test_resolve_gold_label_fails_with_reasons_against_the_real_database(tmp_path):
+    with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
+        add_text(kb, "guide", TEXT)
+        default_id = str(kb._workspace.default_collection_id)
+        twin = kb._workspace.bridge.call(
+            kb._workspace.services.collections.create(
+                CollectionCreate(title="Twin", slug=default_id),
+                kb.scope,
+                ExecutionContext(),
+                managed_owner_authorized=True,
+            )
+        )
+        job = kb.sources.add(
+            {
+                "type": "text",
+                "source_key": "guide",
+                "collection_id": str(twin.collection_id),
+                "kind": "document@1",
+                "format": "text",
+                "text": TEXT,
+                "metadata": {"title": "guide"},
+            }
+        )
+        snapshot = kb.jobs.wait(job.id).result_snapshot_id
+        anchor = PageAnchor(page=1)
+
+        def reasons():
+            resolver = SqliteGoldLabelResolver(kb._workspace.owner.db, snapshot)
+            found = {}
+            for name, collection, key in (
+                ("ambiguous", default_id, "guide"),
+                ("missing", "default", "absent"),
+            ):
+                label = GoldLabel(collection=collection, source_key=key, anchor=anchor)
+                try:
+                    resolve_gold_label(label, resolver)
+                except GoldLabelError as error:
+                    found[name] = error.reason
+            return found
+
+        found = _on_owner(kb, reasons)
+    assert found == {"ambiguous": "label.ambiguous", "missing": "label.missing"}
+
+
 def test_sqlite_resolver_resolves_sources_withdrawn_after_the_snapshot(tmp_path):
     with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
         snapshot = add_text(kb, "guide", TEXT).result_snapshot_id
