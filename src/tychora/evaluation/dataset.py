@@ -271,7 +271,9 @@ def bind_case(case: GoldCase, resolver: GoldLabelResolver) -> GoldCase:
         return case
     expected = [resolve_gold_binding(label, resolver) for label in case.gold_labels]
     forbidden = [
-        resolve_gold_binding(label, resolver) for label in case.forbidden_labels
+        unit
+        for label in case.forbidden_labels
+        for unit in resolve_gold_label(label, resolver)
     ]
     data = case.model_dump(mode="json")
 
@@ -288,9 +290,7 @@ def bind_case(case: GoldCase, resolver: GoldLabelResolver) -> GoldCase:
         expected_unit_ids=merged(
             "expected_unit_ids", [unit for b in expected for unit in b.unit_ids]
         ),
-        forbidden_unit_ids=merged(
-            "forbidden_unit_ids", [unit for b in forbidden for unit in b.unit_ids]
-        ),
+        forbidden_unit_ids=merged("forbidden_unit_ids", forbidden),
     )
     return GoldCase.from_mapping(data)
 
