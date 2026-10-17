@@ -1029,12 +1029,7 @@ class SourceService:
         ).fetchall()
         for extraction_id, sha, size, media_type, storage_key in rows:
             ctx.checkpoint()
-            ref = ArtifactRef(
-                sha256=sha,
-                size_bytes=size,
-                media_type=media_type,
-                storage_key=storage_key,
-            )
+            ref = ArtifactRef.from_row((sha, size, media_type, storage_key))
             with self.owner.artifacts.open_verified(ref) as stream:
                 payload = stream.read(ref.size_bytes + 1)
             root = json.loads(payload)
