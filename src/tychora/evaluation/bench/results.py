@@ -5,7 +5,7 @@ import math
 import os
 import platform
 import sqlite3
-import tempfile
+import uuid
 from collections.abc import Mapping, Sequence
 from importlib import metadata
 from pathlib import Path
@@ -247,17 +247,40 @@ def is_reference(
     )
 
 
+def _sync_directory(directory: Path) -> None:
+    """Flush a directory entry to disk where the platform allows opening one."""
+    try:
+        descriptor = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        os.close(descriptor)
+
+
 def write_result(result: BenchResult, out_dir: Path) -> Path:
-    """Write ``<out_dir>/<commit>/<suite>-<profile>.json`` atomically."""
+    """Write ``<out_dir>/<commit>/<suite>-<profile>.json`` atomically.
+
+    The temp file is created with the umask-adjusted default mode and removed
+    when any step fails, so the target is either the old or the new document.
+    """
     path = out_dir / result.commit / f"{result.suite}-{result.profile}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        dir=path.parent, prefix=f".{path.name}.", delete=False
-    ) as handle:
-        handle.write(canonical_bytes(result.document()) + b"\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(handle.name, path)
+    temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}")
+    try:
+        descriptor = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(canonical_bytes(result.document()) + b"\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+    except BaseException:
+        temp.unlink(missing_ok=True)
+        raise
+    _sync_directory(path.parent)
     return path
 
 

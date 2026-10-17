@@ -1,5 +1,6 @@
 """Budgets, stage derivation, verdicts and result documents."""
 
+import os
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -184,3 +185,26 @@ def test_write_result_replaces_atomically(tmp_path):
 def test_unknown_ingest_stages_map_to_unbudgeted_buckets():
     assert ingest_bucket("accepted") == "queue"
     assert ingest_bucket("something_new") == "other"
+
+
+def test_failed_write_leaves_no_temp_file_and_keeps_the_target(tmp_path, monkeypatch):
+    path = write_result(_result(100.0), tmp_path)
+    before = path.read_bytes()
+
+    def refuse(source, target):
+        raise OSError("replace refused")
+
+    monkeypatch.setattr(os, "replace", refuse)
+    with pytest.raises(OSError, match="replace refused"):
+        write_result(_result(150.0), tmp_path)
+    assert path.read_bytes() == before
+    assert [item.name for item in path.parent.iterdir()] == [path.name]
+
+
+def test_written_result_has_umask_permissions(tmp_path):
+    previous = os.umask(0o022)
+    try:
+        path = write_result(_result(100.0), tmp_path)
+    finally:
+        os.umask(previous)
+    assert path.stat().st_mode & 0o777 == 0o644
