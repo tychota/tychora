@@ -114,8 +114,7 @@ class LocalWorkspace:
         token_counter: TokenCounter | None,
         credential_resolver: Callable[[str], str] | None = None,
     ) -> None:
-        root = Path(path)
-        require_complete_workspace(root)
+        root = require_complete_workspace(Path(path))
         existed = root.exists()
         if not existed:
             root.mkdir(parents=True)
