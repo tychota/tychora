@@ -273,11 +273,14 @@ it("archive confirmation preserves data wording and refreshes lifecycle; reactiv
 });
 it("administration keeps full-grant requests while selected query history uses exact scope", async () => {
   await open("/dashboard/jobs");
-  expect(
-    new Headers(
-      requests.find((r) => r.path.startsWith("/v1/jobs"))!.init.headers,
-    ).has("X-Tychora-Scope"),
-  ).toBe(false);
+  const jobsRequest = await waitFor(() => {
+    const found = requests.find((r) => r.path.startsWith("/v1/jobs"));
+    expect(found).toBeDefined();
+    return found!;
+  });
+  expect(new Headers(jobsRequest.init.headers).has("X-Tychora-Scope")).toBe(
+    false,
+  );
   fireEvent.click(screen.getAllByRole("link", { name: "Activity" })[0]);
   await waitFor(() =>
     expect(requests.some((r) => r.path.startsWith("/v1/queries"))).toBe(true),
