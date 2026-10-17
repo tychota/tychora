@@ -10,6 +10,7 @@ import json
 import shutil
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from functools import partial
 from pathlib import Path
 from typing import Literal, Protocol
@@ -113,8 +114,10 @@ class RebuildTarget(Protocol):
         """Carry access floors, ranks, uses and declared review states over."""
         ...
 
-    def record_review(self, target: ReviewTarget, state: str, actor: str) -> None:
-        """Record a review event for a revision, unit or asset."""
+    def record_review(
+        self, target: ReviewTarget, state: str, actor: str, decided_at: datetime
+    ) -> None:
+        """Record a review event, dated as the old decision, for a revision, unit or asset."""
         ...
 
     def close(self) -> None:
@@ -281,13 +284,20 @@ def _replay_source(replay: _Replay, source: InventorySource) -> None:
 def _replay_reviews(
     inventory: WorkspaceInventory, target: RebuildTarget, progress: _Progress
 ) -> int:
+    """Replay the latest review of every target with its original decision time.
+
+    The new event gets a new identifier: the review table has no column for the
+    old one, so the link to the old event id is not carried over.
+    """
     replayed = 0
     for review in inventory.reviews:
         subject = ReviewTarget.model_validate(
             {f"{review.target_kind}_id": review.target_id}
         )
         try:
-            target.record_review(subject, review.state, review.actor_id)
+            target.record_review(
+                subject, review.state, review.actor_id, review.decided_at
+            )
         except TychoraError as error:
             if error.code != "NOT_FOUND":
                 raise

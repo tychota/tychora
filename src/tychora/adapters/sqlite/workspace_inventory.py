@@ -10,10 +10,11 @@ import fcntl
 import json
 import os
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import Field, ValidationError
+from pydantic import AwareDatetime, Field, ValidationError
 
 from tychora.adapters.files.cas import LocalArtifacts
 from tychora.contracts.artifacts import ArtifactRef
@@ -67,6 +68,7 @@ class InventoryReview(Contract):
     target_id: NonEmptyStr
     state: NonEmptyStr
     actor_id: NonEmptyStr
+    decided_at: AwareDatetime
 
 
 class WorkspaceInventory(Contract):
@@ -89,14 +91,14 @@ _REVISIONS = (
 )
 _LATEST_REVIEWS = (
     " UNION ALL ".join(
-        f"SELECT '{kind}',e.{kind}_id,e.state,e.actor_id,e.review_event_id "
+        f"SELECT '{kind}',e.{kind}_id,e.state,e.actor_id,e.created_at,e.review_event_id "
         f"FROM review_events e JOIN (SELECT {kind}_id AS target,"
         f"MAX(review_event_id) AS latest FROM review_events "
         f"WHERE {kind}_id IS NOT NULL GROUP BY {kind}_id) l "
         f"ON l.latest=e.review_event_id"
         for kind in ("revision", "unit", "asset")
     )
-    + " ORDER BY 5"
+    + " ORDER BY 6"
 )
 
 
@@ -188,7 +190,11 @@ def _inventory(db: sqlite3.Connection) -> WorkspaceInventory:
         sources=_sources(db),
         reviews=tuple(
             InventoryReview(
-                target_kind=row[0], target_id=row[1], state=row[2], actor_id=row[3]
+                target_kind=row[0],
+                target_id=row[1],
+                state=row[2],
+                actor_id=row[3],
+                decided_at=datetime.fromisoformat(row[4]),
             )
             for row in db.execute(_LATEST_REVIEWS)
         ),
