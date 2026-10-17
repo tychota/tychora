@@ -195,6 +195,7 @@ def _unread(url):
         "file:///etc/passwd",
         "http://example.org/one.txt",
         "https://elsewhere.example.net/one.txt",
+        "https://example.org:8443/one.txt",
     ],
 )
 def test_fetch_refuses_urls_outside_the_allowlist_before_reading(tmp_path, url):
@@ -222,7 +223,12 @@ def test_corpus_validation_refuses_urls_outside_the_allowlist():
 
 
 @pytest.mark.parametrize(
-    "target", ["http://example.org/b", "https://elsewhere.example.net/b"]
+    "target",
+    [
+        "http://example.org/b",
+        "https://elsewhere.example.net/b",
+        "https://example.org:8443/b",
+    ],
 )
 def test_redirects_leaving_https_or_the_allowlist_are_refused(target):
     handler = GuardedRedirect(("example.org",))
@@ -298,3 +304,18 @@ def test_rasterize_pdf_refuses_a_pdf_without_pages():
     pdfium.PdfDocument.new().save(empty)
     with pytest.raises(curation.UnusablePdf):
         curation.rasterize_pdf(empty.getvalue())
+
+
+def test_document_bytes_names_the_document_when_rasterizing_fails(
+    tmp_path, monkeypatch
+):
+    original = b"%PDF- original"
+    corpus = _corpus(original, transform="rasterize@150dpi")
+    fetch_corpus(corpus, tmp_path, lambda url: io.BytesIO(original))
+
+    def unusable(data):
+        raise curation.UnusablePdf("no pages")
+
+    monkeypatch.setattr("tychora.evaluation.bench.corpus.rasterize_pdf", unusable)
+    with pytest.raises(BenchCorpusError, match="public/one"):
+        document_bytes(corpus.documents[0], tmp_path)
