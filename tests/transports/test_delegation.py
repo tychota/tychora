@@ -10,7 +10,10 @@ from pathlib import Path
 import pytest
 
 from tychora import AsyncTychora, Tychora
+from tychora.adapters.sqlite import receipt
 from tychora.contracts.errors import TychoraError
+from tychora.interfaces.commands import _common
+from tychora.interfaces.http import client as http_client
 from tychora.interfaces.http.client import connect_local
 
 
@@ -244,6 +247,93 @@ def test_standalone_owner_without_endpoint_is_busy_not_integrity(tmp_path):
         assert error.value.code == "WORKSPACE_BUSY"
         assert error.value.reason == "owner.live"
         assert error.value.retryable is True
+    finally:
+        assert process.stdin is not None
+        process.stdin.write("\n")
+        process.stdin.flush()
+        process.wait(timeout=30)
+
+
+def _hold_and_write(path: Path):
+    """Open the workspace in a child process that keeps committing until stdin closes."""
+    script = """
+import sqlite3
+import sys
+import threading
+from pathlib import Path
+from tychora import Tychora
+class Counter:
+    model = "synthetic-output-test-counter"
+    tokenizer_id = "cl100k_base"
+    def count(self, text):
+        return len(text)
+root = Path(sys.argv[1])
+stop = threading.Event()
+def write():
+    db = sqlite3.connect(root / "corpus.sqlite3", isolation_level=None)
+    db.execute("PRAGMA busy_timeout=2000")
+    step = 0
+    while not stop.is_set():
+        step += 1
+        db.execute(f"PRAGMA user_version={step % 1000}")
+    db.close()
+with Tychora.open(root, token_counter=Counter()):
+    writer = threading.Thread(target=write)
+    writer.start()
+    print("ready", flush=True)
+    sys.stdin.readline()
+    stop.set()
+    writer.join()
+"""
+    process = subprocess.Popen(
+        [sys.executable, "-c", script, str(path)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+    )
+    assert process.stdout is not None
+    assert process.stdout.readline().strip() == "ready", process.stderr
+    return process
+
+
+def test_second_open_against_writing_owner_is_busy_and_delegates(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    copies: list[Path] = []
+    original_copy = receipt._copy_to
+
+    def recording_copy(scratch, path, wal):
+        copies.append(path)
+        return original_copy(scratch, path, wal)
+
+    monkeypatch.setattr(receipt, "_copy_to", recording_copy)
+    process = _hold_and_write(workspace)
+    try:
+        for _ in range(5):
+            with pytest.raises(TychoraError) as error:
+                Tychora.open(workspace)
+            assert (error.value.code, error.value.reason) == (
+                "WORKSPACE_BUSY",
+                "owner.live",
+            )
+            assert error.value.retryable is True
+
+        class Delegated:
+            closed = False
+
+            def close(self):
+                self.closed = True
+
+        delegated = Delegated()
+        monkeypatch.setattr(http_client, "connect_local", lambda path: delegated)
+        options = _common.CLIState(
+            workspace=workspace, profile=None, offline=False, format=None
+        )
+        with _common.client(options) as kb:
+            assert kb is delegated
+        assert delegated.closed
+        assert copies == []
     finally:
         assert process.stdin is not None
         process.stdin.write("\n")

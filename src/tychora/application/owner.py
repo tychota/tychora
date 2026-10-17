@@ -29,7 +29,7 @@ from typing import (
 from uuid import UUID, uuid4
 
 from tychora.adapters.files.cas import LocalArtifacts
-from tychora.adapters.sqlite.connection import open_corpus, refuse_older_format
+from tychora.adapters.sqlite.connection import open_corpus, refuse_owned_or_older
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
@@ -145,7 +145,7 @@ class WorkspaceOwner:
     ) -> Iterator["WorkspaceOwner"]:
         owner = cls(path, config, scope)
         try:
-            refuse_older_format(owner.path / "corpus.sqlite3")
+            refuse_owned_or_older(owner.path)
             owner.path.mkdir(parents=True, exist_ok=True)
             owner._runtime.acquire()
             owner._worker.submit(owner._initialize).result()
@@ -182,7 +182,9 @@ class WorkspaceOwner:
         ):
             raise TychoraError("INTEGRITY_ERROR", "Canonical database path is unsafe")
         try:
-            self.db = open_corpus(self.path / "corpus.sqlite3", initialize=True)
+            self.db = open_corpus(
+                self.path / "corpus.sqlite3", initialize=True, format_checked=True
+            )
         except sqlite3.DatabaseError:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Canonical database cannot be opened"

@@ -1,5 +1,7 @@
 """Format-2 workspaces open; format-1 workspaces and archives are refused untouched."""
 
+import fcntl
+import os
 import shutil
 import sqlite3
 from contextlib import closing
@@ -11,6 +13,7 @@ import pytest
 from tests.helpers.legacy import OutputCounter as Counter
 from tests.helpers.legacy import make_format_one, make_format_one_database
 from tychora import Tychora
+from tychora.adapters.sqlite import connection
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.migrations import (
     FORMAT_ONE_CHECKSUM,
@@ -133,3 +136,32 @@ def test_unknown_receipt_is_still_incompatible(tmp_path):
         open_corpus(path)
     assert error.value.code == "PROFILE_INCOMPATIBLE"
     assert error.value.reason == "workspace.schema_mismatch"
+
+
+def test_owner_starting_during_format_read_is_busy_not_integrity(tmp_path, monkeypatch):
+    root = tmp_path / "ws"
+    with Tychora.open(root, token_counter=Counter()):
+        pass
+    held: list[int] = []
+
+    def owner_starts_mid_read(path):
+        fd = os.open(root / ".runtime" / "owner.lock", os.O_RDWR)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        held.append(fd)
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "The workspace database cannot be inspected.",
+            reason="workspace.database_invalid",
+        )
+
+    monkeypatch.setattr(connection, "refuse_older_format", owner_starts_mid_read)
+    try:
+        with pytest.raises(TychoraError) as error:
+            connection.refuse_owned_or_older(root)
+        assert (error.value.code, error.value.reason) == (
+            "WORKSPACE_BUSY",
+            "owner.live",
+        )
+    finally:
+        for fd in held:
+            os.close(fd)
