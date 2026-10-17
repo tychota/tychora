@@ -10,7 +10,7 @@ import fcntl
 import json
 import os
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -100,6 +100,12 @@ _LATEST_REVIEWS = (
     )
     + " ORDER BY 6"
 )
+
+
+def _aware(value: str) -> datetime:
+    """Parse a stored timestamp; a naive one is read as UTC, the zone all rows use."""
+    parsed = datetime.fromisoformat(value)
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
 def _require_no_live_owner(root: Path) -> None:
@@ -194,7 +200,7 @@ def _inventory(db: sqlite3.Connection) -> WorkspaceInventory:
                 target_id=row[1],
                 state=row[2],
                 actor_id=row[3],
-                decided_at=datetime.fromisoformat(row[4]),
+                decided_at=_aware(row[4]),
             )
             for row in db.execute(_LATEST_REVIEWS)
         ),

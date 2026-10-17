@@ -455,9 +455,6 @@ def test_the_job_service_stops_before_the_final_restore(old, tmp_path):
 def test_a_stopped_job_service_refuses_new_jobs_but_the_workspace_stays_usable(
     old, tmp_path
 ):
-    from tests.helpers.legacy import (
-        add_text,  # noqa: F401 - keeps the helper import local
-    )
     from tychora.adapters.sqlite.workspace_inventory import read_inventory
     from tychora.api import open_rebuild_target
     from tychora.application.workspace_rebuild import rebuild_scope
@@ -504,3 +501,36 @@ def test_a_replayed_review_keeps_the_time_of_the_old_decision(old, tmp_path):
             "SELECT created_at FROM review_events WHERE revision_id=?",
             alpha_revision,
         ) == [("2026-02-03T04:05:06+00:00",)]
+
+
+def test_a_naive_review_time_in_an_old_row_is_read_as_utc(old, tmp_path):
+    root, alpha_revision = old
+    with _edit(root) as db:
+        db.execute(
+            "UPDATE review_events SET created_at='2026-02-03T04:05:06' "
+            "WHERE revision_id=?",
+            (alpha_revision,),
+        )
+    report = rebuild_workspace_from(root, tmp_path / "new", token_counter=Counter())
+    assert report.reviews_replayed == 1
+    with Tychora.open(tmp_path / "new", token_counter=Counter()) as kb:
+        assert _read(
+            kb,
+            "SELECT created_at FROM review_events WHERE revision_id=?",
+            alpha_revision,
+        ) == [("2026-02-03T04:05:06+00:00",)]
+
+
+def test_a_failed_destination_opens_after_the_documented_retry(old, tmp_path):
+    import shutil
+
+    root, _ = old
+    destination = tmp_path / "new"
+    with pytest.raises(RuntimeError, match="add failed"):
+        _run(root, destination, lambda t: _Wrapped(t, fail_add_after=1))
+    with pytest.raises(TychoraError):
+        Tychora.open(destination, token_counter=Counter())
+    shutil.rmtree(destination)
+    rebuild_workspace_from(root, destination, token_counter=Counter())
+    with Tychora.open(destination, token_counter=Counter()) as kb:
+        assert _read(kb, "SELECT count(*) FROM sources")[0][0] >= 1
