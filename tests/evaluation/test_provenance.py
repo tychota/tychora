@@ -474,3 +474,96 @@ def test_one_code_file_above_the_budget_is_still_refused(tmp_path, monkeypatch):
             )
     assert error.value.code == "LIMIT_EXCEEDED"
     assert error.value.reason == "evaluation.binding_budget"
+
+
+def _held(cache) -> tuple[int, int]:
+    """Rows and bytes of the bindings the cache currently holds."""
+    resident = cache._resident.values()
+    return sum(item.rows for item in resident), sum(item.size for item in resident)
+
+
+def test_mixed_whole_and_file_bindings_never_exceed_the_budget(tmp_path, monkeypatch):
+    with _code_workspace(tmp_path) as kb:
+        result = kb.search({"question": "zanzibar_marker", "modalities": ["lexical"]})
+        owner = kb._workspace.owner
+
+        def assess():
+            member = owner.store.resolve_snapshot(result.snapshot_id).members[0]
+            whole = binding_footprint(owner.db, member)[0]
+            single = binding_footprint(owner.db, member, "target.py")[0]
+            monkeypatch.setattr(
+                "tychora.evaluation.provenance.MAX_BINDING_ROWS", whole + 2 * single
+            )
+            cache = RetainedBindingCache(owner, result.snapshot_id)
+            observed = []
+            for path in ("target.py", None, "target.py", None, "target.py"):
+                cache._load(member.extraction_id, path)
+                observed.append((cache.rows_used, cache.bytes_used, _held(cache)))
+            assessment = verify_result_locators(owner, result, cache=cache)
+            observed.append((cache.rows_used, cache.bytes_used, _held(cache)))
+            return observed, assessment, whole + 2 * single
+
+        observed, assessment, budget = kb._workspace.bridge.call(
+            owner.run_blocking(assess, ExecutionContext())
+        )
+    for rows_used, bytes_used, held in observed:
+        assert (rows_used, bytes_used) == held
+        assert rows_used <= budget
+    assert assessment.valid == assessment.total > 0
+
+
+def test_tampered_code_locator_in_the_cited_file_is_invalid(tmp_path):
+    with _code_workspace(tmp_path) as kb:
+        result = kb.search({"question": "zanzibar_marker", "modalities": ["lexical"]})
+        owner = kb._workspace.owner
+        segment = next(
+            segment
+            for segment in result.segments
+            if any(
+                isinstance(locator, CodeLocator)
+                for citation in segment.citations
+                for locator in citation.locators
+            )
+        )
+        citation = next(
+            citation
+            for citation in segment.citations
+            if isinstance(citation.locators[0], CodeLocator)
+        )
+        locator = citation.locators[0]
+
+        def assess(value):
+            return kb._workspace.bridge.call(
+                owner.run_blocking(
+                    lambda: verify_result_locators(owner, value), ExecutionContext()
+                )
+            )
+
+        baseline = assess(result)
+        assert baseline.valid == baseline.total > 0
+        for update in (
+            {"byte_start": locator.byte_start + 1},
+            {"line_start": locator.line_start + 1},
+            {"relative_path": "bulk_one.py", "native_ref": "bulk_one.py"},
+        ):
+            changed = citation.model_copy(
+                update={"locators": (locator.model_copy(update=update),)}
+            )
+            tampered = segment.model_copy(
+                update={
+                    "citations": tuple(
+                        changed if item is citation else item
+                        for item in segment.citations
+                    )
+                }
+            )
+            bad = result.model_copy(
+                update={
+                    "segments": tuple(
+                        tampered if item is segment else item
+                        for item in result.segments
+                    )
+                }
+            )
+            outcome = assess(bad)
+            assert outcome.valid < outcome.total, update
