@@ -11,6 +11,8 @@ SQL_FREE_MODULES: tuple[str, ...] = (
     "evaluation/bench/stages.py",
     "evaluation/bench/synth.py",
     "evaluation/bench/corpus.py",
+    "evaluation/bench/harness.py",
+    "interfaces/bench.py",
 )
 SQL_CALLS = {"execute", "executemany", "executescript"}
 

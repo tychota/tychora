@@ -1,0 +1,20 @@
+# Online benchmark profile: Voyage text embeddings with a Chroma index.
+schema_version = 1
+
+[profiles.bench]
+builtin = "general-documents@1"
+
+[defaults]
+profile = "bench"
+
+[configuration]
+offline = false
+
+[configuration.providers.text]
+provider = "voyage"
+model = "voyage-context-4"
+dimensions = 1024
+credential_ref = "env:VOYAGE_API_KEY"
+
+[configuration.index.text]
+backend = "chroma"
