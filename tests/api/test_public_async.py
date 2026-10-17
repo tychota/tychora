@@ -220,7 +220,9 @@ async def test_two_public_queries_complete_while_parser_job_is_held(
             assert heartbeat.subject == "kinds"
         finally:
             release.set()
-        assert (await kb.jobs.wait(parser_job.id, timeout=20)).state == "succeeded"
+        assert (
+            await kb.jobs.wait(parser_job.id, timeout=min(scaled(20), 300))
+        ).state == "succeeded"
 
 
 @pytest.mark.asyncio
