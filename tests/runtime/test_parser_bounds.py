@@ -273,3 +273,61 @@ def test_sampled_rss_threshold_reaps_an_entered_child(tmp_path, monkeypatch):
     with pytest.raises(ProcessLookupError):
         os.kill(int(marker.read_text()), 0)
     assert not multiprocessing.active_children()
+
+
+def test_transient_rss_sampling_failures_are_retried_then_enforced(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    import psutil
+
+    from tychora.application.runtime import ParserExecutionLimits, parser_process
+
+    marker = tmp_path / "parser-child-live"
+    path = tmp_path / "input"
+    path.write_text(str(tmp_path))
+    failures = []
+
+    class Monitor:
+        def memory_info(self):
+            if len(failures) < 2:
+                failures.append(1)
+                raise psutil.AccessDenied()
+            return SimpleNamespace(rss=2 if marker.exists() else 0)
+
+    monkeypatch.setattr(psutil, "Process", lambda _: Monitor())
+    with pytest.raises(TychoraError) as error:
+        parser_process(
+            blocked_parser,
+            (path,),
+            limits=ParserExecutionLimits(1, 10, 1, 100, ExecutionContext()),
+        )
+    assert len(failures) == 2
+    assert error.value.code == "LIMIT_EXCEEDED"
+    assert not multiprocessing.active_children()
+
+
+def test_persistent_rss_sampling_failure_of_a_live_child_is_reported(
+    tmp_path, monkeypatch
+):
+    import psutil
+
+    from tychora.application.runtime import ParserExecutionLimits, parser_process
+
+    path = tmp_path / "input"
+    path.write_text(str(tmp_path))
+
+    class Monitor:
+        def memory_info(self):
+            raise psutil.AccessDenied()
+
+    monkeypatch.setattr(psutil, "Process", lambda _: Monitor())
+    with pytest.raises(TychoraError) as error:
+        parser_process(
+            blocked_parser,
+            (path,),
+            limits=ParserExecutionLimits(1, 10, 1, 100, ExecutionContext()),
+        )
+    assert error.value.code == "CAPABILITY_MISSING"
+    assert not multiprocessing.active_children()

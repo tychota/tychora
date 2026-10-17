@@ -113,6 +113,8 @@ def private_directory(path: Path) -> None:
 
 
 OWNER_TOKEN_FILE = "owner-token"
+_RSS_SAMPLE_ATTEMPTS = 4
+
 _OWNER_TOKEN = re.compile(r"[A-Za-z0-9_-]{43,128}")
 
 
@@ -400,18 +402,23 @@ def parser_process[T](
             or now - batch_started >= limits.batch_seconds
         ):
             raise TychoraError("DEADLINE_EXCEEDED", "PDF parser deadline exceeded")
-        try:
-            assert monitor is not None
-            rss = monitor.memory_info().rss
-        except Exception:  # noqa: BLE001 - unavailable platform/process inspection
-            # macOS can retire its task port just before multiprocessing observes
-            # the process sentinel. Reap that exit; never continue an unmonitored child.
-            child.join(0.05)
-            if not child.is_alive():
-                return
+        assert monitor is not None
+        rss = None
+        # macOS can retire its task port just before multiprocessing observes the
+        # process sentinel. Reap that exit, or retry briefly; never continue a child
+        # that stays unmonitored.
+        for attempt in range(_RSS_SAMPLE_ATTEMPTS):
+            try:
+                rss = monitor.memory_info().rss
+                break
+            except Exception:  # noqa: BLE001 - unavailable platform/process inspection
+                child.join(0.05 * 2**attempt)
+                if not child.is_alive():
+                    return
+        if rss is None:
             raise TychoraError(
                 "CAPABILITY_MISSING", "Parser RSS monitoring is unavailable"
-            ) from None
+            )
         if rss > limits.rss_bytes:
             raise TychoraError("LIMIT_EXCEEDED", "Parser RSS threshold exceeded")
 
