@@ -42,6 +42,7 @@ SPEC_REASONS = {
         "label.missing",
         "label.ambiguous",
         "rebuild.destination_not_empty",
+        "rebuild.incomplete",
     },
     "LIMIT_EXCEEDED": {"rebuild.original_too_large"},
     "PROVIDER_FAILURE": {

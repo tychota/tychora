@@ -39,6 +39,7 @@ RebuildSkipReason = Literal[
     "timed_out",
     "review_target_missing",
 ]
+INCOMPLETE_MARKER = ".rebuild-incomplete"
 _INLINE_DROPPED = (
     "path",
     "url",
@@ -152,6 +153,17 @@ def _not_empty() -> TychoraError:
         "The rebuild destination must be a new, empty directory outside the old workspace.",
         reason="rebuild.destination_not_empty",
     )
+
+
+def require_complete_workspace(root: Path) -> None:
+    """Refuse a workspace whose rebuild did not finish; it holds a partial copy."""
+    if (root / INCOMPLETE_MARKER).exists():
+        raise TychoraError(
+            "INVALID_REQUEST",
+            "This workspace is an unfinished rebuild and is incomplete. "
+            "Delete it and rerun `tychora --workspace NEW manage rebuild workspace --from OLD`.",
+            reason="rebuild.incomplete",
+        )
 
 
 def _checked_paths(old: Path, destination: Path) -> tuple[Path, Path]:
@@ -310,6 +322,12 @@ def rebuild_workspace(
     workspace; nothing is written before that is checked. Access floors, ranks,
     allowed uses and declared review states of the old workspace are carried over
     and never lowered.
+
+    A marker file in the destination is written before the first source is added
+    and removed only after the final policy restore succeeds. A process killed in
+    between, or a rebuild that raises, leaves the marker behind, and opening the
+    destination then fails with ``rebuild.incomplete``: the destination holds a
+    partial copy whose policy was not restored. Delete it and rerun the rebuild.
     """
     old_root, new_root = _checked_paths(old, destination)
     inventory = read_inventory(old_root)
@@ -318,13 +336,15 @@ def rebuild_workspace(
         shutil.copyfile(old_root / "workspace.toml", new_root / "workspace.toml")
     target = open_target(new_root, rebuild_scope(inventory.collections))
     progress = _Progress()
+    report: WorkspaceRebuildReport | None = None
     try:
+        (new_root / INCOMPLETE_MARKER).write_text("")
         target.seed_collections(inventory.collections)
         replay = _Replay(old_root, target, kind_map or {}, progress, ctx)
         for source in inventory.sources:
             _replay_source(replay, source)
         replayed = _replay_reviews(inventory, target, progress)
-        return WorkspaceRebuildReport(
+        report = WorkspaceRebuildReport(
             old_workspace_id=inventory.workspace_id,
             new_workspace_id=target.workspace_id,
             collections=len(inventory.collections),
@@ -332,8 +352,11 @@ def rebuild_workspace(
             skipped=tuple(progress.skipped),
             reviews_replayed=replayed,
         )
+        return report
     finally:
         try:
             _settle_and_restore(target, inventory, progress)
+            if report is not None:
+                (new_root / INCOMPLETE_MARKER).unlink()
         finally:
             target.close()

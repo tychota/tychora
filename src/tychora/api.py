@@ -26,6 +26,7 @@ from tychora.application.workspace_rebuild import (
     RebuildTarget,
     WorkspaceRebuildReport,
     rebuild_workspace,
+    require_complete_workspace,
 )
 from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.resolve import resolve_config, selected_workspace_profile
@@ -113,6 +114,7 @@ class LocalWorkspace:
         credential_resolver: Callable[[str], str] | None = None,
     ) -> None:
         root = Path(path)
+        require_complete_workspace(root)
         existed = root.exists()
         if not existed:
             root.mkdir(parents=True)
