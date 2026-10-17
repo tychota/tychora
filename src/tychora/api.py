@@ -361,6 +361,10 @@ class _LocalRebuildTarget:
             _REBUILD_CANCEL_SECONDS,
         ).state
 
+    def stop_jobs(self) -> None:
+        """Drain and stop the job service; the workspace stays usable and nothing publishes."""
+        self._workspace.services.source_jobs.stop()
+
     def restore_policy(self, sources: tuple[InventorySource, ...]) -> int:
         """Carry access floors, ranks, uses and declared review states over."""
         owner = self._workspace.owner

@@ -389,3 +389,101 @@ def test_a_rebuild_that_does_not_finish_leaves_a_workspace_that_will_not_open(
         Tychora.open(destination, token_counter=Counter())
     assert error.value.reason == "rebuild.incomplete"
     assert "Delete it and rerun" in str(error.value)
+
+
+class _Failing(_Wrapped):
+    """A rebuild target whose cleanup steps raise."""
+
+    def __init__(self, target, *, fail=(), **kwargs):
+        super().__init__(target, **kwargs)
+        self._fail = fail
+        self.calls: list[str] = []
+
+    def stop_jobs(self):
+        self.calls.append("stop_jobs")
+        if "stop_jobs" in self._fail:
+            raise OSError("stop boom")
+        self._target.stop_jobs()
+
+    def restore_policy(self, sources):
+        self.calls.append("restore_policy")
+        if "restore_policy" in self._fail:
+            raise OSError("restore boom")
+        return self._target.restore_policy(sources)
+
+    def close(self):
+        self.calls.append("close")
+        self._target.close()
+        if "close" in self._fail:
+            raise OSError("close boom")
+
+
+def test_the_original_error_stays_visible_when_cleanup_fails_too(old, tmp_path):
+    root, _ = old
+    with pytest.raises(RuntimeError, match="add failed") as error:
+        _run(
+            root,
+            tmp_path / "new",
+            lambda t: _Failing(t, fail=("restore_policy", "close"), fail_add_after=1),
+        )
+    assert error.value.__notes__ == [
+        "cleanup also failed: OSError: restore boom",
+        "cleanup also failed: OSError: close boom",
+    ]
+    assert (tmp_path / "new" / ".rebuild-incomplete").exists()
+
+
+def test_a_cleanup_failure_after_a_good_rebuild_is_raised(old, tmp_path):
+    root, _ = old
+    with pytest.raises(OSError, match="restore boom"):
+        _run(root, tmp_path / "new", lambda t: _Failing(t, fail=("restore_policy",)))
+    assert (tmp_path / "new" / ".rebuild-incomplete").exists()
+
+
+def test_the_job_service_stops_before_the_final_restore(old, tmp_path):
+    root, _ = old
+    holder = []
+
+    def wrap(target):
+        holder.append(_Failing(target))
+        return holder[0]
+
+    _run(root, tmp_path / "new", wrap)
+    assert holder[0].calls == ["stop_jobs", "restore_policy", "close"]
+
+
+def test_a_stopped_job_service_refuses_new_jobs_but_the_workspace_stays_usable(
+    old, tmp_path
+):
+    from tests.helpers.legacy import (
+        add_text,  # noqa: F401 - keeps the helper import local
+    )
+    from tychora.adapters.sqlite.workspace_inventory import read_inventory
+    from tychora.api import open_rebuild_target
+    from tychora.application.workspace_rebuild import rebuild_scope
+    from tychora.contracts.requests import SourceInput
+
+    root, _ = old
+    inventory = read_inventory(root)
+    target = open_rebuild_target(
+        tmp_path / "new", rebuild_scope(inventory.collections), token_counter=Counter()
+    )
+    try:
+        target.seed_collections(inventory.collections)
+        target.stop_jobs()
+        source = SourceInput.from_mapping(
+            {
+                "type": "text",
+                "source_key": "late",
+                "collection_id": inventory.collections[0].collection_id,
+                "kind": "document@1",
+                "format": "text",
+                "text": "Late.",
+            }
+        )
+        with pytest.raises(TychoraError) as error:
+            target.add(source)
+        assert error.value.code == "WORKSPACE_BUSY"
+        assert target.restore_policy(inventory.sources) >= 0
+    finally:
+        target.close()

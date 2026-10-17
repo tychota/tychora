@@ -68,6 +68,7 @@ class SourceJobScheduler:
         self._tasks: dict[str, tuple[asyncio.Task[JobHandle], ExecutionContext]] = {}
         self._submitting = 0
         self._closing = False
+        self._closed = False
 
     async def _submit(
         self,
@@ -316,12 +317,17 @@ class SourceJobScheduler:
             else:
                 await asyncio.sleep(0.01)
 
-    def close(self) -> None:
-        if self._closing:
-            return
+    def stop(self) -> None:
+        """Refuse new jobs, then cancel and drain running ones; the bridge stays open."""
         self._closing = True
+        self.bridge.call(self._drain())
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
         try:
-            self.bridge.call(self._drain())
+            self.stop()
         finally:
             self.bridge.close()
 
