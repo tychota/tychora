@@ -7,6 +7,8 @@ SOURCE = Path(__file__).resolve().parents[2] / "src" / "tychora"
 SQL_FREE_MODULES: tuple[str, ...] = (
     "ports/repositories.py",
     "application/workspace_rebuild.py",
+    "evaluation/bench/budgets.py",
+    "evaluation/bench/stages.py",
 )
 SQL_CALLS = {"execute", "executemany", "executescript"}
 
