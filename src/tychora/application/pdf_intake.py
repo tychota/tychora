@@ -891,11 +891,17 @@ def _analysis_child(path, limits, sender):
     try:
         sender.send((True, dict(analyse_pdf(path, limits))))
     except TychoraError as error:
-        sender.send((False, (error.code, error.message)))
+        sender.send((False, (error.code, error.message, error.reason)))
     except Exception:  # noqa: BLE001 - sanitize failures at the child boundary
-        sender.send((False, ("INVALID_REQUEST", "PDF analysis failed.")))
+        sender.send((False, ("INVALID_REQUEST", "PDF analysis failed.", None)))
     finally:
         sender.close()
+
+
+def _child_error(result: tuple[str, str, str | None]) -> TychoraError:
+    """Rebuild a child's typed failure, reason included."""
+    code, message, reason = result
+    return TychoraError(code, message, reason=reason)
 
 
 def _isolated_analysis(path, limits, ctx):
@@ -926,7 +932,7 @@ def _isolated_analysis(path, limits, ctx):
         if child.is_alive():
             raise TychoraError("DEADLINE_EXCEEDED", "PDF analysis deadline exceeded.")
         if not success:
-            raise TychoraError(*result)
+            raise _child_error(result)
         if child.exitcode != 0:
             raise TychoraError("INVALID_REQUEST", "PDF analysis process failed.")
         return result
