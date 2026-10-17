@@ -136,9 +136,7 @@ class InspectionService:
             raise TychoraError(
                 "INVALID_REQUEST", "Inspection payload exceeds its limit."
             )
-        ref = ArtifactRef(
-            sha256=sha, size_bytes=row[0], media_type=row[1], storage_key=row[2]
-        )
+        ref = ArtifactRef.from_row((sha, *row[:3]))
         with self.owner.artifacts.open_verified(ref) as stream:
             return stream.read(), row[1]
 

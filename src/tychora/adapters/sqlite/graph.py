@@ -6,6 +6,7 @@ from typing import Literal, NoReturn, cast
 
 from tychora.adapters.files.assertions import iter_verified_assertions
 from tychora.adapters.sqlite.corpus import CorpusStore
+from tychora.adapters.sqlite.repositories import SqliteWorkspaceRepository, artifact_ref
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.graph import (
@@ -44,9 +45,7 @@ def read_graph_build(
     decisions: dict[str, tuple[str, str, str, int, str]] = {}
     try:
         db.execute("BEGIN")
-        maximum = db.execute(
-            "SELECT COALESCE(MAX(decision_id),0) FROM assertion_decisions"
-        ).fetchone()[0]
+        maximum = SqliteWorkspaceRepository(db).decision_watermark()
         if spec.decision_watermark > maximum:
             _fail("Graph decision watermark exceeds canonical history")
         unit_count = 0
@@ -75,12 +74,7 @@ def read_graph_build(
                 ).fetchone()
                 if artifact_row is None or artifact_row[4] != "present":
                     _fail("Graph assertion root is unavailable")
-                root = ArtifactRef(
-                    sha256=artifact_row[0],
-                    size_bytes=artifact_row[1],
-                    media_type=artifact_row[2],
-                    storage_key=artifact_row[3],
-                )
+                root = artifact_ref(artifact_row)
             if root != member.assertion_root:
                 _fail("Graph assertion root differs from registered extraction")
             count = db.execute(

@@ -127,10 +127,7 @@ def apply_upload_consent(
                 "UPDATE workspaces SET policy_epoch=policy_epoch+1 WHERE workspace_id=?",
                 (owner.workspace_id,),
             )
-        epoch = owner.db.execute(
-            "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
-            (owner.workspace_id,),
-        ).fetchone()[0]
+        epoch = owner.policy_epoch()
         owner.db.commit()
     except BaseException:
         owner.db.rollback()

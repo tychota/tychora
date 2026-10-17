@@ -280,12 +280,7 @@ class RemovalService:
             if (
                 row[3] == "present"
                 and not self.owner.artifacts.stat(
-                    ArtifactRef(
-                        sha256=sha,
-                        size_bytes=row[0],
-                        media_type=row[1],
-                        storage_key=row[2],
-                    )
+                    ArtifactRef.from_row((sha, *row[:3]))
                 ).available
             ):
                 raise TychoraError(
@@ -358,9 +353,7 @@ class RemovalService:
                 "INTEGRITY_ERROR", "Required manifest descriptor is missing."
             )
         return ManifestRef(
-            artifact=ArtifactRef(
-                sha256=sha, size_bytes=row[0], media_type=row[1], storage_key=row[2]
-            ),
+            artifact=ArtifactRef.from_row((sha, *row[:3])),
             type=kind,
             schema_version="1",
         )
@@ -528,12 +521,7 @@ class RemovalService:
                     )
                 if self._live_root(sha):
                     if row[3] == "delete_pending":
-                        ref = ArtifactRef(
-                            sha256=sha,
-                            size_bytes=row[0],
-                            media_type=row[1],
-                            storage_key=row[2],
-                        )
+                        ref = ArtifactRef.from_row((sha, *row[:3]))
                         if not self.owner.artifacts.stat(ref).available:
                             raise TychoraError(
                                 "INTEGRITY_ERROR", "Live original payload is missing."
@@ -554,9 +542,7 @@ class RemovalService:
                 ):
                     counts["pending_payloads"] += 1
                     continue
-                ref = ArtifactRef(
-                    sha256=sha, size_bytes=row[0], media_type=row[1], storage_key=row[2]
-                )
+                ref = ArtifactRef.from_row((sha, *row[:3]))
                 self.owner.artifacts.unlink_registered(ref)
                 with self.owner.store.immediate_transaction():
                     if self._live_root(sha):

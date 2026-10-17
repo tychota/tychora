@@ -321,13 +321,10 @@ async def create_visual_embedder(
 
     def create() -> VoyageVisualEmbedder:
         granted = owner.scope.narrow(scope)
-        row = owner.db.execute(
-            "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
-            (owner.workspace_id,),
-        ).fetchone()
-        if row is None or runtime.workspace_id != owner.workspace_id:
+        epoch = owner.policy_epoch()
+        if runtime.workspace_id != owner.workspace_id:
             raise TychoraError("INTEGRITY_ERROR", "Visual runtime workspace differs.")
-        access = OwnerVisualAccess(owner, granted, row[0])
+        access = OwnerVisualAccess(owner, granted, epoch)
         access.read_scope((), ctx)
         embedder = VoyageVisualEmbedder(
             capabilities=capabilities, counter=counter, runtime=runtime, access=access

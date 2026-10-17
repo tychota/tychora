@@ -5,11 +5,11 @@ import sqlite3
 from contextlib import contextmanager
 from typing import NoReturn, cast
 
+from tychora.adapters.sqlite.repositories import SqliteUnitOfWork, artifact_ref
 from tychora.application.collection_policy import require_active_collection
 from tychora.application.leases import LeaseSet
 from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
-from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import Contract, FrozenJsonMap
 from tychora.contracts.candidates import ChannelCandidates
 from tychora.contracts.corpus import ExtractionBundle, ReviewTarget
@@ -66,6 +66,7 @@ class CorpusStore(PolicyRepository):
         self.graph_indexes = graph_indexes if graph_indexes is not None else {}
         self.leases = leases if leases is not None else LeaseSet()
         self.publication_context = publication_context
+        self.uow = SqliteUnitOfWork(db)
 
     @contextmanager
     def immediate_transaction(self):
@@ -115,12 +116,7 @@ class CorpusStore(PolicyRepository):
         ).fetchone()
         if row is None or row[2] != snapshot.config_sha or row[3] != "present":
             _fail("Snapshot resolved-config artifact is unavailable")
-        ref = ArtifactRef(
-            sha256=snapshot.config_sha,
-            size_bytes=row[0],
-            media_type=row[1],
-            storage_key=row[2],
-        )
+        ref = artifact_ref((snapshot.config_sha, *row[:3]))
         with self.artifacts.open_verified(ref) as stream:
             try:
                 payload = json.load(stream)
@@ -148,12 +144,7 @@ class CorpusStore(PolicyRepository):
         ).fetchone()
         if row is None or row[2] != config_sha or row[3] != "present":
             _fail("Retained resolved-config artifact is unavailable")
-        ref = ArtifactRef(
-            sha256=config_sha,
-            size_bytes=row[0],
-            media_type=row[1],
-            storage_key=row[2],
-        )
+        ref = artifact_ref((config_sha, *row[:3]))
         with self.artifacts.open_verified(ref) as stream:
             try:
                 payload = json.load(stream)

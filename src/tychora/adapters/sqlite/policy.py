@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 
 from tychora.adapters.files.assertions import iter_verified_assertions
-from tychora.contracts.artifacts import ArtifactRef
+from tychora.adapters.sqlite.repositories import artifact_ref
 from tychora.contracts.corpus import ReviewTarget
 from tychora.contracts.errors import TychoraError
 from tychora.ports.artifacts import ArtifactReader
@@ -150,12 +150,7 @@ class PolicyRepository:
             "SELECT size_bytes,media_type,storage_key FROM artifacts WHERE artifact_sha=?",
             (artifact_sha,),
         ).fetchone()
-        ref = ArtifactRef(
-            sha256=artifact_sha,
-            size_bytes=row[0],
-            media_type=row[1],
-            storage_key=row[2],
-        )
+        ref = artifact_ref((artifact_sha, *row[:3]))
         matched = sum(
             item.assertion_id == assertion_id and item.record_id == record_id
             for item in iter_verified_assertions(ref, self.artifacts)

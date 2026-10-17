@@ -286,13 +286,8 @@ class EvaluationService:
         )
 
     def _epochs(self) -> tuple[int, int]:
-        row = self.owner.db.execute(
-            "SELECT policy_epoch,lexical_statistics_epoch FROM workspaces WHERE workspace_id=?",
-            (self.owner.workspace_id,),
-        ).fetchone()
-        if row is None:
-            raise TychoraError("INTEGRITY_ERROR", "Workspace epochs are missing")
-        return row
+        with self.owner.store.uow.read() as tx:
+            return tx.workspace.policy_epoch(), tx.workspace.lexical_epoch()
 
     async def run(
         self, request: EvaluationRequest, scope: RequestScope, ctx: ExecutionContext

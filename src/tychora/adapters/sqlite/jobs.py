@@ -10,6 +10,7 @@ from typing import NoReturn
 from uuid import uuid4
 
 from tychora.adapters.files.references import MAX_MANIFEST_BYTES, required_closure
+from tychora.adapters.sqlite.repositories import artifact_ref
 from tychora.contracts.artifacts import ArtifactRef, ManifestRef, physical_identity
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import JsonValue, canonical_bytes, digest
@@ -198,9 +199,7 @@ class JobRepository:
         ).fetchone()
         if row is None:
             _fail("Committed artifact metadata is missing")
-        return ArtifactRef(
-            sha256=sha, size_bytes=row[0], media_type=row[1], storage_key=row[2]
-        )
+        return artifact_ref((sha, *row[:3]))
 
     def get(self, job_id: str) -> JobStatus:
         row = self.db.execute(

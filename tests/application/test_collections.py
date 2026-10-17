@@ -133,8 +133,11 @@ async def test_bounded_inventory_hidden_revision_and_cursor_epoch(
         assert item.unit_count is item.window_count is item.latest_job is None
         assert not item.counts_complete and not item.job_observations_complete
         assert hidden.candidate_record_limit == 5000
-        assert len(statements) == 4
-        assert not any("evidence_units" in sql or "jobs" in sql for sql in statements)
+        queries = [
+            sql for sql in statements if sql not in {"BEGIN", "ROLLBACK", "COMMIT"}
+        ]
+        assert len(queries) == 4
+        assert not any("evidence_units" in sql or "jobs" in sql for sql in queries)
         for cursor in ("bad", "a" * 4097):
             with pytest.raises(TychoraError):
                 await service.documents(kb.scope, ExecutionContext(), cursor=cursor)

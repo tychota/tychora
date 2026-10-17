@@ -180,12 +180,7 @@ def _active_snapshot_config(
         raise TychoraError(
             "INTEGRITY_ERROR", "Active snapshot configuration is missing"
         )
-    ref = ArtifactRef(
-        sha256=row[0],
-        size_bytes=ref_row[0],
-        media_type=ref_row[1],
-        storage_key=ref_row[2],
-    )
+    ref = ArtifactRef.from_row((row[0], *ref_row[:3]))
     with artifacts.open_verified(ref) as stream:
         raw = stream.read(min(ref.size_bytes, 16 * 1024 * 1024) + 1)
     if len(raw) != ref.size_bytes:
@@ -254,9 +249,7 @@ def _validate_retained_documents(
             raise TychoraError(
                 "INTEGRITY_ERROR", "Retained document dependency is unavailable"
             )
-        ref = ArtifactRef(
-            sha256=sha, size_bytes=row[0], media_type=row[1], storage_key=row[2]
-        )
+        ref = ArtifactRef.from_row((sha, *row[:3]))
         with artifacts.open_verified(ref) as stream:
             raw = stream.read(ref.size_bytes + 1)
         if len(raw) != ref.size_bytes:

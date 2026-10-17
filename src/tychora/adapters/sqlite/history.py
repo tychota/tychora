@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from io import BytesIO
 
 from tychora.adapters.files.references import MAX_MANIFEST_BYTES, required_refs
+from tychora.adapters.sqlite.repositories import artifact_ref
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import Contract, NonNegativeInt, Sha256
 from tychora.contracts.errors import TychoraError
@@ -260,14 +261,7 @@ class HistoryRepository:
             raise TychoraError(
                 "REPLAY_UNAVAILABLE", "Retained query artifact is unavailable."
             )
-        data = self._retained_data(
-            ArtifactRef(
-                sha256=row[0],
-                size_bytes=artifact[0],
-                media_type=artifact[1],
-                storage_key=artifact[2],
-            )
-        )
+        data = self._retained_data(artifact_ref((row[0], *artifact[:3])))
         if (
             scope is None
             or snapshot_id is None

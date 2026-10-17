@@ -6,6 +6,7 @@ import json
 from datetime import UTC, datetime
 from io import BytesIO
 
+from tychora.adapters.sqlite.repositories import SqliteWorkspaceRepository, artifact_ref
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import JsonValue, canonical_bytes, digest
@@ -64,9 +65,7 @@ class EvaluationRepository:
         ).fetchone()
         if row is None or row[3] != "present":
             raise TychoraError("INTEGRITY_ERROR", "Evaluation artifact is unavailable")
-        ref = ArtifactRef(
-            sha256=sha, size_bytes=row[0], media_type=row[1], storage_key=row[2]
-        )
+        ref = artifact_ref((sha, *row[:3]))
         with self.artifacts.open_verified(ref) as stream:
             return json.load(stream)
 
@@ -190,10 +189,8 @@ class EvaluationRepository:
         report: EvaluationReport,
     ) -> None:
         """Final epoch check and valid-result commit share one owner callback."""
-        current = self.db.execute(
-            "SELECT policy_epoch,lexical_statistics_epoch FROM workspaces WHERE workspace_id=?",
-            (self.owner.workspace_id,),
-        ).fetchone()
+        workspace = SqliteWorkspaceRepository(self.db)
+        current = (workspace.policy_epoch(), workspace.lexical_epoch())
         if current != (policy_epoch, lexical_epoch):
             raise TychoraError("SCOPE_CHANGED", "Evaluation comparison epochs changed")
         ref_by_case = {
@@ -260,10 +257,7 @@ class EvaluationRepository:
         if row is None:
             raise TychoraError("NOT_FOUND", "Evaluation run does not exist")
         jobs.authorize(row[2], self.owner.scope.narrow(scope), write=True)
-        epoch = self.db.execute(
-            "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
-            (self.owner.workspace_id,),
-        ).fetchone()[0]
+        epoch = SqliteWorkspaceRepository(self.db).policy_epoch()
         if epoch != row[3]:
             raise TychoraError(
                 "SCOPE_CHANGED",
@@ -293,10 +287,7 @@ class EvaluationRepository:
             "SELECT evaluation_id,dataset_id,snapshot_id,job_id,policy_epoch,created_at "
             "FROM evaluation_runs ORDER BY created_at DESC LIMIT 100"
         ).fetchall()
-        current_epoch = self.db.execute(
-            "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
-            (self.owner.workspace_id,),
-        ).fetchone()[0]
+        current_epoch = SqliteWorkspaceRepository(self.db).policy_epoch()
         visible = []
         for evaluation_id, dataset_id, snapshot_id, job_id, epoch, created_at in rows:
             try:

@@ -34,10 +34,7 @@ class CollectionService:
         self.owner = owner
 
     def _epoch(self):
-        return self.owner.db.execute(
-            "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
-            (self.owner.workspace_id,),
-        ).fetchone()[0]
+        return self.owner.policy_epoch()
 
     def _grant(self, scope, capability="read"):
         grant = self.owner.scope.narrow(scope)

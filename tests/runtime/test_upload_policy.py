@@ -187,7 +187,12 @@ async def test_upload_denies_missing_or_invalid_permission(tmp_path, change):
                 ),
                 ExecutionContext(),
             )
-        assert exc.value.code == "FORBIDDEN_SCOPE"
+        if change == "foreign":
+            # Two workspace rows make the epoch read itself ambiguous.
+            assert exc.value.code == "INTEGRITY_ERROR"
+            assert exc.value.reason == "canonical.row_invalid"
+        else:
+            assert exc.value.code == "FORBIDDEN_SCOPE"
 
 
 @pytest.mark.asyncio

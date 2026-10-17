@@ -293,9 +293,7 @@ class SourceService:
     def _decision_watermark(self) -> int | None:
         if self.owner.config.values.index.graph == "disabled":
             return None
-        return self.owner.db.execute(
-            "SELECT COALESCE(MAX(decision_id),0) FROM assertion_decisions"
-        ).fetchone()[0]
+        return self.owner.decision_watermark()
 
     @staticmethod
     def _plan_watermark(plan: PublicationPlan) -> int | None:
@@ -444,12 +442,7 @@ class SourceService:
                 )
             from tychora.contracts.artifacts import ArtifactRef
 
-            ref = ArtifactRef(
-                sha256=artifact[0],
-                size_bytes=artifact[1],
-                media_type=artifact[2],
-                storage_key=artifact[3],
-            )
+            ref = ArtifactRef.from_row(artifact)
             with self.owner.artifacts.open_verified(ref) as stream:
                 payload = stream.read(ref.size_bytes + 1)
             if registration["type"] == "text":
@@ -884,13 +877,7 @@ class SourceService:
             raise TychoraError(
                 "CAPABILITY_MISSING", "Configured text provider is unavailable"
             )
-        epoch = await self.owner.run_blocking(
-            lambda: self.owner.db.execute(
-                "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
-                (self.owner.workspace_id,),
-            ).fetchone()[0],
-            ctx,
-        )
+        epoch = await self.owner.run_blocking(self.owner.policy_epoch, ctx)
         records = []
         # Every batch is authorized independently against the same policy epoch.
         for batch in upload_batches(prepared.text_groups):
@@ -1220,12 +1207,7 @@ class SourceService:
                 "INTEGRITY_ERROR", "Retained code capture is unavailable"
             )
         capture = self._committed_capture(
-            ArtifactRef(
-                sha256=row[0],
-                size_bytes=row[1],
-                media_type=row[2],
-                storage_key=row[3],
-            ),
+            ArtifactRef.from_row(row),
             historical=True,
         )
         if (
@@ -1255,9 +1237,7 @@ class SourceService:
             raise TychoraError(
                 "REPLAY_UNAVAILABLE", "Registered upload original is unavailable."
             )
-        ref = ArtifactRef(
-            sha256=row[0], size_bytes=row[1], media_type=row[2], storage_key=row[3]
-        )
+        ref = ArtifactRef.from_row(row)
         return AcquiredSource(
             workspace_id=self.owner.workspace_id,
             scope=scope,
@@ -1518,12 +1498,7 @@ class SourceService:
 
             try:
                 with self.owner.artifacts.open_verified(
-                    ArtifactRef(
-                        sha256=marker[1],
-                        size_bytes=marker[2],
-                        media_type=marker[3],
-                        storage_key=marker[4],
-                    )
+                    ArtifactRef.from_row(marker[1:5])
                 ) as stream:
                     if stream.read(65537) != global_binding:
                         raise TychoraError(
@@ -1927,13 +1902,7 @@ class SourceService:
             captured = CapturedSourceRegistration(
                 source=registration.source, kind_id=registration.revision.kind_id
             )
-            epoch = await self.owner.run_blocking(
-                lambda: self.owner.db.execute(
-                    "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
-                    (self.owner.workspace_id,),
-                ).fetchone()[0],
-                ctx,
-            )
+            epoch = await self.owner.run_blocking(self.owner.policy_epoch, ctx)
 
             def ensure_registration() -> None:
                 row = self.owner.db.execute(

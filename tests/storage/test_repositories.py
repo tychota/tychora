@@ -1,6 +1,7 @@
 """SQLite repositories over one canonical connection."""
 
 import sqlite3
+from typing import cast
 
 import pytest
 
@@ -92,3 +93,41 @@ def test_ambiguous_workspace_row_is_a_typed_error(db):
 def test_no_sqlite_type_escapes(db):
     with SqliteUnitOfWork(db).read() as tx:
         assert not isinstance(tx.workspace.policy_epoch(), sqlite3.Row)
+
+
+def test_read_joining_an_open_transaction_leaves_it_open(db):
+    db.execute("BEGIN")
+    try:
+        with SqliteUnitOfWork(db).read() as tx:
+            assert tx.workspace.workspace_id() == "workspace"
+        assert db.in_transaction
+    finally:
+        db.rollback()
+
+
+def test_write_rolls_back_when_commit_raises(tmp_path):
+    class FailingCommit:
+        """A connection whose commit fails after the work ran."""
+
+        def __init__(self, inner):
+            self._inner = inner
+
+        def commit(self):
+            raise sqlite3.OperationalError("disk I/O error")
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+    connection = open_corpus(tmp_path / "failing.sqlite3", initialize=True)
+    try:
+        with (
+            pytest.raises(sqlite3.OperationalError),
+            SqliteUnitOfWork(
+                cast(sqlite3.Connection, FailingCommit(connection))
+            ).write() as tx,
+        ):
+            tx.artifacts.register(REF)
+        assert not connection.in_transaction
+        assert connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 0
+    finally:
+        connection.close()
