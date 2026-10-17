@@ -946,6 +946,13 @@ def connect_local(path: str | Path) -> HTTPClient:
         finally:
             if fd != -1:
                 os.close(fd)
+        if "authority" not in record:
+            raise TychoraError(
+                "WORKSPACE_BUSY",
+                "The workspace is open in another process without an HTTP "
+                "endpoint; retry when it closes or start it with `tychora serve`.",
+                reason="owner.live",
+            )
         with sqlite3.connect(f"file:{root / 'corpus.sqlite3'}?mode=ro", uri=True) as db:
             workspace = db.execute("SELECT workspace_id FROM workspaces").fetchall()
         if (
