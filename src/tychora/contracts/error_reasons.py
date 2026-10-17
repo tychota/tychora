@@ -238,6 +238,12 @@ _ENTRIES = (
     ),
     Reason(
         "LIMIT_EXCEEDED",
+        "evaluation.binding_budget",
+        False,
+        "Evaluate fewer cases or variants per run; one run's cited sources exceed the retained binding budget.",
+    ),
+    Reason(
+        "LIMIT_EXCEEDED",
         "rebuild.original_too_large",
         False,
         "Raise the rebuild original size limit or drop the oversized original.",

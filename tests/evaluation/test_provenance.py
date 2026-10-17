@@ -5,8 +5,15 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.code.conftest import git
+from tests.evaluation.conftest import (
+    SyntheticCounter,
+    add_repository,
+    code_profile_config,
+)
 from tests.helpers.timing import scaled
 from tychora import Tychora
+from tychora.adapters.sqlite.retained_bindings import binding_footprint, binding_key
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import CodeLocator, ImageLocator, VisualEvidence
 from tychora.evaluation.provenance import (
@@ -92,6 +99,71 @@ def test_real_retained_text_locator_rejects_wrong_identity_and_binding(tmp_path)
             assert assess(bad_result).valid < assess(bad_result).total
 
 
+def _result_rows(owner, result) -> int:
+    """Retained rows of the one extraction a text result cites."""
+    unit_id = next(
+        citation.unit_id
+        for segment in result.segments
+        for citation in segment.citations
+        if citation.unit_id is not None
+    )
+    key = binding_key(owner.db, unit_id)
+    assert key is not None
+    extraction_id = key[0]
+    member = next(
+        member
+        for member in owner.store.resolve_snapshot(result.snapshot_id).members
+        if member.extraction_id == extraction_id
+    )
+    return binding_footprint(owner.db, member)[0]
+
+
+def _two_text_sources(kb):
+    for key, word in (("first", "saffron"), ("second", "indigo")):
+        handle = kb.sources.add(
+            {
+                "type": "text",
+                "source_key": key,
+                "collection_id": "default",
+                "kind": "manual@1",
+                "format": "text",
+                "text": f"The {word} marker identifies the {key} note.",
+                "metadata": {"title": key, "publisher": "Example", "edition": "1"},
+            }
+        )
+        assert kb.jobs.wait(handle.id, timeout=scaled(10)).state == "succeeded"
+    return (
+        kb.search({"question": "saffron", "modalities": ["lexical"]}),
+        kb.search({"question": "indigo", "modalities": ["lexical"]}),
+    )
+
+
+def test_a_full_budget_releases_the_least_recently_used_binding(tmp_path, monkeypatch):
+    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+        first, second = _two_text_sources(kb)
+        owner = kb._workspace.owner
+
+        def assess():
+            rows = (_result_rows(owner, first), _result_rows(owner, second))
+            # Each binding fits alone; both together do not.
+            monkeypatch.setattr(
+                "tychora.evaluation.provenance.MAX_BINDING_ROWS", max(rows)
+            )
+            cache = RetainedBindingCache(owner, first.snapshot_id)
+            outcomes = [
+                verify_result_locators(owner, value, cache=cache)
+                for value in (first, second, first)
+            ]
+            return outcomes, cache, rows
+
+        outcomes, cache, rows = kb._workspace.bridge.call(
+            owner.run_blocking(assess, ExecutionContext())
+        )
+    assert all(item.valid == item.total > 0 for item in outcomes)
+    assert cache.binding_count == 3
+    assert cache.rows_used == rows[0] <= max(rows)
+
+
 @pytest.mark.slow
 def test_selected_bindings_are_bounded_and_reused_without_snapshot_rehydration(
     tmp_path,
@@ -126,32 +198,28 @@ def test_selected_bindings_are_bounded_and_reused_without_snapshot_rehydration(
                 first = verify_result_locators(owner, result, cache=cache)
                 after_first = len(commands)
                 second = verify_result_locators(owner, result, cache=cache)
+                reused = commands[after_first:]
                 monkeypatch.setattr(
-                    "tychora.evaluation.provenance.MAX_BINDING_ROWS", cache.rows_used
+                    "tychora.evaluation.provenance.MAX_BINDING_ROWS",
+                    _result_rows(owner, other_result) - 1,
                 )
                 with pytest.raises(TychoraError) as error:
                     verify_result_locators(owner, other_result, cache=cache)
                 assert error.value.code == "LIMIT_EXCEEDED"
-                return first, second, after_first, cache
+                return first, second, reused, cache
             finally:
                 owner.db.set_trace_callback(None)
 
-        first, second, after_first, cache = kb._workspace.bridge.call(
+        first, second, reused, cache = kb._workspace.bridge.call(
             owner.run_blocking(assess_twice, ExecutionContext())
         )
         assert first.valid == first.total > 0
         assert second == first
         assert cache.binding_count == 1
-        assert not any(
-            "FROM evidence_units WHERE extraction_id=" in sql
-            for sql in commands[after_first:]
-        )
-        assert not any(
-            "FROM assets WHERE extraction_id=" in sql for sql in commands[after_first:]
-        )
-        assert not any(
-            "SELECT * FROM evidence_units" in sql for sql in commands[after_first:]
-        )
+        assert any("SELECT u.* FROM evidence_units" in sql for sql in commands)
+        assert not any("SUM(" in sql for sql in reused)
+        assert not any("FROM assets a WHERE" in sql for sql in reused)
+        assert not any("SELECT u.* FROM evidence_units" in sql for sql in reused)
 
 
 def test_selected_text_budget_rejects_before_materialization(tmp_path, monkeypatch):
@@ -188,7 +256,7 @@ def test_selected_text_budget_rejects_before_materialization(tmp_path, monkeypat
             kb._workspace.bridge.call(owner.run_blocking(assess, ExecutionContext()))
         assert error.value.code == "LIMIT_EXCEEDED"
         assert any("SUM(" in sql and "FROM evidence_units" in sql for sql in commands)
-        assert not any("SELECT * FROM evidence_units" in sql for sql in commands)
+        assert not any("SELECT u.* FROM evidence_units" in sql for sql in commands)
 
 
 def test_mismatched_retained_locator_artifact_fails_before_hydration(
@@ -246,7 +314,7 @@ def test_mismatched_retained_locator_artifact_fails_before_hydration(
             )
 
         monkeypatch.setattr(
-            "tychora.evaluation.provenance._retained_rows", unexpected_hydration
+            "tychora.evaluation.provenance.retained_rows", unexpected_hydration
         )
         with pytest.raises(TychoraError) as error:
             kb._workspace.bridge.call(
@@ -319,3 +387,90 @@ def test_visual_binding_rejects_wrong_artifact_native_source_and_revision():
     assert not visual_binding_matches(
         visual.model_copy(update={"revision_id": "wrong"}), asset, member
     )
+
+
+def _code_workspace(tmp_path):
+    """A repository whose cited file is small next to the rest of the extraction."""
+    repo = tmp_path / "repository"
+    repo.mkdir()
+    (repo / "target.py").write_text("def zanzibar_marker():\n    return 'zanzibar'\n")
+    for name in ("bulk_one", "bulk_two", "bulk_three"):
+        (repo / f"{name}.py").write_text(
+            "".join(
+                f"def {name}_{index}():\n    return {index}\n\n" for index in range(40)
+            )
+        )
+    git(repo, "init", "-q")
+    git(repo, "config", "user.name", "Synthetic Author")
+    git(repo, "config", "user.email", "synthetic@example.invalid")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "synthetic repository")
+    config = code_profile_config(tmp_path, "limit=10")
+    kb = Tychora.open(
+        tmp_path / "workspace", config=config, token_counter=SyntheticCounter()
+    )
+    handle = add_repository(kb, repo, "synthetic-repo", "Synthetic repository")
+    assert kb.jobs.wait(handle.id, timeout=scaled(120)).state == "succeeded"
+    return kb
+
+
+def _extraction_unit_count(owner) -> int:
+    return owner.db.execute("SELECT COUNT(*) FROM evidence_units").fetchone()[0]
+
+
+def test_code_citations_bind_only_the_cited_file_within_budget(tmp_path, monkeypatch):
+    with _code_workspace(tmp_path) as kb:
+        result = kb.search({"question": "zanzibar_marker", "modalities": ["lexical"]})
+        owner = kb._workspace.owner
+        cited = {
+            locator.relative_path
+            for segment in result.segments
+            for citation in segment.citations
+            for locator in citation.locators
+            if isinstance(locator, CodeLocator)
+        }
+        assert cited == {"target.py"}
+
+        def assess():
+            # The whole extraction holds at least one row per unit, so it cannot fit.
+            monkeypatch.setattr(
+                "tychora.evaluation.provenance.MAX_BINDING_ROWS",
+                _extraction_unit_count(owner),
+            )
+            cache = RetainedBindingCache(owner, result.snapshot_id)
+            return verify_result_locators(owner, result, cache=cache), cache
+
+        assessment, cache = kb._workspace.bridge.call(
+            owner.run_blocking(assess, ExecutionContext())
+        )
+    assert assessment.total > 0
+    assert assessment.valid == assessment.total
+    assert cache.binding_count == 1
+
+
+def test_one_code_file_above_the_budget_is_still_refused(tmp_path, monkeypatch):
+    with _code_workspace(tmp_path) as kb:
+        result = kb.search({"question": "zanzibar_marker", "modalities": ["lexical"]})
+        owner = kb._workspace.owner
+
+        def assess(limit: int):
+            monkeypatch.setattr("tychora.evaluation.provenance.MAX_BINDING_ROWS", limit)
+            return verify_result_locators(owner, result)
+
+        def file_rows() -> int:
+            member = owner.store.resolve_snapshot(result.snapshot_id).members[0]
+            return binding_footprint(owner.db, member, "target.py")[0]
+
+        rows = kb._workspace.bridge.call(
+            owner.run_blocking(file_rows, ExecutionContext())
+        )
+        fits = kb._workspace.bridge.call(
+            owner.run_blocking(lambda: assess(rows), ExecutionContext())
+        )
+        assert fits.valid == fits.total > 0
+        with pytest.raises(TychoraError) as error:
+            kb._workspace.bridge.call(
+                owner.run_blocking(lambda: assess(rows - 1), ExecutionContext())
+            )
+    assert error.value.code == "LIMIT_EXCEEDED"
+    assert error.value.reason == "evaluation.binding_budget"

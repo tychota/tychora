@@ -107,3 +107,25 @@ def test_run_without_a_resolvable_case_is_rejected_with_the_label_reason(tmp_pat
             _evaluate(kb, "labels-none")
     assert error.value.code == "INVALID_REQUEST"
     assert error.value.reason == "label.missing"
+
+
+def test_unresolved_forbidden_label_reports_the_case_and_excludes_it(tmp_path):
+    forbidden = {
+        **_case("forbidden-absent", "guide"),
+        "forbidden_labels": [
+            {
+                "collection": "default",
+                "source_key": "absent",
+                "anchor": {"char_start": 0, "char_end": 5},
+            }
+        ],
+    }
+    with _open_with_guide(tmp_path) as kb:
+        _register(kb, tmp_path, "labels-forbidden", (_case("good", "guide"), forbidden))
+        completed = _evaluate(kb, "labels-forbidden")
+        assert completed.job.state == "succeeded"
+        stored = kb.evaluations.get(completed.job.id)
+    assert set(stored["cases"]) == {"good"}
+    assert [
+        (item["case_id"], item["reason"]) for item in stored["report"]["label_failures"]
+    ] == [("forbidden-absent", "label.missing")]
