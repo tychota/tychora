@@ -7,7 +7,7 @@ from pathlib import Path
 
 import typer
 
-from ._common import client, emit, fail, progress, selected_format, state
+from ._common import client, emit, fail, load_json, progress, selected_format, state
 
 group = typer.Typer(
     no_args_is_help=True, help="Setup, synchronize and maintain a workspace."
@@ -67,10 +67,42 @@ def remove(ctx: typer.Context, source_id: list[str] = typer.Argument(...)) -> No
     _run(ctx, {"operation": "remove", "source_ids": source_id})
 
 
-@group.command()
-def rebuild(ctx: typer.Context, channel: list[str] = typer.Argument(...)) -> None:
-    """Rebuild configured projection channels."""
+rebuild_group = typer.Typer(
+    no_args_is_help=True, help="Rebuild projections or a whole workspace."
+)
+group.add_typer(rebuild_group, name="rebuild")
+
+
+@rebuild_group.command("native")
+def rebuild_native(
+    ctx: typer.Context, channel: list[str] = typer.Argument(...)
+) -> None:
+    """Re-project channels from retained rows, without provider calls."""
     _run(ctx, {"operation": "rebuild", "channels": channel})
+
+
+@rebuild_group.command("workspace")
+def rebuild_workspace(
+    ctx: typer.Context,
+    from_path: Path = typer.Option(
+        ..., "--from", help="Older workspace, opened read-only."
+    ),
+    kind_map: Path | None = typer.Option(
+        None, help="JSON object mapping old kind IDs to current kind IDs."
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Recreate --workspace (new, empty) from an older workspace's originals."""
+    from tychora.api import rebuild_workspace_from
+
+    options = state(ctx)
+    try:
+        output_format = selected_format(options, json_output)
+        mapping = load_json(kind_map) if kind_map is not None else None
+        report = rebuild_workspace_from(from_path, options.workspace, kind_map=mapping)
+        emit(report, format=output_format)
+    except Exception as error:  # noqa: BLE001 - command boundary rethrows unknown exceptions
+        fail(error)
 
 
 @group.command("export")
