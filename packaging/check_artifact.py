@@ -77,7 +77,11 @@ def _allowed_path(path: PurePosixPath, kind: str) -> bool:
         and path.parts[1:] == ("dashboard", ".nvmrc")
     ):
         return re.fullmatch(r"tychora-[^/]+", path.parts[0]) is not None
-    if any(part.startswith(".") or part in _DENIED_PARTS for part in path.parts):
+    denied = _DENIED_PARTS
+    if kind == "sdist" and path.parts[1:3] == ("dashboard", "src"):
+        # Tracked dashboard source may have a models/ page directory; weights stay caught by suffix.
+        denied = denied - {"models", "reports"}
+    if any(part.startswith(".") or part in denied for part in path.parts):
         return False
     if path.name.lower().endswith(_DENIED_SUFFIXES) or path.name.lower() in {
         ".env",

@@ -78,3 +78,16 @@ def test_dashboard_audit_accepts_source_but_rejects_caches():
     assert not _allowed_path(PurePosixPath("tychora-0.1.0/dashboard/.env"), "sdist")
     assert not _allowed_path(PurePosixPath("tychora-0.1.0/other/.nvmrc"), "sdist")
     assert not _allowed_path(PurePosixPath("tychora-0.1.0/dashboard/.nvmrc"), "wheel")
+    # Dashboard source pages named models/ ship, but models/ stays denied elsewhere.
+    page = "tychora-0.1.0/dashboard/src/pages/models/ExpertSettings.tsx"
+    assert _allowed_path(PurePosixPath(page), "sdist")
+    assert not _allowed_path(
+        PurePosixPath(page.replace("dashboard/src", "src")), "sdist"
+    )
+    assert not _allowed_path(PurePosixPath(page), "wheel")
+    assert not _allowed_path(
+        PurePosixPath("tychora-0.1.0/dashboard/src/models/w.safetensors"), "sdist"
+    )
+    assert not _allowed_path(
+        PurePosixPath("tychora-0.1.0/dashboard/src/node_modules/x.js"), "sdist"
+    )
