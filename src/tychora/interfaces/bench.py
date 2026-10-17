@@ -16,7 +16,12 @@ from tychora.configuration.resolve import resolve_config
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.operations import JobEvent
 from tychora.contracts.requests import SourceInput
-from tychora.evaluation.bench.corpus import BenchCorpusError, fetch_corpus, load_corpus
+from tychora.evaluation.bench.corpus import (
+    BenchCorpus,
+    BenchCorpusError,
+    fetch_corpus,
+    load_corpus,
+)
 from tychora.evaluation.bench.harness import (
     BenchSource,
     BenchUnavailable,
@@ -29,6 +34,7 @@ from tychora.evaluation.bench.harness import (
 )
 from tychora.evaluation.bench.results import (
     BenchResult,
+    MachineFingerprint,
     is_reference,
     load_result,
     machine_fingerprint,
@@ -235,6 +241,26 @@ def _run(args: argparse.Namespace) -> int:
         raise BenchUnavailable(f"{workspace} must be a new, empty directory")
     machine = machine_fingerprint()
     reference = tomllib.loads((args.benchmarks / "reference-machine.toml").read_text())
+    try:
+        result = _measure(args, corpus, workspace, machine, reference)
+    finally:
+        if args.workspace is None:
+            _remove_scratch(scratch, args.cache)
+    print(write_result(result, args.out))
+    problems = _problems(result, args.compare)
+    for problem in problems:
+        print(problem, file=sys.stderr)
+    return 1 if problems else 0
+
+
+def _measure(
+    args: argparse.Namespace,
+    corpus: BenchCorpus,
+    workspace: Path,
+    machine: MachineFingerprint,
+    reference: dict[str, object],
+) -> BenchResult:
+    """Open the benchmark workspace, run the suite and close the workspace."""
     kb, config_sha = _open(workspace, args.profile, args.benchmarks)
     try:
         client = TychoraBenchClient(
@@ -254,7 +280,7 @@ def _run(args: argparse.Namespace) -> int:
             max_wall_seconds=args.max_wall_seconds,
             limit=args.limit,
         )
-        result = run_suite(
+        return run_suite(
             client,
             corpus,
             args.suite,
@@ -263,13 +289,18 @@ def _run(args: argparse.Namespace) -> int:
         )
     finally:
         kb.close()
-        if args.workspace is None:
-            shutil.rmtree(scratch, ignore_errors=True)
-    print(write_result(result, args.out))
-    problems = _problems(result, args.compare)
-    for problem in problems:
-        print(problem, file=sys.stderr)
-    return 1 if problems else 0
+
+
+def _remove_scratch(scratch: Path, cache: Path) -> None:
+    """Delete a workspace this run created, only if it lies inside the cache.
+
+    A symlinked ``workspaces`` directory that points elsewhere is left alone.
+    """
+    root = cache.resolve() / "workspaces"
+    target = scratch.resolve()
+    if root.is_symlink() or scratch.is_symlink() or target.parent != root:
+        return
+    shutil.rmtree(target, ignore_errors=True)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

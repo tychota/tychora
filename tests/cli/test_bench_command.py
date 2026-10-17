@@ -240,3 +240,24 @@ def test_auto_workspace_is_removed_and_explicit_one_is_kept(tmp_path):
     kept = tmp_path / "kept"
     assert main(_args(tmp_path, "--workspace", str(kept))) == 0
     assert (kept / "workspace.toml").exists()
+
+
+def test_auto_workspace_is_removed_when_opening_fails(tmp_path, monkeypatch):
+    def refuse(workspace, *_):
+        workspace.mkdir(parents=True)
+        raise bench.BenchUnavailable("cannot open")
+
+    monkeypatch.setattr(bench, "_open", refuse)
+    assert main(_args(tmp_path)) == 2
+    assert not list((tmp_path / "cache" / "workspaces").iterdir())
+
+
+def test_scratch_outside_the_cache_is_never_removed(tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    victim = elsewhere / "run-1"
+    victim.mkdir(parents=True)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    (cache / "workspaces").symlink_to(elsewhere, target_is_directory=True)
+    bench._remove_scratch(cache / "workspaces" / "run-1", cache)
+    assert victim.is_dir()
