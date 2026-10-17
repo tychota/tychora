@@ -70,7 +70,7 @@ async def test_full_static_manager_and_narrow_tokens_across_global_routes(tmp_pa
                 },
             ),
             ("POST", "/v1/jobs", {"operation": "rebuild", "channels": ["text"]}),
-            ("POST", "/v1/jobs", {"operation": "migrate", "target_version": "2"}),
+            ("POST", "/v1/jobs", {"operation": "migrate", "target_version": "3"}),
         ]
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://127.0.0.1:8765"

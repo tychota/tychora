@@ -79,14 +79,14 @@ def test_manage_import_bootstraps_without_original_or_control_workspace(tmp_path
         db.close()
 
 
-def test_manage_migrate_uses_packaged_v1_target_and_rejects_unknown_version(tmp_path):
+def test_manage_migrate_uses_packaged_v2_target_and_rejects_unknown_version(tmp_path):
     workspace = tmp_path / "workspace"
     valid = CliRunner().invoke(
-        app, ["--workspace", str(workspace), "manage", "migrate", "1"]
+        app, ["--workspace", str(workspace), "manage", "migrate", "2"]
     )
     assert valid.exit_code == 0, valid.stderr
     unsupported = CliRunner().invoke(
-        app, ["--workspace", str(workspace), "manage", "migrate", "2"]
+        app, ["--workspace", str(workspace), "manage", "migrate", "3"]
     )
     assert unsupported.exit_code != 0
     assert "Unsupported migration target" in unsupported.stderr

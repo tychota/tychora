@@ -8,8 +8,27 @@ from pathlib import Path
 
 from tychora.contracts.errors import TychoraError
 
-SCHEMA_VERSION = 1
-SCHEMA_CHECKSUM = "b98d888098fa0ea790484f37ab8cf746afc2299576411767012c9e3a3c5642a9"
+SCHEMA_VERSION = 2
+SCHEMA_CHECKSUM = "5899bf5b00ec52d686602369801491bdc6e50d6e9dd803e790bb1cd32d15cabe"
+FORMAT_ONE_CHECKSUM = "b98d888098fa0ea790484f37ab8cf746afc2299576411767012c9e3a3c5642a9"
+
+
+def format_old_error() -> TychoraError:
+    """The refusal for a workspace or archive written by an older format."""
+    return TychoraError(
+        "PROFILE_INCOMPATIBLE",
+        "This workspace uses an older storage format. Recreate it with "
+        "`tychora --workspace NEW manage rebuild workspace --from OLD`.",
+        reason="workspace.format_old",
+    )
+
+
+def receipt_is_older(rows: list[tuple[int, str]]) -> bool:
+    """True when a migration receipt names format 1, or format 2 with older DDL."""
+    return len(rows) == 1 and (
+        rows[0][0] < SCHEMA_VERSION
+        or (rows[0][0] == SCHEMA_VERSION and rows[0][1] != SCHEMA_CHECKSUM)
+    )
 
 
 def _disable_extension_loading(db: sqlite3.Connection) -> None:
@@ -19,16 +38,37 @@ def _disable_extension_loading(db: sqlite3.Connection) -> None:
 
 
 def supported_migration_target(target_version: int) -> int:
-    """V1 is the sole packaged version; never infer an upgrade from archive SQL."""
+    """Format 2 is the sole packaged version; never infer an upgrade from archive SQL."""
     if type(target_version) is not int or target_version != SCHEMA_VERSION:
-        raise TychoraError("PROFILE_INCOMPATIBLE", "Unsupported migration target")
+        raise TychoraError(
+            "PROFILE_INCOMPATIBLE",
+            "Unsupported migration target",
+            reason="workspace.schema_mismatch",
+        )
     return target_version
+
+
+def _imported_receipt_is_older(db: sqlite3.Connection) -> bool:
+    """Read only the migration receipt of an untrusted, read-only database."""
+    if not db.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+    ).fetchone():
+        return False
+    try:
+        rows = db.execute("SELECT version, checksum FROM schema_migrations").fetchall()
+    except sqlite3.DatabaseError:
+        return False
+    return receipt_is_older(rows)
 
 
 def open_verified_import(path: Path) -> sqlite3.Connection:
     """Establish the packaged-schema trust boundary before reading imported rows."""
     if path.is_symlink() or not path.is_file():
-        raise TychoraError("INTEGRITY_ERROR", "Unsafe imported database path")
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Unsafe imported database path",
+            reason="workspace.database_invalid",
+        )
     db = sqlite3.connect(path.as_uri() + "?mode=ro&immutable=1", uri=True)
     try:
         _disable_extension_loading(db)
@@ -46,32 +86,46 @@ def open_verified_import(path: Path) -> sqlite3.Connection:
                 db.execute(schema_query).fetchall()
                 != expected.execute(schema_query).fetchall()
             ):
+                if _imported_receipt_is_older(db):
+                    raise format_old_error()
                 raise TychoraError(
                     "PROFILE_INCOMPATIBLE",
                     "Imported schema differs from packaged schema",
+                    reason="workspace.schema_mismatch",
                 )
         finally:
             expected.close()
         # The only read from an imported user table occurs after exact object comparison.
-        if db.execute(
+        rows = db.execute(
             "SELECT version,checksum FROM schema_migrations ORDER BY version"
-        ).fetchall() != [(SCHEMA_VERSION, SCHEMA_CHECKSUM)]:
+        ).fetchall()
+        if receipt_is_older(rows):
+            raise format_old_error()
+        if rows != [(SCHEMA_VERSION, SCHEMA_CHECKSUM)]:
             raise TychoraError(
-                "PROFILE_INCOMPATIBLE", "Imported migration receipt differs"
+                "PROFILE_INCOMPATIBLE",
+                "Imported migration receipt differs",
+                reason="workspace.schema_mismatch",
             )
         if db.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
             raise TychoraError(
-                "INTEGRITY_ERROR", "Imported database failed integrity check"
+                "INTEGRITY_ERROR",
+                "Imported database failed integrity check",
+                reason="workspace.database_invalid",
             )
         if db.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise TychoraError(
-                "INTEGRITY_ERROR", "Imported database has broken foreign keys"
+                "INTEGRITY_ERROR",
+                "Imported database has broken foreign keys",
+                reason="workspace.database_invalid",
             )
         return db
     except sqlite3.DatabaseError:
         db.close()
         raise TychoraError(
-            "INTEGRITY_ERROR", "Imported database cannot be inspected"
+            "INTEGRITY_ERROR",
+            "Imported database cannot be inspected",
+            reason="workspace.database_invalid",
         ) from None
     except BaseException:
         db.close()

@@ -1,4 +1,4 @@
-"""Explicit v1 schema compatibility and unsupported migration targets."""
+"""Explicit v2 schema compatibility and unsupported migration targets."""
 
 from types import SimpleNamespace
 from typing import Any, cast
@@ -9,11 +9,12 @@ from tychora.adapters.sqlite.migrations import supported_migration_target
 from tychora.contracts.errors import TychoraError
 
 
-def test_v1_is_the_only_packaged_migration_target():
-    assert supported_migration_target(1) == 1
-    with pytest.raises(TychoraError) as error:
-        supported_migration_target(2)
-    assert error.value.code == "PROFILE_INCOMPATIBLE"
+def test_v2_is_the_only_packaged_migration_target():
+    assert supported_migration_target(2) == 2
+    for unsupported in (1, 3):
+        with pytest.raises(TychoraError) as error:
+            supported_migration_target(unsupported)
+        assert error.value.code == "PROFILE_INCOMPATIBLE"
 
 
 def test_ready_native_file_guard_precedes_constructor_and_skips_pending(tmp_path):
@@ -55,7 +56,7 @@ def test_public_maintenance_health_and_unsupported_migration(tmp_path):
         assert native.recovery.native_verified_generations == 0
         assert native.recovery.native_verified_snapshot_id is None
         with pytest.raises(TychoraError) as error:
-            kb.management.run({"operation": "migrate", "target_version": "2"})
+            kb.management.run({"operation": "migrate", "target_version": "3"})
         assert error.value.code == "PROFILE_INCOMPATIBLE"
         rebuilt = kb.management.run({"operation": "rebuild", "channels": ["text"]})
         assert rebuilt.recovery is not None
@@ -85,7 +86,7 @@ def test_internal_maintenance_health_and_unsupported_migration(tmp_path):
             ws.bridge.call(
                 ws.services.maintenance.run(
                     MaintenanceRequest.from_mapping(
-                        {"operation": "migrate", "target_version": "2"}
+                        {"operation": "migrate", "target_version": "3"}
                     ),
                     kb.scope,
                     None,
@@ -96,7 +97,7 @@ def test_internal_maintenance_health_and_unsupported_migration(tmp_path):
         completed = ws.bridge.call(
             ws.services.maintenance.run(
                 MaintenanceRequest.from_mapping(
-                    {"operation": "migrate", "target_version": "1"}
+                    {"operation": "migrate", "target_version": "2"}
                 ),
                 kb.scope,
                 "same-version",

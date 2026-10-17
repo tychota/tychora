@@ -152,7 +152,7 @@ async def test_upload_denies_missing_or_invalid_permission(tmp_path, change):
                 owner.db.commit()
             if change == "foreign":
                 owner.db.execute(
-                    "INSERT INTO workspaces (workspace_id,schema_version,created_at) VALUES ('foreign',1,'2024')"
+                    "INSERT INTO workspaces (workspace_id,schema_version,created_at) VALUES ('foreign',2,'2024')"
                 )
                 owner.db.execute("UPDATE collections SET workspace_id='foreign'")
 

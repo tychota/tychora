@@ -944,7 +944,9 @@ def connect_local(path: str | Path) -> HTTPClient:
             else:
                 fcntl.flock(lock, fcntl.LOCK_UN)
                 raise TychoraError(
-                    "WORKSPACE_BUSY", "Local endpoint has no live owner."
+                    "WORKSPACE_BUSY",
+                    "Local endpoint has no live owner.",
+                    reason="owner.absent",
                 )
         finally:
             os.close(lock)
@@ -995,5 +997,7 @@ def connect_local(path: str | Path) -> HTTPClient:
         json.JSONDecodeError,
     ):
         raise TychoraError(
-            "INTEGRITY_ERROR", "Local runtime endpoint is unavailable or unsafe."
+            "INTEGRITY_ERROR",
+            "Local runtime endpoint is unavailable or unsafe.",
+            reason="runtime.endpoint_unsafe",
         ) from None

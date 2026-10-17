@@ -68,6 +68,18 @@ _ENTRIES = (
     ),
     Reason(
         "INTEGRITY_ERROR",
+        "workspace.database_invalid",
+        False,
+        "Restore the workspace or archive from a backup; the database failed its safety checks.",
+    ),
+    Reason(
+        "INTEGRITY_ERROR",
+        "runtime.endpoint_unsafe",
+        False,
+        "Stop the workspace owner, remove its runtime directory and start it again.",
+    ),
+    Reason(
+        "INTEGRITY_ERROR",
         "invariant.unexpected",
         False,
         "Report the diagnostic ID; this is a defect in Tychora.",
@@ -83,6 +95,12 @@ _ENTRIES = (
         "owner.live",
         True,
         "Another process holds the workspace without an HTTP endpoint; retry when it closes or start it with `tychora serve`.",
+    ),
+    Reason(
+        "WORKSPACE_BUSY",
+        "owner.absent",
+        False,
+        "Start the workspace owner with `tychora serve`, or open the workspace directly.",
     ),
     Reason(
         "WORKSPACE_BUSY",
@@ -122,6 +140,12 @@ _ENTRIES = (
     ),
     Reason(
         "PROFILE_INCOMPATIBLE",
+        "workspace.schema_mismatch",
+        False,
+        "Open the workspace with the Tychora version that created it, or recreate it with `tychora --workspace NEW manage rebuild workspace --from OLD`.",
+    ),
+    Reason(
+        "PROFILE_INCOMPATIBLE",
         "family.space_mismatch",
         False,
         "Use a document model and a query encoder from the same embedding space.",
@@ -140,6 +164,12 @@ _ENTRIES = (
     ),
     Reason(
         "CAPABILITY_MISSING",
+        "sqlite.version_unsupported",
+        False,
+        "Install a Python build linked against SQLite 3.38 or newer.",
+    ),
+    Reason(
+        "CAPABILITY_MISSING",
         "model_asset.absent",
         False,
         "Install the model asset with `tychora manage setup`.",
@@ -149,6 +179,12 @@ _ENTRIES = (
         "graph.disabled",
         False,
         "Select a preset that defines relations to enable the graph.",
+    ),
+    Reason(
+        "NOT_FOUND",
+        "workspace.absent",
+        False,
+        "Check the workspace path; the database file is missing.",
     ),
     Reason(
         "INVALID_REQUEST",

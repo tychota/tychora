@@ -23,6 +23,7 @@ from tychora.ports.execution import ExecutionContext
 from tychora.ports.graph import GraphStore
 from tychora.ports.vectors import VectorIndex
 
+from .migrations import SCHEMA_VERSION
 from .policy import PolicyRepository
 from .validation import validate_bundle, verify_artifacts
 
@@ -265,7 +266,7 @@ class CorpusStore(PolicyRepository):
                 self._check_membership(bundle)
                 self._insert(
                     "workspaces",
-                    {**_row(bundle.workspace), "schema_version": 1},
+                    {**_row(bundle.workspace), "schema_version": SCHEMA_VERSION},
                     ("workspace_id",),
                 )
                 collection = _row(bundle.collection)

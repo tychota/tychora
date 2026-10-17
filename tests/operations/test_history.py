@@ -20,7 +20,7 @@ def history(tmp_path):
     now = datetime(2026, 1, 1, tzinfo=UTC)
     db.execute(
         "INSERT INTO workspaces(workspace_id,schema_version,created_at) VALUES (?,?,?)",
-        ("workspace", 1, now.isoformat()),
+        ("workspace", 2, now.isoformat()),
     )
     db.execute(
         "INSERT INTO artifacts(artifact_sha,size_bytes,media_type,storage_key,created_at) VALUES (?,?,?,?,?)",

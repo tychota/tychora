@@ -429,7 +429,7 @@ def test_sqlite_reader_detaches_current_floor_and_epoch(tmp_path, config):
     db = open_corpus(tmp_path / "corpus.sqlite3", initialize=True)
     artifact_sha = digest("original")
     db.execute(
-        "INSERT INTO workspaces(workspace_id,schema_version,created_at) VALUES ('workspace',1,'2025-01-01')"
+        "INSERT INTO workspaces(workspace_id,schema_version,created_at) VALUES ('workspace',2,'2025-01-01')"
     )
     db.execute(
         "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES ('collection','workspace','synthetic','Synthetic',0,'{\"schema_version\":1,\"upload_providers\":[]}')"
