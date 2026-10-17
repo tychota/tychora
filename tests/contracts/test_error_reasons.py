@@ -43,6 +43,7 @@ SPEC_REASONS = {
         "label.ambiguous",
         "rebuild.destination_not_empty",
     },
+    "LIMIT_EXCEEDED": {"rebuild.original_too_large"},
     "PROVIDER_FAILURE": {
         "provider.auth",
         "provider.unreachable",

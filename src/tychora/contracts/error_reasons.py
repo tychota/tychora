@@ -231,6 +231,12 @@ _ENTRIES = (
         "Choose a new, empty workspace directory as the rebuild destination.",
     ),
     Reason(
+        "LIMIT_EXCEEDED",
+        "rebuild.original_too_large",
+        False,
+        "Raise the rebuild original size limit or drop the oversized original.",
+    ),
+    Reason(
         "PROVIDER_FAILURE",
         "provider.auth",
         False,

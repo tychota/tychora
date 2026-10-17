@@ -152,8 +152,49 @@ def test_read_original_reports_missing_and_damaged_payloads(old_workspace):
     assert error.value.reason == "payload.hash_mismatch"
     payload.unlink()
     assert read_original(old_workspace, original) is None
-    with pytest.raises(TychoraError):
+    with pytest.raises(TychoraError) as oversize:
         read_original(old_workspace, original, max_bytes=1)
+    assert oversize.value.reason == "rebuild.original_too_large"
+
+
+def test_missing_artifacts_directory_is_reported_not_created(old_workspace):
+    inventory = read_inventory(old_workspace)
+    shutil.rmtree(old_workspace / "artifacts")
+    listing = sorted(path.name for path in old_workspace.rglob("*"))
+    for source in inventory.sources:
+        for revision in source.revisions:
+            assert revision.original is not None
+            assert read_original(old_workspace, revision.original) is None
+    assert sorted(path.name for path in old_workspace.rglob("*")) == listing
+    assert not (old_workspace / "artifacts").exists()
+
+
+def test_inventory_carries_access_floors_and_uses(old_workspace):
+    with closing(sqlite3.connect(old_workspace / "corpus.sqlite3")) as db:
+        db.execute("UPDATE sources SET access_floor=2 WHERE source_key='beta'")
+        db.execute(
+            "UPDATE revisions SET access_rank=3, declared_review_state='accepted', "
+            "allowed_uses_json='[\"search\"]' WHERE source_id IN "
+            "(SELECT source_id FROM sources WHERE source_key='beta')"
+        )
+        db.commit()
+    inventory = read_inventory(old_workspace)
+    alpha, beta = inventory.sources
+    assert (alpha.access_floor, beta.access_floor) == (0, 2)
+    for revision in beta.revisions:
+        assert revision.access_rank == 3
+        assert revision.declared_review_state == "accepted"
+        assert revision.allowed_uses_json == '["search"]'
+    assert alpha.revisions[0].access_rank != 3
+
+
+def test_inventory_refuses_a_row_it_cannot_read(old_workspace):
+    with closing(sqlite3.connect(old_workspace / "corpus.sqlite3")) as db:
+        db.execute("UPDATE collections SET title=''")
+        db.commit()
+    with pytest.raises(TychoraError) as error:
+        read_inventory(old_workspace)
+    assert error.value.reason == "canonical.row_invalid"
 
 
 def test_seed_collections_inserts_and_refreshes(tmp_path):
@@ -179,6 +220,13 @@ def test_seed_collections_inserts_and_refreshes(tmp_path):
         ),
     )
     assert seed_collections(db, "ws", rows) == 2
+    assert db.execute("SELECT policy_epoch FROM workspaces").fetchone()[0] == 1
     assert seed_collections(db, "ws", rows) == 0
+    assert db.execute("SELECT policy_epoch FROM workspaces").fetchone()[0] == 1
+    renamed = (rows[0].model_copy(update={"title": "Renamed"}), rows[1])
+    assert seed_collections(db, "ws", renamed) == 0
     assert db.execute("SELECT policy_epoch FROM workspaces").fetchone()[0] == 2
+    with pytest.raises(TychoraError) as error:
+        seed_collections(db, "other", rows)
+    assert error.value.reason == "canonical.row_invalid"
     db.close()
