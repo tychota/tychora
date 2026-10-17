@@ -21,7 +21,7 @@ The API returns schema-versioned canonical error envelopes containing `code`, sa
 
 | Route | Contract |
 | --- | --- |
-| `GET /v1/handshake` | Protocol, workspace and instance identities, effective token scope, accessible default collection ID, `policy_epoch`, and `managed_workspace_owner` display metadata. |
+| `GET /v1/handshake` | Protocol, workspace and instance identities, effective token scope, accessible default collection ID, `policy_epoch`, and `managed_workspace_owner` display metadata. Its `schema_version` (the string `"1"`) versions the handshake document itself, not the workspace storage format. |
 | `GET /v1/discovery[/{subject}]` | Scoped, cursor-bounded definitions, counts, and capabilities. Subjects include kinds, facets, relations, profiles, languages, sources, settings, runs, and models. |
 | `GET /v1/collections`; `POST /v1/collections`; `GET/PATCH /v1/collections/{id}` | Granted collection pages and management. Create requires the full explicitly managed owner identity and returns 201. Create/edit accepts title, slug and optional default_kind_id; UUID, floor, policy and lifecycle are server-owned. |
 | `POST /v1/collections/{id}/archive`; `POST /v1/collections/{id}/reactivate`; `GET /v1/collections/{id}/consent` | Idempotent lifecycle changes and secret-free consent projection. Consent writes continue through `POST /v1/jobs` with operation `provider-upload-consent`. |
