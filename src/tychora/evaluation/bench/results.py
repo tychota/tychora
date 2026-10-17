@@ -5,6 +5,7 @@ import math
 import os
 import platform
 import sqlite3
+import tempfile
 from collections.abc import Mapping, Sequence
 from importlib import metadata
 from pathlib import Path
@@ -19,6 +20,7 @@ from tychora.contracts.base import (
     PositiveInt,
     Sha256,
 )
+from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
 
 from .budgets import REFERENCE_TOLERANCE, SHARED_RUNNER_REGRESSION
@@ -37,6 +39,8 @@ class StageStats(Contract):
     p90: float
     p95: float
     p99: float
+    quantile: float
+    asserted: float
     unit: Unit
     budget: float | None
     verdict: Verdict
@@ -148,6 +152,8 @@ def stage_stats(
         p90=nearest_rank(values, 0.90),
         p95=nearest_rank(values, 0.95),
         p99=nearest_rank(values, 0.99),
+        quantile=quantile,
+        asserted=asserted,
         unit=unit,
         budget=None if budget is None else float(budget),
         verdict=verdict(asserted, budget, reference=reference)
@@ -156,21 +162,58 @@ def stage_stats(
     )
 
 
+_REGRESSION_FLOOR = {"ms": 1.0, "s": 0.001}
+
+
+def _require_comparable(current: BenchResult, previous: BenchResult) -> None:
+    """Refuse to compare runs of different suites, profiles or machines."""
+    same = (current.suite, current.profile, current.reference_machine) == (
+        previous.suite,
+        previous.profile,
+        previous.reference_machine,
+    ) and (current.machine.cpu, current.machine.cores, current.machine.os) == (
+        previous.machine.cpu,
+        previous.machine.cores,
+        previous.machine.os,
+    )
+    if not same:
+        raise TychoraError(
+            "INVALID_REQUEST",
+            "Results come from different suites, profiles or machines.",
+            reason="bench.incomparable",
+        )
+
+
 def regressions(
     current: BenchResult,
     previous: BenchResult,
     tolerance: float = SHARED_RUNNER_REGRESSION,
 ) -> tuple[str, ...]:
-    """Stages whose p95 grew by more than ``tolerance`` against an earlier run."""
+    """Stages whose asserted quantile grew by more than ``tolerance``.
+
+    Both runs must share suite, profile, reference flag and machine class. A
+    stage never regresses below an absolute floor (1 ms, or 0.001 s), so a zero
+    baseline does not flag every positive value.
+    """
+    _require_comparable(current, previous)
     found = []
     for name, stats in sorted(current.stages.items()):
         earlier = previous.stages.get(name)
         if earlier is None or not earlier.n:
             continue
-        ceiling = round(earlier.p95 * (1 + tolerance), 3)
-        if stats.p95 > ceiling:
+        if (earlier.unit, earlier.quantile) != (stats.unit, stats.quantile):
+            raise TychoraError(
+                "INVALID_REQUEST",
+                f"Stage {name} differs in unit or quantile between runs.",
+                reason="bench.incomparable",
+            )
+        ceiling = round(
+            max(earlier.asserted * (1 + tolerance), _REGRESSION_FLOOR[stats.unit]), 3
+        )
+        if stats.asserted > ceiling:
+            label = f"p{round(stats.quantile * 100)}"
             found.append(
-                f"{name}: p95 {stats.p95} {stats.unit} > {ceiling} {stats.unit}"
+                f"{name}: {label} {stats.asserted} {stats.unit} > {ceiling} {stats.unit}"
             )
     return tuple(found)
 
@@ -205,10 +248,16 @@ def is_reference(
 
 
 def write_result(result: BenchResult, out_dir: Path) -> Path:
-    """Write ``<out_dir>/<commit>/<suite>-<profile>.json`` and return its path."""
+    """Write ``<out_dir>/<commit>/<suite>-<profile>.json`` atomically."""
     path = out_dir / result.commit / f"{result.suite}-{result.profile}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(canonical_bytes(result.document()) + b"\n")
+    with tempfile.NamedTemporaryFile(
+        dir=path.parent, prefix=f".{path.name}.", delete=False
+    ) as handle:
+        handle.write(canonical_bytes(result.document()) + b"\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(handle.name, path)
     return path
 
 
@@ -220,4 +269,4 @@ def load_result(path: Path) -> BenchResult:
         or document.pop("version", None) != 1
     ):
         raise ValueError(f"{path} is not a tychora.bench-result version 1 document")
-    return BenchResult.model_validate_json(json.dumps(document))
+    return BenchResult.model_validate(document, strict=False)

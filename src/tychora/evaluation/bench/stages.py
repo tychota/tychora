@@ -17,6 +17,8 @@ _INGEST_BUCKETS = {
     "publish": "publication",
     "total": "total",
 }
+# Job-lifecycle stages with no ingestion budget row; anything else unknown is "other".
+_QUEUE_STAGES = frozenset({"accepted", "start", "complete"})
 
 
 class StageSample(Contract):
@@ -43,7 +45,9 @@ def ingest_bucket(stage: str) -> str:
     """Map a job-event stage to its ingestion budget row."""
     if stage.startswith("projection/"):
         return "projection"
-    return _INGEST_BUCKETS.get(stage, "queue")
+    if stage in _QUEUE_STAGES:
+        return "queue"
+    return _INGEST_BUCKETS.get(stage, "other")
 
 
 class WallClockStageSource:
