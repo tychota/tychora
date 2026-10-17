@@ -1,0 +1,22 @@
+tests/cli/test_bench_command.py
+  s_ab847b2c6c265a::t_41ad986558a271 243-263
+src/tychora/interfaces/bench.py
+  s_ab847b2c6c265a::t_6003fc19898e06 299,301
+  s_ab847b2c6c265a::t_dab0573513a392 19-24,37,244-263,283,292-298,300,302-303
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8d5c16537ec98698e25db84758939842f59c92e3",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
