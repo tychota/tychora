@@ -25,7 +25,7 @@ jobs:
         with:
           version: "0.9.28"
       - name: Install locked offline browser server dependencies
-        run: uv sync --locked --extra server --group dev --group build
+        run: uv sync --locked --extra server --extra documents --group dev --group build
       - name: Install frontend without lifecycle scripts
         working-directory: dashboard
         run: npm ci --ignore-scripts
@@ -44,4 +44,4 @@ jobs:
           TYCHORA_E2E_PYTHON: ../.venv/bin/python
         run: npm run e2e
       - name: Verify bounded fixture controls and distribution resources
-        run: uv run --locked pytest dashboard/e2e/test_server.py tests/transports/test_dashboard_distribution.py -q
+        run: uv run --locked --extra server --extra documents pytest dashboard/e2e/test_server.py tests/transports/test_dashboard_distribution.py -q
