@@ -6,7 +6,7 @@ import shutil
 import sqlite3
 import tempfile
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 from tychora.contracts.errors import TychoraError
@@ -55,6 +55,37 @@ def _copy_to(scratch: str, path: Path, wal: Path) -> Path:
     return copy
 
 
+def database_invalid() -> TychoraError:
+    """Return the refusal for a database that cannot be read safely."""
+    return TychoraError(
+        "INTEGRITY_ERROR",
+        "The workspace database cannot be inspected.",
+        reason="workspace.database_invalid",
+    )
+
+
+def _connect_untouched(path: Path, stack: ExitStack) -> sqlite3.Connection:
+    """Open the database read-only, through a private copy when sidecars exist."""
+    wal = path.with_name(path.name + "-wal")
+    shm = path.with_name(path.name + "-shm")
+    if wal.exists() or shm.exists():
+        scratch = stack.enter_context(
+            tempfile.TemporaryDirectory(prefix="tychora-untouched-")
+        )
+        before = (_stamp(path), _stamp(wal))
+        copy = _copy_to(scratch, path, wal)
+        if (_stamp(path), _stamp(wal)) != before:
+            raise OSError("The database changed while it was copied")
+        uri = copy.as_uri() + "?mode=ro"
+    else:
+        uri = path.as_uri() + "?mode=ro&immutable=1"
+    db = sqlite3.connect(uri, uri=True)
+    stack.callback(db.close)
+    # Reading the schema here refuses a file that is not a database at open time.
+    db.execute("SELECT count(*) FROM sqlite_master").fetchone()
+    return db
+
+
 @contextmanager
 def open_untouched(path: Path) -> Iterator[sqlite3.Connection]:
     """Yield a read-only connection that sees every commit and writes nothing.
@@ -64,40 +95,24 @@ def open_untouched(path: Path) -> Iterator[sqlite3.Connection]:
     even a read-only open would rewrite the -shm or create the missing sidecar,
     so the database and its -wal are copied into a private directory and the
     copy is read. No concurrent writer is assumed: the files are compared before
-    and after the copy and the read is refused when either changed. Any failure
-    refuses with a typed error; the caller never falls back to a read-write open.
+    and after the copy and the read is refused when either changed. A failure to
+    copy or open refuses with a typed error; the caller never falls back to a
+    read-write open. Errors raised by the caller's own reads are left to it.
     """
-    wal = path.with_name(path.name + "-wal")
-    shm = path.with_name(path.name + "-shm")
-    try:
-        if not (wal.exists() or shm.exists()):
-            db = sqlite3.connect(path.as_uri() + "?mode=ro&immutable=1", uri=True)
-            try:
-                yield db
-            finally:
-                db.close()
-            return
-        with tempfile.TemporaryDirectory(prefix="tychora-untouched-") as scratch:
-            before = (_stamp(path), _stamp(wal))
-            copy = _copy_to(scratch, path, wal)
-            if (_stamp(path), _stamp(wal)) != before:
-                raise OSError("The database changed while it was copied")
-            db = sqlite3.connect(copy.as_uri() + "?mode=ro", uri=True)
-            try:
-                yield db
-            finally:
-                db.close()
-    except (OSError, sqlite3.DatabaseError):
-        raise TychoraError(
-            "INTEGRITY_ERROR",
-            "The workspace database cannot be inspected.",
-            reason="workspace.database_invalid",
-        ) from None
+    with ExitStack() as stack:
+        try:
+            db = _connect_untouched(path, stack)
+        except (OSError, sqlite3.DatabaseError):
+            raise database_invalid() from None
+        yield db
 
 
 def read_receipt_untouched(path: Path) -> list[tuple[int, str]]:
     """Return the migration receipt rows of an existing database, leaving it as is."""
     with open_untouched(path) as db:
-        if not db.execute(_HAS_RECEIPT).fetchone():
-            return []
-        return db.execute(_RECEIPT).fetchall()
+        try:
+            if not db.execute(_HAS_RECEIPT).fetchone():
+                return []
+            return db.execute(_RECEIPT).fetchall()
+        except sqlite3.DatabaseError:
+            raise database_invalid() from None

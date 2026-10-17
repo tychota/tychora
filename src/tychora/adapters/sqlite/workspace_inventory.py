@@ -20,7 +20,7 @@ from tychora.contracts.base import Contract, Identifier, NonEmptyStr, NonNegativ
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
 
-from .receipt import open_untouched, require_no_live_owner
+from .receipt import database_invalid, open_untouched, require_no_live_owner
 
 
 class InventoryCollection(Contract):
@@ -207,6 +207,8 @@ def read_inventory(root: Path) -> WorkspaceInventory:
                 "The old workspace holds a row this version cannot read.",
                 reason="canonical.row_invalid",
             ) from None
+        except sqlite3.DatabaseError:
+            raise database_invalid() from None
 
 
 def read_original(

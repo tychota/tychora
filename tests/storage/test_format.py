@@ -22,6 +22,7 @@ from tychora.adapters.sqlite.migrations import (
     migration_sql,
     open_verified_import,
 )
+from tychora.adapters.sqlite.receipt import open_untouched
 from tychora.contracts.errors import TychoraError
 
 
@@ -165,3 +166,13 @@ def test_owner_starting_during_format_read_is_busy_not_integrity(tmp_path, monke
     finally:
         for fd in held:
             os.close(fd)
+
+
+@pytest.mark.parametrize("sidecar", [False, True])
+def test_caller_error_inside_untouched_read_keeps_its_type(tmp_path, sidecar):
+    path = tmp_path / "corpus.sqlite3"
+    open_corpus(path, initialize=True).close()
+    if sidecar:
+        (tmp_path / "corpus.sqlite3-shm").write_bytes(b"")
+    with pytest.raises(PermissionError, match="caller"), open_untouched(path):
+        raise PermissionError("caller")
