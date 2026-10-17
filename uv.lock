@@ -3475,6 +3475,7 @@ documents = [
     { name = "pillow" },
     { name = "psutil" },
     { name = "pypdf" },
+    { name = "pypdfium2" },
 ]
 full = [
     { name = "anthropic" },
@@ -3488,6 +3489,7 @@ full = [
     { name = "pillow" },
     { name = "psutil" },
     { name = "pypdf" },
+    { name = "pypdfium2" },
     { name = "tree-sitter" },
     { name = "tree-sitter-javascript" },
     { name = "tree-sitter-python" },
@@ -3578,6 +3580,8 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2,<3" },
     { name = "pypdf", marker = "extra == 'documents'", specifier = "==6.19.0" },
     { name = "pypdf", marker = "extra == 'full'", specifier = "==6.19.0" },
+    { name = "pypdfium2", marker = "extra == 'documents'", specifier = "==5.13.0" },
+    { name = "pypdfium2", marker = "extra == 'full'", specifier = "==5.13.0" },
     { name = "rich" },
     { name = "tiktoken" },
     { name = "tomlkit", specifier = "==0.15.1" },

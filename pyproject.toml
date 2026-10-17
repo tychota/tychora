@@ -11,7 +11,7 @@ license-files = ["LICENSE"]
 dependencies = ["pydantic>=2,<3", "typer", "rich", "markdown-it-py", "jsonschema", "platformdirs", "filelock", "tiktoken", "anyio", "tomlkit==0.15.1"]
 
 [project.optional-dependencies]
-documents = ["docling", "pillow", "pypdf==6.19.0", "psutil==7.2.2"]
+documents = ["docling", "pillow", "pypdf==6.19.0", "pypdfium2==5.13.0", "psutil==7.2.2"]
 code = ["tree-sitter", "tree-sitter-python", "tree-sitter-typescript", "tree-sitter-javascript", "pathspec"]
 vector = ["chromadb==1.5.9"]
 graph = ["ladybug==0.20.3"]
@@ -22,6 +22,7 @@ full = [
   "docling",
   "pillow",
   "pypdf==6.19.0",
+  "pypdfium2==5.13.0",
   "psutil==7.2.2",
   "tree-sitter",
   "tree-sitter-python",
