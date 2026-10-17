@@ -1,0 +1,41 @@
+{
+  "subject": "evidence",
+  "id": "6207a5f14d3b1268f762e5be37dc46890c50d61433e2102550b53d6c77cc1bf0",
+  "evidence": {
+    "unit_id": "6207a5f14d3b1268f762e5be37dc46890c50d61433e2102550b53d6c77cc1bf0",
+    "extraction_id": "841db554ddb6ee67617c75a031bb57ee1b775db409b3e35e4fe4f5d9a254d83a",
+    "parent_id": null,
+    "ordinal": 0,
+    "unit_type": "paragraph",
+    "native_ref": "paragraph:0",
+    "boundary_key": "paragraph:0",
+    "heading_path": [],
+    "text": "Record synthetic verification outcomes for the dashboard fixture.",
+    "text_sha": "d38fe702c11b5c85cba31924f58998f827851c135e2d787c03458f44f8c87640",
+    "text_origin": "source",
+    "citable": true,
+    "review_state": "unreviewed",
+    "locators": [
+      {
+        "char_start": 0,
+        "char_end": 65,
+        "type": "text",
+        "artifact_ref": "d38fe702c11b5c85cba31924f58998f827851c135e2d787c03458f44f8c87640",
+        "native_ref": "dashboard-synthetic-manual"
+      }
+    ],
+    "attributes": {
+      "cells": [],
+      "line_end": 1,
+      "line_start": 1,
+      "token_kind": "text_paragraph"
+    }
+  },
+  "partial_evidence": null,
+  "excerpts": [],
+  "records": [],
+  "original_ref": null,
+  "payload": null,
+  "media_type": null,
+  "truncated": false
+}

@@ -403,7 +403,7 @@ def attest_ranking_input(
     rows: ExtractionBundle | RetainedRepresentationRows,
     prepared: PreparedExtraction,
 ) -> frozenset[str]:
-    """Bind every rendered span and dependency to Task19's canonical ownership."""
+    """Check that every rendered span and dependency belongs to the canonical owner of its extraction."""
     try:
         if (
             type(item) is not RankingInput

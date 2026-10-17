@@ -2,7 +2,7 @@
 
 Tychora is a local evidence engine. It captures versioned documents and code, builds searchable representations, and returns source evidence with citations through Python, CLI, HTTP and MCP. The calling agent writes the final answer or review.
 
-This walkthrough describes the implemented `0.1.0a1` engine at `e7de140`, rather than treating every item in the design specification as delivered. Read the [review assessment](review-assessment.md) for remaining implementation gaps, especially history retention, traces and strict retrieval.
+This walkthrough describes the implemented `0.1.0a1` engine as of the current `main`, rather than treating every item in the design specification as delivered. Read the [review assessment](review-assessment.md) for remaining implementation gaps, especially history retention, traces and strict retrieval.
 
 ## From sources to evidence
 
@@ -42,6 +42,17 @@ The distinction between canonical evidence and derived indexes lets the engine c
 | `evaluation` | Gold datasets, comparisons and metrics | The production query path |
 
 The engine uses explicit orchestration rather than a general RAG framework. Python 3.12 is the supported interpreter. The base package is small relative to the optional document, model and native-index stack. Exact resolved versions live in `uv.lock`; optional dependencies are declared in `pyproject.toml`.
+
+### Dependency direction
+
+Four import-linter contracts in `pyproject.toml` (`[tool.importlinter]`) are the source of truth; `python -m tools.health check` runs them on every pull request.
+
+1. **Layers.** Higher packages may import lower ones, never the reverse: `interfaces` and `clients` (independent of each other), then `api`, `evaluation`, `application`, then `retrieval`, `indexing`, `ingestion` and `formatting` (which may import each other), then `configuration`, `ports` and `contracts`. Evaluation sits above application because it drives the production query path.
+2. **Adapters implement ports.** `adapters` never imports `application`, `retrieval`, `indexing`, `ingestion`, `evaluation`, `formatting`, `interfaces`, `clients` or `api`. The application layer and `api` are the composition root and may import adapters.
+3. **Storage through ports.** `contracts`, `ports`, `configuration`, `ingestion`, `indexing`, `retrieval` and `formatting` never import `adapters`.
+4. **Pure contracts.** `contracts` imports no database client, web framework, command-line library or model SDK.
+
+Today's violations are listed in each contract's `ignore_imports`, one line per import with its file and line. The list may only shrink.
 
 ## 2. Identity and versioning
 
@@ -228,7 +239,7 @@ The CLI verbs are `init`, `add`, `search`, `inspect`, `serve` and `manage`. Type
 
 Backup, restore, health, withdrawal and original deletion have separate semantics. History stores metadata by default; full request replay is not generally available. Expiry timestamps currently do not imply working automatic purge. See [operations](operations.md).
 
-The dashboard has a specification but no implemented UI. Its intended views cover ingestion, corpus inspection, retrieval history and evaluation. Full traces and retention controls must be completed before presenting them as dashboard features.
+The built-in dashboard, served by `tychora serve`, covers collections, documents, PDF and OCR intake, search, evidence inspection, settings and evaluations; see the [dashboard guide](dashboard.md). Query traces and retention controls are not yet available in it.
 
 ## 14. Evaluation, packaging and extension limits
 

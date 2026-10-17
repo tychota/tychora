@@ -41,25 +41,20 @@ def test_setup_request_has_explicit_asset_and_bundle_fields():
 def test_manage_import_bootstraps_without_original_or_control_workspace(tmp_path):
     import shutil
 
+    from tychora import Tychora
     from tychora.adapters.sqlite.connection import open_corpus
     from tychora.application.backup import BackupService
-    from tychora.application.owner import WorkspaceOwner
     from tychora.configuration.resolve import resolve_config
-    from tychora.contracts.requests import RequestScope
     from tychora.ports.execution import ExecutionContext
 
     settings = tmp_path / "settings.toml"
     settings.write_text('schema_version=1\n[profiles.custom]\nbuiltin="documents@1"\n')
     config = resolve_config(settings, "custom", {})
-    scope = RequestScope(
-        principal_id="owner",
-        collection_ids=frozenset(),
-        access_ceiling=0,
-        capabilities=frozenset({"manage"}),
-    )
     source = tmp_path / "removed-source"
-    with WorkspaceOwner.open(source, config, scope) as owner:
-        BackupService(owner).export(tmp_path / "backup", scope, ctx=ExecutionContext())
+    with Tychora.open(source, config=config) as kb:
+        BackupService(kb._workspace.owner).export(
+            tmp_path / "backup", kb.scope, ctx=ExecutionContext()
+        )
     shutil.rmtree(source)
     settings.unlink()
     restored = tmp_path / "restored"

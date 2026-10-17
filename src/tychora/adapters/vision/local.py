@@ -137,8 +137,9 @@ class _OcrWorker:
 
 
 class LocalOcrProvider:
-    def __init__(self, owner: WorkspaceOwner, model_root: Path):
+    def __init__(self, owner: WorkspaceOwner, model_root: Path, *, before_retain=None):
         self.owner = owner
+        self.before_retain = before_retain
         self.models = _verify_models(model_root)
         runtime = _qualified_runtime_versions()
         self.model = "rapidocr==3.9.2:" + digest(
@@ -159,12 +160,15 @@ class LocalOcrProvider:
                 "INVALID_REQUEST", "Local OCR only accepts the explicit OCR task"
             )
         ctx.checkpoint()
-        image_ref = self.owner.run_blocking_sync(
-            lambda: self.owner.artifacts.put_stream(
+
+        def retain_region():
+            if self.before_retain is not None:
+                self.before_retain(region.image, region.media_type)
+            return self.owner.artifacts.put_stream(
                 BytesIO(region.image), region.media_type
-            ),
-            ctx,
-        )
+            )
+
+        image_ref = self.owner.run_blocking_sync(retain_region, ctx)
         if image_ref != region.image_ref:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Local OCR region differs from retained artifact"
@@ -195,61 +199,78 @@ class LocalOcrProvider:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Local OCR returned an invalid result"
             ) from None
-        task_schema = {"type": "null"}
-        task_schema_sha = digest("vision-task-schema-v1", task_schema)
-        prompt_identity = vision_prompt_identity(
-            self.prompt_schema_version, task_schema
-        )
-        receipt = canonical_bytes(
-            {
-                "type": "vision_derivation",
-                "schema_version": "1",
-                "data": {
-                    "task": region.task,
-                    "source_native_ref": region.source_native_ref,
-                    "image_sha256": region.image_sha256,
-                    "original_image_sha256": region.original_image_sha256,
-                    "original_pixel_sha256": region.original_pixel_sha256,
-                    "region_pixel_sha256": region.region_pixel_sha256,
-                    "context_sha256": region.context_sha256,
-                    "source_context_sha256": source_context_identity(
-                        region.source_context
-                    ),
-                    "dependency_ids": sorted(region.dependency_ids),
-                    "model": self.model,
-                    "prompt_schema_version": self.prompt_schema_version,
-                    "task_schema_sha256": task_schema_sha,
-                    "prompt_identity": prompt_identity,
-                    "result": {
-                        **result,
-                        "uncertainties": ["OCR model scores are uncalibrated."],
-                    },
-                },
-            }
-        )
-        derivation = self.owner.artifacts.put_stream(
-            BytesIO(receipt), "application/json"
-        )
-        return DerivedObservation(
-            cache_key=vision_cache_key(
-                region.image_sha256,
-                region.task,
-                self.model,
-                prompt_identity,
-                region.context_sha256,
-            ),
-            task=region.task,
-            image_sha256=region.image_sha256,
-            original_image_sha256=region.original_image_sha256,
-            original_pixel_sha256=region.original_pixel_sha256,
-            region_pixel_sha256=region.region_pixel_sha256,
-            context_sha256=region.context_sha256,
-            literal_transcription=literal,
-            interpretation=None,
-            uncertainties=("OCR model scores are uncalibrated.",),
+        return retain_local_ocr_observation(
+            self.owner,
+            region,
+            result,
             model=self.model,
             prompt_schema_version=self.prompt_schema_version,
-            task_schema_sha256=task_schema_sha,
-            prompt_identity=prompt_identity,
-            derivation=derivation,
+            before_retain=self.before_retain,
         )
+
+
+def local_ocr_identities(prompt_schema_version):
+    task_schema = {"type": "null"}
+    return (
+        digest("vision-task-schema-v1", task_schema),
+        vision_prompt_identity(prompt_schema_version, task_schema),
+    )
+
+
+def retain_local_ocr_observation(
+    owner, region, result, *, model, prompt_schema_version, before_retain=None
+):
+    """Shared receipt serializer for computed OCR; performs no model invocation."""
+    literal = result["literal_transcription"]
+    task_schema_sha, prompt_identity = local_ocr_identities(prompt_schema_version)
+    receipt = canonical_bytes(
+        {
+            "type": "vision_derivation",
+            "schema_version": "1",
+            "data": {
+                "task": region.task,
+                "source_native_ref": region.source_native_ref,
+                "image_sha256": region.image_sha256,
+                "original_image_sha256": region.original_image_sha256,
+                "original_pixel_sha256": region.original_pixel_sha256,
+                "region_pixel_sha256": region.region_pixel_sha256,
+                "context_sha256": region.context_sha256,
+                "source_context_sha256": source_context_identity(region.source_context),
+                "dependency_ids": sorted(region.dependency_ids),
+                "model": model,
+                "prompt_schema_version": prompt_schema_version,
+                "task_schema_sha256": task_schema_sha,
+                "prompt_identity": prompt_identity,
+                "result": {
+                    **result,
+                    "uncertainties": ["OCR model scores are uncalibrated."],
+                },
+            },
+        }
+    )
+    if before_retain is not None:
+        before_retain(receipt, "application/json")
+    derivation = owner.artifacts.put_stream(BytesIO(receipt), "application/json")
+    return DerivedObservation(
+        cache_key=vision_cache_key(
+            region.image_sha256,
+            region.task,
+            model,
+            prompt_identity,
+            region.context_sha256,
+        ),
+        task=region.task,
+        image_sha256=region.image_sha256,
+        original_image_sha256=region.original_image_sha256,
+        original_pixel_sha256=region.original_pixel_sha256,
+        region_pixel_sha256=region.region_pixel_sha256,
+        context_sha256=region.context_sha256,
+        literal_transcription=literal,
+        interpretation=None,
+        uncertainties=("OCR model scores are uncalibrated.",),
+        model=model,
+        prompt_schema_version=prompt_schema_version,
+        task_schema_sha256=task_schema_sha,
+        prompt_identity=prompt_identity,
+        derivation=derivation,
+    )

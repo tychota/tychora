@@ -24,7 +24,14 @@ from .base import (
     PositiveInt,
     Sha256,
 )
-from .evidence import EvidenceUnit, Excerpt, RelationPath
+from .evidence import (
+    EvidenceUnit,
+    Excerpt,
+    Locator,
+    RelationPath,
+    ReviewState,
+    TextOrigin,
+)
 from .identity import canonical_bytes
 
 PageLimit = Annotated[int, Field(ge=1, le=1000)]
@@ -54,6 +61,25 @@ class DefinitionEntry(Contract):
     label: str
     definition: FrozenJsonMap
     schema_digest: Identifier
+
+
+class KindMetadataField(Contract):
+    name: NonEmptyStr
+    required: bool
+    value_types: tuple[str, ...]
+    description: str
+    constraints: FrozenJsonMap | bool
+    advanced: bool = False
+
+
+class KindMetadataForm(Contract):
+    kind_id: Identifier
+    schema_id: Identifier
+    schema_digests: FrozenJsonMap
+    fields: tuple[KindMetadataField, ...]
+    schemas: FrozenJsonMap
+    schema_reference_bindings: FrozenJsonMap
+    advanced: bool = False
 
 
 class SourceExtractionCoverage(Contract):
@@ -119,6 +145,59 @@ class SourceChannelPage(Contract):
     extraction_id: Identifier
     channels: tuple[SourceChannelCoverage, ...] = ()
     next_cursor: Cursor | None = None
+
+
+class ExtractionContentRequest(Contract):
+    source_id: Identifier
+    revision_id: Identifier
+    extraction_id: Identifier
+    limit: Annotated[int, Field(ge=1, le=50)] = 20
+    cursor: Cursor | None = None
+    unit_id: Identifier | None = None
+    chunk_id: Identifier | None = None
+
+
+class ExtractionUnitSummary(Contract):
+    id: Identifier
+    ordinal: NonNegativeInt
+    unit_type: NonEmptyStr
+    heading_path: tuple[str, ...]
+    text_origin: TextOrigin
+    review_state: ReviewState
+    citable: bool
+    locators: tuple[Locator, ...]
+    preview: str
+
+
+class ExtractionWindow(Contract):
+    id: Identifier
+    unit_id: Identifier
+    extraction_id: Identifier
+    char_start: NonNegativeInt
+    char_end: PositiveInt
+    text: str
+    token_count: PositiveInt
+    chunker_fingerprint: NonEmptyStr
+    context_group_key: NonEmptyStr
+    locators: tuple[Locator, ...]
+
+
+class ExtractionUnitsPage(Contract):
+    source_id: Identifier
+    revision_id: Identifier
+    extraction_id: Identifier
+    units: tuple[ExtractionUnitSummary, ...] = ()
+    next_cursor: Cursor | None = None
+    scope_limited: bool = False
+
+
+class ExtractionWindowsPage(Contract):
+    source_id: Identifier
+    revision_id: Identifier
+    extraction_id: Identifier
+    windows: tuple[ExtractionWindow, ...] = ()
+    next_cursor: Cursor | None = None
+    scope_limited: bool = False
 
 
 class NamedCount(Contract):

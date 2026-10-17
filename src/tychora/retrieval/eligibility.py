@@ -43,6 +43,7 @@ class RevisionFact:
     is_default: bool
     kind_allowed_uses: frozenset[str] | None = None
     global_facets: frozenset[str] = frozenset()
+    collection_archived: bool = False
 
 
 def _parsed_date(value: str | None) -> date | None:
@@ -325,8 +326,19 @@ class EligibilityCompiler:
         scope: RequestScope,
         request: QueryRequest,
         config: ResolvedConfig,
+        *,
+        _retained_inspection: bool = False,
     ) -> EligibilityAttempt:
         facts = self.reader.read_eligibility_facts(snapshot)
+        if _retained_inspection:
+            # Exact retained inspection alone: these detached facts are never cached
+            # or reused by query/graph/vector admission.
+            facts = replace(
+                facts,
+                revisions=tuple(
+                    replace(item, collection_archived=False) for item in facts.revisions
+                ),
+            )
         view, warnings = self._compile(snapshot, scope, request, config, facts)
         definitions = dict(facts.historical_definitions)
         selected_all_kinds = {
@@ -431,6 +443,7 @@ class EligibilityCompiler:
             for item in facts.revisions
             if item.collection_id in scope.collection_ids
             and not item.withdrawn
+            and not item.collection_archived
             and max(item.access_rank, item.source_floor, item.collection_floor)
             <= scope.access_ceiling
             and item.review_state in original_reviews

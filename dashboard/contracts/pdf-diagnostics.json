@@ -1,0 +1,31 @@
+{
+  "subject": "diagnostics",
+  "id": "e8f20f090369d20260828867c8b423e584e3a97f5b7a0328a0acf0d8bd855e9d",
+  "evidence": null,
+  "partial_evidence": null,
+  "excerpts": [],
+  "records": [
+    {
+      "id": "e8f20f090369d20260828867c8b423e584e3a97f5b7a0328a0acf0d8bd855e9d",
+      "record_type": "diagnostic_summary",
+      "schema_id": "diagnostic-summary@1",
+      "value": {
+        "detection_note": "No-text-detected is detector-relative, not a blank-page assertion.",
+        "ocr_review_state": "needs_review",
+        "pdf_coverage": {
+          "blank_pages": [3],
+          "native_pages": [2],
+          "no_text_detected_pages": [],
+          "ocr_pages": [1],
+          "page_count": 3
+        },
+        "retained": true,
+        "scope_limited": false
+      }
+    }
+  ],
+  "original_ref": null,
+  "payload": null,
+  "media_type": null,
+  "truncated": false
+}

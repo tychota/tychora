@@ -1,6 +1,7 @@
 """Pure preparation of exact representation ownership from canonical rows."""
 
 import codecs
+import weakref
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -42,6 +43,9 @@ class _RetainedIndex:
     asset_owners: Mapping[str, frozenset[str]]
     code_maps: Mapping[str, "_LocalCodeMap"]
     document_parts: Mapping[str, tuple[DocumentSourcePart, ...]]
+    source_locators: Mapping[
+        tuple[str, str, str], tuple[tuple[EvidenceUnit, TextLocator | CodeLocator], ...]
+    ]
 
 
 @dataclass(frozen=True)
@@ -499,53 +503,34 @@ def _validate_retained_code_records(
                 raise ValueError("Retained code context dependencies differ")
 
 
+_BUNDLE_INDEXES: dict[int, tuple[weakref.ref[Any], _RetainedIndex]] = {}
+
+
 def _bundle_index(bundle: RepresentationRows) -> _RetainedIndex:
-    units = {unit.unit_id: unit for unit in bundle.units}
-    if (
-        len(units) != len(bundle.units)
-        or bundle.extraction.revision_id != bundle.revision.revision_id
-        or any(
-            unit.extraction_id != bundle.extraction.extraction_id
-            or sha256(unit.text.encode()).hexdigest() != unit.text_sha
-            for unit in bundle.units
-        )
-    ):
-        raise ValueError("Canonical extraction membership or text identity differs")
-    rows: dict[str, list[tuple[int, object]]] = defaultdict(list)
-    for row in bundle.locators:
-        if row.unit_id not in units:
-            raise ValueError("Canonical locator belongs outside extraction")
-        rows[row.unit_id].append((row.fragment_ordinal, row.locator))
-    for unit in bundle.units:
-        ordered = sorted(rows.get(unit.unit_id, ()))
-        if [ordinal for ordinal, _ in ordered] != list(range(len(ordered))) or tuple(
-            locator for _, locator in ordered
-        ) != unit.locators:
-            raise ValueError("Canonical locator rows differ from evidence unit")
+    """Validate and index one immutable row bundle once for the bundle object's lifetime.
+
+    Code excerpt projection runs once per citation; rebuilding the index there costs a
+    full revalidation of every unit in the extraction, which for a repository source
+    is the whole repository. Bundles are frozen, so the index of one object never
+    changes; it is keyed by object identity (not by value, which would hash the whole
+    bundle) and dropped when the bundle is collected.
+    """
+    key = id(bundle)
+    cached = _BUNDLE_INDEXES.get(key)
+    if cached is not None and cached[0]() is bundle:
+        return cached[1]
+    index = _build_bundle_index(bundle)
+    _BUNDLE_INDEXES[key] = (weakref.ref(bundle), index)
+    weakref.finalize(bundle, _BUNDLE_INDEXES.pop, key, None)
+    return index
+
+
+def _build_bundle_index(bundle: RepresentationRows) -> _RetainedIndex:
+    units = _validated_units(bundle)
+    _validate_locator_rows(bundle, units)
     code_files = _code_files(bundle)
     retained_code_files = {} if code_files else _retained_code_files(bundle, units)
-    code_maps: dict[str, _LocalCodeMap] = {}
-    for unit in bundle.units:
-        native_locators = [
-            locator
-            for locator in unit.locators
-            if isinstance(locator, (TextLocator, CodeLocator))
-        ]
-        for locator in native_locators:
-            local_map = _validate_locator(
-                bundle, unit, locator, code_files, retained_code_files
-            )
-            if local_map is not None:
-                if unit.unit_id in code_maps:
-                    raise ValueError("Code unit requires one retained file locator")
-                code_maps[unit.unit_id] = local_map
-        for locator in unit.locators:
-            if isinstance(locator, DocumentLocator) and (
-                locator.artifact_ref != bundle.revision.original_sha
-                or locator.native_ref != bundle.source.source_key
-                or locator.char_end > len(unit.text)
-            ):
-                raise ValueError("Document locator retained binding differs")
+    code_maps = _validated_unit_locators(bundle, code_files, retained_code_files)
     if retained_code_files:
         _validate_retained_code_structure(units, retained_code_files, code_maps)
         _validate_retained_code_records(bundle, units, retained_code_files, code_maps)
@@ -557,6 +542,95 @@ def _bundle_index(bundle: RepresentationRows) -> _RetainedIndex:
         for asset in bundle.assets
     ):
         raise ValueError("Duplicate canonical asset identity")
+    proxies = _validated_proxies(bundle, units, assets)
+    asset_owners = _validated_asset_owners(bundle, units, assets)
+    return _RetainedIndex(
+        units=units,
+        assets=assets,
+        proxies=proxies,
+        asset_owners={
+            asset_id: frozenset(owner_ids)
+            for asset_id, owner_ids in asset_owners.items()
+        },
+        code_maps=code_maps,
+        document_parts=_validated_documents(bundle),
+        source_locators=_source_locators(units),
+    )
+
+
+def _validated_units(bundle: RepresentationRows) -> dict[str, EvidenceUnit]:
+    """Index the units by id, requiring one extraction, one revision and true text hashes."""
+    units = {unit.unit_id: unit for unit in bundle.units}
+    if (
+        len(units) != len(bundle.units)
+        or bundle.extraction.revision_id != bundle.revision.revision_id
+        or any(
+            unit.extraction_id != bundle.extraction.extraction_id
+            or sha256(unit.text.encode()).hexdigest() != unit.text_sha
+            for unit in bundle.units
+        )
+    ):
+        raise ValueError("Canonical extraction membership or text identity differs")
+    return units
+
+
+def _validate_locator_rows(
+    bundle: RepresentationRows, units: Mapping[str, EvidenceUnit]
+) -> None:
+    """Require the stored locator rows to reproduce each unit's ordered locators."""
+    rows: dict[str, list[tuple[int, object]]] = defaultdict(list)
+    for row in bundle.locators:
+        if row.unit_id not in units:
+            raise ValueError("Canonical locator belongs outside extraction")
+        rows[row.unit_id].append((row.fragment_ordinal, row.locator))
+    for unit in bundle.units:
+        ordered = sorted(rows.get(unit.unit_id, ()))
+        if [ordinal for ordinal, _ in ordered] != list(range(len(ordered))) or tuple(
+            locator for _, locator in ordered
+        ) != unit.locators:
+            raise ValueError("Canonical locator rows differ from evidence unit")
+
+
+def _validated_unit_locators(
+    bundle: RepresentationRows,
+    code_files: Mapping[tuple[str, str], CodeFileDescriptor],
+    retained_code_files: Mapping[tuple[str, str], _RetainedCodeFile],
+) -> dict[str, _LocalCodeMap]:
+    """Validate every native and document locator; return the code map of each code unit."""
+    code_maps: dict[str, _LocalCodeMap] = {}
+    for unit in bundle.units:
+        for locator in unit.locators:
+            if not isinstance(locator, (TextLocator, CodeLocator)):
+                continue
+            local_map = _validate_locator(
+                bundle, unit, locator, code_files, retained_code_files
+            )
+            if local_map is None:
+                continue
+            if unit.unit_id in code_maps:
+                raise ValueError("Code unit requires one retained file locator")
+            code_maps[unit.unit_id] = local_map
+        _validate_document_locators(bundle, unit)
+    return code_maps
+
+
+def _validate_document_locators(bundle: RepresentationRows, unit: EvidenceUnit) -> None:
+    """Require document locators to bind the retained original and stay inside the unit."""
+    for locator in unit.locators:
+        if isinstance(locator, DocumentLocator) and (
+            locator.artifact_ref != bundle.revision.original_sha
+            or locator.native_ref != bundle.source.source_key
+            or locator.char_end > len(unit.text)
+        ):
+            raise ValueError("Document locator retained binding differs")
+
+
+def _validated_proxies(
+    bundle: RepresentationRows,
+    units: Mapping[str, EvidenceUnit],
+    assets: Mapping[str, AssetRow],
+) -> dict[str, AssetProxyRow]:
+    """Index the asset proxies, requiring original source ownership and one row per proxy unit."""
     proxies = {proxy.proxy_unit_id: proxy for proxy in bundle.proxies}
     if len(proxies) != len(bundle.proxies) or any(
         proxy.proxy_unit_id not in units
@@ -575,6 +649,15 @@ def _bundle_index(bundle: RepresentationRows) -> _RetainedIndex:
         for unit in bundle.units
     ):
         raise ValueError("Every asset proxy unit requires exactly one proxy row")
+    return proxies
+
+
+def _validated_asset_owners(
+    bundle: RepresentationRows,
+    units: Mapping[str, EvidenceUnit],
+    assets: Mapping[str, AssetRow],
+) -> dict[str, set[str]]:
+    """Collect the units that own each asset as source or caption, rejecting repeat links."""
     asset_owners: dict[str, set[str]] = defaultdict(set)
     seen_links: set[tuple[str, str, str]] = set()
     for link in bundle.unit_assets:
@@ -588,6 +671,13 @@ def _bundle_index(bundle: RepresentationRows) -> _RetainedIndex:
         seen_links.add(key)
         if link.role in {"source", "caption"}:
             asset_owners[link.asset_id].add(link.unit_id)
+    return asset_owners
+
+
+def _validated_documents(
+    bundle: RepresentationRows,
+) -> dict[str, tuple[DocumentSourcePart, ...]]:
+    """Read the document source parts of each unit, requiring one provenance per domain."""
     documents: dict[str, tuple[DocumentSourcePart, ...]] = {}
     for unit in bundle.units:
         if unit.attributes.get("document_representation") == "docling-source-parts@1":
@@ -598,17 +688,34 @@ def _bundle_index(bundle: RepresentationRows) -> _RetainedIndex:
             previous = provenance.setdefault(part.source_domain, part.provenance)
             if previous != part.provenance:
                 raise ValueError("Document source provenance differs")
-    return _RetainedIndex(
-        units=units,
-        assets=assets,
-        proxies=proxies,
-        asset_owners={
-            asset_id: frozenset(owner_ids)
-            for asset_id, owner_ids in asset_owners.items()
-        },
-        code_maps=code_maps,
-        document_parts=documents,
-    )
+    return documents
+
+
+def _source_domain(locator: object) -> tuple[str, str, str] | None:
+    """The source slice a text or code locator addresses; only equal domains overlap."""
+    if isinstance(locator, TextLocator):
+        return "text", locator.artifact_ref, locator.native_ref
+    if isinstance(locator, CodeLocator):
+        return "code", locator.artifact_ref, locator.relative_path
+    return None
+
+
+def _source_locators(
+    units: Mapping[str, EvidenceUnit],
+) -> dict[
+    tuple[str, str, str], tuple[tuple[EvidenceUnit, TextLocator | CodeLocator], ...]
+]:
+    """Group source locators by domain in unit order, so ownership scans one file."""
+    grouped: dict[
+        tuple[str, str, str], list[tuple[EvidenceUnit, TextLocator | CodeLocator]]
+    ] = defaultdict(list)
+    for owner in units.values():
+        for candidate in owner.locators:
+            domain = _source_domain(candidate)
+            if domain is not None:
+                assert isinstance(candidate, (TextLocator, CodeLocator))
+                grouped[domain].append((owner, candidate))
+    return {domain: tuple(items) for domain, items in grouped.items()}
 
 
 def project_code_excerpt_locator(
@@ -671,63 +778,50 @@ def _locator_intervals(
     if len(locators) != 1:
         raise ValueError("Text/code representation requires one source locator")
     locator = locators[0]
+    domain = _source_domain(locator)
+    assert domain is not None
     result: list[tuple[int, int, str]] = []
-    for owner in index.units.values():
-        for candidate in owner.locators:
-            same_domain = (
-                isinstance(locator, TextLocator)
-                and isinstance(candidate, TextLocator)
-                and candidate.artifact_ref == locator.artifact_ref
-                and candidate.native_ref == locator.native_ref
-                or isinstance(locator, CodeLocator)
+    for owner, candidate in index.source_locators.get(domain, ()):
+        left = max(locator.char_start, candidate.char_start)
+        right = min(locator.char_end, candidate.char_end)
+        if left < right:
+            target_text = target.text[
+                left - locator.char_start : right - locator.char_start
+            ]
+            owner_text = owner.text[
+                left - candidate.char_start : right - candidate.char_start
+            ]
+            if target_text != owner_text:
+                raise ValueError("Retained source slices differ across owners")
+            if (
+                isinstance(locator, CodeLocator)
                 and isinstance(candidate, CodeLocator)
-                and candidate.artifact_ref == locator.artifact_ref
-                and candidate.relative_path == locator.relative_path
-            )
-            if not same_domain:
-                continue
-            left = max(locator.char_start, candidate.char_start)
-            right = min(locator.char_end, candidate.char_end)
-            if left < right:
-                target_text = target.text[
-                    left - locator.char_start : right - locator.char_start
-                ]
-                owner_text = owner.text[
-                    left - candidate.char_start : right - candidate.char_start
-                ]
-                if target_text != owner_text:
-                    raise ValueError("Retained source slices differ across owners")
+                and target.unit_id in index.code_maps
+            ):
+                target_map = index.code_maps[target.unit_id]
+                owner_map = index.code_maps[owner.unit_id]
+                target_start = left - locator.char_start
+                target_end = right - locator.char_start
+                owner_start = left - candidate.char_start
+                owner_end = right - candidate.char_start
                 if (
-                    isinstance(locator, CodeLocator)
-                    and isinstance(candidate, CodeLocator)
-                    and target.unit_id in index.code_maps
+                    locator.byte_start + target_map.byte_offsets[target_start]
+                    != candidate.byte_start + owner_map.byte_offsets[owner_start]
+                    or locator.byte_start + target_map.byte_offsets[target_end]
+                    != candidate.byte_start + owner_map.byte_offsets[owner_end]
+                    or locator.line_start + target_map.line_offsets[target_start]
+                    != candidate.line_start + owner_map.line_offsets[owner_start]
+                    or locator.line_start + target_map.line_offsets[target_end - 1]
+                    != candidate.line_start + owner_map.line_offsets[owner_end - 1]
                 ):
-                    target_map = index.code_maps[target.unit_id]
-                    owner_map = index.code_maps[owner.unit_id]
-                    target_start = left - locator.char_start
-                    target_end = right - locator.char_start
-                    owner_start = left - candidate.char_start
-                    owner_end = right - candidate.char_start
-                    if (
-                        locator.byte_start + target_map.byte_offsets[target_start]
-                        != candidate.byte_start + owner_map.byte_offsets[owner_start]
-                        or locator.byte_start + target_map.byte_offsets[target_end]
-                        != candidate.byte_start + owner_map.byte_offsets[owner_end]
-                        or locator.line_start + target_map.line_offsets[target_start]
-                        != candidate.line_start + owner_map.line_offsets[owner_start]
-                        or locator.line_start + target_map.line_offsets[target_end - 1]
-                        != candidate.line_start + owner_map.line_offsets[owner_end - 1]
-                    ):
-                        raise ValueError(
-                            "Retained code overlap coordinate mapping differs"
-                        )
-                result.append(
-                    (
-                        left - locator.char_start,
-                        right - locator.char_start,
-                        owner.unit_id,
-                    )
+                    raise ValueError("Retained code overlap coordinate mapping differs")
+            result.append(
+                (
+                    left - locator.char_start,
+                    right - locator.char_start,
+                    owner.unit_id,
                 )
+            )
     return result
 
 

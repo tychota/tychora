@@ -140,7 +140,7 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
         await owner.run_blocking(
             lambda: owner.db.execute(
                 "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) "
-                "VALUES (?,?,?,?,0,'{}')",
+                'VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
                 (COLLECTION, owner.workspace_id, "manuals", "Manuals"),
             ),
             context,

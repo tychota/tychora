@@ -1,0 +1,72 @@
+{
+  "dataset_id": "dashboard-synthetic-v1",
+  "name": "Synthetic dashboard contract",
+  "version_sha": "e850e2a47e7f3504314d6120b64236b312658fd87b20874803feb9bd0ed20198",
+  "cases": [
+    {
+      "case_id": "synthetic-verification",
+      "family_key": "synthetic-verification",
+      "split": "test",
+      "query": {
+        "input": {
+          "type": "question",
+          "text": "verification"
+        },
+        "profile": null,
+        "mode": null,
+        "filters": null,
+        "hints": [],
+        "context": {},
+        "revision_ids": [],
+        "revision_selector": "current",
+        "as_of": null,
+        "cutoff": null,
+        "unknown_dates": "strict",
+        "include_global": false,
+        "modalities": [
+          "lexical"
+        ],
+        "previous_unit_ids": [],
+        "exact_identifiers": [],
+        "exact_only": false,
+        "limit": 8,
+        "budgets": {
+          "max_tokens": 6000,
+          "tokenizer_id": "cl100k_base",
+          "render_targets": [],
+          "max_response_bytes": 1048576
+        },
+        "render_targets": [],
+        "trace": false
+      },
+      "expected_source_ids": [
+        "5372b6c3-0e49-56f1-b6fb-777656679103"
+      ],
+      "expected_document_ids": [],
+      "expected_revision_ids": [
+        "1121a973d0f6aadedfecd9437c9ba61aaccca93a681cf6543e12c7a42cba2bf0"
+      ],
+      "expected_unit_ids": [
+        "6207a5f14d3b1268f762e5be37dc46890c50d61433e2102550b53d6c77cc1bf0"
+      ],
+      "expected_asset_ids": [],
+      "expected_definition_ids": [],
+      "expected_file_ids": [],
+      "forbidden_source_ids": [],
+      "forbidden_revision_ids": [],
+      "forbidden_unit_ids": [],
+      "forbidden_asset_ids": [],
+      "forbidden_definition_ids": [],
+      "forbidden_file_ids": [],
+      "expected_spans": [],
+      "graded_relevance": {},
+      "file_relevance": {},
+      "asset_relevance": {},
+      "expected_paths": [],
+      "expected_reference_ids": [],
+      "expected_edge_ids": [],
+      "benchmark": "integrity",
+      "label_provenance": "synthetic fixture text and public HTTP evidence identity"
+    }
+  ]
+}

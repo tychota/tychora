@@ -25,3 +25,13 @@ site/
 model-bundle/
 model-cache/
 knowledge/
+
+# Dashboard developer dependencies and browser evidence
+dashboard/node_modules/
+dashboard/test-results/
+dashboard/playwright-report/
+dashboard/public/assets/THIRD-PARTY-NOTICES.txt
+.superpowers/
+.worktrees/
+mutants/
+dashboard/coverage/

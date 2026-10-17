@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+from tychora.adapters.docling.ocr_evidence import normalize_native_document_units
 from tychora.contracts.base import Contract
 from tychora.contracts.documents import (
     DocumentSeparator,
@@ -15,7 +16,7 @@ from tychora.contracts.evidence import DocumentLocator, EvidenceUnit
 from tychora.contracts.extraction import ExtractionArtifact
 from tychora.contracts.identity import canonical_bytes, digest
 
-# Task34 must disclose these aggregate semantic expansion ceilings. They count
+# Documented ingestion limits: aggregate semantic expansion ceilings. They count
 # repeated ancestor representations as output, not just distinct original items.
 MAX_SEMANTIC_WORK = 100_000
 MAX_SEMANTIC_BYTES = 256 * 1024 * 1024
@@ -76,7 +77,8 @@ def _part_locators(
                 physical_page=prov.physical_page,
                 geometry=prov.geometry,
             )
-            for prov in item.provenance
+            for index, prov in enumerate(item.provenance)
+            if prov.char_domain != "docling_assembly_step" or index == 0
             if prov.char_domain != "docling_orig_text_item"
             or min(part.source_end, prov.charspan[1])
             > max(part.source_start, prov.charspan[0])
@@ -259,7 +261,10 @@ def validate_document_source_parts(
     unit: EvidenceUnit, parsed: ExtractionArtifact
 ) -> None:
     """Validate canonical ownership against complete verified SDK facts."""
-    items = {item.native_ref: cast(DocumentUnit, item) for item in parsed.units}
+    items = {
+        item.native_ref: cast(DocumentUnit, item)
+        for item in normalize_native_document_units(parsed)
+    }
     _validate_source_parts(unit, parsed, items)
 
 
@@ -419,7 +424,10 @@ def validate_document_ownership(
     units: tuple[EvidenceUnit, ...], parsed: ExtractionArtifact
 ) -> None:
     """Pure normalization/restore boundary; never degrade to parent-only ownership."""
-    items = {item.native_ref: cast(DocumentUnit, item) for item in parsed.units}
+    items = {
+        item.native_ref: cast(DocumentUnit, item)
+        for item in normalize_native_document_units(parsed)
+    }
     covered = set()
     for unit in units:
         if unit.attributes.get("document_representation") != "docling-source-parts@1":

@@ -360,6 +360,11 @@ def _validate_retained_documents(
                     for marker in source_markers
                 )
             )
+            if (
+                data.get("image_representation") == "scan-external-images@1"
+                and composed_root is not None
+            ):
+                document_markers.add("docling-pdf-pixels@1")
             if requires_document_mapping and any(
                 marker not in document_markers for marker in source_markers
             ):
@@ -375,7 +380,14 @@ def _validate_retained_documents(
                 raise ValueError("Unregistered document source mapping")
             doc_ref = ArtifactRef.model_validate_json(canonical_bytes(doc_ref_data))
             _, sdk_json = payload(doc_ref.sha256)
-            parsed = replay_document(raw, sdk_json, ref)
+
+            def read_declared(declared_ref):
+                registered, content = payload(declared_ref.sha256)
+                if registered != declared_ref:
+                    raise ValueError("Declared PDF artifact differs")
+                return content
+
+            parsed = replay_document(raw, sdk_json, ref, read_declared=read_declared)
             if parsed.registration.revision.revision_id != revision_id:
                 raise ValueError
             units = []
@@ -402,22 +414,33 @@ def _validate_retained_documents(
                 units.append(EvidenceUnit.from_mapping(values))
                 if values["text_origin"] == "source":
                     source_units.append(units[-1])
-            validate_document_ownership(tuple(source_units), parsed)
+            native_source_units = tuple(
+                unit
+                for unit in source_units
+                if unit.attributes.get("document_representation")
+                != "docling-pdf-pixels@1"
+            )
+            if len(native_source_units) != len(source_units) and (
+                parsed.image_representation != "scan-external-images@1"
+                or composed_root is None
+            ):
+                raise ValueError("Undeclared PDF pixel owner")
+            validate_document_ownership(native_source_units, parsed)
             if composed_root is not None:
-                inputs: dict[str, bytes] = {}
-                aggregate = 0
+                from tychora.ingestion.composition import DeclaredPayloads
+
+                declared_refs = {}
                 for declared in composed_root.get("required_artifacts", []):
                     declared_ref = ArtifactRef.model_validate_json(
                         canonical_bytes(declared)
                     )
-                    registered, content = payload(declared_ref.sha256)
-                    if registered != declared_ref:
-                        raise ValueError("Composed input declaration differs")
-                    if declared_ref.sha256 not in inputs:
-                        aggregate += len(content)
-                        if aggregate > 512 * 1024 * 1024:
-                            raise ValueError("Composed replay exceeds capacity")
-                        inputs[declared_ref.sha256] = content
+                    old = declared_refs.get(declared_ref.sha256)
+                    if old is not None and old != declared_ref:
+                        raise ValueError("Conflicting composed inputs")
+                    declared_refs[declared_ref.sha256] = declared_ref
+                inputs = DeclaredPayloads(
+                    declared_refs, read_declared, 512 * 1024 * 1024
+                )
                 if not candidate_configs:
                     raise ValueError("Composed replay configuration is unavailable")
                 replayed = None
@@ -538,9 +561,11 @@ class RestoreService:
         ctx: ExecutionContext,
     ) -> RestoreReceipt:
         source, destination = source.absolute(), destination.absolute()
-        if destination.resolve(strict=False).is_relative_to(
-            source.resolve(strict=True)
-        ):
+        try:
+            resolved_source = source.resolve(strict=True)
+        except FileNotFoundError:
+            raise TychoraError("NOT_FOUND", "Restore archive is unavailable.") from None
+        if destination.resolve(strict=False).is_relative_to(resolved_source):
             raise TychoraError(
                 "INVALID_REQUEST", "Restore destination is inside archive"
             )

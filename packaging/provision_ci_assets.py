@@ -4,17 +4,54 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import time
 from pathlib import Path
 
 SELECTIONS = frozenset(
     {"documents", "ocr", "output-tokenizer", "voyage-context-4", "rerank-2.5"}
 )
+
+
+CODE_CORPUS_COMMIT = "700df656fb391aa5eaa41a75ce27eed432be442c"
+CODE_CORPUS_TREE = "34fa1cac9248f208c5dfaa34347674a4f6d6d26b"
+
+
+def provision_code_corpus(
+    repository: Path,
+    destination: Path,
+    *,
+    commit: str = CODE_CORPUS_COMMIT,
+    tree: str = CODE_CORPUS_TREE,
+) -> Path:
+    """Export src/tychora at the pinned commit; Git verifies the bytes by tree id."""
+
+    def git(*args: str) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(
+            ["git", "-C", str(repository), *args], capture_output=True, check=False
+        )
+
+    missing = git("cat-file", "-e", f"{commit}^{{commit}}").returncode != 0
+    if missing and git("fetch", "--quiet", "--depth", "1", "origin", commit).returncode:
+        raise SystemExit(f"cannot fetch the pinned code corpus commit {commit}")
+    actual = git("rev-parse", f"{commit}:src/tychora").stdout.decode().strip()
+    if actual != tree:
+        raise SystemExit(
+            f"code corpus tree {actual} differs from the pinned tree {tree}"
+        )
+    archive = git("archive", "--format=tar", commit, "src/tychora")
+    if archive.returncode != 0:
+        raise SystemExit(f"cannot export the code corpus: {archive.stderr.decode()}")
+    destination.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as bundle:
+        bundle.extractall(destination, filter="data")
+    return destination
 
 
 def verify_selected(cache: Path, manifest: Path) -> dict[str, Path]:
@@ -56,9 +93,12 @@ def _retryable_download_failure(stderr: str) -> bool:
     return False
 
 
+_ATTEMPTS = 5
+
+
 def run_setup(command: list[str], env: dict[str, str]) -> None:
     """Retry only an explicitly transient public asset download failure."""
-    for attempt in range(1, 4):
+    for attempt in range(1, _ATTEMPTS + 1):
         result = subprocess.run(
             command, env=env, capture_output=True, text=True, check=False
         )
@@ -68,10 +108,12 @@ def run_setup(command: list[str], env: dict[str, str]) -> None:
             sys.stderr.write(result.stderr)
         if result.returncode == 0:
             return
-        if attempt == 3 or not _retryable_download_failure(result.stderr):
+        if attempt == _ATTEMPTS or not _retryable_download_failure(result.stderr):
             result.check_returncode()
-        print(f"Retrying public asset setup ({attempt + 1}/3)", file=sys.stderr)
-        time.sleep(5 * attempt)
+        print(
+            f"Retrying public asset setup ({attempt + 1}/{_ATTEMPTS})", file=sys.stderr
+        )
+        time.sleep(5 * 2 ** (attempt - 1))  # 5, 10, 20, 40 s: 75 s in total
 
 
 def main() -> None:
@@ -83,6 +125,11 @@ def main() -> None:
         "--bundle",
         type=Path,
         help="Existing verified local bundle for offline validation",
+    )
+    parser.add_argument(
+        "--code-corpus",
+        type=Path,
+        help="Export the pinned code gold-set corpus (Tychora's own source) here",
     )
     args = parser.parse_args()
     args.workspace.mkdir(parents=True, exist_ok=True)
@@ -130,6 +177,10 @@ def main() -> None:
         "TYCHORA_TEST_OCR_MODELS": args.cache / "rapidocr/3.9.2",
         "TYCHORA_TEST_TOKENIZER_ASSETS": tokenizer_dir,
     }
+    if args.code_corpus:
+        lines["TYCHORA_TEST_CODE_CORPUS"] = provision_code_corpus(
+            Path(__file__).parents[1], args.code_corpus
+        )
     with args.github_env.open("a") as stream:
         for key, value in lines.items():
             stream.write(f"{key}={value}\n")

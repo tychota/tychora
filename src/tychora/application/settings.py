@@ -8,7 +8,13 @@ import os
 from uuid import uuid4
 
 from tychora.adapters.sqlite.corpus import CorpusStore
-from tychora.configuration.indexed_representation import indexed_representation_identity
+from tychora.configuration.additive_compatibility import (
+    qualified_additive_registry_extension,
+)
+from tychora.configuration.indexed_representation import (
+    indexed_representation_identity,
+    pinned_runtime_compatible,
+)
 from tychora.configuration.registry import Registry
 from tychora.configuration.resolve import resolve_config, selected_workspace_profile
 from tychora.contracts.errors import TychoraError
@@ -41,9 +47,61 @@ class SettingsService:
         self.owner = owner
         self.runtime = runtime
 
-    async def activate(self, request: SettingsActivation):
+    def preflight(self, candidate):
+        """Validate retained identity without constructing runtimes or changing state."""
+        registry = Registry.from_config(candidate)
+        retained = {}
+        rows = self.owner.db.execute(
+            "SELECT DISTINCT k.kind_id,k.definition_json FROM kinds k "
+            "JOIN revisions r USING(kind_id) JOIN sources s USING(source_id) "
+            "JOIN collections c USING(collection_id) WHERE c.workspace_id=?",
+            (self.owner.workspace_id,),
+        ).fetchall()
+        for kind, definition in rows:
+            value = json.loads(definition)
+            if kind in retained and retained[kind] != value:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Retained kind identity is ambiguous."
+                )
+            retained[kind] = value
+        registry.validate_activation(frozenset(retained), retained)
+        has_snapshot = self.owner.store.active_snapshot_id() is not None
+        if (
+            has_snapshot
+            and indexed_representation_identity(candidate)
+            != indexed_representation_identity(self.owner.config)
+            and not qualified_additive_registry_extension(self.owner.config, candidate)
+        ):
+            raise TychoraError(
+                "PROFILE_INCOMPATIBLE",
+                "Existing index generations require their original configuration.",
+            )
+        if has_snapshot:
+            snapshot = self.owner.store.resolve_snapshot(None)
+            retained_config = self.owner.store.retained_config(snapshot)
+            if not pinned_runtime_compatible(retained_config, candidate):
+                raise TychoraError(
+                    "PROFILE_INCOMPATIBLE",
+                    "Pinned snapshot requires publication under current settings.",
+                )
+        return registry
+
+    async def activate(self, request: SettingsActivation, scope=None):
+        """Direct callers share the same exclusive admission as HTTP activation."""
+        self.runtime.admit(activation=True)
+        try:
+            return await self._activate_admitted(request, scope or self.owner.scope)
+        finally:
+            self.runtime.release(activation=True)
+
+    async def _activate_admitted(self, request: SettingsActivation, scope):
         """Prepare all ports before replacing the durable file and live binding."""
         owner = self.owner
+        from .workspace_authority import authorize_workspace
+
+        await owner.run_blocking(
+            lambda: authorize_workspace(owner, scope), ExecutionContext()
+        )
         await self.runtime.aclose_retired()
         if self.runtime.retired_count >= 8:
             raise TychoraError(
@@ -89,30 +147,7 @@ class SettingsService:
             registry = Registry.from_config(candidate)
 
             def prepare():
-                retained = {}
-                rows = owner.db.execute(
-                    "SELECT DISTINCT k.kind_id,k.definition_json FROM kinds k "
-                    "JOIN revisions r USING(kind_id) JOIN sources s USING(source_id) "
-                    "JOIN collections c USING(collection_id) WHERE c.workspace_id=?",
-                    (owner.workspace_id,),
-                ).fetchall()
-                for kind, definition in rows:
-                    value = json.loads(definition)
-                    if kind in retained and retained[kind] != value:
-                        raise TychoraError(
-                            "INTEGRITY_ERROR", "Retained kind identity is ambiguous."
-                        )
-                    retained[kind] = value
-                registry.validate_activation(frozenset(retained), retained)
-                if (
-                    owner.store.active_snapshot_id() is not None
-                    and indexed_representation_identity(candidate)
-                    != indexed_representation_identity(owner.config)
-                ):
-                    raise TychoraError(
-                        "PROFILE_INCOMPATIBLE",
-                        "Existing index generations require their original configuration.",
-                    )
+                self.preflight(candidate)
                 slots = {"lexical"}
                 if candidate.values.index.text.backend != "disabled":
                     slots.add("text")
@@ -196,6 +231,14 @@ class SettingsService:
                 os.close(directory_fd)
             owner.config, owner.store = candidate, store
             self.runtime.swap(candidate_services)
+            from .workspace_authority import refresh_managed_owner
+
+            if not await _complete_committed(
+                owner.run_blocking(
+                    lambda: refresh_managed_owner(owner), ExecutionContext()
+                )
+            ):
+                self.runtime.record_cleanup_failure()
             # The durable file and live binding have committed. Cleanup must not
             # turn this successful activation into an apparent failed request.
             if not await _complete_committed(previous_services.source_jobs.aclose()):

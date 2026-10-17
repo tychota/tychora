@@ -1,0 +1,44 @@
+{
+  "documents": [
+    {
+      "source_id": "e11fa4d8-c908-5dd2-81b5-27b871caf04e",
+      "source_key": "calibration.md",
+      "title": "Calibration reference",
+      "collection_id": "7046379b-eee3-4fe4-a9a9-dd38296a1d98",
+      "collection_title": "Synthetic library",
+      "source_type": "document",
+      "revision_id": "5b95efcd9ee0e8f0afd4dbb6aa3782390fad670acf6fe66dbf163a4fbec7a58b",
+      "extraction_id": "0e26f7a50cf9e0ebd15e5d90eea05b849fc98ca58c99c8984f359e43c91275f4",
+      "original_media_type": "text/plain",
+      "original_size_bytes": 54,
+      "created_at": "2026-10-14T11:25:22.806314Z",
+      "captured_at": "2026-10-14T11:25:22.806314Z",
+      "processing_state": "unknown",
+      "published_content_state": "published",
+      "channel_readiness": [
+        "lexical"
+      ],
+      "channel_observations": [
+        {
+          "family_id": "7d6dc1488332c280ff45bd56518f1345f7bf29acb56e83a1908833f2d10831a6",
+          "channel": "lexical",
+          "state": "ready"
+        }
+      ],
+      "channel_observations_complete": true,
+      "latest_job": null,
+      "job_observations_complete": false,
+      "unit_count": null,
+      "window_count": null,
+      "counts_complete": false,
+      "counts_unavailable_reason": "bounded_exact_authorization_unavailable",
+      "jobs_unavailable_reason": "bounded_subject_lineage_unavailable"
+    }
+  ],
+  "next_cursor": null,
+  "policy_epoch": 1,
+  "candidate_record_limit": 5000,
+  "channel_record_limit": 400,
+  "job_record_limit": 100,
+  "job_metadata_byte_limit": 1048576
+}

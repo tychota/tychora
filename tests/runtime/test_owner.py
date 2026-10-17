@@ -4,6 +4,7 @@ import time
 
 import pytest
 
+from tests.helpers.timing import scaled
 from tychora.application.owner import WorkspaceOwner
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.errors import TychoraError
@@ -146,7 +147,7 @@ except TychoraError as error:
             capture_output=True,
             text=True,
             check=True,
-            timeout=10,
+            timeout=scaled(10),
         ).stdout.strip()
 
     with WorkspaceOwner.open(root, settings, scope) as owner:
@@ -166,7 +167,8 @@ except TychoraError as error:
     with WorkspaceOwner.open(root, settings, scope) as successor:
         replacement = json.loads(endpoint.read_text())
         assert successor.workspace_id == record["workspace_id"]
-        assert replacement["token"] != record["token"]
+        # The bearer token is stable across restarts; the instance is not.
+        assert replacement["token"] == record["token"]
         assert replacement["instance_id"] != record["instance_id"]
         assert (root / ".runtime/owner.lock").stat().st_ino == inode
     assert child() == "OPEN"
@@ -392,7 +394,7 @@ async def test_parser_process_count_is_bounded_and_unknown_staging_is_retained(
         seen = set()
         released = set()
         try:
-            for _ in range(300):
+            for _ in range(round(scaled(3) / 0.01)):
                 active = list((root / "staging").glob("parser-*/child-started"))
                 if len(active) == 2:
                     break
@@ -400,7 +402,7 @@ async def test_parser_process_count_is_bounded_and_unknown_staging_is_retained(
             assert len(active) == 2
             await asyncio.sleep(0.05)
             assert len(list((root / "staging").glob("parser-*/child-started"))) == 2
-            for _ in range(400):
+            for _ in range(round(scaled(4) / 0.01)):
                 for marker in (root / "staging").glob("parser-*/child-started"):
                     if marker in released:
                         continue

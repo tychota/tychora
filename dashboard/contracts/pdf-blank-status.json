@@ -1,0 +1,72 @@
+{
+  "intake_id": "<synthetic-receipt>",
+  "state": "analysed",
+  "byte_ceiling": 1298,
+  "received_bytes": 1298,
+  "expires_at": "2030-01-01T00:00:00Z",
+  "analysis": {
+    "original_sha256": "5c06586f3f53b176a074eec87425f48ea5b863bb8a610b9e0c1efe68d935e7b8",
+    "size_bytes": 1298,
+    "page_count": 1,
+    "native_text_pages": [],
+    "image_only_pages": [],
+    "blank_pages": [1],
+    "unknown_pages": [],
+    "requires_ocr": false,
+    "blockers": ["INDEX_INCOMPLETE: PDF has no usable text or scanned pages."],
+    "proposed_policy": {
+      "version": "pdf-processing@1",
+      "mode": "native",
+      "native_pages": [],
+      "ocr_pages": [],
+      "blank_pages": [1],
+      "backend_identity": {
+        "native": "ThreadedDoclingParseDocumentBackend",
+        "ocr": null,
+        "parser": "docling"
+      },
+      "runtime_inventory": {
+        "docling": "2.132.0",
+        "docling-core": "2.101.1",
+        "docling-ibm-models": "4.0.2",
+        "psutil": "7.2.2",
+        "pypdf": "6.19.0",
+        "pypdfium2": "5.13.0"
+      },
+      "model_inventory_sha256": "273c93608083af8dfd18b4fb1f10f9531894cabc6871e9f86f47982d634a0db5",
+      "options": {
+        "device": "cpu",
+        "native_image_scale": 1.0,
+        "plugins": false,
+        "queue_size": 2,
+        "remote_services": false,
+        "stage_batch_size": 1,
+        "telemetry": false,
+        "threads": 2
+      },
+      "limits": {
+        "analysis_timeout_seconds": 60,
+        "batch_pages": 16,
+        "batch_seconds": 180,
+        "max_child_output_bytes": 268435456,
+        "max_extraction_bytes": 16777216,
+        "max_image_pixels": 40000000,
+        "max_metadata_bytes": 268435456,
+        "max_objects": 100000,
+        "max_pages": 1000,
+        "max_retained_bytes": 1073741824,
+        "queue_size": 2,
+        "rss_bytes": 4294967296,
+        "rss_poll_milliseconds": 250,
+        "sdk_batch_seconds": 120,
+        "stage_batch_size": 1,
+        "wall_seconds": 5400
+      },
+      "origin_proof": "ordered-ocr-cells@1"
+    },
+    "analysis_sha256": "a2e62bfe42852dcd884ac5e1daf590d6a38847c120a02ee558b7867e58d55a23",
+    "policy_sha256": "90a66914dcb84d84e42d71a5ef8e8af7a3b1af1ca778c58711fd616ad76d9de2"
+  },
+  "job": null,
+  "error": null
+}

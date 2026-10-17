@@ -2,6 +2,7 @@
 
 import pytest
 
+from tests.helpers.assets import asset_path
 from tychora import Tychora
 from tychora.configuration.resolve import resolve_config
 
@@ -159,17 +160,12 @@ async def test_settings_activation_recomposes_credential_without_changing_space(
         old_transport = old._base._runtime.transport()
         assert keys == ["synthetic-old"]
         monkeypatch.setenv("TEST_VOYAGE_KEY", "synthetic-new")
-        ws.runtime.admit(activation=True)
-        try:
-            await SettingsService(ws.owner, ws.runtime).activate(
-                SettingsActivation(
-                    profile="test",
-                    workspace_toml=content
-                    + '\n[configuration.output]\ntitle="Rotated"\n',
-                )
+        await SettingsService(ws.owner, ws.runtime).activate(
+            SettingsActivation(
+                profile="test",
+                workspace_toml=content + '\n[configuration.output]\ntitle="Rotated"\n',
             )
-        finally:
-            ws.runtime.release(activation=True)
+        )
         current = ws.services.provider_bindings.text_query
         assert current is not None
         assert current.credential_binding_id != old_id
@@ -180,17 +176,12 @@ async def test_settings_activation_recomposes_credential_without_changing_space(
         native_index = ws.services.provider_bindings.text_index
         current_transport = current._base._runtime.transport()
         monkeypatch.setenv("TEST_VOYAGE_KEY", "synthetic-third")
-        ws.runtime.admit(activation=True)
-        try:
-            await SettingsService(ws.owner, ws.runtime).activate(
-                SettingsActivation(
-                    profile="test",
-                    workspace_toml=content
-                    + '\n[configuration.output]\ntitle="Rotated"\n',
-                )
+        await SettingsService(ws.owner, ws.runtime).activate(
+            SettingsActivation(
+                profile="test",
+                workspace_toml=content + '\n[configuration.output]\ntitle="Rotated"\n',
             )
-        finally:
-            ws.runtime.release(activation=True)
+        )
         latest = ws.services.provider_bindings.text_query
         assert latest is not None
         assert latest.credential_binding_id != current.credential_binding_id
@@ -252,13 +243,9 @@ async def test_committed_activation_settles_each_owned_runtime_close(
             runtime.transport()
         assert len(transports) == 2
         candidate = content + '\n[configuration.output]\ntitle="Committed"\n'
-        ws.runtime.admit(activation=True)
-        try:
-            accepted = await SettingsService(ws.owner, ws.runtime).activate(
-                SettingsActivation(profile="test", workspace_toml=candidate)
-            )
-        finally:
-            ws.runtime.release(activation=True)
+        accepted = await SettingsService(ws.owner, ws.runtime).activate(
+            SettingsActivation(profile="test", workspace_toml=candidate)
+        )
         assert accepted.config_sha == ws.owner.config.config_sha
         assert ws.runtime.services is not old
         assert (workspace / "workspace.toml").read_text() == candidate
@@ -338,18 +325,17 @@ def test_secret_reference_uses_explicit_resolver_only_on_operation(
         assert keys == ["synthetic-key"]
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 def test_public_add_dispatches_configured_text_only_after_policy_grant(
     tmp_path, monkeypatch
 ):
     import json
-    import os
 
     from tychora.adapters.voyage.request_types import RawVoyageResponse
     from tychora.contracts.requests import RequestScope
     from tychora.ports.execution import ExecutionContext
 
-    cache = os.environ.get("TYCHORA_TEST_MODEL_CACHE")
-    assert cache is not None
+    cache = str(asset_path("TYCHORA_TEST_MODEL_CACHE"))
     monkeypatch.setenv("TYCHORA_MODEL_CACHE", cache)
     monkeypatch.setenv("TEST_VOYAGE_KEY", "synthetic-test-key")
     posts = []
@@ -453,10 +439,10 @@ def test_public_add_dispatches_configured_text_only_after_policy_grant(
         assert result.segments
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 def test_configured_text_provider_cli_api_mcp_grant_then_revoke(tmp_path, monkeypatch):
     import asyncio
     import json
-    import os
 
     from typer.testing import CliRunner
 
@@ -465,7 +451,9 @@ def test_configured_text_provider_cli_api_mcp_grant_then_revoke(tmp_path, monkey
     from tychora.interfaces.cli import app as cli_app
     from tychora.interfaces.mcp.server import _current, build_mcp
 
-    monkeypatch.setenv("TYCHORA_MODEL_CACHE", os.environ["TYCHORA_TEST_MODEL_CACHE"])
+    monkeypatch.setenv(
+        "TYCHORA_MODEL_CACHE", str(asset_path("TYCHORA_TEST_MODEL_CACHE"))
+    )
     monkeypatch.setenv("TEST_VOYAGE_KEY", "synthetic-test-key")
     posts = []
 
@@ -605,11 +593,11 @@ def test_configured_text_provider_cli_api_mcp_grant_then_revoke(tmp_path, monkey
     assert len(posts) == 4
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 def test_public_visual_query_uses_default_binding_and_narrow_scope(
     tmp_path, monkeypatch
 ):
     import json
-    import os
     from types import SimpleNamespace
 
     from tychora.adapters.voyage.request_types import RawVoyageResponse
@@ -617,8 +605,7 @@ def test_public_visual_query_uses_default_binding_and_narrow_scope(
     from tychora.contracts.requests import RequestScope
     from tychora.ports.execution import ExecutionContext
 
-    cache = os.environ.get("TYCHORA_TEST_MODEL_CACHE")
-    assert cache is not None
+    cache = str(asset_path("TYCHORA_TEST_MODEL_CACHE"))
     monkeypatch.setenv("TYCHORA_MODEL_CACHE", cache)
     monkeypatch.setenv("TEST_VOYAGE_KEY", "synthetic-test-key")
     monkeypatch.setattr(
@@ -716,9 +703,9 @@ def test_public_visual_query_uses_default_binding_and_narrow_scope(
         assert len(posts) == 1
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 def test_public_rerank_uses_default_binding_and_narrow_scope(tmp_path, monkeypatch):
     import json
-    import os
     from types import SimpleNamespace
 
     from tychora.adapters.voyage.request_types import RawVoyageResponse
@@ -727,8 +714,7 @@ def test_public_rerank_uses_default_binding_and_narrow_scope(tmp_path, monkeypat
     from tychora.contracts.requests import QueryRequest, RequestScope
     from tychora.ports.execution import ExecutionContext
 
-    cache = os.environ.get("TYCHORA_TEST_MODEL_CACHE")
-    assert cache is not None
+    cache = str(asset_path("TYCHORA_TEST_MODEL_CACHE"))
     monkeypatch.setenv("TYCHORA_MODEL_CACHE", cache)
     monkeypatch.setenv("TEST_VOYAGE_KEY", "synthetic-test-key")
     monkeypatch.setattr(
@@ -870,16 +856,15 @@ def test_public_rerank_uses_default_binding_and_narrow_scope(tmp_path, monkeypat
         assert len(posts) == 1
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 def test_cli_add_and_search_use_configured_native_graph(tmp_path, monkeypatch):
     import json
-    import os
 
     from typer.testing import CliRunner
 
     from tychora.interfaces.cli import app
 
-    cache = os.environ.get("TYCHORA_TEST_MODEL_CACHE")
-    assert cache is not None
+    cache = str(asset_path("TYCHORA_TEST_MODEL_CACHE"))
     monkeypatch.setenv("TYCHORA_MODEL_CACHE", cache)
     workspace = tmp_path / "knowledge"
     workspace.mkdir()
@@ -1100,15 +1085,11 @@ async def test_failed_settings_prepare_restores_native_graph_policy(tmp_path):
             '[configuration.providers.text]\nprovider="voyage"\n'
             'model="unsupported"\ncredential_ref="env:UNSET_TEST_KEY"\n'
         )
-        ws.runtime.admit(activation=True)
-        try:
-            with pytest.raises(TychoraError) as rejected:
-                await SettingsService(ws.owner, ws.runtime).activate(
-                    SettingsActivation(profile="test", workspace_toml=candidate)
-                )
-            assert rejected.value.code == "CAPABILITY_MISSING"
-        finally:
-            ws.runtime.release(activation=True)
+        with pytest.raises(TychoraError) as rejected:
+            await SettingsService(ws.owner, ws.runtime).activate(
+                SettingsActivation(profile="test", workspace_toml=candidate)
+            )
+        assert rejected.value.code == "CAPABILITY_MISSING"
         assert ws.services.provider_bindings.graph is graph
         assert graph._traversal.policy == previous_policy
         assert (workspace / "workspace.toml").read_text() == content

@@ -1,0 +1,92 @@
+[
+  {
+    "counters": [],
+    "diagnostic_refs": [],
+    "job_id": "e6aa0e2d-5d4f-47c1-b608-bf2a8775dd9d",
+    "schema_version": "1",
+    "sequence": 1,
+    "stage": "accepted",
+    "state": "queued",
+    "timestamp": "2026-10-14T01:11:16.520638Z"
+  },
+  {
+    "counters": [],
+    "diagnostic_refs": [],
+    "job_id": "e6aa0e2d-5d4f-47c1-b608-bf2a8775dd9d",
+    "schema_version": "1",
+    "sequence": 2,
+    "stage": "start",
+    "state": "running",
+    "timestamp": "2026-10-14T01:11:16.582783Z"
+  },
+  {
+    "counters": [],
+    "diagnostic_refs": [],
+    "job_id": "e6aa0e2d-5d4f-47c1-b608-bf2a8775dd9d",
+    "schema_version": "1",
+    "sequence": 3,
+    "stage": "acquire",
+    "state": "running",
+    "timestamp": "2026-10-14T01:11:16.730650Z"
+  },
+  {
+    "counters": [],
+    "diagnostic_refs": [],
+    "job_id": "e6aa0e2d-5d4f-47c1-b608-bf2a8775dd9d",
+    "schema_version": "1",
+    "sequence": 4,
+    "stage": "capture",
+    "state": "running",
+    "timestamp": "2026-10-14T01:11:16.732946Z"
+  },
+  {
+    "counters": [],
+    "diagnostic_refs": [],
+    "job_id": "e6aa0e2d-5d4f-47c1-b608-bf2a8775dd9d",
+    "schema_version": "1",
+    "sequence": 5,
+    "stage": "parse",
+    "state": "running",
+    "timestamp": "2026-10-14T01:11:16.742467Z"
+  },
+  {
+    "counters": [],
+    "diagnostic_refs": [],
+    "job_id": "e6aa0e2d-5d4f-47c1-b608-bf2a8775dd9d",
+    "schema_version": "1",
+    "sequence": 6,
+    "stage": "project",
+    "state": "running",
+    "timestamp": "2026-10-14T01:11:17.102674Z"
+  },
+  {
+    "counters": [],
+    "diagnostic_refs": [],
+    "job_id": "e6aa0e2d-5d4f-47c1-b608-bf2a8775dd9d",
+    "schema_version": "1",
+    "sequence": 7,
+    "stage": "projection/plan/genesis",
+    "state": "running",
+    "timestamp": "2026-10-14T01:11:17.138635Z"
+  },
+  {
+    "counters": [],
+    "diagnostic_refs": [],
+    "job_id": "e6aa0e2d-5d4f-47c1-b608-bf2a8775dd9d",
+    "schema_version": "1",
+    "sequence": 8,
+    "stage": "publish",
+    "state": "running",
+    "timestamp": "2026-10-14T01:11:17.148744Z"
+  },
+  {
+    "counters": [],
+    "diagnostic_refs": [],
+    "job_id": "e6aa0e2d-5d4f-47c1-b608-bf2a8775dd9d",
+    "schema_version": "1",
+    "sequence": 9,
+    "stage": "complete",
+    "state": "succeeded",
+    "timestamp": "2026-10-14T01:11:17.152040Z"
+  }
+]

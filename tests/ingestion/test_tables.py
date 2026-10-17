@@ -1,5 +1,6 @@
 """Conservative table continuation decisions preserve original fragments."""
 
+from tests.helpers.assets import asset_path
 from tests.typed_json import json_array, json_object
 from tychora.ingestion.tables import continuation_score
 
@@ -255,11 +256,6 @@ def test_continuation_policy_only_narrows_eligible_relations(policy, status, all
     assert not permitted(permitted_predicates=frozenset())
 
 
-from tests.qualification import test_docling_records as qualification
-
-document_record_case = qualification.document_record_case
-
-
 def create_table_source(path, content):
     if path.suffix == ".pdf":
         from reportlab.lib import colors
@@ -319,6 +315,7 @@ def create_table_source(path, content):
         doc.save(path)
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 @pytest.mark.parametrize("format", ["pdf", "docx"])
 def test_composed_tables_commit_once_with_exact_rows_and_captions(
@@ -396,6 +393,7 @@ def test_composed_tables_commit_once_with_exact_rows_and_captions(
     )
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_composed_document_archive_replays_canonical_evidence(
     document_record_case, tmp_path, monkeypatch
@@ -635,6 +633,7 @@ def composed_inputs(source):
     return source.owner.run_blocking_sync(read, source.ctx)
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_composed_replay_requires_retained_derivations(document_record_case):
     from tychora.contracts.composition import DocumentCompositionPlan
@@ -676,6 +675,7 @@ def test_composed_replay_requires_retained_derivations(document_record_case):
         )
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_legacy_document_replay_keeps_identity_but_new_normalizer_separates_it(
     document_record_case,
@@ -753,17 +753,16 @@ def test_legacy_document_replay_keeps_identity_but_new_normalizer_separates_it(
         )
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_valid_legacy_document_backup_restores_exact_snapshot_and_rejects_tampering(
     document_record_case, tmp_path
 ):
     import asyncio
     import json
-    import os
     import sqlite3
     from hashlib import sha256
     from io import BytesIO
-    from pathlib import Path
 
     from tychora.application.backup import BackupService
     from tychora.application.restore import RestoreService
@@ -851,7 +850,7 @@ def test_valid_legacy_document_backup_restores_exact_snapshot_and_rejects_tamper
             config=source.owner.config,
             counter=_Counter(),
         ),
-        docling_models=Path(os.environ["TYCHORA_TEST_DOCLING_MODELS"]),
+        docling_models=asset_path("TYCHORA_TEST_DOCLING_MODELS"),
     )
     assert (
         source.owner.run_blocking_sync(
@@ -935,6 +934,7 @@ def test_valid_legacy_document_backup_restores_exact_snapshot_and_rejects_tamper
         )
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_composition_plan_and_manifest_forgery_fail_before_commit(document_record_case):
     import json
@@ -975,6 +975,7 @@ def test_composition_plan_and_manifest_forgery_fail_before_commit(document_recor
         )
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_changed_plan_commits_distinct_extraction_same_revision(document_record_case):
     from tychora.contracts.composition import DocumentCompositionPlan
@@ -1027,6 +1028,7 @@ def create_rich_source(path, content):
     shutil.copyfile(Path(__file__).parents[1] / "fixtures/documents/rich.pdf", path)
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_real_caption_copy_commit_and_retention_replay(document_record_case):
     import json
@@ -1105,6 +1107,7 @@ def test_real_caption_copy_commit_and_retention_replay(document_record_case):
     source.owner.run_blocking_sync(retained_replay, source.ctx)
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_composition_metadata_observations_do_not_change_semantic_identity(
     document_record_case,
@@ -1132,6 +1135,7 @@ def test_composition_metadata_observations_do_not_change_semantic_identity(
         before.verify(later, source.registry)
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_supplied_proxy_plan_binds_text_derivation_and_exact_original_selectors(
     document_record_case,
@@ -1212,6 +1216,7 @@ def test_fragment_support_serialization_has_stable_order(fragments):
     ] == sorted(support)
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_assertion_cannot_drop_overlapping_original_owners(document_record_case):
     from tychora.contracts.composition import DocumentCompositionPlan
@@ -1253,6 +1258,7 @@ def test_assertion_cannot_drop_overlapping_original_owners(document_record_case)
         )
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_composed_manifest_capacity_exact_boundary_and_work_limit(
     document_record_case, monkeypatch
@@ -1297,6 +1303,7 @@ def test_composed_manifest_capacity_exact_boundary_and_work_limit(
         )
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 @pytest.mark.parametrize("format", ["pdf", "docx"])
 def test_grouped_provision_table_owners_remain_complete(document_record_case, format):
@@ -1418,6 +1425,7 @@ def test_assertion_observations_remain_distinct_and_duplicates_fail(fragments):
         encode_assertions((first, first))
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_invalid_composition_plan_fails_before_artifact_reads(document_record_case):
     from contextlib import AbstractContextManager
@@ -1489,6 +1497,7 @@ def test_composed_replay_rejects_malformed_envelopes(root):
         )
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_source_view_expansion_accounts_existing_original_parts(
     document_record_case, monkeypatch
@@ -1525,6 +1534,7 @@ def test_source_view_expansion_accounts_existing_original_parts(
         source_views(source.parsed, context, base)
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_proxy_expansion_stops_before_constructing_oversized_whole_result(
     document_record_case, monkeypatch
@@ -1590,6 +1600,7 @@ def test_proxy_expansion_stops_before_constructing_oversized_whole_result(
     assert 0 < calls < len(planned)
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_build_at_exact_input_ceiling_replays_retained_closure(
     document_record_case, monkeypatch
@@ -1654,6 +1665,7 @@ def test_build_at_exact_input_ceiling_replays_retained_closure(
         )
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_replay_has_its_own_exact_required_payload_bound(
     document_record_case, monkeypatch
@@ -1696,6 +1708,7 @@ def test_replay_has_its_own_exact_required_payload_bound(
         )
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 @pytest.mark.qualification
 def test_required_build_inputs_reject_conflicting_duplicate_refs(document_record_case):
     from hashlib import sha256

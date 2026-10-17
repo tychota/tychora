@@ -2,7 +2,7 @@
 
 from typing import Literal, Self, cast
 
-from pydantic import model_validator
+from pydantic import model_serializer, model_validator
 
 from .acquisition import CaptureManifest
 from .artifacts import ArtifactRef, physical_identity
@@ -17,8 +17,10 @@ from .base import (
 from .corpus import CollectionRow, RevisionRow, SourceRow, WorkspaceRow
 from .documents import (
     DocumentAsset,
+    DocumentImageBinding,
     DocumentRegistration,
     DocumentUnit,
+    OcrPageEvidence,
     OriginalImage,
     validate_document_assets,
     validate_document_units,
@@ -128,6 +130,34 @@ class ExtractionArtifact(Contract):
     records: tuple[ParsedRecord, ...] = ()
     diagnostics: tuple[Diagnostic, ...] = ()
 
+    pdf_processing: FrozenJsonMap | None = None
+    image_representation: Literal["scan-external-images@1"] | None = None
+    image_bindings: tuple[DocumentImageBinding, ...] = ()
+    ocr_pages: tuple[OcrPageEvidence, ...] = ()
+    ocr_evidence_ref: ArtifactRef | None = None
+    image_bindings_ref: ArtifactRef | None = None
+    ocr_lineage: tuple[FrozenJsonMap, ...] | None = None
+    native_text_evidence: FrozenJsonMap | None = None
+
+    @model_serializer(mode="wrap")
+    def legacy_pdf_fields(self, handler):
+        data = handler(self)
+        if self.ocr_lineage is None:
+            data.pop("ocr_lineage", None)
+        if self.native_text_evidence is None:
+            data.pop("native_text_evidence", None)
+        if self.pdf_processing is None:
+            for key in (
+                "pdf_processing",
+                "image_representation",
+                "image_bindings",
+                "ocr_pages",
+                "ocr_evidence_ref",
+                "image_bindings_ref",
+            ):
+                data.pop(key, None)
+        return data
+
     @model_validator(mode="after")
     def original_facts(self) -> Self:
         import re
@@ -160,7 +190,19 @@ class ExtractionArtifact(Contract):
             ):
                 raise ValueError("Docling JSON differs from retained artifact")
             document_units = cast(tuple[DocumentUnit, ...], self.units)
-            validate_document_units(self.document_json, document_units)
+            from tychora.adapters.docling.text_coordinates import coordinate_proof
+
+            coordinates = coordinate_proof(
+                self.pdf_processing.get("text_coordinates")
+                if self.pdf_processing
+                else None,
+                {page.physical_page: page for page in self.ocr_pages},
+                self.ocr_lineage,
+                self.native_text_evidence,
+            )
+            validate_document_units(
+                self.document_json, document_units, coordinates=coordinates
+            )
             validate_document_assets(
                 self.document_json,
                 document_units,
@@ -168,7 +210,22 @@ class ExtractionArtifact(Contract):
                 self.original_ref,
                 self.registration.source.source_key,
                 self.original_image,
+                self.image_representation,
+                self.image_bindings,
             )
+            if self.pdf_processing is not None:
+                from tychora.adapters.docling.ocr_evidence import validate_ocr_origins
+
+                validate_ocr_origins(self)
+            elif (
+                self.ocr_pages
+                or self.ocr_lineage is not None
+                or self.native_text_evidence is not None
+                or self.image_bindings
+                or self.image_representation
+                or any(u.text_origin != "source" for u in document_units)
+            ):
+                raise ValueError("Unexpected explicit PDF evidence")
             if any(
                 loc.artifact_ref != self.original_ref.sha256
                 or loc.native_ref != unit.native_ref
@@ -276,6 +333,11 @@ def extraction_document(data: JsonValue) -> bytes:
         required = [
             data["docling_json_ref"],
             *[asset["artifact_ref"] for asset in data.get("assets", [])],
+            *[
+                data[key]
+                for key in ("ocr_evidence_ref", "image_bindings_ref")
+                if data.get(key) is not None
+            ],
         ]
         data = {
             **data,

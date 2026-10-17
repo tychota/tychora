@@ -5,12 +5,10 @@ from io import BytesIO
 import pytest
 from PIL import Image
 
-from tests.qualification import test_docling_records as qualification
+from tests.helpers.assets import asset_path
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.requests import VisionCrop, VisionSelection
-
-document_record_case = qualification.document_record_case
 
 
 def _picture(path, _content):
@@ -18,6 +16,7 @@ def _picture(path, _content):
     image.save(path)
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 def test_selected_crop_comes_from_retained_original(document_record_case):
     from tychora.application.vision_selection import derive_selected_region
 
@@ -62,9 +61,8 @@ def test_selected_crop_comes_from_retained_original(document_record_case):
     assert stale.value.code == "INVALID_REQUEST"
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 def test_supplied_new_parser_root_requires_retained_revision(document_record_case):
-    import os
-    from pathlib import Path
 
     from tychora.adapters.docling.parser import DoclingParser
     from tychora.application.vision_selection import derive_selected_region
@@ -94,7 +92,7 @@ def test_supplied_new_parser_root_requires_retained_revision(document_record_cas
     parsed_b = DoclingParser(
         case.owner,
         parsed_a.registration,
-        Path(os.environ["TYCHORA_TEST_DOCLING_MODELS"]),
+        asset_path("TYCHORA_TEST_DOCLING_MODELS"),
     ).extract(parsed_a.original_ref, changed, ExecutionContext())
     assert parsed_b.original_ref.sha256 == parsed_a.original_ref.sha256
     assert parsed_b.raw_document_ref.sha256 != parsed_a.raw_document_ref.sha256
@@ -144,6 +142,7 @@ def test_supplied_new_parser_root_requires_retained_revision(document_record_cas
     assert region.original_image_sha256 == parsed_b.original_ref.sha256
 
 
+@pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
 def test_incomplete_vision_diagnostic_changes_identity_and_replays(
     document_record_case,
 ):

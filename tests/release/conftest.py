@@ -62,7 +62,7 @@ def _clean_env() -> dict[str, str]:
     env = {key: value for key, value in os.environ.items() if key in allowed}
     env["PYTHONNOUSERSITE"] = "1"
     env["UV_CACHE_DIR"] = os.environ.get(
-        "UV_CACHE_DIR", "/private/tmp/tychora-task45-uv"
+        "UV_CACHE_DIR", "/private/tmp/tychora-release-uv"
     )
     return env
 

@@ -9,14 +9,19 @@ from contextlib import ExitStack
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import TYPE_CHECKING, NoReturn
+from uuid import UUID
 
-from tychora.adapters.files.references import required_closure
+from tychora.adapters.files.references import MAX_MANIFEST_BYTES, required_closure
+from tychora.application.collection_policy import (
+    collection_is_active,
+    require_active_collection,
+)
 from tychora.configuration.indexed_representation import pinned_runtime_compatible
 from tychora.contracts.artifacts import ArtifactRef, ManifestRef
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.graph import GraphBatchReceipt, graph_manifest_digest
-from tychora.contracts.identity import canonical_bytes, digest
-from tychora.contracts.jobs import PublicationReceipt
+from tychora.contracts.identity import canonical_bytes, digest, source_id
+from tychora.contracts.jobs import JobAuthorization, PublicationReceipt
 from tychora.contracts.publication import (
     LexicalBatchReceipt,
     PublicationPlan,
@@ -82,7 +87,7 @@ def _manifest_document(plan: PublicationPlan) -> dict:
 
 
 def publication_manifest(plan: PublicationPlan) -> bytes:
-    """Exact Task 7 typed retention header for a complete snapshot plan."""
+    """Canonical bytes of the snapshot manifest, the typed retention header of a complete plan."""
     return canonical_bytes(_manifest_document(plan))
 
 
@@ -453,6 +458,77 @@ def insert_snapshot_bindings(store: CorpusStore, plan: PublicationPlan) -> None:
             )
 
 
+def check_publication_target(store: CorpusStore, plan: PublicationPlan) -> str | None:
+    """Resolve actual source identity from verified durable capture, never full grant.
+
+    Called before native attachment and again inside final canonical activation.
+    Old synthetic/internal publications without a capture get no exemption for
+    archived members. No new field changes historical publication identities.
+    """
+    row = store.db.execute(
+        "SELECT j.captured_inputs_sha,a.size_bytes,a.media_type,a.storage_key "
+        "FROM jobs j LEFT JOIN artifacts a ON a.artifact_sha=j.captured_inputs_sha WHERE j.job_id=?",
+        (plan.job_id,),
+    ).fetchone()
+    if row is None or row[0] is None:
+        return None
+    if row[1] is None or row[1] > MAX_MANIFEST_BYTES:
+        _fail("Publication capture exceeds its verified metadata budget")
+    capture = _read_json(
+        store,
+        ArtifactRef(
+            sha256=row[0], size_bytes=row[1], media_type=row[2], storage_key=row[3]
+        ),
+    )
+    auth_row = store.db.execute(
+        "SELECT a.artifact_sha,a.size_bytes,a.media_type,a.storage_key FROM job_steps js "
+        "JOIN artifacts a ON a.artifact_sha=js.output_artifact_sha "
+        "WHERE js.job_id=? AND js.step_key='__tychora__/authorization'",
+        (plan.job_id,),
+    ).fetchone()
+    if auth_row is None or auth_row[1] > 1048576:
+        _fail("Publication source authorization is unavailable")
+    auth_doc = _read_json(
+        store,
+        ArtifactRef(
+            sha256=auth_row[0],
+            size_bytes=auth_row[1],
+            media_type=auth_row[2],
+            storage_key=auth_row[3],
+        ),
+    )
+    try:
+        if capture["type"] != "job_capture" or capture["schema_version"] != "1":
+            raise ValueError
+        source = capture["data"]["source"]
+        cid = str(UUID(source["collection_id"]))
+        key = source["source_key"]
+        if key != capture["data"]["source_key"]:
+            raise ValueError
+        sid = source_id(UUID(cid), key)
+        authorization = JobAuthorization.from_mapping(auth_doc["data"])
+        if cid not in authorization.collection_ids:
+            raise ValueError
+    except (KeyError, TypeError, ValueError):
+        _fail("Publication capture source binding is invalid")
+    current = store.db.execute(
+        "SELECT c.policy_json,c.access_floor,s.access_floor,c.workspace_id,s.withdrawn_at "
+        "FROM collections c JOIN sources s USING(collection_id) WHERE c.collection_id=? AND s.source_id=?",
+        (cid, sid),
+    ).fetchone()
+    if (
+        current is None
+        or current[3] != plan.workspace_id
+        or current[4] is not None
+        or max(current[1:3]) > authorization.access_ceiling
+    ):
+        raise TychoraError(
+            "FORBIDDEN_SCOPE", "Publication target is outside the current grant."
+        )
+    require_active_collection(current[0])
+    return sid
+
+
 def publish_snapshot(store: CorpusStore, plan: PublicationPlan) -> str:
     try:
         plan = PublicationPlan.model_validate_json(
@@ -539,13 +615,35 @@ def publish_snapshot(store: CorpusStore, plan: PublicationPlan) -> str:
                     "SELECT workspace_id FROM workspaces"
                 ).fetchall() != [(plan.workspace_id,)]:
                     _fail("Publication workspace identity differs")
+                target = check_publication_target(store, plan)
                 for member in plan.members:
                     row = store.db.execute(
-                        "SELECT r.source_id,e.revision_id,c.workspace_id FROM extractions e JOIN revisions r USING(revision_id) JOIN sources s USING(source_id) JOIN collections c USING(collection_id) WHERE e.extraction_id=? AND s.withdrawn_at IS NULL",
+                        "SELECT r.source_id,e.revision_id,c.workspace_id,c.policy_json FROM extractions e JOIN revisions r USING(revision_id) JOIN sources s USING(source_id) JOIN collections c USING(collection_id) WHERE e.extraction_id=? AND s.withdrawn_at IS NULL",
                         (member.extraction_id,),
                     ).fetchone()
-                    if row != (member.source_id, member.revision_id, plan.workspace_id):
+                    if row is None or row[:3] != (
+                        member.source_id,
+                        member.revision_id,
+                        plan.workspace_id,
+                    ):
                         _fail("Snapshot member is not a registered extraction")
+                    if not collection_is_active(row[3]):
+                        prior = store.db.execute(
+                            "SELECT source_id,revision_id,extraction_id,is_default FROM snapshot_members WHERE snapshot_id=? AND revision_id=?",
+                            (plan.base_snapshot_id, member.revision_id),
+                        ).fetchone()
+                        if (
+                            target is None
+                            or member.source_id == target
+                            or prior
+                            != (
+                                member.source_id,
+                                member.revision_id,
+                                member.extraction_id,
+                                int(member.is_default),
+                            )
+                        ):
+                            require_active_collection(row[3])
                 for slot in plan.slots:
                     for batch in slot.batches:
                         for row in batch.lexical_records:

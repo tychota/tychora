@@ -1,0 +1,137 @@
+{
+  "applied_scope": {
+    "access_ceiling": 0,
+    "capabilities": ["read", "manage", "write", "vision"],
+    "collection_ids": ["00000000-0000-4000-8000-000000000001"],
+    "principal_id": "local-owner",
+    "upload_providers": [],
+    "uses": ["audit", "lookup", "compose"]
+  },
+  "budget_contract": {
+    "max_response_bytes": 1048576,
+    "max_tokens": 6000,
+    "render_targets": [
+      {
+        "profile_digest": "674de1ffb3131f1b740058883d66c7a2020000265dfe6e3586ba9f979d11c562",
+        "renderer": "canonical-json@1",
+        "schema_digest": "282f343a6cd3180439fab75e289cf38d07c21dc17d43bbe68071839bdf27c774",
+        "serialization": "canonical-json-utf8"
+      }
+    ],
+    "tokenizer_id": "cl100k_base"
+  },
+  "checks": {
+    "assertion_ids": [],
+    "assertions": [],
+    "decisions": [],
+    "predicates": [],
+    "status": "not_evaluated",
+    "truncated": false
+  },
+  "citations": [
+    {
+      "asset_id": "4b3b350aff4d0a4abb13c526802c3f60361c86ef04fb153de0bac347eec3955a",
+      "locators": [
+        {
+          "artifact_ref": "d89f62485f775ed0f83546ca4d322fc4057bf99e93ec444d3a54ea1b8fe67460",
+          "geometry": {
+            "domain": "points",
+            "x0": 0,
+            "x1": 600,
+            "y0": 0,
+            "y1": 800
+          },
+          "native_ref": "synthetic-pdf-recovery",
+          "physical_page": 1,
+          "printed_page": null,
+          "type": "image"
+        }
+      ],
+      "physical_page": 1,
+      "printed_page": null,
+      "revision_id": "b382c90d6a98859030aee6e5efb1408702c45f15ea86a3ade04cc7f86883fb43",
+      "source_id": "56270bce-62c0-5e40-8576-3f66ecbdd229",
+      "source_ref": "synthetic-pdf-recovery",
+      "unit_id": null
+    }
+  ],
+  "coverage": {
+    "completed_channels": ["exact", "lexical"],
+    "status": "complete",
+    "unavailable_channels": [],
+    "warnings": []
+  },
+  "coverage_gaps": [],
+  "decision_requirements": [],
+  "relations": [],
+  "run_id": "b2683161-7a69-4d37-a59b-fb255ca51309",
+  "schema_version": "1",
+  "segments": [],
+  "snapshot_id": "35c14d487fe68ec6f5395f62bf812cb10f2bd21dbc3359d49475ecbbe2389381",
+  "trace": null,
+  "visuals": [
+    {
+      "asset_id": "4b3b350aff4d0a4abb13c526802c3f60361c86ef04fb153de0bac347eec3955a",
+      "asset_ref": "d8eae9992850d84aecd63c58065b774e6f7f32bc001679a9b8d00e9afb131d83",
+      "caption": null,
+      "citations": [
+        {
+          "asset_id": "4b3b350aff4d0a4abb13c526802c3f60361c86ef04fb153de0bac347eec3955a",
+          "locators": [
+            {
+              "artifact_ref": "d89f62485f775ed0f83546ca4d322fc4057bf99e93ec444d3a54ea1b8fe67460",
+              "geometry": {
+                "domain": "points",
+                "x0": 0,
+                "x1": 600,
+                "y0": 0,
+                "y1": 800
+              },
+              "native_ref": "synthetic-pdf-recovery",
+              "physical_page": 1,
+              "printed_page": null,
+              "type": "image"
+            }
+          ],
+          "physical_page": 1,
+          "printed_page": null,
+          "revision_id": "b382c90d6a98859030aee6e5efb1408702c45f15ea86a3ade04cc7f86883fb43",
+          "source_id": "56270bce-62c0-5e40-8576-3f66ecbdd229",
+          "source_ref": "synthetic-pdf-recovery",
+          "unit_id": null
+        }
+      ],
+      "locator": {
+        "artifact_ref": "d89f62485f775ed0f83546ca4d322fc4057bf99e93ec444d3a54ea1b8fe67460",
+        "geometry": {
+          "domain": "points",
+          "x0": 0,
+          "x1": 600,
+          "y0": 0,
+          "y1": 800
+        },
+        "native_ref": "synthetic-pdf-recovery",
+        "physical_page": 1,
+        "printed_page": null,
+        "type": "image"
+      },
+      "proxies": [
+        {
+          "dependencies": [
+            "d57bd016d8e344884e9c1e0acb3f43303f9fdf207d87306bdcd9469983866366",
+            "4b3b350aff4d0a4abb13c526802c3f60361c86ef04fb153de0bac347eec3955a"
+          ],
+          "label": "ocr",
+          "origin": "ocr",
+          "proxy_id": "f3c05d6a473b60e12f5ec043b3f33d88f55907f8a11b2c6cd3a1dc01cdd8469e",
+          "review_state": "needs_review",
+          "text": "Violet telescope field notes\nSynthetic local OCR evidence\nReview this derived transcript"
+        }
+      ],
+      "revision_id": "b382c90d6a98859030aee6e5efb1408702c45f15ea86a3ade04cc7f86883fb43",
+      "selection_reasons": ["proxy_match"],
+      "source_id": "56270bce-62c0-5e40-8576-3f66ecbdd229"
+    }
+  ],
+  "warnings": []
+}

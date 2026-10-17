@@ -6,6 +6,7 @@ site_dir: site
 strict: true
 exclude_docs: |
   /superpowers/
+  /quality/
 validation:
   nav:
     omitted_files: warn
@@ -58,6 +59,7 @@ nav:
   - Use:
       - Python API: api.md
       - CLI: cli.md
+      - Dashboard: dashboard.md
       - HTTP API: http.md
       - MCP: mcp.md
       - Operations: operations.md

@@ -24,6 +24,10 @@ def pinned_runtime_compatible(
     retained: ResolvedConfig, current: ResolvedConfig
 ) -> bool:
     """Permit credential rotation and monotonic offline/source-root tightening."""
+    from .additive_compatibility import qualified_additive_registry_extension
+
+    if qualified_additive_registry_extension(retained, current):
+        return True
     old = retained.model_dump(mode="json")
     new = current.model_dump(mode="json")
     old_values, new_values = old["values"], new["values"]

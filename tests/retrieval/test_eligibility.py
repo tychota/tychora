@@ -432,7 +432,7 @@ def test_sqlite_reader_detaches_current_floor_and_epoch(tmp_path, config):
         "INSERT INTO workspaces(workspace_id,schema_version,created_at) VALUES ('workspace',1,'2025-01-01')"
     )
     db.execute(
-        "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES ('collection','workspace','synthetic','Synthetic',0,'{}')"
+        "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES ('collection','workspace','synthetic','Synthetic',0,'{\"schema_version\":1,\"upload_providers\":[]}')"
     )
     from tychora.contracts.identity import canonical_bytes
 

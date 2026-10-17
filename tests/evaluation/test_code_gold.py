@@ -1,0 +1,157 @@
+"""Code gold set: real queries over Tychora's own pinned source, lexical and structural."""
+
+import json
+import os
+import shutil
+import time
+from pathlib import Path
+
+import pytest
+
+from tests.code.conftest import git
+from tests.evaluation.conftest import (
+    SyntheticCounter,
+    add_repository,
+    code_profile_config,
+)
+from tests.helpers.assets import asset_path
+from tests.helpers.code_gold import (
+    DATASET_ID,
+    load_templates,
+    materialize,
+    mean_metrics,
+    write_dataset,
+)
+from tests.helpers.timing import scaled
+from tychora import Tychora
+from tychora.contracts.errors import TychoraError
+from tychora.ports.execution import ExecutionContext
+
+pytestmark = [pytest.mark.slow, pytest.mark.assets("TYCHORA_TEST_CODE_CORPUS")]
+
+METRICS = ("file_recall", "definition_recall", "file_mrr", "file_ndcg")
+VARIANTS = (
+    {
+        "name": "lexical",
+        "profile": "test",
+        "overrides": {"channels": ["lexical"], "rerank": False},
+    },
+    {
+        "name": "lexical_structural",
+        "profile": "test",
+        "overrides": {"channels": ["lexical", "structural_graph"], "rerank": False},
+    },
+)
+
+
+class RetainedBindingBudgetExceeded(Exception):
+    """The evaluation refused a whole-repository extraction as over its retained-binding budget."""
+
+
+def _repository(tmp_path: Path) -> Path:
+    repo = tmp_path / "repository"
+    shutil.copytree(asset_path("TYCHORA_TEST_CODE_CORPUS") / "src", repo / "src")
+    git(repo, "init", "-q")
+    git(repo, "config", "user.name", "Gold Corpus")
+    git(repo, "config", "user.email", "gold@example.invalid")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "pinned corpus")
+    return repo
+
+
+def _wait(kb, job_id, budget):
+    """Poll a job to a terminal state within budget seconds; one wait call allows at most 300."""
+    end = time.monotonic() + budget
+    while True:
+        status = kb.jobs.wait(job_id, timeout=min(30, max(0.0, end - time.monotonic())))
+        if status.state not in {"queued", "running"} or time.monotonic() >= end:
+            return status
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=RetainedBindingBudgetExceeded,
+    reason=(
+        "whole-repository code extraction exceeds the evaluation retained-binding "
+        "budget; engine core v2 phase 1 makes repository sources fit"
+    ),
+)
+def test_code_gold_set_runs_offline_with_valid_locators(tmp_path):
+    repo = _repository(tmp_path)
+    config = code_profile_config(tmp_path, "limit=10\nmax_tokens=30000")
+    with Tychora.open(
+        tmp_path / "workspace", config=config, token_counter=SyntheticCounter()
+    ) as kb:
+        handle = add_repository(kb, repo, "tychora", "Tychora source")
+        status = _wait(kb, handle.id, scaled(900))
+        assert status.state == "succeeded", status.error_code
+        owner = kb._workspace.owner
+
+        def labels():
+            return owner.db.execute(
+                "SELECT s.source_id,r.revision_id,sr.data_json FROM structured_records sr "
+                "JOIN evidence_units u USING(unit_id) JOIN extractions e USING(extraction_id) "
+                "JOIN revisions r USING(revision_id) JOIN sources s USING(source_id) "
+                "WHERE sr.record_type='code_symbol'"
+            ).fetchall()
+
+        rows = kb._workspace.bridge.call(owner.run_blocking(labels, ExecutionContext()))
+        source_id, revision_id = rows[0][:2]
+        definitions: dict[tuple[str, str], list[str]] = {}
+        for _, _, data in rows:
+            record = json.loads(data)
+            key = (record["relative_path"], record["name"])
+            definitions.setdefault(key, []).append(record["definition_key"])
+        cases = [
+            materialize(
+                t, source_id=source_id, revision_id=revision_id, definitions=definitions
+            )
+            for t in load_templates()
+        ]
+        write_dataset(tmp_path / "gold", cases)
+        kb.evaluations.register_dataset(tmp_path / "gold")
+        snapshot = kb._workspace.bridge.call(
+            owner.run_blocking(
+                lambda: owner.store.resolve_snapshot(None), ExecutionContext()
+            )
+        )
+        try:
+            run = kb.evaluations.run(
+                {
+                    "dataset_id": DATASET_ID,
+                    "split": "test",
+                    "snapshot_id": snapshot.snapshot_id,
+                    "variants": list(VARIANTS),
+                    "seed": 0,
+                    "repetitions": 1,
+                    "offline": True,
+                }
+            )
+        except TychoraError as error:
+            if (
+                error.code == "LIMIT_EXCEEDED"
+                and "retained binding budget" in error.message
+            ):
+                raise RetainedBindingBudgetExceeded(error.message) from error
+            raise
+        assert _wait(kb, run.id, scaled(900)).state == "succeeded"
+        report = kb.evaluations.get(run.id)
+
+    test_cases = {case["case_id"] for case in cases if case["split"] == "test"}
+    assert set(report["cases"]) == test_cases
+    for entry in report["cases"].values():
+        for result in entry["runs"]:
+            values = {m["name"]: m["value"] for m in result["metrics"]["metrics"]}
+            assert values["forbidden_leakage"] in (None, 0.0)
+            assert values["locator_validity"] in (None, 1.0)
+    means = mean_metrics(report, METRICS)
+    assert set(means) == {"lexical", "lexical_structural"}
+    destination = os.environ.get("TYCHORA_CODE_GOLD_REPORT")
+    if destination:
+        Path(destination).parent.mkdir(parents=True, exist_ok=True)
+        Path(destination).write_text(
+            json.dumps(
+                {"dataset": DATASET_ID, "variants": means}, indent=2, sort_keys=True
+            )
+            + "\n"
+        )

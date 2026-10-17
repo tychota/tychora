@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Any, cast
 
+from tychora.adapters.docling.ocr_evidence import normalize_native_document_units
 from tychora.configuration.registry import Registry
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.corpus import (
@@ -332,7 +333,7 @@ def normalize_document_records(
     budget = _Budget()
     budget.add(size=len(canonical_bytes(base.model_dump(mode="json"))))
     groups = _groups(
-        cast(tuple[DocumentUnit, ...], parsed.units),
+        normalize_native_document_units(parsed),
         strategy,
         kind.get("normalizer_options", {}),
         budget,

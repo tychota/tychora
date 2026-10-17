@@ -1,0 +1,42 @@
+{
+  "name": "tychora-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "knip": "knip --no-progress",
+    "cycles": "madge --circular --extensions ts,tsx --ts-config tsconfig.json src",
+    "coverage": "vitest run --coverage",
+    "format:check": "prettier --check src e2e",
+    "build": "node scripts/notices.mjs && vite build",
+    "e2e": "playwright test",
+    "check:build": "npm run build && git diff --exit-code -- ../src/tychora/resources/dashboard && test -z \"$(git ls-files --others --exclude-standard ../src/tychora/resources/dashboard)\""
+  },
+  "dependencies": {
+    "react": "19.2.0",
+    "react-dom": "19.2.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.61.1",
+    "@testing-library/jest-dom": "6.9.1",
+    "@testing-library/react": "16.3.0",
+    "@types/node": "22.19.15",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "@vitejs/plugin-react": "5.0.4",
+    "@vitest/coverage-v8": "4.1.11",
+    "jscpd": "5.4.1",
+    "jsdom": "26.1.0",
+    "knip": "6.41.0",
+    "madge": "8.0.0",
+    "prettier": "3.8.5",
+    "typescript": "5.9.3",
+    "vite": "7.3.7",
+    "vitest": "4.1.11"
+  }
+}

@@ -378,6 +378,31 @@ def _continuation_context(
     return tuple(excerpts), tuple(citations)
 
 
+_TABLE_UNIT_TYPES = frozenset({"table", "table_row"})
+
+
+def _is_document_unit(unit) -> bool:
+    return any(isinstance(locator, DocumentLocator) for locator in unit.locators)
+
+
+def _same_section(first, second) -> bool:
+    """Whether two units share the section that bounds neighbour context and joins.
+
+    Document normalizers give every paragraph its own boundary key, so document
+    units are grouped by their heading path instead. Document tables are excluded:
+    a table continued on another page joins only through a verified graph path.
+    """
+    if _is_document_unit(first) or _is_document_unit(second):
+        return (
+            _is_document_unit(first)
+            and _is_document_unit(second)
+            and first.unit_type not in _TABLE_UNIT_TYPES
+            and second.unit_type not in _TABLE_UNIT_TYPES
+            and first.heading_path == second.heading_path
+        )
+    return first.boundary_key == second.boundary_key
+
+
 def _neighbor_context(
     item: RankedEvidenceItem,
     unit_id: str,
@@ -388,9 +413,7 @@ def _neighbor_context(
     """Add at most one eligible same-boundary unit on either side."""
     assert item.facts is not None
     unit = item.facts.prepared.representation(unit_id).unit
-    if any(
-        isinstance(locator, (CodeLocator, DocumentLocator)) for locator in unit.locators
-    ):
+    if any(isinstance(locator, CodeLocator) for locator in unit.locators):
         return (), ()
     excerpts: list[Excerpt] = []
     citations: list[Citation] = []
@@ -399,8 +422,7 @@ def _neighbor_context(
             (
                 rep.unit
                 for rep in item.facts.prepared.units
-                if rep.unit.ordinal == ordinal
-                and rep.unit.boundary_key == unit.boundary_key
+                if rep.unit.ordinal == ordinal and _same_section(rep.unit, unit)
             ),
             None,
         )
@@ -446,6 +468,10 @@ def _physical_ranges(
         for locator in fragments
         if locator.char_start < end and locator.char_end > start
     )
+    if not ranges and (start >= end or unit.text[start:end].isspace()):
+        # Textless units (pictures) and separators between fragments (table
+        # cell tabs) have no physical extent; there is nothing to excerpt.
+        return ()
     if not ranges:
         raise TychoraError(
             "INTEGRITY_ERROR", "Document excerpt has no physical fragment."
@@ -633,7 +659,7 @@ def _coalesce_boundary_matches(
             owner is None
             or owner.facts is None
             or any(
-                isinstance(locator, (CodeLocator, DocumentLocator))
+                isinstance(locator, CodeLocator)
                 for citation in primary.citations
                 for locator in citation.locators
             )
@@ -652,7 +678,7 @@ def _coalesce_boundary_matches(
                 or candidate.revision_id != primary.revision_id
                 or candidate.lane != primary.lane
                 or any(
-                    isinstance(locator, (CodeLocator, DocumentLocator))
+                    isinstance(locator, CodeLocator)
                     for citation in candidate.citations
                     for locator in citation.locators
                 )
@@ -665,10 +691,7 @@ def _coalesce_boundary_matches(
             except ValueError:
                 continue
             distance = abs(first_unit.ordinal - second_unit.ordinal)
-            if (
-                distance not in (1, 2)
-                or first_unit.boundary_key != second_unit.boundary_key
-            ):
+            if distance not in (1, 2) or not _same_section(first_unit, second_unit):
                 continue
             if distance == 2:
                 gap = next(
@@ -677,7 +700,7 @@ def _coalesce_boundary_matches(
                         for rep in owner.facts.prepared.units
                         if rep.unit.ordinal
                         == min(first_unit.ordinal, second_unit.ordinal) + 1
-                        and rep.unit.boundary_key == first_unit.boundary_key
+                        and _same_section(rep.unit, first_unit)
                     ),
                     None,
                 )

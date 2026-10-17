@@ -180,7 +180,7 @@ async def test_code_source_discovery_uses_retained_scoped_resolution_rates(tmp_p
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
         await owner.run_blocking(
             lambda: owner.db.execute(
-                "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,'{}')",
+                'INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
                 (collection, owner.workspace_id, "code", "Code"),
             ),
             ExecutionContext(),
@@ -294,3 +294,170 @@ async def test_code_source_discovery_uses_retained_scoped_resolution_rates(tmp_p
     assert diagnostic.records[0].value["scope_limited"] is True
     assert "hidden-reference" not in diagnostic.model_dump_json()
     assert "hidden-unit" not in diagnostic.model_dump_json()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "kind,required",
+    [
+        ("manual@1", {"title", "publisher", "edition"}),
+        ("evidence@1", {"title", "author", "provenance"}),
+    ],
+)
+async def test_kind_metadata_form_is_scoped_and_schema_derived(
+    tmp_path, kind, required
+):
+    from tychora import Tychora
+
+    with Tychora.open(tmp_path / "metadata") as kb:
+        service = kb._workspace.services.discovery
+        form = await service.kind_metadata_schema(kind, kb.scope, ExecutionContext())
+        assert {field.name for field in form.fields if field.required} == required
+        assert form.schema_id == kind.replace("@1", "-metadata@1")
+        assert form.schemas[form.schema_id]["additionalProperties"] is False
+        assert len(form.model_dump_json().encode()) <= 256 * 1024
+        for forbidden in ("metadata@1", "../schemas/metadata.json", "absent@1"):
+            with pytest.raises(TychoraError) as err:
+                await service.kind_metadata_schema(
+                    forbidden, kb.scope, ExecutionContext()
+                )
+            assert err.value.code == "NOT_FOUND"
+        for update in (
+            {"collection_ids": frozenset()},
+            {"uses": frozenset()},
+            {"capabilities": frozenset()},
+        ):
+            with pytest.raises(TychoraError) as err:
+                await service.kind_metadata_schema(
+                    kind, kb.scope.model_copy(update=update), ExecutionContext()
+                )
+            assert err.value.code == "NOT_FOUND"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("budget", ["nodes", "bytes"])
+async def test_kind_metadata_form_enforces_schema_and_response_budgets(
+    tmp_path, budget
+):
+    from tychora import Tychora
+    from tychora.configuration.models import ResolvedConfig
+    from tychora.configuration.resolve import _resolved_hashes
+
+    with Tychora.open(tmp_path / "metadata-budget") as kb:
+        owner = kb._workspace.owner
+        raw = owner.config.model_dump(mode="json")
+        schema = raw["registry"]["schemas"]["manual-metadata@1"]
+        if budget == "nodes":
+            schema["properties"].update(
+                {f"field{i}": {"type": "string"} for i in range(65)}
+            )
+        else:
+            schema["description"] = "x" * (256 * 1024)
+        raw.update(_resolved_hashes(raw["registry"], raw["values"]))
+        config = ResolvedConfig.model_validate_json(json.dumps(raw))
+        service = DiscoveryService(config, Registry.from_config(config), owner)
+        with pytest.raises(TychoraError) as err:
+            await service.kind_metadata_schema("manual@1", kb.scope, ExecutionContext())
+        assert err.value.code == "BUDGET_TOO_SMALL"
+
+
+@pytest.mark.asyncio
+async def test_metadata_form_keeps_transitive_local_refs_and_boolean_constraints(
+    tmp_path,
+):
+    from tychora import Tychora
+    from tychora.configuration.models import ResolvedConfig
+    from tychora.configuration.resolve import _resolved_hashes
+
+    with Tychora.open(tmp_path / "metadata-refs") as kb:
+        owner = kb._workspace.owner
+        raw = owner.config.model_dump(mode="json")
+        registry = raw["registry"]
+        schema = registry["schemas"]["manual-metadata@1"]
+        schema["properties"]["advanced"] = {"$ref": "local.json"}
+        schema["properties"]["forbidden"] = False
+        registry["schemas"]["local@1"] = {
+            "$id": "local@1",
+            "type": "string",
+            "maxLength": 12,
+        }
+        registry["schema_reference_bindings"]["manual-metadata@1"][
+            "/properties/advanced/$ref"
+        ] = {"schema_id": "local@1", "fragment": ""}
+        registry["schema_reference_bindings"]["local@1"] = {}
+        raw.update(_resolved_hashes(registry, raw["values"]))
+        config = ResolvedConfig.model_validate_json(json.dumps(raw))
+        service = DiscoveryService(config, Registry.from_config(config), owner)
+        form = await service.kind_metadata_schema(
+            "manual@1", kb.scope, ExecutionContext()
+        )
+        assert set(form.schemas) == {"manual-metadata@1", "local@1"}
+        assert (
+            json_object(
+                json_object(form.schema_reference_bindings, "manual-metadata@1"),
+                "/properties/advanced/$ref",
+            )["schema_id"]
+            == "local@1"
+        )
+        fields = {field.name: field for field in form.fields}
+        assert fields["advanced"].advanced
+        assert fields["forbidden"].advanced and fields["forbidden"].constraints is False
+        assert form.advanced
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "root_options,metadata,advanced",
+    [
+        (
+            {
+                "required": ["title", "custom"],
+                "additionalProperties": {"type": "string"},
+            },
+            {"title": "Notes", "custom": "Required value"},
+            True,
+        ),
+        (
+            {"additionalProperties": {"type": "string"}},
+            {"title": "Notes", "custom": "Optional value"},
+            True,
+        ),
+        ({"additionalProperties": True}, {"title": "Notes", "custom": 1}, True),
+        ({}, {"title": "Notes", "custom": 1}, True),
+        (
+            {"additionalProperties": False, "enum": [{"title": "Notes"}]},
+            {"title": "Notes"},
+            True,
+        ),
+        ({"additionalProperties": False}, {"title": "Notes"}, False),
+    ],
+)
+async def test_metadata_form_marks_unrepresented_root_semantics_advanced(
+    tmp_path, root_options, metadata, advanced
+):
+    from tychora import Tychora
+    from tychora.configuration.models import ResolvedConfig
+    from tychora.configuration.resolve import _resolved_hashes
+
+    with Tychora.open(tmp_path / "metadata-root") as kb:
+        owner = kb._workspace.owner
+        raw = owner.config.model_dump(mode="json")
+        schema = {
+            "$id": "manual-metadata@1",
+            "type": "object",
+            "properties": {"title": {"type": "string"}},
+            "required": ["title"],
+            **root_options,
+        }
+        raw["registry"]["schemas"]["manual-metadata@1"] = schema
+        raw.update(_resolved_hashes(raw["registry"], raw["values"]))
+        config = ResolvedConfig.model_validate_json(json.dumps(raw))
+        registry = Registry.from_config(config)
+        assert registry.validate_metadata("manual@1", metadata) == metadata
+        service = DiscoveryService(config, registry, owner)
+        form = await service.kind_metadata_schema(
+            "manual@1", kb.scope, ExecutionContext()
+        )
+        assert form.advanced is advanced
+        assert [field.name for field in form.fields] == ["title"]
+        assert form.model_dump(mode="json")["schemas"][form.schema_id] == schema

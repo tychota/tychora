@@ -1,24 +1,16 @@
 # Tychora handoff
 
-Updated: 2026-10-14. Audience: the next maintainer or agent continuing the engine and dashboard work.
+Updated: 2026-10-15. Audience: the next maintainer or agent continuing the engine and dashboard work.
 
-## Start here: dashboard specification and implementation plan
+## Start here: implemented dashboard and engine follow-ups
 
-The owner's next task is to specify and plan the dashboard. **Do not start dashboard implementation or the engine extension backlog automatically.** Begin with the existing [dashboard design draft](docs/superpowers/specs/2026-09-10-tychora-dashboard-design.md), reconcile it with the actual engine, then produce an actionable plan. That draft describes intended behavior; it is not proof that every backend endpoint exists.
+The bundled local dashboard implements named Collections, Documents/Add documents, Search, Explore, Models, Jobs, Evaluations, exact-scope Activity and Settings through authenticated services. Read [dashboard usage and delivery](docs/dashboard.md). It preserves one workspace with several stable collection identities and memory-only browser credentials/content/drafts. Node is build-only. Existing custom/restricted grants never broaden; whole-workspace maintenance requires complete authority.
 
-Read these in order:
+Add documents now streams chosen PDFs as raw File bodies through private prepare/upload/analyse receipts, explicit confirmation of server-issued analysis/policy hashes and the existing durable source-job scheduler. Ordinary JSON remains 1 MiB; binary PDF intake is at most 100 MiB with lower configured limits. Model/setup navigation retains File/title/text/destination/kind and renews stale receipts under current authority, while cleanup keeps the exact original receipt owner. Queued/accepted and retained page-processing progress are not indexed success. OCR remains derived, noncitable and review-required with physical page locators and retained input/derivation identities; selected coverage and registered search modes expose gaps and exclusion honestly. Original inspection remains separately bounded at 16 MiB payload/24 MiB encoded response; large retained PDFs can exceed browser inspection without being removed.
 
-1. [Current architecture](docs/architecture.md): layers, libraries, SQLite tables, artifacts, indexing, reference resolution and sequence diagrams.
-2. [Implementation assessment](docs/review-assessment.md): confirmed defects, reproduced cases, fixed findings, and unverified review inventory.
-3. [Dashboard design draft](docs/superpowers/specs/2026-09-10-tychora-dashboard-design.md).
-4. [Engine specification](docs/superpowers/specs/2026-09-10-tychora-engine-design.md) and [engine implementation plan](docs/superpowers/plans/2026-09-11-tychora-engine.md): historical intent and execution context.
-5. [HTTP](docs/http.md), [Python API](docs/api.md), [operations](docs/operations.md), and [evaluation](docs/evaluation.md).
+Qualified browser verification uses generated synthetic content, actual disposable HTTP, installed pinned local OCR/tokenizers and explicit opt-in. Synthetic transient/partial failures are identified as test seams; simulated remote-provider journeys do not establish connectivity or quality. Thin CI does not provision model assets and explicitly skips those qualified scenarios. Current PDF intake evidence is recorded in its verification report; no claim follows about private full-document OCR accuracy/capacity or hosted CI. The controller owns private corpus, backup, runtime and preview work.
 
-For dashboard planning, create an endpoint/capability matrix: available and verified, available with limitations, or missing. Cover discovery, scoped source/revision inventory, original/asset inspection, bounded relations, job status/events/recovery, queries, traces, history/replay/purge, evaluations and configuration. Check response fields and authorization against actual HTTP handlers and contract tests. Do not make a convincing mock stand in for a missing backend feature.
-
-The dashboard draft proposes Search, Sources, Jobs, Evaluations, Activity and Settings. It is an evidence inspection and operations interface. It needs exact citations, source readers, original/derived distinctions, partial-coverage states, bounded graph exploration, and accessible edge lists. Query history represents retrieval runs; an LLM chat or answer-generation workflow is not required. Workspaces currently have no global directory registry, and collection management is incomplete: specify how selection will actually work before designing a universal selector.
-
-Plan small end-to-end journeys: search and inspect original evidence; add a source and follow a durable job; diagnose partial coverage; inspect relations; compare evaluations. Identify backend prerequisite tasks separately. Frontend business logic must not duplicate retrieval, authorization or indexing. The proposed React/TypeScript frontend and bundled static resources remain design choices to confirm. The existing draft calls for HTTP/SSE, keyboard access, small-screen inspection, safe rendering of imported content, and reconnect/recovery tests.
+Remaining engine boundaries include bounded relations/inventory, metadata-only history without replay, unavailable trace/history-cache purge enforcement, no PDF overlays, no global workspace discovery, evaluation label editing/aggregate analytics and automatic settings rebuild planning. Earlier upstream qualification/advisory blockers below remain open; collection lifecycle and local named collection administration are implemented.
 
 ## Product decisions to preserve
 
@@ -35,7 +27,7 @@ The engine branch was fast-forwarded into `main` at `e7de14081073c4a9020d5e595cb
 
 The package is an **alpha**, not a fully qualified production release. Implemented areas include versioned capture and extraction, typed evidence and locators, SQLite/FTS5, optional Chroma/Ladybug, document and code adapters, provider boundaries, hybrid retrieval, deterministic formatting, API/CLI/HTTP/MCP, evaluation machinery, and lifecycle operations. See the architecture for concrete code boundaries rather than inferring completion from this list.
 
-The dashboard has a design draft, but no implemented application UI. The Material for MkDocs site is documentation, not that dashboard. The public site excludes the historical planning archive; those specifications remain available in Git.
+The bundled dashboard is implemented and served by the local HTTP owner at /dashboard/. The Material for MkDocs site is documentation, not that dashboard. The public site excludes the historical planning archive; those specifications remain available in Git.
 
 Distribution supports a Python wheel and source archive. Standalone executable build/qualification tooling also exists, with platform and model-asset limits documented in [distribution](docs/distribution.md). Model weights and tokenizer assets are external. Do not equate a wheel, a local frozen build, and qualification on all supported operating systems.
 
@@ -58,7 +50,7 @@ Verification during this repair: the full local source run completed with 1,926 
 
 **Linux native qualification still blocked:** with Docling 2.132.0, the synthetic PDF's exact figure-caption text and page geometry are retained, but Linux labels it as body text and emits no picture-caption reference. macOS emits that reference. A controlled comparison of closer spacing, italic and bold captions reproduced the discrepancy; those temporary experiments were removed. The strict assertion and production requirement to bind asset captions to retained Docling references remain unchanged. The latest experiment produced 43 native passes and one caption-association failure. This belongs in the planned Docling improvement work: distinguish explicit parser relations from inferred candidates and evaluate platform behavior before changing the provenance contract.
 
-**Security gate still blocked:** the fresh installed-stack advisory audit reports five rows covering four unique Chroma 1.5.9 advisories, with no fixed versions reported. No advisory has been ignored or waived. See [distribution](docs/distribution.md) for identifiers. This is distinct from package and executable correctness; do not describe the full CI suite as green.
+**Security gate:** the fresh installed-stack advisory audit reports five rows covering four unique Chroma 1.5.9 advisories, with no fixed release published. Each is listed in the time-limited waiver register [`quality/advisories.toml`](quality/advisories.toml) (product owner decision, 30 days, reviewed monthly); gate G19 fails on an unlisted or expired advisory and on an entry no longer reported. See [distribution](docs/distribution.md) for identifiers. This is distinct from package and executable correctness; do not describe the full CI suite as green.
 
 ### Recorded verification from the preceding documentation update
 
@@ -71,24 +63,26 @@ These are dated observations, not results automatically inherited by later chang
 - The outgoing-history audit from `c914cb2` through `8c2f8cb` passed across 506 paths. Publication of this handoff requires a fresh outgoing check.
 - Logs and preview images were saved under the ignored local `.superpowers/docs-refresh-2026-10-13/` directory. They are not a public release artifact.
 
+On 2026-10-15, 2,385 tests were collected; the default selection is now green on a clean machine (code-health baseline).
+
 The full source run does not establish live embedding/reranking quality, gold-set adequacy, a Linux or minimum-macOS qualification result, or closure of the behavior defects below. Historical dependency advisories remain disclosed in the distribution guide; rerun the current advisory audit rather than treating that older result as a waiver. Hosted CI outcomes must be checked after pushing.
 
 ## Review findings and needed fixes
 
 The earlier review was checked against `e7de140`. Preserve the distinctions below when turning it into issues. The [full assessment](docs/review-assessment.md) has exact source references and the remaining review inventory.
 
-| Priority area | Current finding | Next useful acceptance test |
-| --- | --- | --- |
-| Strict lexical retrieval | More than the 80-per-kind cap marks the channel incomplete; strict queries can report `INDEX_INCOMPLETE` for normal truncation | More than 80 eligible matches remains a valid bounded search; genuinely unavailable/incomplete indexes still fail appropriately |
-| Historical editions | A unique selected edition can still produce an overlap warning and a human-decision requirement | Unique dated winner produces no spurious conflict; tied/unknown/overlapping cases retain explicit behavior |
-| Retention and purge | Advertised history/cache purge commands return `CAPABILITY_MISSING`; expiry is recorded but not enforced | Working scoped purge, expiry enforcement, retained-payload/replay behavior and job-diagnostic cleanup |
-| Vector identities | Family creation identity is configuration-derived; record IDs omit family identity | Independent families with identical configuration remain isolated across rebuild, restore and deletion; plan migration before changing durable IDs |
-| Workspace ownership | A second client encountering a standalone Python owner can receive `INTEGRITY_ERROR` | Two-process case returns a retryable ownership error without treating an ordinary live owner as corrupt |
-| Query traces | The trace request exists, but the result trace stays null | Scoped trace with bounded timings/counts/reasons and no hidden-source leakage, exposed consistently across transports |
+| Priority area            | Current finding                                                                                                                | Next useful acceptance test                                                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Strict lexical retrieval | More than the 80-per-kind cap marks the channel incomplete; strict queries can report `INDEX_INCOMPLETE` for normal truncation | More than 80 eligible matches remains a valid bounded search; genuinely unavailable/incomplete indexes still fail appropriately                    |
+| Historical editions      | A unique selected edition can still produce an overlap warning and a human-decision requirement                                | Unique dated winner produces no spurious conflict; tied/unknown/overlapping cases retain explicit behavior                                         |
+| Retention and purge      | Advertised history/cache purge commands return `CAPABILITY_MISSING`; expiry is recorded but not enforced                       | Working scoped purge, expiry enforcement, retained-payload/replay behavior and job-diagnostic cleanup                                              |
+| Vector identities        | Family creation identity is configuration-derived; record IDs omit family identity                                             | Independent families with identical configuration remain isolated across rebuild, restore and deletion; plan migration before changing durable IDs |
+| Workspace ownership      | A second client encountering a standalone Python owner can receive `INTEGRITY_ERROR`                                           | Two-process case returns a retryable ownership error without treating an ordinary live owner as corrupt                                            |
+| Query traces             | The trace request exists, but the result trace stays null                                                                      | Scoped trace with bounded timings/counts/reasons and no hidden-source leakage, exposed consistently across transports                              |
 
 Synthetic probes reproduced lexical cap classification, the spurious edition warning, and missing purge dispatch. Their end-to-end consequences and the other findings were assessed through code inspection; do not describe all six as full end-to-end reproductions.
 
-Dashboard-relevant gaps also include incomplete collection creation/list/discovery, missing CLI relation-assertion inspection by ID, code context excerpts without their own locator/reason, and full request-history retention not exposed through normal configuration. Metadata-only history cannot provide exact replay. Do not display unavailable trace, retention or replay features as operational.
+Dashboard-relevant gaps also include global workspace discovery, missing CLI relation-assertion inspection by ID, code context excerpts without their own locator/reason, and full request-history retention not exposed through normal configuration. Metadata-only history cannot provide exact replay. Do not display unavailable trace, retention or replay features as operational.
 
 Some findings were already overtaken: missing-revision original access was corrected in `e7de140`; parse reuse, read scope, vector candidate/window separation and reranker asset setup were finalized in earlier commits. Historical failing-suite counts and claims about workflows never running are not current facts.
 
@@ -102,7 +96,7 @@ SHA-256 provides standard-library availability, checksum interoperability and a 
 
 ### Multiple independent RAGs and their locations
 
-One workspace directory owns one corpus: `corpus.sqlite3`, `artifacts/`, and the configured `indexes/text/`, `indexes/image/`, and `indexes/graph/` projections. Pass its path to Python, CLI or a one-workspace server. The CLI defaults to the current directory; there is no implicit home-directory corpus, global workspace catalog or federated query. Choose directories in a project or under a user-managed home directory. `TYCHORA_MODEL_CACHE` can share model assets, not corpus data. Collections partition a workspace logically but do not create separate database directories, and public collection lifecycle/discovery is incomplete. See [workspaces](docs/workspaces.md).
+One workspace directory owns one corpus: `corpus.sqlite3`, `artifacts/`, and the configured `indexes/text/`, `indexes/image/`, and `indexes/graph/` projections. Pass its path to Python, CLI or a one-workspace server. The CLI defaults to the current directory; there is no implicit home-directory corpus, global workspace catalog or federated query. Choose directories in a project or under a user-managed home directory. `TYCHORA_MODEL_CACHE` can share model assets, not corpus data. Collections partition a workspace logically but do not create separate database directories, and named collection HTTP lifecycle and scoped discovery are available; the redesigned collection/document UI remains subsequent work. See [workspaces](docs/workspaces.md).
 
 ### Document kinds and configurable relations
 
@@ -136,9 +130,9 @@ Vector and graph ports provide a starting boundary for Qdrant and Neo4j. Parity 
 
 Earlier engineering estimates were 4–8 weeks for Qdrant parity, 6–12 for Neo4j, and 3–6 months for PostgreSQL canonical-store parity. At an illustrative €800/day, that is €16–32k, €24–48k and €48–96k respectively; narrow prototypes are smaller. These are uncertain human-effort estimates, not quotes, model-usage costs or commitments. Shared refactoring changes the combined estimate. See [extension boundaries](docs/extensions.md) before planning each implementation.
 
-## Owner's intended work after the dashboard specification/plan
+## Owner's remaining engine work after dashboard delivery
 
-The following work is explicitly desired but not implemented by this handoff. The order after dashboard planning is not fixed:
+The following work is explicitly desired but not implemented by this handoff. The order after dashboard delivery is not fixed:
 
 1. Polish the product and documentation.
 2. Understand and redesign chunking around semantic units, with contextual indexing and measured retrieval behavior.
@@ -161,3 +155,9 @@ uv run --project packaging/docs --locked mkdocs serve
 See [documentation maintenance and publication](docs/documentation.md). The docs workflow builds on pushes/PRs. GitHub Pages publication is a separate manual workflow action, with Pages configured to use GitHub Actions. Pushing the repository does not publish a package or deliberately deploy Pages. Runtime, native qualification and executable workflows also run on relevant pushes; inspect their actual results and do not weaken failing gates merely to obtain a green badge.
 
 Keep examples runnable, prerequisites explicit, current limits next to affected features, and tutorials/how-to/reference/explanation distinct. The local documentation previews are not a dashboard prototype. Any future handoff should update this file's baseline, remaining defects and verification evidence together.
+
+## Named collection backend (2026-10-14)
+
+CollectionService and HTTP collection/document endpoints now provide stable UUIDs, managed-owner-only creation, idempotent archive/reactivate, strict v1/v2 policy projection and lifecycle-preserving consent. Static grants never expand. Managed future-call grants refresh in the attached workspace, job facade and explicit LocalAuth slot; accepted job scopes stay immutable. Archive gates new source/PDF/provider/publication work and ordinary retrieval while retaining authorized exact inspection and history.
+
+Inventory is bounded and conservative: selected readable publication metadata and up to 400 canonical channel observations, with null unit/window counts and unknown latest-job state because current exact ownership/job lineage cannot be established inside the summary budget. No corpus artifacts are decoded for summaries. Actual synthetic HTTP fixtures are in `dashboard/contracts/collections-*.json`. Session refresh supports these backend operations; this delivery does not claim redesigned pages, guided settings, OCR or explicit PDF-policy execution.

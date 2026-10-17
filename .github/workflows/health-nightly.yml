@@ -1,0 +1,140 @@
+name: Health nightly
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      baseline:
+        description: Record the nightly metrics in quality/baseline.json and upload it
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    name: Branch coverage, three seeds and the code gold set
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.9.28"
+          enable-cache: true
+      - name: Install locked stack
+        run: uv sync --locked --all-extras --group dev --group test-fixtures
+      - name: Provision pinned public test assets and the code corpus
+        run: python packaging/provision_ci_assets.py --cache "$RUNNER_TEMP/tychora-public-models" --workspace "$RUNNER_TEMP/tychora-asset-setup" --github-env "$GITHUB_ENV" --code-corpus "$RUNNER_TEMP/tychora-code-corpus"
+      - name: Seed 1 with branch coverage and the gold-set report
+        env:
+          TYCHORA_TEST_TIMEOUT_FACTOR: "3"
+          TYCHORA_CODE_GOLD_REPORT: reports/code-gold.json
+        run: >-
+          uv run --locked pytest tests -q -n auto --randomly-seed=1
+          -m 'not live and not qualification and not release'
+          --cov --cov-branch --cov-report=json:reports/coverage-branch.json --cov-report=term
+          --junitxml=reports/seed-1.xml
+      - name: Seed 2
+        if: always()
+        env:
+          TYCHORA_TEST_TIMEOUT_FACTOR: "3"
+        run: uv run --locked pytest tests -q -n auto --randomly-seed=2 -m 'not live and not qualification and not release' --junitxml=reports/seed-2.xml
+      - name: Seed 3
+        if: always()
+        env:
+          TYCHORA_TEST_TIMEOUT_FACTOR: "3"
+        run: uv run --locked pytest tests -q -n auto --randomly-seed=3 -m 'not live and not qualification and not release' --junitxml=reports/seed-3.xml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: nightly-suite-reports
+          path: reports/
+          retention-days: 14
+
+  mutation:
+    name: Mutation testing of the core modules
+    runs-on: ubuntu-22.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.9.28"
+          enable-cache: true
+      - name: Install the project to provision assets
+        run: uv sync --locked --all-extras --group test-fixtures
+      - name: Provision pinned public test assets
+        run: python packaging/provision_ci_assets.py --cache "$RUNNER_TEMP/tychora-public-models" --workspace "$RUNNER_TEMP/tychora-asset-setup" --github-env "$GITHUB_ENV"
+      - name: Reinstall without the project so mutants are imported
+        run: uv sync --locked --no-install-project --all-extras --group dev --group mutation --group test-fixtures
+      - name: Run mutmut
+        run: uv run --no-sync mutmut run --max-children 4
+      - name: Export results
+        if: always()
+        run: mkdir -p reports && uv run --no-sync mutmut results --all true > reports/mutmut-results.txt
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: nightly-mutation-reports
+          path: reports/
+          retention-days: 14
+
+  report:
+    name: Nightly gates, flakes and architecture report
+    needs: [suite, mutation]
+    if: always()
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.9.28"
+          enable-cache: true
+      - name: Install locked checks
+        run: uv sync --locked --all-extras --group dev
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: nightly-suite-reports
+          path: reports
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: nightly-mutation-reports
+          path: reports
+      - name: Architecture report
+        run: uv run --locked python -m tools.health report --architecture reports/architecture.md --previous docs/quality/2026-10-15-baseline.md
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: architecture-report
+          path: reports/architecture.*
+          retention-days: 90
+      - name: Tests whose outcome depends on the seed
+        if: always()
+        run: uv run --locked python -m tools.health flaky reports/seed-1.xml reports/seed-2.xml reports/seed-3.xml
+      - name: Record the nightly baseline (manual dispatch only)
+        if: github.event_name == 'workflow_dispatch' && inputs.baseline
+        # --initial adds only the metrics missing from quality/baseline.json and keeps existing entries.
+        # G22 is left out for the same reason as in the check below.
+        run: uv run --locked python -m tools.health update --initial --group nightly --gates G16,G21
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: github.event_name == 'workflow_dispatch' && inputs.baseline
+        with:
+          name: nightly-baseline
+          path: quality/baseline.json
+          retention-days: 7
+      # G22 (code gold set) is left out until the gold test produces reports/code-gold.json:
+      # it is a strict expected failure on the evaluation budget, see
+      # tests/fixtures/evaluation/code-gold/README.md. Add G22 here when that test passes.
+      - name: Nightly gates
+        if: always()
+        run: uv run --locked python -m tools.health check --group nightly --gates G16,G21

@@ -1,0 +1,28 @@
+{
+  "manifest_sha256": "9ae89433d165632de488dc55883ec560baf4ed93530416848b0e1ab4f408a530",
+  "selection": ["output-tokenizer"],
+  "assets": [
+    {
+      "id": "cl100k-base-ranks",
+      "selection": "output-tokenizer",
+      "path": "tiktoken/0.14.0/cl100k_base.tiktoken",
+      "sha256": "223921b76ee99bde995b7ff738513eef100fb51d18c93597a113bcffe865b2a7",
+      "size_bytes": 1681126,
+      "url": "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken",
+      "license": "MIT",
+      "owner": "tiktoken==0.14.0",
+      "revision": "cl100k_base@0.14.0",
+      "notice_url": "https://github.com/openai/tiktoken/issues/92#issuecomment-1497875652"
+    }
+  ],
+  "notices": [
+    {
+      "selection": "output-tokenizer",
+      "attribution": "cl100k_base encoding published with tiktoken by OpenAI",
+      "license": "MIT",
+      "notice_url": "https://github.com/openai/tiktoken/blob/0.14.0/LICENSE",
+      "model_card_url": "https://github.com/openai/tiktoken/issues/92#issuecomment-1497875652"
+    }
+  ],
+  "total_size_bytes": 1681126
+}

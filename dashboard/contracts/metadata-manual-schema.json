@@ -1,0 +1,383 @@
+{
+  "kind_id": "manual@1",
+  "schema_id": "manual-metadata@1",
+  "schema_digests": {
+    "manual-metadata@1": "2950a95191fe6227f3663bec4675ba9e0315b9650d83e5f5215a17493ccc2763"
+  },
+  "fields": [
+    {
+      "name": "approval",
+      "required": false,
+      "value_types": ["string"],
+      "description": "",
+      "constraints": {
+        "enum": ["unreviewed", "accepted", "rejected"],
+        "type": "string"
+      },
+      "advanced": false
+    },
+    {
+      "name": "author",
+      "required": false,
+      "value_types": ["string"],
+      "description": "",
+      "constraints": {
+        "maxLength": 65536,
+        "minLength": 1,
+        "type": "string"
+      },
+      "advanced": false
+    },
+    {
+      "name": "deciding_body",
+      "required": false,
+      "value_types": ["string"],
+      "description": "",
+      "constraints": {
+        "maxLength": 65536,
+        "minLength": 1,
+        "type": "string"
+      },
+      "advanced": false
+    },
+    {
+      "name": "decision",
+      "required": false,
+      "value_types": ["string"],
+      "description": "",
+      "constraints": {
+        "maxLength": 65536,
+        "minLength": 1,
+        "type": "string"
+      },
+      "advanced": false
+    },
+    {
+      "name": "edition",
+      "required": true,
+      "value_types": ["string"],
+      "description": "",
+      "constraints": {
+        "maxLength": 65536,
+        "minLength": 1,
+        "type": "string"
+      },
+      "advanced": false
+    },
+    {
+      "name": "effective_end",
+      "required": false,
+      "value_types": ["string", "null"],
+      "description": "",
+      "constraints": {
+        "format": "date",
+        "type": ["string", "null"]
+      },
+      "advanced": false
+    },
+    {
+      "name": "effective_start",
+      "required": false,
+      "value_types": ["string", "null"],
+      "description": "",
+      "constraints": {
+        "format": "date",
+        "type": ["string", "null"]
+      },
+      "advanced": false
+    },
+    {
+      "name": "issuer",
+      "required": false,
+      "value_types": ["string"],
+      "description": "",
+      "constraints": {
+        "maxLength": 65536,
+        "minLength": 1,
+        "type": "string"
+      },
+      "advanced": false
+    },
+    {
+      "name": "jurisdiction",
+      "required": false,
+      "value_types": ["string"],
+      "description": "",
+      "constraints": {
+        "maxLength": 65536,
+        "minLength": 1,
+        "type": "string"
+      },
+      "advanced": false
+    },
+    {
+      "name": "language",
+      "required": false,
+      "value_types": ["string"],
+      "description": "",
+      "constraints": {
+        "maxLength": 65536,
+        "minLength": 1,
+        "type": "string"
+      },
+      "advanced": false
+    },
+    {
+      "name": "owner",
+      "required": false,
+      "value_types": ["string"],
+      "description": "",
+      "constraints": {
+        "maxLength": 65536,
+        "minLength": 1,
+        "type": "string"
+      },
+      "advanced": false
+    },
+    {
+      "name": "provenance",
+      "required": false,
+      "value_types": ["array"],
+      "description": "",
+      "constraints": {
+        "items": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "type": "string"
+        },
+        "maxItems": 4096,
+        "minItems": 1,
+        "type": "array"
+      },
+      "advanced": true
+    },
+    {
+      "name": "publication_date",
+      "required": false,
+      "value_types": ["string", "null"],
+      "description": "",
+      "constraints": {
+        "format": "date",
+        "type": ["string", "null"]
+      },
+      "advanced": false
+    },
+    {
+      "name": "publisher",
+      "required": true,
+      "value_types": ["string"],
+      "description": "",
+      "constraints": {
+        "maxLength": 65536,
+        "minLength": 1,
+        "type": "string"
+      },
+      "advanced": false
+    },
+    {
+      "name": "reference",
+      "required": false,
+      "value_types": ["string"],
+      "description": "",
+      "constraints": {
+        "maxLength": 65536,
+        "minLength": 1,
+        "type": "string"
+      },
+      "advanced": false
+    },
+    {
+      "name": "relative_path",
+      "required": false,
+      "value_types": ["string"],
+      "description": "",
+      "constraints": {
+        "maxLength": 65536,
+        "minLength": 1,
+        "type": "string"
+      },
+      "advanced": false
+    },
+    {
+      "name": "scope",
+      "required": false,
+      "value_types": ["object"],
+      "description": "",
+      "constraints": {
+        "additionalProperties": false,
+        "properties": {
+          "global_facets": {
+            "items": {
+              "maxLength": 65536,
+              "minLength": 1,
+              "type": "string"
+            },
+            "maxItems": 4096,
+            "minItems": 0,
+            "type": "array"
+          },
+          "project": {
+            "maxLength": 65536,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "advanced": true
+    },
+    {
+      "name": "target",
+      "required": false,
+      "value_types": ["string"],
+      "description": "",
+      "constraints": {
+        "maxLength": 65536,
+        "minLength": 1,
+        "type": "string"
+      },
+      "advanced": false
+    },
+    {
+      "name": "title",
+      "required": true,
+      "value_types": ["string"],
+      "description": "",
+      "constraints": {
+        "maxLength": 65536,
+        "minLength": 1,
+        "type": "string"
+      },
+      "advanced": false
+    }
+  ],
+  "schemas": {
+    "manual-metadata@1": {
+      "$id": "manual-metadata@1",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "approval": {
+          "enum": ["unreviewed", "accepted", "rejected"],
+          "type": "string"
+        },
+        "author": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "type": "string"
+        },
+        "deciding_body": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "type": "string"
+        },
+        "decision": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "type": "string"
+        },
+        "edition": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "type": "string"
+        },
+        "effective_end": {
+          "format": "date",
+          "type": ["string", "null"]
+        },
+        "effective_start": {
+          "format": "date",
+          "type": ["string", "null"]
+        },
+        "issuer": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "type": "string"
+        },
+        "jurisdiction": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "type": "string"
+        },
+        "language": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "type": "string"
+        },
+        "owner": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "type": "string"
+        },
+        "provenance": {
+          "items": {
+            "maxLength": 65536,
+            "minLength": 1,
+            "type": "string"
+          },
+          "maxItems": 4096,
+          "minItems": 1,
+          "type": "array"
+        },
+        "publication_date": {
+          "format": "date",
+          "type": ["string", "null"]
+        },
+        "publisher": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "type": "string"
+        },
+        "reference": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "type": "string"
+        },
+        "relative_path": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "type": "string"
+        },
+        "scope": {
+          "additionalProperties": false,
+          "properties": {
+            "global_facets": {
+              "items": {
+                "maxLength": 65536,
+                "minLength": 1,
+                "type": "string"
+              },
+              "maxItems": 4096,
+              "minItems": 0,
+              "type": "array"
+            },
+            "project": {
+              "maxLength": 65536,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "target": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 65536,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": ["title", "publisher", "edition"],
+      "type": "object"
+    }
+  },
+  "schema_reference_bindings": {
+    "manual-metadata@1": {}
+  },
+  "advanced": true
+}

@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -10,16 +11,14 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.assets import asset_path
+from tests.helpers.timing import scaled
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
 def _bundle(tmp_path: Path) -> Path:
-    supplied = os.environ.get("TYCHORA_TEST_TOKENIZER_ASSETS")
-    if not supplied:
-        pytest.fail(
-            "Set TYCHORA_TEST_TOKENIZER_ASSETS to the provisioned tokenizer fixture directory"
-        )
-    source = Path(supplied) / "cl100k_base.tiktoken"
+    source = asset_path("TYCHORA_TEST_TOKENIZER_ASSETS") / "cl100k_base.tiktoken"
     if not source.is_file():
         pytest.fail(
             f"TYCHORA_TEST_TOKENIZER_ASSETS has no cl100k_base.tiktoken: {source}"
@@ -38,6 +37,7 @@ def _environment(tmp_path: Path) -> dict[str, str]:
     return env
 
 
+@pytest.mark.assets("TYCHORA_TEST_TOKENIZER_ASSETS")
 def test_literal_readme_offline_recipe(tmp_path: Path) -> None:
     readme = (ROOT / "README.md").read_text()
     match = re.search(
@@ -60,6 +60,7 @@ def test_literal_readme_offline_recipe(tmp_path: Path) -> None:
     assert (tmp_path / "knowledge" / "workspace.toml").is_file()
 
 
+@pytest.mark.assets("TYCHORA_TEST_TOKENIZER_ASSETS")
 def test_public_python_quickstart(tmp_path: Path) -> None:
     env = _environment(tmp_path)
     workspace = tmp_path / "python-knowledge"
@@ -76,6 +77,7 @@ def test_public_python_quickstart(tmp_path: Path) -> None:
     assert "Record verification outcomes." in result.stdout
 
 
+@pytest.mark.assets("TYCHORA_TEST_TOKENIZER_ASSETS")
 def test_public_async_python_quickstart(tmp_path: Path) -> None:
     env = _environment(tmp_path)
     workspace = tmp_path / "async-knowledge"
@@ -97,6 +99,7 @@ def test_public_async_python_quickstart(tmp_path: Path) -> None:
     assert "Record verification outcomes." in result.stdout
 
 
+@pytest.mark.assets("TYCHORA_TEST_TOKENIZER_ASSETS")
 def test_generic_external_pack_installs_and_survives_reopen(tmp_path: Path) -> None:
     pack = tmp_path / "knowledge" / "profiles" / "workbench"
     shutil.copytree(ROOT / "examples" / "profiles" / "workbench", pack)
@@ -162,18 +165,16 @@ def test_public_relative_markdown_links_resolve() -> None:
             assert (page.parent / relative).exists(), f"{page}: broken link {target}"
 
 
-@pytest.mark.parametrize("asset_root", [None, "missing"])
+@pytest.mark.assets("TYCHORA_TEST_TOKENIZER_ASSETS")
 def test_required_tokenizer_fixture_fails_clearly(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, asset_root: str | None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    if asset_root is None:
-        monkeypatch.delenv("TYCHORA_TEST_TOKENIZER_ASSETS", raising=False)
-    else:
-        monkeypatch.setenv("TYCHORA_TEST_TOKENIZER_ASSETS", str(tmp_path / asset_root))
+    monkeypatch.setenv("TYCHORA_TEST_TOKENIZER_ASSETS", str(tmp_path / "missing"))
     with pytest.raises(pytest.fail.Exception, match="TYCHORA_TEST_TOKENIZER_ASSETS"):
         _bundle(tmp_path)
 
 
+@pytest.mark.assets("TYCHORA_TEST_TOKENIZER_ASSETS")
 def test_literal_external_pack_offline_recipe(tmp_path: Path) -> None:
     pack = tmp_path / "examples" / "profiles" / "workbench"
     pack.parent.mkdir(parents=True)
@@ -195,6 +196,7 @@ def test_literal_external_pack_offline_recipe(tmp_path: Path) -> None:
     assert (tmp_path / "knowledge" / "workspace.toml").is_file()
 
 
+@pytest.mark.assets("TYCHORA_TEST_TOKENIZER_ASSETS")
 def test_framework_adapter_keeps_complete_multiple_citations(tmp_path: Path) -> None:
     from types import SimpleNamespace
 
@@ -252,6 +254,7 @@ def test_framework_adapter_keeps_complete_multiple_citations(tmp_path: Path) -> 
     )
 
 
+@pytest.mark.assets("TYCHORA_TEST_TOKENIZER_ASSETS")
 @pytest.mark.parametrize("mode", ["sync", "async"])
 def test_optimized_quickstart_reports_failed_setup(tmp_path: Path, mode: str) -> None:
     script = """
@@ -294,6 +297,7 @@ else:
     assert "Output tokenizer setup did not succeed" in result.stderr
 
 
+@pytest.mark.assets("TYCHORA_TEST_TOKENIZER_ASSETS")
 def test_shipped_pack_project_global_history_and_hierarchy(tmp_path: Path) -> None:
     from tychora import OutputProfile, Tychora, format_result
 
@@ -345,7 +349,7 @@ def test_shipped_pack_project_global_history_and_hierarchy(tmp_path: Path) -> No
                     "metadata": metadata,
                 }
             )
-            status = kb.jobs.wait(job.id, timeout=10)
+            status = kb.jobs.wait(job.id, timeout=scaled(10))
             assert status.state == "succeeded", (key, status.error_code)
 
         base_metadata = {
@@ -399,3 +403,64 @@ def test_shipped_pack_project_global_history_and_hierarchy(tmp_path: Path) -> No
         assert any(
             segment["kind"] == "legacy-standard@1" for segment in standard["segments"]
         )
+
+
+DOCUMENTED_COMMANDS = ("HANDOFF.md", "docs/contributing.md")
+TRACKED_ROOTS = (
+    "packaging/",
+    "tools/",
+    "tests/",
+    "docs/",
+    "src/",
+    "dashboard/",
+    "examples/",
+)
+MARKERS = {"live", "qualification", "release", "assets", "slow", "quarantine"}
+VALUE_FLAGS = {"--group", "--project", "--with", "--extra"}
+
+
+def _documented_commands(document: str) -> list[list[str]]:
+    text = (ROOT / document).read_text()
+    commands = []
+    for block in re.findall(r"```bash\n(.*?)\n```", text, re.DOTALL):
+        for line in block.replace("\\\n", " ").splitlines():
+            if line.strip() and not line.lstrip().startswith("#"):
+                commands.append(shlex.split(line))
+    return commands
+
+
+def _uv_run_target(words: list[str]) -> str | None:
+    rest = iter(words[2:])
+    for word in rest:
+        if word in VALUE_FLAGS:
+            next(rest, None)
+        elif not word.startswith("-"):
+            return word
+    return None
+
+
+@pytest.mark.parametrize("document", DOCUMENTED_COMMANDS)
+def test_documented_commands_reference_real_entry_points(document: str) -> None:
+    commands = _documented_commands(document)
+    assert commands, f"{document} has no bash command block"
+    for words in commands:
+        for word in words:
+            if word.startswith(TRACKED_ROOTS):
+                assert (ROOT / word).exists(), f"{document}: {word} does not exist"
+        if words[:2] == ["uv", "run"]:
+            target = _uv_run_target(words)
+            assert target, f"{document}: `{' '.join(words)}` names no command"
+            if "--project" in words:
+                project = ROOT / words[words.index("--project") + 1] / "pyproject.toml"
+                installed = target in project.read_text()
+            else:
+                installed = (Path(sys.executable).parent / target).exists()
+            assert installed, (
+                f"{document}: `{' '.join(words)}` runs a tool that is not installed"
+            )
+        if "pytest" in words and "-m" in words:
+            expression = words[words.index("-m") + 1]
+            names = set(re.findall(r"[a-z_]+", expression)) - {"not", "and", "or"}
+            assert names <= MARKERS, (
+                f"{document}: unknown markers {sorted(names - MARKERS)}"
+            )

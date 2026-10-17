@@ -93,7 +93,7 @@ versions, and native wheel tags before running the same suite on native macOS
 have not been run as part of this local qualification.
 
 This historical dependency probe did not qualify a standalone executable. The
-separate [distribution guide](distribution.md) and Task 46 executable report
+separate [distribution guide](distribution.md) and executable qualification report
 record later local binary evidence and its target limits. A current-host
 development run does not establish the macOS 15 or Ubuntu 22.04 baseline,
 and live provider correctness, signing and notarization remain separate gates.

@@ -5,6 +5,7 @@ import os
 import stat
 from base64 import b64decode
 from collections.abc import Callable
+from datetime import UTC, datetime
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path, PurePosixPath
@@ -206,6 +207,175 @@ class SetupService:
             total_size_bytes=sum(asset.size_bytes for asset in selected),
         )
 
+    def verify_bounded(
+        self,
+        plan: ModelAssetPlan,
+        ctx: ExecutionContext,
+        *,
+        byte_budget: int = 256 * 1024 * 1024,
+        seconds: float = 5.0,
+    ):
+        """Measure local hashes under actual byte and cooperative deadline bounds.
+
+        No directory creation, symlink traversal, downloads or secret resolution.
+        Oversized files are deferred; a durable setup receipt is separate evidence.
+        """
+        import time
+
+        from tychora.contracts.administration import (
+            AssetReadiness,
+            ModelReadiness,
+            SelectionReadiness,
+        )
+
+        if not 0 <= byte_budget <= 256 * 1024 * 1024 or not 0 <= seconds <= 5:
+            raise ValueError("Verification budget exceeds the public bound")
+        if len(plan.selection) > 4 or len(plan.assets) > 64:
+            raise TychoraError(
+                "INVALID_REQUEST", "Verification selection exceeds the limit."
+            )
+        deadline = min(time.monotonic() + seconds, ctx.deadline or float("inf"))
+        checked = 0
+        results = []
+        root_fd = None
+        root_state = None
+        try:
+            try:
+                root_fd = _open_directory(self.cache_root, create=False)
+            except FileNotFoundError:
+                root_state = "missing"
+            except OSError:
+                root_state = "corrupt"
+            for asset in plan.assets:
+                state, reason, measured = "not_checked", "deadline_exceeded", 0
+                parent_fd = fd = None
+                try:
+                    if time.monotonic() >= deadline or ctx.cancelled.is_set():
+                        reason = "verification_interrupted"
+                    elif root_state is not None:
+                        state, reason = root_state, None
+                    else:
+                        assert root_fd is not None
+                        parent_fd, name = _open_relative_parent(
+                            root_fd, PurePosixPath(asset.path), create=False
+                        )
+                        fd = os.open(
+                            name,
+                            os.O_RDONLY | _NOFOLLOW | os.O_NONBLOCK,
+                            dir_fd=parent_fd,
+                        )
+                        initial = os.fstat(fd)
+                        if (
+                            not stat.S_ISREG(initial.st_mode)
+                            or initial.st_size != asset.size_bytes
+                        ):
+                            state, reason = "corrupt", "invalid_file"
+                        elif asset.size_bytes > byte_budget - checked:
+                            reason = "needs_full_verification"
+                        else:
+                            hasher = sha256()
+                            while measured < asset.size_bytes:
+                                if (
+                                    time.monotonic() >= deadline
+                                    or ctx.cancelled.is_set()
+                                ):
+                                    reason = "verification_interrupted"
+                                    break
+                                block = os.read(
+                                    fd,
+                                    min(
+                                        1024 * 1024,
+                                        asset.size_bytes - measured,
+                                        byte_budget - checked,
+                                    ),
+                                )
+                                measured += len(block)
+                                checked += len(block)
+                                if not block:
+                                    state, reason = "not_checked", "file_changed"
+                                    break
+                                hasher.update(block)
+                            else:
+                                final = os.fstat(fd)
+                                if (
+                                    time.monotonic() >= deadline
+                                    or ctx.cancelled.is_set()
+                                ):
+                                    reason = "verification_interrupted"
+                                elif (
+                                    initial.st_size,
+                                    initial.st_mtime_ns,
+                                    initial.st_ctime_ns,
+                                ) != (
+                                    final.st_size,
+                                    final.st_mtime_ns,
+                                    final.st_ctime_ns,
+                                ):
+                                    reason = "file_changed"
+                                else:
+                                    state = (
+                                        "installed"
+                                        if hasher.hexdigest() == asset.sha256
+                                        else "corrupt"
+                                    )
+                                    reason = (
+                                        None
+                                        if state == "installed"
+                                        else "checksum_mismatch"
+                                    )
+                except FileNotFoundError:
+                    state, reason = "missing", None
+                except OSError:
+                    state, reason = "corrupt", "unsafe_or_unreadable_file"
+                finally:
+                    if fd is not None:
+                        os.close(fd)
+                    if parent_fd is not None:
+                        os.close(parent_fd)
+                results.append(
+                    AssetReadiness(
+                        asset_id=asset.id,
+                        selection=asset.selection,
+                        sha256=asset.sha256,
+                        size_bytes=asset.size_bytes,
+                        state=state,
+                        checked_bytes=measured,
+                        verification="current_full_hash"
+                        if state == "installed" or reason == "checksum_mismatch"
+                        else "none",
+                        reason=reason,
+                    )
+                )
+        finally:
+            if root_fd is not None:
+                os.close(root_fd)
+        selections = []
+        for selection in plan.selection:
+            states = {item.state for item in results if item.selection == selection}
+            state = next(
+                (
+                    state
+                    for state in ("not_checked", "corrupt", "missing")
+                    if state in states
+                ),
+                "installed",
+            )
+            selections.append(
+                SelectionReadiness(
+                    selection=selection,
+                    state=state,
+                    complete="not_checked" not in states,
+                )
+            )
+        return ModelReadiness(
+            manifest_sha256=plan.manifest_sha256,
+            assets=tuple(results),
+            selections=tuple(selections),
+            total_size_bytes=plan.total_size_bytes,
+            checked_bytes=checked,
+            complete=all(item.complete for item in selections),
+        )
+
     def apply(
         self,
         plan: ModelAssetPlan,
@@ -260,6 +430,7 @@ class SetupService:
                             "schema_version": "1",
                             "data": {
                                 "manifest_sha256": plan.manifest_sha256,
+                                "verified_at": datetime.now(UTC).isoformat(),
                                 "selection": list(plan.selection),
                                 "notices": [
                                     notice.model_dump(mode="json")
@@ -590,6 +761,9 @@ async def run_public_setup(owner, repository, scope, request):
         )
 
     def execute():
+        from .workspace_authority import authorize_workspace
+
+        authorize_workspace(owner, scope)
         effective_config = owner.artifacts.put_stream(
             BytesIO(
                 canonical_bytes(

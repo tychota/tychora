@@ -69,7 +69,7 @@ async def test_retry_uses_exact_committed_capture_and_verified_plan(
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
         await owner.run_blocking(
             lambda: owner.db.execute(
-                "INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,'{}')",
+                'INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
                 (collection, owner.workspace_id, "manuals", "Manuals"),
             ),
             ExecutionContext(),

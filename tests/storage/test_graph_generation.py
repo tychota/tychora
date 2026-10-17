@@ -6,6 +6,7 @@ import pytest
 
 import tychora.adapters.sqlite.graph as sqlite_graph
 from tests.helpers.corpus import artifact, reader, registry, seed_bundle
+from tests.retrieval.graph_fixture import generation_spec
 from tychora.adapters.files.cas import LocalArtifacts
 from tychora.adapters.ladybug.generation import LadybugGraphStore
 from tychora.adapters.sqlite.connection import open_corpus
@@ -103,22 +104,7 @@ def _build(tmp_path, *, method="native", status="recorded", allow_model=False):
         io.BytesIO(encode_assertions((assertion,))), "application/x-ndjson"
     )
     units = (_unit("a"), _unit("b"))
-    spec = GraphGenerationSpec(
-        generation_id="generation",
-        family_id=digest("family"),
-        config_sha=digest("config"),
-        registry_digest=digest("registry"),
-        workspace_id="workspace",
-        decision_watermark=0,
-        memberships=(
-            GraphExtraction(
-                extraction_id="extraction",
-                revision_id="revision",
-                assertion_root=root,
-                unit_ids=("a", "b"),
-            ),
-        ),
-    )
+    spec = generation_spec(root, ("a", "b"))
     build = GraphBuildInput(
         spec=spec,
         units=tuple(
@@ -145,6 +131,51 @@ def _build(tmp_path, *, method="native", status="recorded", allow_model=False):
         ),
     )
     return spec, build, units, assertion
+
+
+def test_registered_calls_relation_admits_recursive_self_link(tmp_path):
+    origin = TextLocator(artifact_ref="text", native_ref="a", char_start=0, char_end=1)
+    recursive = RelationshipAssertion.from_observation(
+        AssertionObservation(
+            observation_key="recursion",
+            revision_id="revision",
+            extraction_id="extraction",
+            predicate="calls@1",
+            subject=RelationshipEndpoint(
+                entity_id="fn", unit_id="a", kind="code_file@1"
+            ),
+            object=RelationshipEndpoint(
+                entity_id="fn", unit_id="a", kind="code_file@1"
+            ),
+            origin_unit_id="a",
+            origin_locator=origin,
+            required_support_ids=frozenset({"a"}),
+            method="parser_inferred",
+            status="recorded",
+            confidence=1.0,
+            derivation_fingerprint=digest("fixture"),
+        )
+    )
+    store = LocalArtifacts(tmp_path / "artifacts")
+    root = store.put_stream(
+        io.BytesIO(encode_assertions((recursive,))), "application/x-ndjson"
+    )
+    unit = _unit("a")
+    spec = generation_spec(root, ("a",))
+    build = GraphBuildInput(
+        spec=spec,
+        units=(GraphUnitBinding(unit=unit, revision_id="revision"),),
+        assertions=(
+            GraphAssertionBinding(
+                assertion=recursive, artifact=root, record_id=recursive.assertion_id
+            ),
+        ),
+        relations=FrozenJsonMap({"calls@1": registry().relations["calls@1"]}),
+    )
+    graph = LadybugGraphStore(tmp_path / "graph", build=build)
+    generation = graph.begin_generation(spec)
+    graph.upsert_batch(generation, (recursive,), (unit,), ExecutionContext())
+    assert _query_rows(graph, "MATCH (a:RelationAssertion) RETURN count(a)") == [[1]]
 
 
 def test_generation_seals_native_grounding_and_reopens(tmp_path):

@@ -1,18 +1,22 @@
 """Async public client stays responsive while local ingestion runs."""
 
 import asyncio
-import os
 from contextlib import contextmanager
 from threading import Event
 
 import pytest
 from PIL import Image
 
+from tests.helpers.assets import asset_path
+from tests.helpers.timing import scaled
 from tychora import AsyncTychora
 from tychora.adapters.docling.parser import DoclingParser
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.identity import source_id
 from tychora.ports.execution import ExecutionContext
+
+# Parser and OCR jobs are slow on loaded CI runners; the API caps one wait at 300 s.
+JOB_WAIT = min(scaled(60), 300)
 
 
 class CharacterCounter:
@@ -76,7 +80,9 @@ async def test_async_public_ingestion_and_heartbeat(tmp_path):
                 await asyncio.sleep(0.01)
                 beats += 1
 
-        status, _ = await asyncio.gather(kb.jobs.wait(job.id), heartbeat())
+        status, _ = await asyncio.gather(
+            kb.jobs.wait(job.id, timeout=JOB_WAIT), heartbeat()
+        )
         assert status.state == "succeeded"
         assert beats == 3
         result = await kb.search(
@@ -114,7 +120,7 @@ async def test_cancelled_async_search_drains_before_returning(tmp_path):
                 },
             }
         )
-        assert (await kb.jobs.wait(job.id)).state == "succeeded"
+        assert (await kb.jobs.wait(job.id, timeout=JOB_WAIT)).state == "succeeded"
         started, release = Event(), Event()
         original = kb._workspace.services.query._prepare
 
@@ -138,11 +144,14 @@ async def test_cancelled_async_search_drains_before_returning(tmp_path):
             await search
 
 
+@pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 @pytest.mark.asyncio
 async def test_two_public_queries_complete_while_parser_job_is_held(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("TYCHORA_MODEL_CACHE", os.environ["TYCHORA_TEST_MODEL_CACHE"])
+    monkeypatch.setenv(
+        "TYCHORA_MODEL_CACHE", str(asset_path("TYCHORA_TEST_MODEL_CACHE"))
+    )
     pdf = tmp_path / "manual.pdf"
     pdf.write_bytes(_simple_pdf())
     picture = tmp_path / "held.png"
@@ -180,7 +189,7 @@ async def test_two_public_queries_complete_while_parser_job_is_held(
                 },
             }
         )
-        first_status = await kb.jobs.wait(first.id)
+        first_status = await kb.jobs.wait(first.id, timeout=min(scaled(120), 300))
         assert first_status.state == "succeeded", first_status.error_code
         monkeypatch.setattr(DoclingParser, "aextract", held_parser)
         parser_job = await kb.sources.add(
@@ -216,7 +225,9 @@ async def test_two_public_queries_complete_while_parser_job_is_held(
             assert heartbeat.subject == "kinds"
         finally:
             release.set()
-        assert (await kb.jobs.wait(parser_job.id, timeout=20)).state == "succeeded"
+        assert (
+            await kb.jobs.wait(parser_job.id, timeout=min(scaled(20), 300))
+        ).state == "succeeded"
 
 
 @pytest.mark.asyncio
@@ -243,7 +254,7 @@ async def test_cancelled_public_original_inspection_keeps_payload_pinned(
                 },
             }
         )
-        assert (await kb.jobs.wait(job.id)).state == "succeeded"
+        assert (await kb.jobs.wait(job.id, timeout=JOB_WAIT)).state == "succeeded"
         sid = source_id(kb.default_collection_id, "leased-original")
         revision = (await kb.sources.revisions(sid)).revisions[0].revision_id
         owner = kb._workspace.owner

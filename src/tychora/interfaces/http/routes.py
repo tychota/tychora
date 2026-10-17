@@ -9,8 +9,9 @@ import math
 import time
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response
 
 from tychora.api import DEFAULT_COLLECTION_ID
@@ -19,6 +20,7 @@ from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.operations import (
     DiscoverRequest,
     EvaluationRequest,
+    ExtractionContentRequest,
     InspectRequest,
     MaintenanceRequest,
     RelationRequest,
@@ -113,12 +115,98 @@ def _inspection_json(value) -> Response:
 
 
 def register_routes(app: FastAPI) -> None:
+    from tychora.contracts.collections import CollectionCreate, CollectionEdit
+
+    @app.get("/v1/collections")
+    async def collections(
+        request: Request,
+        cursor: str | None = None,
+        limit: int = 50,
+        include_archived: bool = False,
+    ):
+        result = await _services(request).collections.list(
+            _scope(request),
+            ExecutionContext(),
+            cursor=cursor,
+            limit=limit,
+            include_archived=include_archived,
+        )
+        return JSONResponse(result.model_dump(mode="json"))
+
+    @app.post("/v1/collections")
+    async def create_collection(request: Request):
+        parsed = CollectionCreate.from_mapping(await _body_map(request))
+        result = await _services(request).collections.create(
+            parsed,
+            _scope(request),
+            ExecutionContext(),
+            managed_owner_authorized=request.state.managed_workspace_owner,
+        )
+        return JSONResponse(result.model_dump(mode="json"), status_code=201)
+
+    @app.get("/v1/collections/{collection_id}")
+    async def get_collection(collection_id: str, request: Request):
+        result = await _services(request).collections.get(
+            collection_id, _scope(request), ExecutionContext()
+        )
+        return JSONResponse(result.model_dump(mode="json"))
+
+    @app.patch("/v1/collections/{collection_id}")
+    async def edit_collection(collection_id: str, request: Request):
+        parsed = CollectionEdit.from_mapping(await _body_map(request))
+        result = await _services(request).collections.edit(
+            collection_id, parsed, _scope(request), ExecutionContext()
+        )
+        return JSONResponse(result.model_dump(mode="json"))
+
+    @app.post("/v1/collections/{collection_id}/archive")
+    async def archive_collection(collection_id: str, request: Request):
+        result = await _services(request).collections.set_archived(
+            collection_id, True, _scope(request), ExecutionContext()
+        )
+        return JSONResponse(result.model_dump(mode="json"))
+
+    @app.post("/v1/collections/{collection_id}/reactivate")
+    async def reactivate_collection(collection_id: str, request: Request):
+        result = await _services(request).collections.set_archived(
+            collection_id, False, _scope(request), ExecutionContext()
+        )
+        return JSONResponse(result.model_dump(mode="json"))
+
+    @app.get("/v1/collections/{collection_id}/consent")
+    async def collection_consent(collection_id: str, request: Request):
+        result = await _services(request).collections.consent(
+            collection_id, _scope(request), ExecutionContext()
+        )
+        result = result.model_copy(
+            update={
+                "managed_grant_refresh_available": result.managed_grant_refresh_available
+                and request.state.managed_workspace_owner
+            }
+        )
+        return JSONResponse(result.model_dump(mode="json"))
+
+    @app.get("/v1/documents")
+    async def documents(request: Request, cursor: str | None = None, limit: int = 50):
+        result = await _services(request).collections.documents(
+            _scope(request), ExecutionContext(), cursor=cursor, limit=limit
+        )
+        return JSONResponse(result.model_dump(mode="json"))
+
     @app.get("/v1/handshake")
     async def handshake(request: Request):
         owner = request.app.state.owner
         scope = _scope(request)
         return JSONResponse(
             {
+                "managed_workspace_owner": request.state.managed_workspace_owner,
+                "policy_epoch": await owner.run_blocking(
+                    lambda: owner.db.execute(
+                        "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
+                        (owner.workspace_id,),
+                    ).fetchone()[0],
+                    ExecutionContext(),
+                ),
                 "schema_version": "1",
                 "protocol_version": 1,
                 "workspace_id": owner.workspace_id,
@@ -244,6 +332,15 @@ def register_routes(app: FastAPI) -> None:
         )
         return _source_json(result) if parsed.subject == "sources" else _json(result)
 
+    @app.get("/v1/discovery/kinds/{kind_id}/metadata-schema")
+    async def kind_metadata_schema(kind_id: str, request: Request):
+        _require(request, "read")
+        return _json(
+            await _services(request).discovery.kind_metadata_schema(
+                kind_id, _scope(request), ExecutionContext()
+            )
+        )
+
     @app.get("/v1/sources")
     async def list_sources(
         request: Request, cursor: str | None = None, limit: int = 100
@@ -345,6 +442,62 @@ def register_routes(app: FastAPI) -> None:
             limit=limit,
         )
         return _source_json(result)
+
+    @app.get(
+        "/v1/sources/{source_id}/revisions/{revision_id}/extractions/{extraction_id}/units"
+    )
+    async def list_extraction_units(
+        source_id: str,
+        revision_id: str,
+        extraction_id: str,
+        request: Request,
+        cursor: str | None = None,
+        limit: int = 20,
+        unit_id: str | None = None,
+    ):
+        _require(request, "read")
+        parsed = ExtractionContentRequest(
+            source_id=source_id,
+            revision_id=revision_id,
+            extraction_id=extraction_id,
+            cursor=cursor,
+            limit=limit,
+            unit_id=unit_id,
+        )
+        return _source_json(
+            await _services(request).inspection.extraction_units(
+                parsed, _scope(request), ExecutionContext()
+            )
+        )
+
+    @app.get(
+        "/v1/sources/{source_id}/revisions/{revision_id}/extractions/{extraction_id}/windows"
+    )
+    async def list_extraction_windows(
+        source_id: str,
+        revision_id: str,
+        extraction_id: str,
+        request: Request,
+        cursor: str | None = None,
+        limit: int = 20,
+        unit_id: str | None = None,
+        chunk_id: str | None = None,
+    ):
+        _require(request, "read")
+        parsed = ExtractionContentRequest(
+            source_id=source_id,
+            revision_id=revision_id,
+            extraction_id=extraction_id,
+            cursor=cursor,
+            limit=limit,
+            unit_id=unit_id,
+            chunk_id=chunk_id,
+        )
+        return _source_json(
+            await _services(request).inspection.extraction_windows(
+                parsed, _scope(request), ExecutionContext()
+            )
+        )
 
     @app.get("/v1/evidence/{unit_id}")
     async def get_evidence(
@@ -513,7 +666,7 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/v1/evaluations")
     async def list_evaluations(request: Request):
         _require(request, "manage")
-        return _json(
+        return JSONResponse(
             await _services(request).evaluations.list_runs(
                 _scope(request), ExecutionContext()
             )
@@ -522,7 +675,7 @@ def register_routes(app: FastAPI) -> None:
     @app.get("/v1/evaluations/{evaluation_id}")
     async def get_evaluation(evaluation_id: str, request: Request):
         _require(request, "manage")
-        return _json(
+        return JSONResponse(
             await _services(request).evaluations.get(
                 evaluation_id, _scope(request), ExecutionContext()
             )
@@ -542,8 +695,60 @@ def register_routes(app: FastAPI) -> None:
     async def put_settings(request: Request):
         _require(request, "manage")
         parsed = SettingsActivation.from_mapping(await _body_map(request))
-        config = await request.app.state.settings.activate(parsed)
+        config = await request.app.state.settings._activate_admitted(
+            parsed, _scope(request)
+        )
         return Response(
             content=canonical_bytes(config.inspect(owner_authorized=False)),
             media_type="application/json",
+        )
+
+    @app.get("/v1/settings/fields")
+    async def settings_fields(request: Request):
+        return await request.app.state.settings_draft.fields(
+            _scope(request), ExecutionContext()
+        )
+
+    @app.post("/v1/settings/preview")
+    async def settings_preview(request: Request):
+        from tychora.contracts.administration import SettingsPatch
+
+        patch = SettingsPatch.from_mapping(await _body_map(request))
+        return await request.app.state.settings_draft.preview(
+            patch, _scope(request), ExecutionContext()
+        )
+
+    @app.patch("/v1/settings")
+    async def settings_apply(request: Request):
+        from tychora.contracts.administration import SettingsPatch
+
+        patch = SettingsPatch.from_mapping(await _body_map(request))
+        return await request.app.state.settings_draft._apply_admitted(
+            patch, _scope(request), ExecutionContext()
+        )
+
+    @app.get("/v1/models")
+    async def models_catalog(request: Request):
+        return await request.app.state.models.catalog(
+            _scope(request), ExecutionContext()
+        )
+
+    @app.post("/v1/models/setup-plan")
+    async def models_plan(request: Request):
+        from tychora.contracts.administration import ModelSelections
+
+        selected = ModelSelections.from_mapping(await _body_map(request))
+        return await request.app.state.models.setup_plan(
+            selected.selections, _scope(request), ExecutionContext()
+        )
+
+    @app.get("/v1/models/readiness")
+    async def models_readiness(
+        request: Request, selection: Annotated[list[str], Query()]
+    ):
+        from tychora.contracts.administration import ModelSelections
+
+        selected = ModelSelections(selections=tuple(selection))
+        return await request.app.state.models.readiness(
+            selected.selections, _scope(request), ExecutionContext()
         )

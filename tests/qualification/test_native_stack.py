@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.timing import scaled
+
 pytestmark = pytest.mark.qualification
 
 
@@ -151,17 +153,17 @@ def test_ladybug_recovers_after_writer_is_forced_to_terminate(tmp_path):
     assert writer.stdout is not None
     selector = selectors.DefaultSelector()
     selector.register(writer.stdout, selectors.EVENT_READ)
-    if not selector.select(timeout=10):
+    if not selector.select(timeout=scaled(10)):
         writer.kill()
-        _, stderr = writer.communicate(timeout=10)
+        _, stderr = writer.communicate(timeout=scaled(10))
         pytest.fail(f"Ladybug writer did not reach transaction boundary: {stderr}")
     boundary = writer.stdout.readline().strip()
     if boundary != "transaction-open":
         writer.kill()
-        _, stderr = writer.communicate(timeout=10)
+        _, stderr = writer.communicate(timeout=scaled(10))
         pytest.fail(f"unexpected Ladybug writer boundary {boundary!r}: {stderr}")
     writer.kill()
-    _, stderr = writer.communicate(timeout=10)
+    _, stderr = writer.communicate(timeout=scaled(10))
     assert writer.returncode is not None and writer.returncode < 0, stderr
 
     completed = _run_graph_probe("verify", database_path)

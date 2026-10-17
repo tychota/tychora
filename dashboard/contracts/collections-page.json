@@ -1,0 +1,32 @@
+{
+  "collections": [
+    {
+      "collection_id": "00000000-0000-4000-8000-000000000001",
+      "workspace_id": "84fbdaeb-da55-4091-aff1-1dc9d627a7b3",
+      "slug": "default",
+      "title": "Default",
+      "archived_at": null,
+      "default_kind_id": null,
+      "effective_default_kind_id": "document@1",
+      "access_floor": 0,
+      "policy_epoch": 1,
+      "document_count": null,
+      "summary_complete": false
+    },
+    {
+      "collection_id": "7046379b-eee3-4fe4-a9a9-dd38296a1d98",
+      "workspace_id": "84fbdaeb-da55-4091-aff1-1dc9d627a7b3",
+      "slug": "synthetic-library",
+      "title": "Synthetic library",
+      "archived_at": null,
+      "default_kind_id": "document@1",
+      "effective_default_kind_id": "document@1",
+      "access_floor": 0,
+      "policy_epoch": 1,
+      "document_count": null,
+      "summary_complete": false
+    }
+  ],
+  "next_cursor": null,
+  "policy_epoch": 1
+}

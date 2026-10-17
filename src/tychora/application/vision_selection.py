@@ -117,7 +117,12 @@ def _verified_selected_extraction(
                 _invalid()
             with owner.artifacts.open_verified(doc_ref) as stream:
                 document = stream.read(doc_ref.size_bytes + 1)
-            old = replay_document(raw, document, raw_ref)
+
+            def read_declared(image_ref):
+                with owner.artifacts.open_verified(image_ref) as stream:
+                    return stream.read(image_ref.size_bytes + 1)
+
+            old = replay_document(raw, document, raw_ref, read_declared=read_declared)
             return (
                 old.original_ref.sha256 == parsed.original_ref.sha256
                 and old.parser_fingerprint == parsed.parser_fingerprint
@@ -130,7 +135,11 @@ def _verified_selected_extraction(
 
 
 def derive_selected_region(
-    owner: WorkspaceOwner, parsed: ExtractionArtifact, selected: VisionSelection
+    owner: WorkspaceOwner,
+    parsed: ExtractionArtifact,
+    selected: VisionSelection,
+    *,
+    before_retain=None,
 ) -> tuple[RegionInput, CapturedOriginalRegionProof | RetainedDocumentRegionProof]:
     """Create one trusted crop and context without taking proof data from a caller."""
     from PIL import Image, ImageOps
@@ -211,6 +220,8 @@ def derive_selected_region(
     payload = output.getvalue()
     if len(payload) > MAX_VISION_REGION_BYTES:
         _invalid()
+    if before_retain is not None:
+        before_retain(payload, "image/png")
     retained = owner.artifacts.put_stream(BytesIO(payload), "image/png")
     transform = "exif-transpose-rgb-v1"
     crop_transform = transform + ":crop:" + ",".join(str(value) for value in box)
@@ -254,7 +265,11 @@ def derive_selected_region(
 
 
 def retain_remote_observation(
-    owner: WorkspaceOwner, region: RegionInput, observation: DerivedObservation
+    owner: WorkspaceOwner,
+    region: RegionInput,
+    observation: DerivedObservation,
+    *,
+    before_retain=None,
 ) -> DerivedObservation:
     """Retain the exact nonsecret result before the composition plan is built."""
     if observation.derivation is not None:
@@ -282,12 +297,10 @@ def retain_remote_observation(
     }
     if observation.prompt_renderer_identity is not None:
         data["prompt_renderer_identity"] = observation.prompt_renderer_identity
-    ref = owner.artifacts.put_stream(
-        BytesIO(
-            canonical_bytes(
-                {"type": "vision_derivation", "schema_version": "1", "data": data}
-            )
-        ),
-        "application/json",
+    payload = canonical_bytes(
+        {"type": "vision_derivation", "schema_version": "1", "data": data}
     )
+    if before_retain is not None:
+        before_retain(payload, "application/json")
+    ref = owner.artifacts.put_stream(BytesIO(payload), "application/json")
     return observation.model_copy(update={"derivation": ref})

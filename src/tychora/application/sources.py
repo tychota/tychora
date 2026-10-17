@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 from collections.abc import Callable, Mapping
+from contextvars import ContextVar
 from datetime import date
 from functools import partial
 from hashlib import sha256
@@ -30,6 +31,7 @@ from tychora.adapters.code.syntax import base_syntax_result
 from tychora.adapters.docling.parser import DoclingParser
 from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.adapters.sqlite.publication import PublicationReceipts
+from tychora.application.collection_policy import require_active_collection
 from tychora.configuration.global_facets import (
     ROLE as GLOBAL_FACET_ROLE,
 )
@@ -42,6 +44,9 @@ from tychora.configuration.global_facets import (
 from tychora.configuration.global_facets import (
     normalized_metadata,
 )
+from tychora.configuration.indexed_representation import pinned_runtime_compatible
+from tychora.configuration.models import ResolvedConfig
+from tychora.configuration.registry import Registry
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.code import CapturedSyntax, CodeRegistration
 from tychora.contracts.composition import DocumentCompositionPlan, VisionCapabilityGap
@@ -62,6 +67,7 @@ from tychora.contracts.publication import PublicationPlan
 from tychora.contracts.requests import (
     RequestScope,
     SourceInput,
+    UploadSource,
     VisionSelection,
     source_registration_descriptor,
 )
@@ -74,6 +80,7 @@ from tychora.ingestion.vision import planned_vision_proxy
 from tychora.ports.acquisition import UrlReader
 from tychora.ports.execution import ExecutionContext
 
+from .acquired_source import AcquiredSource
 from .jobs import source_intent
 from .owner import WorkspaceOwner
 
@@ -81,8 +88,53 @@ if TYPE_CHECKING:
     from tychora.contracts.acquisition import CaptureManifest
     from tychora.contracts.artifacts import ArtifactRef
     from tychora.contracts.corpus import ExtractionBundle
+    from tychora.contracts.indexing import ContextGroup
     from tychora.indexing.coordinator import PreparedProjection, ProjectionCoordinator
     from tychora.ports.language import SyntaxResult
+
+# Matches the owner's per-authorization dependency bound.
+MAX_UPLOAD_DEPENDENCIES = 2048
+
+
+def upload_batches(
+    groups: tuple[ContextGroup, ...],
+) -> tuple[tuple[ContextGroup, ...], ...]:
+    """Split ordered groups so each separately authorized upload stays bounded."""
+    batches: list[list[ContextGroup]] = []
+    current: list[ContextGroup] = []
+    dependencies: frozenset[str] = frozenset()
+    for group in groups:
+        if len(group.dependency_ids) > MAX_UPLOAD_DEPENDENCIES:
+            raise TychoraError(
+                "INVALID_REQUEST",
+                "One embedding group exceeds the upload authorization bound",
+            )
+        merged = dependencies | group.dependency_ids
+        if current and len(merged) > MAX_UPLOAD_DEPENDENCIES:
+            batches.append(current)
+            current, merged = [], group.dependency_ids
+        current.append(group)
+        dependencies = merged
+    if current:
+        batches.append(current)
+    if len(batches) == 1:
+        return (groups,)
+    renumbered = []
+    for batch in batches:
+        # Request indices only pack provider calls; each batch restarts at zero.
+        indices = {
+            index: position
+            for position, index in enumerate(
+                dict.fromkeys(group.request_index for group in batch)
+            )
+        }
+        renumbered.append(
+            tuple(
+                group.model_copy(update={"request_index": indices[group.request_index]})
+                for group in batch
+            )
+        )
+    return tuple(renumbered)
 
 
 def _parse_code_file(
@@ -103,6 +155,9 @@ def _parse_code_file(
         options=options,
         root_type="unsupported_file",
     )
+
+
+_pdf_job_id: ContextVar[str | None] = ContextVar("pdf_job_id", default=None)
 
 
 class SourceService:
@@ -313,9 +368,15 @@ class SourceService:
         idempotency_key: str | None = None,
         *,
         ctx: ExecutionContext | None = None,
+        acquired: AcquiredSource | None = None,
     ) -> JobHandle:
         return await self._accept(
-            "add", source, scope, idempotency_key, ctx or ExecutionContext()
+            "add",
+            source,
+            scope,
+            idempotency_key,
+            ctx or ExecutionContext(),
+            acquired=acquired,
         )
 
     async def accept_sync(
@@ -418,8 +479,26 @@ class SourceService:
         scope: RequestScope,
         key: str | None,
         ctx: ExecutionContext,
+        acquired: AcquiredSource | None = None,
     ) -> JobHandle:
         granted = self.owner.scope.narrow(scope)
+        if (
+            isinstance(source.root, UploadSource)
+            and acquired is None
+            and operation != "sync"
+        ):
+            raise TychoraError(
+                "FORBIDDEN_SCOPE", "Upload requires a trusted receipt binding."
+            )
+        if acquired is not None:
+            if self.owner.pdf_intakes is None:
+                raise TychoraError(
+                    "FORBIDDEN_SCOPE", "Trusted PDF intake service is unavailable."
+                )
+            intakes = self.owner.pdf_intakes
+            await self.owner.run_blocking(
+                lambda: intakes.validate_acquired(acquired, scope), ctx
+            )
         if source.root.vision:
             value = source.root
             selected_format = (
@@ -443,14 +522,67 @@ class SourceService:
             raise TychoraError(
                 "FORBIDDEN_SCOPE", "Source collection is outside the grant"
             )
-        jobs, _ = await self._ports(ctx)
+        jobs, acquirer = await self._ports(ctx)
         config_ref = await self._config_ref(ctx)
-        return await self.owner.run_blocking(
-            lambda: jobs.accept(
+
+        def accept():
+            row = self.owner.db.execute(
+                "SELECT workspace_id,access_floor,policy_json FROM collections WHERE collection_id=?",
+                (str(source.root.collection_id),),
+            ).fetchone()
+            if (
+                row is None
+                or row[0] != self.owner.workspace_id
+                or row[1] > granted.access_ceiling
+            ):
+                raise TychoraError(
+                    "FORBIDDEN_SCOPE", "Source collection is unavailable."
+                )
+            require_active_collection(row[2])
+            if acquired is not None:
+                assert self.owner.pdf_intakes is not None
+                self.owner.pdf_intakes.validate_acquired(acquired, scope)
+            if operation == "add" and isinstance(source.root, UploadSource):
+                sid = source_id(source.root.collection_id, source.root.source_key)
+                registered = self.owner.db.execute(
+                    "SELECT 1 FROM sources WHERE source_id=?", (sid,)
+                ).fetchone()
+                repeated = (
+                    self.owner.db.execute(
+                        "SELECT 1 FROM jobs WHERE principal_id=? AND operation='add' AND idempotency_key=?",
+                        (granted.principal_id, key),
+                    ).fetchone()
+                    if key is not None
+                    else None
+                )
+                if registered is not None and repeated is None:
+                    raise TychoraError(
+                        "IDEMPOTENCY_CONFLICT",
+                        "A source already uses this logical key; choose a new key for a new upload.",
+                    )
+            handle = jobs.accept(
                 operation, granted, key, source_intent(source), config_ref
-            ),
-            ctx,
-        )
+            )
+            if (
+                isinstance(source.root, UploadSource)
+                and jobs.get(handle.id).captured_inputs is None
+            ):
+                from dataclasses import replace
+
+                trusted = (
+                    acquired
+                    if acquired is not None
+                    else self._registered_upload(source, granted)
+                )
+                canonical = self._canonical_source(source)
+                capture = acquirer.capture_acquired(
+                    canonical, replace(trusted, source=canonical), ctx
+                )
+                self._validate_upload_capture(canonical, capture)
+                jobs.capture(handle.id, capture.manifest_ref)
+            return handle
+
+        return await self.owner.run_blocking(accept, ctx)
 
     async def execute_accepted(
         self,
@@ -460,6 +592,7 @@ class SourceService:
         *,
         ctx: ExecutionContext | None = None,
         retained_capture_sha: str | None = None,
+        acquired: AcquiredSource | None = None,
     ) -> JobHandle:
         """Resume exact accepted intent or its verified retained retry capture."""
         context = ctx or ExecutionContext()
@@ -500,6 +633,16 @@ class SourceService:
         if handle.state != "queued":
             return handle
         operation = handle.operation
+        if source.root.pdf_processing is not None:
+            import time
+
+            deadline = time.monotonic() + 5400
+            context = ExecutionContext(
+                deadline=min(context.deadline, deadline)
+                if context.deadline is not None
+                else deadline,
+                cancelled=context.cancelled,
+            )
         ctx = context
         await self.owner.run_blocking(lambda: jobs.start(handle.id), ctx)
         try:
@@ -522,6 +665,10 @@ class SourceService:
             else:
                 capture = await self.owner.run_blocking(
                     lambda: self._committed_capture(captured_ref), ctx
+                )
+            if isinstance(captured_source.root, UploadSource):
+                await self.owner.run_blocking(
+                    lambda: self._validate_upload_capture(captured_source, capture), ctx
                 )
             await self.owner.run_blocking(lambda: jobs.stage(handle.id, "parse"), ctx)
             registration = await self.owner.run_blocking(
@@ -552,7 +699,11 @@ class SourceService:
                 except TychoraError as error:
                     if error.code != "WORKSPACE_BUSY":
                         raise
-            if base is not None and not source.root.vision:
+            if (
+                base is not None
+                and not source.root.vision
+                and source.root.pdf_processing is None
+            ):
                 selected_base = base
                 can_reuse = await self.owner.run_blocking(
                     lambda: self._selected_revision(selected_base, registration, ctx),
@@ -585,9 +736,13 @@ class SourceService:
                 )
             )
             if bundle is None:
-                bundle = await self._extract(
-                    registration, capture, ctx, source, granted
-                )
+                token = _pdf_job_id.set(handle.id)
+                try:
+                    bundle = await self._extract(
+                        registration, capture, ctx, source, granted
+                    )
+                finally:
+                    _pdf_job_id.reset(token)
             bundle = await self.owner.run_blocking(
                 lambda: self._bind_source_metadata(bundle), ctx
             )
@@ -736,25 +891,32 @@ class SourceService:
             ).fetchone()[0],
             ctx,
         )
-        dependencies = frozenset().union(
-            *(group.dependency_ids for group in prepared.text_groups)
-        )
-        if self.coordinator.local_text_embedder is embedder:
-            return await self.owner.run_local_text(
-                lambda: embedder.embed_groups(prepared.text_groups, ctx),
-                ctx,
-                scope=scope,
-                dependencies=dependencies,
-                policy_epoch=epoch,
-            )
-        return await self.owner.run_provider(
-            embedder.capabilities.provider,
-            lambda: embedder.embed_groups(prepared.text_groups, ctx),
-            ctx,
-            scope=scope,
-            dependencies=dependencies,
-            policy_epoch=epoch,
-        )
+        records = []
+        # Every batch is authorized independently against the same policy epoch.
+        for batch in upload_batches(prepared.text_groups):
+            dependencies = frozenset().union(*(group.dependency_ids for group in batch))
+            if self.coordinator.local_text_embedder is embedder:
+                records.extend(
+                    await self.owner.run_local_text(
+                        partial(embedder.embed_groups, batch, ctx),
+                        ctx,
+                        scope=scope,
+                        dependencies=dependencies,
+                        policy_epoch=epoch,
+                    )
+                )
+            else:
+                records.extend(
+                    await self.owner.run_provider(
+                        embedder.capabilities.provider,
+                        partial(embedder.embed_groups, batch, ctx),
+                        ctx,
+                        scope=scope,
+                        dependencies=dependencies,
+                        policy_epoch=epoch,
+                    )
+                )
+        return tuple(records)
 
     async def _visual_records(
         self, prepared: PreparedProjection, scope: RequestScope, ctx: ExecutionContext
@@ -808,62 +970,61 @@ class SourceService:
         ).fetchone()
         if row is None:
             return False
-        if isinstance(registration, NativeRegistration):
-            from tychora.ingestion.native import native_parser_fingerprint
+        retained = self._retained_bundle(registration, ctx or ExecutionContext())
+        return retained is not None and retained.extraction.extraction_id == row[1]
 
-            kind = self.owner.store.registry.kinds[registration.revision.kind_id]
-            return row[2] == native_parser_fingerprint(
-                registration.format, self.owner.config
-            ) and row[3] == digest(
-                "native-normalizer-v1", kind, self.owner.store.registry.schema_digests
-            )
-        if isinstance(registration, CodeRegistration):
-            retained = self._retained_bundle(registration, ctx or ExecutionContext())
-            return retained is not None and retained.extraction.extraction_id == row[1]
-        artifact_row = self.owner.db.execute(
-            "SELECT size_bytes,media_type,storage_key FROM artifacts "
-            "WHERE artifact_sha=?",
-            (row[0],),
-        ).fetchone()
-        if artifact_row is None:
-            raise TychoraError(
-                "INTEGRITY_ERROR", "Selected document manifest is missing"
-            )
-        from tychora.contracts.artifacts import ArtifactRef
-        from tychora.ingestion.document_records import document_normalizer_fingerprint
+    def _retained_extraction_config(
+        self, capture: CaptureManifest, extraction_id: str
+    ) -> ResolvedConfig:
+        """Resolve only exact capture/extraction lineage, within explicit budgets."""
+        from tychora.configuration.resolve import validate_retained_config
 
-        ref = ArtifactRef(
-            sha256=row[0],
-            size_bytes=artifact_row[0],
-            media_type=artifact_row[1],
-            storage_key=artifact_row[2],
-        )
-        with self.owner.artifacts.open_verified(ref) as stream:
-            root = json.load(stream)
         if (
-            not isinstance(root, dict)
-            or root.get("type") != "extraction"
-            or root.get("schema_version") != "1"
-        ):
-            raise TychoraError("INTEGRITY_ERROR", "Selected document manifest differs")
-        data = root.get("data", {})
-        if (
-            not isinstance(data, dict)
-            or data.get("representation") != "document-composition@1"
+            capture.manifest_ref is None
+            or self._committed_capture(capture.manifest_ref, historical=True) != capture
         ):
             raise TychoraError(
-                "INTEGRITY_ERROR", "Selected document composition differs"
+                "INTEGRITY_ERROR", "Retained capture manifest binding differs"
             )
-        plan = data.get("plan")
-        if not isinstance(plan, dict):
-            raise TychoraError("INTEGRITY_ERROR", "Selected document plan differs")
-        kind = cast(
-            Mapping[str, Any],
-            self.owner.store.registry.kinds[registration.revision.kind_id],
+        refs = self.owner.db.execute(
+            "SELECT DISTINCT effective_config_sha FROM jobs WHERE captured_inputs_sha=? LIMIT 65",
+            (capture.manifest_ref.sha256,),
+        ).fetchall()
+        if not refs:
+            refs = self.owner.db.execute(
+                "SELECT DISTINCT s.config_sha FROM snapshots s JOIN snapshot_members m USING(snapshot_id) "
+                "WHERE m.extraction_id=? LIMIT 65",
+                (extraction_id,),
+            ).fetchall()
+        if len(refs) > 64:
+            raise TychoraError(
+                "BUDGET_TOO_SMALL", "Retained configuration candidate budget exceeded"
+            )
+        total = 0
+        for (sha,) in refs:
+            row = self.owner.db.execute(
+                "SELECT size_bytes FROM artifacts WHERE artifact_sha=? AND payload_state='present'",
+                (sha,),
+            ).fetchone()
+            if row is None:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Retained configuration lineage is unavailable"
+                )
+            total += row[0]
+        if total > 16 * 1024 * 1024:
+            raise TychoraError(
+                "BUDGET_TOO_SMALL", "Retained configuration byte budget exceeded"
+            )
+        matched = None
+        for (sha,) in refs:
+            config = validate_retained_config(self.owner.store.retained_config_sha(sha))
+            if config.config_sha == capture.config_sha:
+                matched = config
+        if matched is not None:
+            return matched
+        raise TychoraError(
+            "INTEGRITY_ERROR", "Retained capture configuration binding is unavailable"
         )
-        return plan.get(
-            "base_normalizer_fingerprint"
-        ) == document_normalizer_fingerprint(kind, self.owner.store.registry)
 
     def _retained_bundle(
         self,
@@ -921,7 +1082,13 @@ class SourceService:
                     for item in retained_code.files
                 ):
                     continue
-                bundle = normalize_code(retained_code, self.owner.store.registry)
+                retained_config = self._retained_extraction_config(
+                    old_capture, extraction_id
+                )
+                if not pinned_runtime_compatible(retained_config, self.owner.config):
+                    continue
+                retained_registry = Registry.from_config(retained_config)
+                bundle = normalize_code(retained_code, retained_registry)
             elif data.get("representation") == "document-composition@1":
                 if not isinstance(registration, DocumentRegistration):
                     raise TychoraError(
@@ -944,26 +1111,38 @@ class SourceService:
                 doc_ref = ArtifactRef.model_validate(parsed_data["docling_json_ref"])
                 with self.owner.artifacts.open_verified(doc_ref) as stream:
                     doc_payload = stream.read(doc_ref.size_bytes + 1)
-                parsed = replay_document(parsed_payload, doc_payload, parsed_ref)
-                if (
-                    parsed.registration.capture.config_sha
-                    != registration.capture.config_sha
+
+                def read_declared(ref):
+                    with self.owner.artifacts.open_verified(ref) as stream:
+                        return stream.read(ref.size_bytes + 1)
+
+                parsed = replay_document(
+                    parsed_payload, doc_payload, parsed_ref, read_declared=read_declared
+                )
+                if parsed.pdf_processing != registration.capture.source.get(
+                    "pdf_processing"
                 ):
                     continue
+                retained_config = self._retained_extraction_config(
+                    parsed.registration.capture, extraction_id
+                )
+                if not pinned_runtime_compatible(retained_config, self.owner.config):
+                    continue
+                retained_registry = Registry.from_config(retained_config)
                 from tychora.ingestion.document_records import (
                     document_normalizer_fingerprint,
                 )
 
                 kind = cast(
                     Mapping[str, Any],
-                    self.owner.store.registry.kinds[registration.revision.kind_id],
+                    retained_registry.kinds[registration.revision.kind_id],
                 )
                 current_fingerprint = document_normalizer_fingerprint(
-                    kind, self.owner.store.registry
+                    kind, retained_registry
                 )
                 if parsed.normalizer_fingerprint != current_fingerprint:
                     if parsed.normalizer_fingerprint == document_normalizer_fingerprint(
-                        kind, self.owner.store.registry, legacy_v1=True
+                        kind, retained_registry, legacy_v1=True
                     ):
                         continue
                     raise TychoraError(
@@ -971,7 +1150,7 @@ class SourceService:
                     )
                 bundle = compose_document(
                     parsed,
-                    self.owner.store.registry,
+                    retained_registry,
                     DocumentCompositionPlan.model_validate_json(
                         canonical_bytes(data["plan"])
                     ),
@@ -990,17 +1169,22 @@ class SourceService:
                 )
                 from tychora.ingestion.native import native_parser_fingerprint
 
-                if (
-                    parsed.registration.capture.config_sha
-                    != registration.capture.config_sha
-                    or parsed.parser_fingerprint
-                    != native_parser_fingerprint(registration.format, self.owner.config)
-                ):
+                retained_config = self._retained_extraction_config(
+                    parsed.registration.capture, extraction_id
+                )
+                if not pinned_runtime_compatible(retained_config, self.owner.config):
                     continue
+                if parsed.parser_fingerprint != native_parser_fingerprint(
+                    registration.format, retained_config
+                ):
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Retained native parser binding differs"
+                    )
+                retained_registry = Registry.from_config(retained_config)
                 bundle = normalize(
                     parsed,
                     registration.revision.revision_id,
-                    self.owner.store.registry,
+                    retained_registry,
                 )
             if (
                 bundle.extraction.extraction_id != extraction_id
@@ -1051,6 +1235,79 @@ class SourceService:
             return capture
         return None
 
+    def _registered_upload(self, source, scope):
+        """Sync resolves only a currently authorized registered immutable original."""
+        from tychora.contracts.artifacts import ArtifactRef
+
+        sid = source_id(source.root.collection_id, source.root.source_key)
+        registered = self._source_for_sync(sid, scope)
+        if registered != source or source.root.pdf_processing is None:
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Registered upload descriptor differs."
+            )
+        row = self.owner.db.execute(
+            "SELECT a.artifact_sha,a.size_bytes,a.media_type,a.storage_key FROM revisions r "
+            "JOIN revision_artifacts ra USING(revision_id) JOIN artifacts a ON a.artifact_sha=ra.artifact_sha "
+            "WHERE r.source_id=? AND r.original_sha=? AND ra.role='original' AND a.payload_state='present' LIMIT 1",
+            (sid, source.root.content_sha256),
+        ).fetchone()
+        if row is None:
+            raise TychoraError(
+                "REPLAY_UNAVAILABLE", "Registered upload original is unavailable."
+            )
+        ref = ArtifactRef(
+            sha256=row[0], size_bytes=row[1], media_type=row[2], storage_key=row[3]
+        )
+        return AcquiredSource(
+            workspace_id=self.owner.workspace_id,
+            scope=scope,
+            source=source,
+            original_ref=ref,
+            receipt_binding_sha256=digest("registered-upload-v1", sid, ref.sha256),
+            policy=source.root.pdf_processing,
+        )
+
+    def _validate_upload_capture(self, source, capture):
+        from tychora.application.pdf_processing import revalidate_pdf_policy
+        from tychora.contracts.pdf_intake import PdfIntakeDescriptor
+
+        value = source.root
+        policy = value.pdf_processing
+        if (
+            policy is None
+            or capture.original_sha != value.content_sha256
+            or capture.original_ref.size_bytes != value.size_bytes
+            or canonical_bytes(capture.source.get("pdf_processing"))
+            != canonical_bytes(policy.model_dump(mode="json"))
+        ):
+            raise TychoraError(
+                "INTEGRITY_ERROR",
+                "Retained upload capture differs from policy or original.",
+            )
+        facts = {
+            "page_count": len(policy.native_pages)
+            + len(policy.ocr_pages)
+            + len(policy.blank_pages),
+            "native_text_pages": policy.native_pages,
+            "image_only_pages": policy.ocr_pages,
+            "blank_pages": policy.blank_pages,
+            "unknown_pages": (),
+            "requires_ocr": bool(policy.ocr_pages),
+        }
+        descriptor = PdfIntakeDescriptor(
+            source_key=value.source_key,
+            collection_id=value.collection_id,
+            kind=value.kind,
+            metadata=value.metadata,
+            expected_size_bytes=value.size_bytes,
+        )
+        if self.owner.service_runtime is not None:
+            services = self.owner.service_runtime.services
+        else:
+            assert self.owner.pdf_intakes is not None
+            services = self.owner.pdf_intakes.services
+        revalidate_pdf_policy(self.owner, services, descriptor, facts, policy)
+
     def _canonical_source(self, source: SourceInput) -> SourceInput:
         metadata = source.root.metadata
         kind = source.root.kind
@@ -1082,6 +1339,7 @@ class SourceService:
             or row[4] > scope.access_ceiling
         ):
             raise TychoraError("FORBIDDEN_SCOPE", "Source collection is unavailable")
+        require_active_collection(row[5])
         collection = CollectionRow(
             collection_id=row[0],
             workspace_id=row[1],
@@ -1104,6 +1362,13 @@ class SourceService:
             (sid,),
         ).fetchone()
         if old is not None:
+            if isinstance(value, UploadSource) and canonical_bytes(
+                json.loads(old[4])
+            ) != canonical_bytes(source_registration_descriptor(source)):
+                raise TychoraError(
+                    "IDEMPOTENCY_CONFLICT",
+                    "Registered upload identity differs; use a new logical source key.",
+                )
             source_row = SourceRow(
                 source_id=old[0],
                 collection_id=old[1],
@@ -1428,6 +1693,25 @@ class SourceService:
             }
         )
 
+    def _pdf_progress(self, job_id, pages):
+        from datetime import UTC, datetime
+
+        from tychora.contracts.operations import JobEvent, NamedCount
+
+        assert self._jobs is not None
+        status = self._jobs.get(job_id)
+        self._jobs.append_event(
+            job_id,
+            JobEvent(
+                job_id=job_id,
+                sequence=status.latest_sequence + 1,
+                timestamp=datetime.now(UTC),
+                stage="parse",
+                state=status.state,
+                counters=(NamedCount(name="accepted_pdf_pages", count=pages[-1]),),
+            ),
+        )
+
     async def _extract(
         self,
         registration: NativeRegistration | DocumentRegistration | CodeRegistration,
@@ -1448,13 +1732,22 @@ class SourceService:
                 ctx,
             )
         if isinstance(registration, DocumentRegistration):
+            job_id = _pdf_job_id.get()
             if self.docling_models is None:
                 raise TychoraError(
                     "CAPABILITY_MISSING", "Docling model path is not provisioned"
                 )
-            parsed = await DoclingParser(
-                self.owner, registration, self.docling_models
-            ).aextract(capture.original_ref, self.owner.config, ctx)
+            parser = DoclingParser(
+                self.owner,
+                registration,
+                self.docling_models,
+                policy=source.root.pdf_processing,
+                progress=(lambda pages: self._pdf_progress(job_id, pages))
+                if job_id
+                else None,
+            )
+            parsed = await parser.aextract(capture.original_ref, self.owner.config, ctx)
+            pdf_budget = parser.retention_budget
             if source.root.vision and canonical_bytes(
                 capture.source.get("vision")
             ) != canonical_bytes(
@@ -1462,10 +1755,27 @@ class SourceService:
             ):
                 raise TychoraError("INTEGRITY_ERROR", "Captured vision intent differs.")
             proxies = []
+            pixel_regions = ()
+            if parsed.pdf_processing is not None:
+                from tychora.adapters.docling.ocr_evidence import plan_pdf_ocr
+
+                initial_proxies, pixel_regions = await self.owner.run_blocking(
+                    lambda: plan_pdf_ocr(self.owner, parsed, ctx, budget=pdf_budget),
+                    ctx,
+                )
+                proxies.extend(initial_proxies)
             gaps = []
             for selected in source.root.vision:
                 proxy, gap = await self._selected_vision_proxy(
-                    parsed, selected, scope, ctx
+                    parsed,
+                    selected,
+                    scope,
+                    ctx,
+                    **(
+                        {"before_retain": pdf_budget.reserve_payload}
+                        if pdf_budget is not None
+                        else {}
+                    ),
                 )
                 if proxy is not None:
                     proxies.append(proxy)
@@ -1478,11 +1788,18 @@ class SourceService:
                         self.owner.store.registry,
                         DocumentCompositionPlan(
                             base_normalizer_fingerprint=parsed.normalizer_fingerprint,
+                            input_strategy="pdf-streamed-images@1"
+                            if parsed.pdf_processing is not None
+                            else None,
                             proxies=tuple(proxies),
+                            pixel_regions=pixel_regions,
                             vision_gaps=tuple(gaps),
                         ),
                         self.owner.artifacts,
                         ctx,
+                        **(
+                            {"pdf_budget": pdf_budget} if pdf_budget is not None else {}
+                        ),
                     ).bundle
                 ),
                 ctx,
@@ -1536,6 +1853,8 @@ class SourceService:
         selected: VisionSelection,
         scope: RequestScope,
         ctx: ExecutionContext,
+        *,
+        before_retain=None,
     ):
         from tychora.adapters.vision.anthropic import (
             dispatch_captured_vision,
@@ -1564,7 +1883,17 @@ class SourceService:
         schema = dict(selected.task_schema)
         response_schema(schema, frozenset())
         region, proof = await self.owner.run_blocking(
-            lambda: derive_selected_region(self.owner, parsed, selected), ctx
+            lambda: derive_selected_region(
+                self.owner,
+                parsed,
+                selected,
+                **(
+                    {"before_retain": before_retain}
+                    if before_retain is not None
+                    else {}
+                ),
+            ),
+            ctx,
         )
         observation = None
         if selected.task == "ocr":
@@ -1574,9 +1903,15 @@ class SourceService:
             )
             try:
                 observation = await asyncio.to_thread(
-                    lambda: LocalOcrProvider(self.owner, model_root).interpret(
-                        region, schema, ctx
-                    )
+                    lambda: LocalOcrProvider(
+                        self.owner,
+                        model_root,
+                        **(
+                            {"before_retain": before_retain}
+                            if before_retain is not None
+                            else {}
+                        ),
+                    ).interpret(region, schema, ctx)
                 )
             except TychoraError as error:
                 if error.code not in {"CAPABILITY_MISSING", "PROVIDER_FAILURE"}:
@@ -1643,7 +1978,17 @@ class SourceService:
                     return None, gap("provider_unavailable")
                 raise
             observation = await self.owner.run_blocking(
-                lambda: retain_remote_observation(self.owner, region, observation), ctx
+                lambda: retain_remote_observation(
+                    self.owner,
+                    region,
+                    observation,
+                    **(
+                        {"before_retain": before_retain}
+                        if before_retain is not None
+                        else {}
+                    ),
+                ),
+                ctx,
             )
         asset_native_ref = region.source_native_ref
         if parsed.original_image is not None:

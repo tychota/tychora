@@ -228,3 +228,66 @@ def purge_cache(ctx: typer.Context, namespace: list[str] = typer.Argument(...)) 
 def migrate(ctx: typer.Context, target_version: str) -> None:
     """Migrate to an explicit schema version."""
     _run(ctx, {"operation": "migrate", "target_version": target_version})
+
+
+@group.command("dashboard-link")
+def dashboard_link(
+    ctx: typer.Context,
+    open_browser: bool = typer.Option(
+        False, "--open", help="Open the link with the macOS `open` command."
+    ),
+) -> None:
+    """Print a one-time dashboard link (expires in 120 s) from the running owner."""
+    import subprocess
+    import sys
+
+    from tychora.contracts.errors import TychoraError
+    from tychora.interfaces.http.client import connect_local
+
+    try:
+        try:
+            kb = connect_local(state(ctx).workspace)
+        except TychoraError as error:
+            if error.code != "WORKSPACE_BUSY":
+                raise
+            raise TychoraError(
+                "WORKSPACE_BUSY",
+                "No running owner; start it with `tychora serve` first.",
+                retryable=True,
+            ) from None
+        with kb:
+            url = kb.dashboard_launch_link()
+        typer.echo(url)
+        if open_browser:
+            if sys.platform != "darwin":
+                raise TychoraError(
+                    "CAPABILITY_MISSING", "--open is only supported on macOS."
+                )
+            subprocess.run(["/usr/bin/open", url], check=True)
+    except Exception as error:  # noqa: BLE001 - command boundary rethrows unknown exceptions
+        fail(error)
+
+
+@group.command("rotate-token")
+def rotate_token(ctx: typer.Context) -> None:
+    """Replace the persisted owner token; the workspace must not be running.
+
+    Every remembered dashboard and copied credential stops working.
+    """
+    from tychora.application.runtime import rotate_owner_token
+    from tychora.contracts.errors import TychoraError
+
+    try:
+        try:
+            rotate_owner_token(state(ctx).workspace)
+        except TychoraError as error:
+            if error.code != "WORKSPACE_BUSY":
+                raise
+            raise TychoraError(
+                "WORKSPACE_BUSY",
+                "Stop the running owner before rotating its token.",
+                retryable=True,
+            ) from None
+        progress("Owner token rotated; it takes effect on the next start.")
+    except Exception as error:  # noqa: BLE001 - command boundary rethrows unknown exceptions
+        fail(error)

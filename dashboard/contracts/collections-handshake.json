@@ -1,0 +1,29 @@
+{
+  "managed_workspace_owner": true,
+  "policy_epoch": 1,
+  "schema_version": "1",
+  "protocol_version": 1,
+  "workspace_id": "84fbdaeb-da55-4091-aff1-1dc9d627a7b3",
+  "instance_id": "df495d44-2446-4a30-bd2e-051b954a5b45",
+  "scope": {
+    "principal_id": "local-owner",
+    "collection_ids": [
+      "7046379b-eee3-4fe4-a9a9-dd38296a1d98",
+      "00000000-0000-4000-8000-000000000001"
+    ],
+    "access_ceiling": 0,
+    "uses": [
+      "audit",
+      "compose",
+      "lookup"
+    ],
+    "capabilities": [
+      "write",
+      "read",
+      "manage",
+      "vision"
+    ],
+    "upload_providers": []
+  },
+  "default_collection_id": "00000000-0000-4000-8000-000000000001"
+}

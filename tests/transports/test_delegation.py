@@ -171,3 +171,37 @@ def test_server_startup_failure_releases_owner(tmp_path, monkeypatch):
         asyncio.run(serve(workspace))
     with Tychora.open(workspace) as reopened:
         assert reopened.discover({"subject": "kinds"}).definitions
+
+
+@pytest.mark.qualification(loopback=True)
+def test_cli_dashboard_link_and_startup_link_exchange_against_live_owner(tmp_path):
+    import httpx
+    from typer.testing import CliRunner
+
+    from tychora.interfaces.cli import app
+
+    workspace = tmp_path / "knowledge"
+    process, record = _serve(workspace)
+    try:
+        result = CliRunner().invoke(
+            app, ["--workspace", str(workspace), "manage", "dashboard-link"]
+        )
+        assert result.exit_code == 0, result.output
+        url = result.stdout.strip()
+        prefix = f"http://{record['authority']}/dashboard/#launch="
+        assert url.startswith(prefix)
+        assert record["token"] not in result.output
+        origin = f"http://{record['authority']}"
+        with httpx.Client(base_url=origin, trust_env=False) as client:
+            exchanged = client.post(
+                "/v1/session/launch",
+                json={"code": url.removeprefix(prefix)},
+                headers={"Origin": origin},
+            )
+            assert exchanged.status_code == 200
+            assert exchanged.json()["token"] == record["token"]
+    finally:
+        process.terminate()
+        stdout, _ = process.communicate(timeout=5)
+    assert f"http://{record['authority']}/dashboard/#launch=" in stdout
+    assert record["token"] not in stdout

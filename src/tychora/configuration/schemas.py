@@ -2,6 +2,8 @@
 
 import json
 import re
+import threading
+from collections import OrderedDict
 from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -45,6 +47,11 @@ _KEYWORDS = frozenset(
     }
 )
 _FORMATS = FormatChecker(formats=["date"])
+# Metaschema checks dominate workspace open; a schema with identical canonical
+# content is checked once per process. Failures are never remembered.
+_SCHEMA_CHECK_CACHE_SIZE = 4096
+_checked_schemas: OrderedDict[str, None] = OrderedDict()
+_checked_schemas_lock = threading.Lock()
 
 
 @_FORMATS.checks("date-time", raises=ValueError)
@@ -57,6 +64,20 @@ def _date_time(value: object) -> bool:
     ):
         return False
     return datetime.fromisoformat(value.upper()).tzinfo is not None
+
+
+def _check_schema_once(document: Any) -> None:
+    """Check a schema against the Draft 2020-12 metaschema once per exact content."""
+    key = digest("checked-schema-v1", document)
+    with _checked_schemas_lock:
+        if key in _checked_schemas:
+            _checked_schemas.move_to_end(key)
+            return
+    Draft202012Validator.check_schema(document)
+    with _checked_schemas_lock:
+        _checked_schemas[key] = None
+        while len(_checked_schemas) > _SCHEMA_CHECK_CACHE_SIZE:
+            _checked_schemas.popitem(last=False)
 
 
 def _pointer(document: Any, pointer: str) -> Any:
@@ -150,7 +171,7 @@ class LocalSchemas:
                 if not isinstance(document, dict) or document.get("$id") != key:
                     raise ValueError("Missing schema identity")
                 walk(document, key, "", ())
-                Draft202012Validator.check_schema(document)
+                _check_schema_once(document)
             if any(set(bindings[key]) != seen[key] for key in documents):
                 raise ValueError("Unexpected reference association")
             # Rewriting only the detached validator copy preserves the stored originals.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import shlex
 import socket
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -14,6 +15,7 @@ from tychora import Tychora
 
 from .app import create_app
 from .auth import LocalAuth
+from .launch import launch_url
 
 if TYPE_CHECKING:
     from tychora.configuration.models import ResolvedConfig
@@ -25,6 +27,7 @@ async def serve(
     port: int = 0,
     token_counter=None,
     config: ResolvedConfig | None = None,
+    announce: bool = True,
 ) -> None:
     if not 0 <= port <= 65535:
         raise ValueError("Port is out of range")
@@ -40,9 +43,25 @@ async def serve(
             token = owner._runtime.record["token"]
             if not isinstance(token, str):
                 raise TypeError("Owner runtime token is invalid")
-            auth = LocalAuth({token: owner.scope}, authority=authority)
+            auth = LocalAuth(
+                {token: owner.scope},
+                authority=authority,
+                managed_owner_token=token,
+                launch_token=token,
+            )
             app = create_app(owner, services, auth)
             owner._runtime.publish_endpoint(authority)
+            if announce and auth.launch_codes is not None:
+                # The one-time code sits in the URL fragment: it never reaches
+                # request lines, logs or Referer headers.
+                print(
+                    "Tychora dashboard (one-time link, expires in "
+                    f"{int(auth.launch_codes.ttl)} s): "
+                    f"{launch_url(auth.origin, auth.launch_codes.mint())}\n"
+                    "Need another? Run: tychora --workspace "
+                    f"{shlex.quote(str(path))} manage dashboard-link",
+                    flush=True,
+                )
             uvicorn_config = uvicorn.Config(
                 app,
                 host="127.0.0.1",

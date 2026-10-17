@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from hashlib import sha256
 from typing import Any, cast
 
+from tychora.adapters.docling.ocr_evidence import normalize_native_document_units
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.corpus import ExtractionBundle, LocatorRow
 from tychora.contracts.documents import DocumentUnit
@@ -34,7 +35,7 @@ def source_views(
         revision, parsed.parser_fingerprint, context.normalizer_fingerprint
     )
     source_key = parsed.registration.source.source_key
-    items = cast(tuple[DocumentUnit, ...], parsed.units)
+    items = normalize_native_document_units(parsed)
     budget = _Budget()
     units = list(base.units) if base else []
     for index, unit in enumerate(units):

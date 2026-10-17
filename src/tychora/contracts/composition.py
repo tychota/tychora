@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, model_serializer, model_validator
 
 from .artifacts import ArtifactRef
 from .base import (
@@ -259,31 +259,81 @@ class VisionCapabilityGap(Contract):
     reason: Literal["provider_unavailable", "provider_failure"]
 
 
+class PdfCoverage(Contract):
+    page_count: Annotated[int, Field(ge=1, le=1000)]
+    native_pages: tuple[PositiveInt, ...]
+    ocr_pages: tuple[PositiveInt, ...]
+    blank_pages: tuple[PositiveInt, ...]
+    no_text_detected_pages: tuple[PositiveInt, ...]
+
+    @model_validator(mode="after")
+    def complete_partition(self):
+        pages = (*self.native_pages, *self.ocr_pages, *self.blank_pages)
+        if (
+            sorted(pages) != list(range(1, self.page_count + 1))
+            or any(
+                tuple(sorted(set(group))) != group
+                for group in (
+                    self.native_pages,
+                    self.ocr_pages,
+                    self.blank_pages,
+                    self.no_text_detected_pages,
+                )
+            )
+            or not set(self.no_text_detected_pages) <= set(self.ocr_pages)
+        ):
+            raise ValueError("Invalid PDF coverage partition")
+        return self
+
+
 class VisionCapabilityDiagnostics(Contract):
     type: Literal["document_vision_capability"] = "document_vision_capability"
     schema_version: Literal["1"] = "1"
-    gaps: Annotated[
-        tuple[VisionCapabilityGap, ...], Field(min_length=1, max_length=100)
-    ]
+    gaps: Annotated[tuple[VisionCapabilityGap, ...], Field(max_length=100)]
+    pdf_coverage: PdfCoverage | None = None
+
+    @model_validator(mode="after")
+    def meaningful(self):
+        if not self.gaps and self.pdf_coverage is None:
+            raise ValueError("Empty processing diagnostic")
+        return self
+
+    @model_serializer(mode="wrap")
+    def legacy_diagnostic(self, handler):
+        data = handler(self)
+        if self.pdf_coverage is None:
+            data.pop("pdf_coverage", None)
+        return data
 
 
 class DocumentCompositionPlan(Contract):
     base_normalizer_fingerprint: Sha256
+    input_strategy: Literal["pdf-streamed-images@1"] | None = None
     table_strategy: Literal["table-fragments@1"] = "table-fragments@1"
     proxy_strategy: Literal["asset-proxies@1"] = "asset-proxies@1"
     infer_table_continuations: bool = True
     caption_copies: bool = True
     proxies: tuple[PlannedProxy, ...] = ()
+    pixel_regions: tuple[PlannedRegion, ...] = ()
     vision_gaps: Annotated[tuple[VisionCapabilityGap, ...], Field(max_length=100)] = ()
 
+    @model_serializer(mode="wrap")
+    def legacy_input_strategy(self, handler):
+        data = handler(self)
+        if self.input_strategy is None:
+            data.pop("input_strategy", None)
+        return data
+
     def semantic_data(self) -> JsonValue:
-        """Preserve the exact Task13 plan form when no region enrichment exists."""
+        """Serialize the plan unchanged when no region enrichment exists, so its digest stays stable."""
         data = self.model_dump(mode="json")
         for proxy in data["proxies"]:
             if proxy.get("region") is None:
                 proxy.pop("region", None)
             if not proxy.get("source_context"):
                 proxy.pop("source_context", None)
+        if not data["pixel_regions"]:
+            data.pop("pixel_regions")
         if not data["vision_gaps"]:
             data.pop("vision_gaps")
         return data
@@ -292,6 +342,9 @@ class DocumentCompositionPlan(Contract):
     def bounded_unique_inputs(self) -> Self:
         if (
             len(self.proxies) > 10_000
+            or len(self.pixel_regions) > 1000
+            or len({region.source_native_ref for region in self.pixel_regions})
+            != len(self.pixel_regions)
             or len({gap.selection_sha256 for gap in self.vision_gaps})
             != len(self.vision_gaps)
             or len(canonical_bytes(self.semantic_data())) > 16 * 1024 * 1024

@@ -3,17 +3,21 @@
 import asyncio
 import fcntl
 import json
+import math
 import multiprocessing
 import os
+import re
 import secrets
 import stat
+import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
+from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from pathlib import Path
 from threading import Lock
-from typing import cast
+from typing import Any, cast
 from uuid import uuid4
 
 from tychora.contracts.errors import TychoraError
@@ -108,6 +112,111 @@ def private_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+OWNER_TOKEN_FILE = "owner-token"
+_RSS_SAMPLE_ATTEMPTS = 4
+
+_OWNER_TOKEN = re.compile(r"[A-Za-z0-9_-]{43,128}")
+
+
+def _unsafe_owner_token() -> TychoraError:
+    return TychoraError(
+        "INTEGRITY_ERROR",
+        "Owner token file is unsafe; inspect or delete .runtime/owner-token "
+        "while the workspace is stopped.",
+    )
+
+
+def _create_owner_token(directory: Path, *, replace: bool) -> str:
+    """Write a fresh owner-only token file atomically, never through a link."""
+    token = secrets.token_urlsafe(32)
+    temporary = directory / (".owner-token-" + secrets.token_hex(8))
+    target = directory / OWNER_TOKEN_FILE
+    try:
+        fd = os.open(
+            temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600
+        )
+        with os.fdopen(fd, "w") as stream:
+            stream.write(token)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if replace:
+            os.replace(temporary, target)
+        else:
+            # link() never overwrites, so a concurrently planted file wins and
+            # is then validated like any other existing token file.
+            os.link(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return token
+
+
+def _read_owner_token(directory: Path) -> str:
+    try:
+        fd = os.open(directory / OWNER_TOKEN_FILE, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        raise
+    except OSError:
+        raise _unsafe_owner_token() from None
+    try:
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_nlink != 1
+            or stat.S_IMODE(info.st_mode) != 0o600
+            or info.st_size > 256
+        ):
+            raise _unsafe_owner_token()
+        raw = os.read(fd, 257)
+    finally:
+        os.close(fd)
+    try:
+        token = raw.decode("ascii")
+    except UnicodeDecodeError:
+        raise _unsafe_owner_token() from None
+    if not _OWNER_TOKEN.fullmatch(token):
+        raise _unsafe_owner_token()
+    return token
+
+
+def load_owner_token(directory: Path) -> str:
+    """Reuse the persisted owner token, creating it only when it is absent.
+
+    The caller must hold the workspace owner lock. Any existing but anomalous
+    file fails closed instead of being silently replaced.
+    """
+    try:
+        return _read_owner_token(directory)
+    except FileNotFoundError:
+        pass
+    try:
+        _create_owner_token(directory, replace=False)
+    except FileExistsError:
+        pass
+    except OSError:
+        raise _unsafe_owner_token() from None
+    try:
+        return _read_owner_token(directory)
+    except FileNotFoundError:
+        raise _unsafe_owner_token() from None
+
+
+def rotate_owner_token(root: Path) -> None:
+    """Replace the persisted owner token of a stopped workspace."""
+    root = Path(root)
+    if not root.is_dir():
+        raise TychoraError("NOT_FOUND", "Workspace directory does not exist.")
+    identity = RuntimeIdentity(root)
+    identity.acquire()
+    try:
+        try:
+            _create_owner_token(identity.directory, replace=True)
+        except OSError:
+            raise _unsafe_owner_token() from None
+    finally:
+        identity.close()
+
+
 class RuntimeIdentity:
     """A lock and secret coordination record; this is not a live handshake."""
 
@@ -151,14 +260,19 @@ class RuntimeIdentity:
             ) from None
 
     def publish(self, workspace_id: str) -> None:
+        if self._fd is None:
+            raise TychoraError("INTEGRITY_ERROR", "Owner runtime is not locked")
         self.instance_id = str(uuid4())
+        # Per-instance secret for owner-bound continuation cursors; the bearer
+        # token below is deliberately stable across restarts.
+        self.instance_secret = secrets.token_bytes(32)
         record = {
             "schema_version": 1,
             "workspace_id": workspace_id,
             "protocol_version": 1,
             "instance_id": self.instance_id,
             "pid": os.getpid(),
-            "token": secrets.token_urlsafe(32),
+            "token": load_owner_token(self.directory),
         }
         self.record = record
         self._write_record(record)
@@ -196,40 +310,226 @@ class RuntimeIdentity:
                 self._fd = None
 
 
-def _parser_entry(call: Callable, paths: tuple[Path, ...], output: Connection) -> None:
+@dataclass(frozen=True)
+class ParserExecutionLimits:
+    page_count: int
+    wall_seconds: float
+    rss_bytes: int
+    output_bytes: int
+    context: ExecutionContext
+    batch_seconds: float = 180.0
+
+    def __post_init__(self):
+        if (
+            not 0 < self.page_count <= 1000
+            or not 0 < self.rss_bytes <= 4294967296
+            or not 0 < self.output_bytes <= 1073741824
+            or not math.isfinite(self.wall_seconds)
+            or not 0 < self.wall_seconds <= 5400
+            or not math.isfinite(self.batch_seconds)
+            or not 0 < self.batch_seconds <= 180
+        ):
+            raise ValueError("Invalid parser execution limits")
+
+
+@dataclass(frozen=True)
+class ParserOutputBatch:
+    outputs: tuple
+    pages: tuple[int, ...]
+
+
+def _parser_entry(
+    call: Callable, paths: tuple[Path, ...], output: Connection, bounded=False
+) -> None:
+    def report(batch):
+        output.send(("batch", batch))
+        if output.recv() != "ack":
+            raise ValueError("Parser batch was not acknowledged")
+
     try:
-        output.send((True, call(paths)))
-    except Exception:  # noqa: BLE001 - sanitize arbitrary parser failures at the process boundary
-        output.send((False, None))
+        result = (
+            cast(Any, call).run(paths, report)
+            if bounded and hasattr(call, "run")
+            else call(paths)
+        )
+        output.send(("done", result))
+    except Exception as exc:  # noqa: BLE001 - never disclose parser paths or text
+        code = (
+            exc.code
+            if isinstance(exc, TychoraError)
+            and exc.code
+            in {
+                "LIMIT_EXCEEDED",
+                "INDEX_INCOMPLETE",
+                "CAPABILITY_MISSING",
+                "INTEGRITY_ERROR",
+                "DEADLINE_EXCEEDED",
+                "INVALID_REQUEST",
+            }
+            else "INVALID_REQUEST"
+        )
+        output.send(("error", code if bounded else "INVALID_REQUEST"))
     finally:
         output.close()
 
 
+def _sample_rss(monitor, child) -> int | None:
+    """Child RSS, or None once the child has exited.
+
+    macOS can retire a task port just before multiprocessing observes the process
+    sentinel: reap that exit or retry briefly, and never continue a child that stays
+    unmonitored.
+    """
+    for attempt in range(_RSS_SAMPLE_ATTEMPTS):
+        try:
+            return monitor.memory_info().rss
+        except Exception:  # noqa: BLE001 - unavailable platform/process inspection
+            child.join(0.05 * 2**attempt)
+            if not child.is_alive():
+                return None
+    raise TychoraError("CAPABILITY_MISSING", "Parser RSS monitoring is unavailable")
+
+
 def parser_process[T](
-    call: Callable[[tuple[Path, ...]], T], paths: tuple[Path, ...]
+    call: Callable[[tuple[Path, ...]], T],
+    paths: tuple[Path, ...],
+    *,
+    limits: ParserExecutionLimits | None = None,
+    progress: Callable | None = None,
 ) -> T:
-    """Spawn with only independent copies; always reap before removing staging."""
+    """Spawn independent copies; poll bounds through collection; reap before cleanup."""
     context = multiprocessing.get_context("spawn")
-    receiver, sender = context.Pipe(duplex=False)
-    child = context.Process(target=_parser_entry, args=(call, paths, sender))
+    receiver, sender = context.Pipe(duplex=True)
+    child = context.Process(
+        target=_parser_entry, args=(call, paths, sender, limits is not None)
+    )
+    started = batch_started = time.monotonic()
+    pending = None
+    monitor = None
+    total = 0
+    pages = []
+
+    def checkpoint():
+        if limits is None:
+            return
+        limits.context.checkpoint()
+        now = time.monotonic()
+        if (
+            now - started >= limits.wall_seconds
+            or now - batch_started >= limits.batch_seconds
+        ):
+            raise TychoraError("DEADLINE_EXCEEDED", "PDF parser deadline exceeded")
+        rss = _sample_rss(monitor, child)
+        if rss is None:
+            return
+        if rss > limits.rss_bytes:
+            raise TychoraError("LIMIT_EXCEEDED", "Parser RSS threshold exceeded")
+
     try:
+        if limits is not None:
+            limits.context.checkpoint()
+            try:
+                import psutil
+
+                if psutil.__version__ != "7.2.2":
+                    raise ImportError
+            except ImportError:
+                raise TychoraError(
+                    "CAPABILITY_MISSING", "Qualified RSS monitoring is unavailable"
+                ) from None
         child.start()
         sender.close()
-        try:
-            succeeded, result = receiver.recv()
-        except EOFError:
-            succeeded, result = False, None
-        child.join()
-        if not succeeded or child.exitcode != 0:
-            raise TychoraError("INVALID_REQUEST", "Parser process failed")
-        return cast(T, result)
+        if limits is not None:
+            monitor = psutil.Process(child.pid)
+        while True:
+            checkpoint()
+            if not receiver.poll(0.05):
+                if not child.is_alive():
+                    raise TychoraError(
+                        "INVALID_REQUEST", "Parser process exited without completion"
+                    )
+                continue
+            try:
+                kind, result = receiver.recv()
+            except (EOFError, ValueError):
+                raise TychoraError("INVALID_REQUEST", "Parser process failed") from None
+            if kind == "error":
+                raise TychoraError(result, "Parser process failed")
+            if kind == "done":
+                while child.is_alive():
+                    checkpoint()
+                    child.join(0.05)
+                if child.exitcode != 0:
+                    raise TychoraError("INVALID_REQUEST", "Parser process failed")
+                if (
+                    limits
+                    and hasattr(call, "run")
+                    and tuple(pages) != tuple(range(1, limits.page_count + 1))
+                ):
+                    raise TychoraError(
+                        "INDEX_INCOMPLETE", "Parser batch coverage differs"
+                    )
+                return cast(T, result)
+            if (
+                kind != "batch"
+                or limits is None
+                or progress is None
+                or not isinstance(result, ParserOutputBatch)
+            ):
+                raise TychoraError("INTEGRITY_ERROR", "Invalid parser output message")
+            from .owner import StagedOutput
+
+            if (
+                not isinstance(result.outputs, tuple)
+                or len(result.outputs) > 4096
+                or not isinstance(result.pages, tuple)
+                or not 0 < len(result.pages) <= 16
+                or any(type(page) is not int for page in result.pages)
+                or result.pages
+                != tuple(range(len(pages) + 1, len(pages) + 1 + len(result.pages)))
+                or result.pages[-1] > limits.page_count
+                or any(
+                    not isinstance(entry, StagedOutput)
+                    or type(entry.size_bytes) is not int
+                    or entry.size_bytes < 0
+                    for entry in result.outputs
+                )
+            ):
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Invalid parser batch descriptors"
+                )
+            size = sum(entry.size_bytes for entry in result.outputs)
+            total += size
+            if size > 268435456 or total > limits.output_bytes:
+                raise TychoraError(
+                    "LIMIT_EXCEEDED", "Parser output exceeds processing capacity"
+                )
+            pending = progress(result)
+            if isinstance(pending, Future):
+                while not pending.done():
+                    checkpoint()
+                    time.sleep(0.05)
+                pending.result()
+            pending = None
+            checkpoint()
+            pages.extend(result.pages)
+            receiver.send("ack")
+            batch_started = time.monotonic()
     finally:
         if child.pid is not None:
-            # Unexpected supervisor failure fences a child before staged cleanup.
             if child.is_alive():
                 child.terminate()
+                child.join(1)
+            if child.is_alive():
+                child.kill()
             child.join()
             child.close()
+        # An owner collector may still hold staged descriptors. Drain before cleanup.
+        if isinstance(pending, Future):
+            try:
+                pending.result()
+            except Exception:  # noqa: BLE001, S110 - preserve the primary supervisor error
+                pass
         receiver.close()
         sender.close()
 

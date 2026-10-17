@@ -2,12 +2,14 @@
 
 import asyncio
 import json
+from contextlib import asynccontextmanager
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import pytest_asyncio
 from PIL import Image
 
 from tests.retrieval.graph_fixture import assertion, sealed_graph, unit
@@ -44,8 +46,9 @@ class Counter:
         return len(text.split())
 
 
-@pytest.fixture
-async def published(tmp_path: Path):
+@asynccontextmanager
+async def _published(tmp_path: Path):
+    """A workspace with one published synthetic manual and its first unit id."""
     settings = tmp_path / "workspace.toml"
     settings.write_text('schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n')
     config = resolve_config(settings, "test", {})
@@ -58,8 +61,14 @@ async def published(tmp_path: Path):
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
         await owner.run_blocking(
             lambda: owner.db.execute(
-                "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,'{}')",
-                (COLLECTION, owner.workspace_id, "manuals", "Manuals"),
+                "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,?)",
+                (
+                    COLLECTION,
+                    owner.workspace_id,
+                    "manuals",
+                    "Manuals",
+                    json.dumps({"schema_version": 1, "upload_providers": []}),
+                ),
             ),
             ExecutionContext(),
         )
@@ -99,9 +108,23 @@ async def published(tmp_path: Path):
         yield owner, scope, uid
 
 
-@pytest.mark.asyncio
-async def test_exact_range_and_unknown_id(published):
-    owner, scope, uid = published
+@pytest.fixture
+async def published(tmp_path: Path):
+    """A fresh workspace for tests that insert rows or patch services."""
+    async with _published(tmp_path) as value:
+        yield value
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def published_shared(tmp_path_factory):
+    """One workspace per module for tests that only read."""
+    async with _published(tmp_path_factory.mktemp("published")) as value:
+        yield value
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_exact_range_and_unknown_id(published_shared):
+    owner, scope, uid = published_shared
     service = InspectionService(owner)
     result = await service.inspect(
         InspectRequest(
@@ -129,9 +152,9 @@ async def test_exact_range_and_unknown_id(published):
     assert error.value.code in {"NOT_FOUND", "FORBIDDEN_SCOPE"}
 
 
-@pytest.mark.asyncio
-async def test_empty_selected_range_is_invalid_even_for_retained_unit(published):
-    owner, scope, uid = published
+@pytest.mark.asyncio(loop_scope="module")
+async def test_empty_selected_range_is_invalid_even_for_retained_unit(published_shared):
+    owner, scope, uid = published_shared
     with pytest.raises(TychoraError) as error:
         await InspectionService(owner).inspect(
             InspectRequest(
@@ -327,9 +350,9 @@ async def test_retained_docling_source_parts_denies_rejected_child_overlap(publi
     assert "doc-child" not in allowed.model_dump_json()
 
 
-@pytest.mark.asyncio
-async def test_lookup_only_scope_can_inspect_its_source(published):
-    owner, scope, uid = published
+@pytest.mark.asyncio(loop_scope="module")
+async def test_lookup_only_scope_can_inspect_its_source(published_shared):
+    owner, scope, uid = published_shared
     lookup = scope.model_copy(update={"uses": frozenset({"lookup"})})
     result = await InspectionService(owner).inspect(
         InspectRequest(subject="evidence", id=uid, view="full"),
@@ -340,9 +363,9 @@ async def test_lookup_only_scope_can_inspect_its_source(published):
     assert "Exact source evidence." in result.evidence.text
 
 
-@pytest.mark.asyncio
-async def test_denied_scope_cannot_inspect_registered_unit(published):
-    owner, scope, uid = published
+@pytest.mark.asyncio(loop_scope="module")
+async def test_denied_scope_cannot_inspect_registered_unit(published_shared):
+    owner, scope, uid = published_shared
     denied = scope.model_copy(update={"collection_ids": frozenset()})
     with pytest.raises(TychoraError) as error:
         await InspectionService(owner).inspect(
@@ -419,9 +442,11 @@ def test_native_explicit_relation_view_and_direction_narrow_policy(tmp_path):
     assert incoming.assertions == ()
 
 
-@pytest.mark.asyncio
-async def test_explicit_relations_require_authorized_seed_before_graph(published):
-    owner, scope, uid = published
+@pytest.mark.asyncio(loop_scope="module")
+async def test_explicit_relations_require_authorized_seed_before_graph(
+    published_shared,
+):
+    owner, scope, uid = published_shared
     service = InspectionService(owner)
     with pytest.raises(TychoraError) as denied:
         await service.relations(
@@ -741,9 +766,9 @@ async def test_full_original_cannot_expose_rejected_source_unit(published):
     assert denied.value.code == "FORBIDDEN_SCOPE"
 
 
-@pytest.mark.asyncio
-async def test_discovery_counts_only_readable_collection_sources(published):
-    owner, scope, _ = published
+@pytest.mark.asyncio(loop_scope="module")
+async def test_discovery_counts_only_readable_collection_sources(published_shared):
+    owner, scope, _ = published_shared
     discovery = DiscoveryService(owner.config, owner.store.registry, owner)
     result = await asyncio.to_thread(
         discovery.discover,
@@ -853,9 +878,9 @@ async def test_source_discovery_preserves_unextracted_source_and_revision_stages
     )
 
 
-@pytest.mark.asyncio
-async def test_job_inspection_uses_durable_authorization(published):
-    owner, scope, _ = published
+@pytest.mark.asyncio(loop_scope="module")
+async def test_job_inspection_uses_durable_authorization(published_shared):
+    owner, scope, _ = published_shared
     job = await owner.run_blocking(
         lambda: owner.db.execute("SELECT job_id FROM jobs LIMIT 1").fetchone()[0],
         ExecutionContext(),
@@ -892,7 +917,7 @@ async def test_metadata_only_run_remains_inspectable_without_replay(published):
                 0,
                 config_sha,
                 "partial",
-                '{"candidate_count":999}',
+                '{"candidate_count":8675309421}',
                 '{"unit_ids":["hidden"]}',
                 None,
                 "2026-01-01T00:00:00Z",
@@ -905,7 +930,8 @@ async def test_metadata_only_run_remains_inspectable_without_replay(published):
         InspectRequest(subject="runs", id="run-inspect"), scope, ExecutionContext()
     )
     assert result.records[0].value["state"] == "partial"
-    assert "999" not in result.model_dump_json()
+    # A long sentinel: short numbers can occur by chance inside random identifiers.
+    assert "8675309421" not in result.model_dump_json()
     assert "hidden" not in result.model_dump_json()
     assert result.payload is None
     assert result.records[0].value["request_retained"] is False
@@ -916,7 +942,7 @@ async def test_metadata_only_run_remains_inspectable_without_replay(published):
     )
     assert [entry.id for entry in listing.definitions] == ["run-inspect"]
     assert listing.definitions[0].definition["state"] == "partial"
-    assert "999" not in listing.model_dump_json()
+    assert "8675309421" not in listing.model_dump_json()
     assert "hidden" not in listing.model_dump_json()
     denied = scope.model_copy(update={"principal_id": "other"})
     with pytest.raises(TychoraError) as error:
@@ -928,9 +954,9 @@ async def test_metadata_only_run_remains_inspectable_without_replay(published):
     assert error.value.code == "FORBIDDEN_SCOPE"
 
 
-@pytest.mark.asyncio
-async def test_diagnostic_summary_is_scope_limited(published):
-    owner, scope, _ = published
+@pytest.mark.asyncio(loop_scope="module")
+async def test_diagnostic_summary_is_scope_limited(published_shared):
+    owner, scope, _ = published_shared
     extraction = await owner.run_blocking(
         lambda: owner.db.execute(
             "SELECT extraction_id FROM extractions LIMIT 1"

@@ -1,0 +1,14 @@
+{
+  "base_workspace_sha256": "dc0da08ac40d94bc0fb31ac37bd71d2f2723fe3035aa042a4ed3df509e8a0b6a",
+  "candidate_workspace_sha256": "b2ec3d4c33ded061530467fe10e66a5f0c5509b8c6dec89c4442c3c1cc4a10de",
+  "changes": [
+    {
+      "path": "limits.limit",
+      "before": 8,
+      "after": 12
+    }
+  ],
+  "activation_allowed": true,
+  "blockers": [],
+  "rebuild_queued": false
+}

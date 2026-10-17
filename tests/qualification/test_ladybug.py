@@ -9,6 +9,7 @@ import pytest
 from ladybug import Connection
 
 from tests.helpers.ladybug import query_rows
+from tests.helpers.timing import scaled
 from tychora.adapters.ladybug.generation import LadybugGraphStore
 
 pytestmark = pytest.mark.qualification
@@ -64,15 +65,15 @@ signal.pause()
     assert writer.stdout is not None
     selector = selectors.DefaultSelector()
     selector.register(writer.stdout, selectors.EVENT_READ)
-    if not selector.select(timeout=10):
+    if not selector.select(timeout=scaled(10)):
         writer.kill()
-        _, stderr = writer.communicate(timeout=10)
+        _, stderr = writer.communicate(timeout=scaled(10))
         pytest.fail(
             f"Ladybug graph writer did not reach transaction boundary: {stderr}"
         )
     assert writer.stdout.readline().strip() == "transaction-open"
     writer.kill()
-    writer.communicate(timeout=10)
+    writer.communicate(timeout=scaled(10))
     assert writer.returncode is not None and writer.returncode < 0
     reopened = LadybugGraphStore(path)
     assert query_rows(reopened._connection, "MATCH (e:Evidence) RETURN count(e)") == [

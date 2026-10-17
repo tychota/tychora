@@ -29,6 +29,9 @@ class ArtifactAudit(NamedTuple):
 _DENIED_PARTS = frozenset(
     {
         ".git",
+        "node_modules",
+        "test-results",
+        "playwright-report",
         ".superpowers",
         ".venv",
         ".cache",
@@ -68,7 +71,17 @@ def _allowed_path(path: PurePosixPath, kind: str) -> bool:
         return False
     if kind == "sdist" and len(path.parts) == 2 and path.name == ".gitignore":
         return re.fullmatch(r"tychora-[^/]+", path.parts[0]) is not None
-    if any(part.startswith(".") or part in _DENIED_PARTS for part in path.parts):
+    if (
+        kind == "sdist"
+        and len(path.parts) == 3
+        and path.parts[1:] == ("dashboard", ".nvmrc")
+    ):
+        return re.fullmatch(r"tychora-[^/]+", path.parts[0]) is not None
+    denied = _DENIED_PARTS
+    if kind == "sdist" and path.parts[1:3] == ("dashboard", "src"):
+        # Tracked dashboard source may have a models/ page directory; weights stay caught by suffix.
+        denied = denied - {"models", "reports"}
+    if any(part.startswith(".") or part in denied for part in path.parts):
         return False
     if path.name.lower().endswith(_DENIED_SUFFIXES) or path.name.lower() in {
         ".env",
@@ -102,7 +115,13 @@ def _allowed_path(path: PurePosixPath, kind: str) -> bool:
         return True
     if len(rel) >= 3 and rel[:2] == ("src", "tychora"):
         return True
-    return len(rel) >= 2 and rel[0] in {"docs", "examples", "tests", "packaging"}
+    return len(rel) >= 2 and rel[0] in {
+        "docs",
+        "examples",
+        "tests",
+        "packaging",
+        "dashboard",
+    }
 
 
 def _validate_member(name: str, data: bytes, kind: str) -> str:

@@ -26,6 +26,7 @@ from tychora.contracts.artifacts import ArtifactRef, physical_identity
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.documents import (
     DocumentAsset,
+    DocumentImageBinding,
     DocumentRegistration,
     OriginalImage,
 )
@@ -306,6 +307,19 @@ def _check_pdf_mask_capacity(path: Path, check_size) -> None:
 class _Convert:
     model_path: str
     format: str
+    policy: Any = None
+
+    def run(self, paths, report):
+        from .pdf_batches import run_pdf_batches
+
+        try:
+            return run_pdf_batches(self, paths, report)
+        except RuntimeError as exc:
+            # The SDK wraps assembly failures with an explicit cause. Preserve
+            # our typed failure for the bounded worker's code-only sanitizer.
+            if isinstance(exc.__cause__, TychoraError):
+                raise exc.__cause__ from None
+            raise
 
     def __call__(self, paths: tuple[Path, ...]) -> tuple[StagedOutput, ...]:
         # This callable is the entire child payload: no canonical handles.
@@ -391,18 +405,41 @@ class DoclingParser:
         owner: WorkspaceOwner,
         registration: DocumentRegistration,
         model_path: Path,
+        policy=None,
+        progress=None,
     ):
         self.owner = owner
         self.registration = DocumentRegistration.model_validate(
             registration.model_dump()
         )
         self.model_path = model_path.resolve()
+        self.policy = policy
+        self.progress = progress
+        self._exports = []
+        self._evidence = []
+        self._lineages = []
+        self._lineage = None
+        self._native_batches = []
+        self._native_text_evidence = None
+        self._coordinate_batches = []
+        self._external_refs = {}
+        self._metadata_bytes = 0
+        self.retention_budget = None
+        if self.policy is not None:
+            from tychora.application.pdf_processing import PdfRetentionBudget
+
+            self.retention_budget = PdfRetentionBudget(
+                self.policy.limits["max_retained_bytes"]
+            )
+            self.retention_budget.reserve_refs(
+                (self.registration.capture.original_ref,)
+            )
 
     def _prepare(
         self, original: ArtifactRef, config: ResolvedConfig, ctx: ExecutionContext
     ):
         ctx.checkpoint()
-        if config.values.extraction.parser != "docling":
+        if self.policy is None and config.values.extraction.parser != "docling":
             raise TychoraError(
                 "CAPABILITY_MISSING", "Configured parser requires its own adapter"
             )
@@ -434,6 +471,48 @@ class DoclingParser:
                 "CAPABILITY_MISSING",
                 "The requested rich-document normalizer is not qualified",
             )
+        if self.policy is not None:
+            from tychora.application.pdf_processing import (
+                PDF_LIMITS,
+                qualified_pdf_runtime,
+            )
+            from tychora.contracts.pdf_policy import PdfProcessingPolicy
+
+            captured = self.registration.capture.source.get("pdf_processing")
+            if (
+                self.registration.format != "pdf"
+                or captured is None
+                or PdfProcessingPolicy.model_validate_json(canonical_bytes(captured))
+                != self.policy
+            ):
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Explicit PDF policy differs from capture"
+                )
+            runtime, models, backend, options = qualified_pdf_runtime(
+                self.model_path, bool(self.policy.ocr_pages)
+            )
+            if (
+                self.policy.runtime_inventory != runtime
+                or self.policy.model_inventory_sha256 != models
+                or self.policy.backend_identity != backend
+                or self.policy.options != options
+                or any(
+                    self.policy.limits.get(key) != value
+                    for key, value in PDF_LIMITS.items()
+                )
+            ):
+                raise TychoraError("SCOPE_CHANGED", "Qualified PDF policy changed")
+            current = (
+                self.owner.pdf_intakes.max_retained_bytes
+                if self.owner.pdf_intakes
+                else 1073741824
+            )
+            if (
+                not 0
+                < self.policy.limits["max_retained_bytes"]
+                <= min(current, 1073741824)
+            ):
+                raise TychoraError("SCOPE_CHANGED", "PDF processing allowance changed")
         inventory = validate_models(self.model_path)
         image = self._original_image(original)
         return registry, kind, inventory, image
@@ -482,6 +561,18 @@ class DoclingParser:
     ) -> ExtractionArtifact:
         self.owner._sync_thread()
         registry, kind, inventory, image = self._prepare(original, config, ctx)
+        if self.policy is not None:
+            self.owner.run_parser_sync(
+                _Convert(str(self.model_path), self.registration.format, self.policy),
+                (original,),
+                ctx,
+                limits=self._limits(ctx),
+                batch_collector=self._accept_batch,
+            )
+            return self.owner.run_blocking_sync(
+                lambda: self._finish_pdf(original, config, registry, kind, inventory),
+                ctx,
+            )
         return self.owner.run_parser_sync(
             _Convert(str(self.model_path), self.registration.format),
             (original,),
@@ -497,6 +588,18 @@ class DoclingParser:
         registry, kind, inventory, image = await self.owner.run_blocking(
             lambda: self._prepare(original, config, ctx), ctx
         )
+        if self.policy is not None:
+            await self.owner.run_parser(
+                _Convert(str(self.model_path), self.registration.format, self.policy),
+                (original,),
+                ctx,
+                limits=self._limits(ctx),
+                batch_collector=self._accept_batch,
+            )
+            return await self.owner.run_blocking(
+                lambda: self._finish_pdf(original, config, registry, kind, inventory),
+                ctx,
+            )
         return await self.owner.run_parser(
             _Convert(str(self.model_path), self.registration.format),
             (original,),
@@ -505,6 +608,152 @@ class DoclingParser:
                 outputs, original, config, registry, kind, inventory, image
             ),
         )
+
+    def _limits(self, ctx):
+        assert self.policy is not None
+        from tychora.application.runtime import ParserExecutionLimits
+
+        if (
+            self.policy.limits["max_retained_bytes"]
+            <= self.registration.capture.original_ref.size_bytes
+        ):
+            raise TychoraError(
+                "LIMIT_EXCEEDED", "PDF original leaves no processing capacity"
+            )
+        return ParserExecutionLimits(
+            page_count=len(self.policy.native_pages)
+            + len(self.policy.ocr_pages)
+            + len(self.policy.blank_pages),
+            wall_seconds=5400,
+            rss_bytes=4294967296,
+            output_bytes=self.policy.limits["max_retained_bytes"]
+            - self.registration.capture.original_ref.size_bytes,
+            context=ctx,
+        )
+
+    def _accept_batch(self, outputs, pages):
+        assert self.policy is not None
+        metadata = None
+        for descriptor, stream in outputs:
+            if descriptor.media_type == "application/json":
+                if metadata is not None:
+                    raise TychoraError("INTEGRITY_ERROR", "Repeated PDF batch metadata")
+                self._metadata_bytes += descriptor.size_bytes
+                if self._metadata_bytes > MAX_PARSER_OUTPUT_BYTES:
+                    raise TychoraError(
+                        "LIMIT_EXCEEDED", "Merged PDF metadata exceeds capacity"
+                    )
+                payload = stream.read(MAX_PARSER_OUTPUT_BYTES + 1)
+                metadata = json.loads(payload)
+                if canonical_bytes(metadata) != payload:
+                    raise TychoraError("INTEGRITY_ERROR", "Noncanonical PDF batch")
+            elif descriptor.media_type == "image/png":
+                # Count before retention; deduplicate durable closure by exact hash.
+                payload = stream.read(MAX_PARSER_OUTPUT_BYTES + 1)
+                hashed = sha256(payload).hexdigest()
+                if hashed not in self._external_refs:
+                    assert self.retention_budget is not None
+                    self.retention_budget.reserve_payload(payload, "image/png")
+                    self._external_refs[hashed] = self.owner.artifacts.put_stream(
+                        io.BytesIO(payload), "image/png"
+                    )
+            else:
+                raise TychoraError("INTEGRITY_ERROR", "Unexpected PDF batch media")
+        if (
+            metadata is None
+            or tuple(sorted(int(page) for page in metadata["document"]["pages"]))
+            != pages
+        ):
+            raise TychoraError("INDEX_INCOMPLETE", "PDF batch page coverage differs")
+        self._exports.append(FrozenJsonMap(metadata["document"]))
+        self._evidence.extend(metadata["evidence"])
+        if self.policy.text_coordinates:
+            from .text_coordinates import batch_coordinate_proof
+
+            native = metadata.get("native_text_evidence")
+            if native is None:
+                raise TychoraError("INTEGRITY_ERROR", "Missing native assembly batch")
+            try:
+                self._coordinate_batches.append(
+                    batch_coordinate_proof(
+                        self.policy,
+                        metadata["evidence"],
+                        metadata.get("lineage"),
+                        native,
+                    )
+                )
+            except (ValueError, KeyError, TypeError, IndexError) as exc:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Invalid PDF coordinate batch"
+                ) from exc
+            self._native_batches.append(native)
+        if self.policy.origin_proof:
+            if "lineage" not in metadata or not isinstance(metadata["lineage"], list):
+                raise TychoraError("INTEGRITY_ERROR", "Missing PDF OCR lineage batch")
+            self._lineages.append(metadata["lineage"])
+        if self.progress:
+            self.progress(pages)
+
+    def _reserve_metadata(self, payload):
+        assert self.policy is not None
+        assert self.retention_budget is not None
+        self.retention_budget.reserve_payload(payload, "application/json")
+
+    def _finish_pdf(self, original, config, registry, kind, inventory):
+        from .pdf_batches import merge_pdf_page_exports
+
+        assert self.policy is not None
+        if self.policy.origin_proof:
+            from .ocr_lineage import merge_lineage
+
+            try:
+                self._lineage = merge_lineage(self._exports, self._lineages)
+            except (ValueError, KeyError, IndexError, TypeError) as exc:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Invalid PDF OCR lineage references"
+                ) from exc
+            self._lineages.clear()
+        if self.policy.text_coordinates:
+            from .text_coordinates import merge_native_evidence
+
+            self._native_text_evidence = merge_native_evidence(
+                self._exports, self._native_batches
+            )
+            self._native_batches.clear()
+        payload = canonical_bytes(
+            merge_pdf_page_exports(
+                tuple(self._exports), coordinates=self._coordinate_batches
+            )
+        )
+        self._coordinate_batches.clear()
+        self._exports.clear()
+        result = self._retain(
+            (
+                (
+                    StagedOutput("document.json", "application/json", len(payload)),
+                    io.BytesIO(payload),
+                ),
+            ),
+            original,
+            config,
+            registry,
+            kind,
+            inventory,
+        )
+        from .ocr_evidence import validate_external_images
+
+        def read(ref):
+            with self.owner.artifacts.open_verified(ref) as stream:
+                return stream.read(ref.size_bytes + 1)
+
+        validate_external_images(result, read)
+        if not any(unit.text.strip() for unit in result.units) and not any(
+            page.transcript.strip() for page in result.ocr_pages
+        ):
+            raise TychoraError(
+                "INDEX_INCOMPLETE", "PDF contains no usable transcription"
+            )
+        return result
 
     def _retain(
         self,
@@ -524,7 +773,14 @@ class DoclingParser:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Docling output is not canonical JSON"
             )
-        mapped = map_document(document_json, original)
+        coordinates = None
+        if self.policy is not None and self.policy.text_coordinates:
+            from .text_coordinates import batch_coordinate_proof
+
+            coordinates = batch_coordinate_proof(
+                self.policy, self._evidence, self._lineage, self._native_text_evidence
+            )
+        mapped = map_document(document_json, original, coordinates=coordinates)
         if self.registration.format == "docx" and any(
             unit.provenance for unit in mapped.units
         ):
@@ -536,7 +792,27 @@ class DoclingParser:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Standalone image conversion invented source text"
             )
+        if self.policy is not None:
+            mapped = mapped.model_copy(
+                update={
+                    "units": tuple(
+                        unit.model_copy(
+                            update={
+                                "text_origin": "ocr"
+                                if any(
+                                    prov.physical_page in self.policy.ocr_pages
+                                    for prov in unit.provenance
+                                )
+                                else "source"
+                            }
+                        )
+                        for unit in mapped.units
+                    )
+                }
+            )
         artifacts = self.owner.artifacts
+        if self.policy is not None:
+            self._reserve_metadata(payload)
         raw_ref = artifacts.put_stream(
             io.BytesIO(canonical_bytes(document_json)), "application/json"
         )
@@ -547,33 +823,52 @@ class DoclingParser:
                 node = node[int(segment)] if isinstance(node, list) else node[segment]
             image = node["image"]
             uri = image["uri"]
-            if (
-                not isinstance(uri, str)
-                or not uri.startswith("data:image/")
-                or ";base64," not in uri
-            ):
-                raise TychoraError(
-                    "INTEGRITY_ERROR",
-                    "Docling images must be complete embedded payloads",
-                )
-            header, encoded = uri.split(",", 1)
-            pixels = base64.b64decode(encoded, validate=True)
-            from PIL import Image
-
-            with Image.open(io.BytesIO(pixels)) as decoded:
-                width, height = decoded.size
-                if width * height > MAX_IMAGE_PIXELS or (width, height) != (
-                    image["size"]["width"],
-                    image["size"]["height"],
+            if self.policy is not None:
+                if not isinstance(uri, str) or not uri.startswith(
+                    "urn:tychora:artifact:sha256:"
                 ):
                     raise TychoraError(
-                        "INVALID_REQUEST",
-                        "Document image exceeds40million pixels or has inconsistent dimensions",
+                        "INTEGRITY_ERROR", "Explicit PDF image is not declared"
                     )
-                decoded.verify()
-            image_ref = artifacts.put_stream(
-                io.BytesIO(pixels), header[5:].split(";", 1)[0]
-            )
+                image_ref = self._external_refs.get(
+                    uri.removeprefix("urn:tychora:artifact:sha256:")
+                )
+                if image_ref is None:
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Undeclared PDF image artifact"
+                    )
+                width, height = (
+                    int(image["size"]["width"]),
+                    int(image["size"]["height"]),
+                )
+            else:
+                if (
+                    not isinstance(uri, str)
+                    or not uri.startswith("data:image/")
+                    or ";base64," not in uri
+                ):
+                    raise TychoraError(
+                        "INTEGRITY_ERROR",
+                        "Docling images must be complete embedded payloads",
+                    )
+                header, encoded = uri.split(",", 1)
+                pixels = base64.b64decode(encoded, validate=True)
+                from PIL import Image
+
+                with Image.open(io.BytesIO(pixels)) as decoded:
+                    width, height = decoded.size
+                    if width * height > MAX_IMAGE_PIXELS or (width, height) != (
+                        image["size"]["width"],
+                        image["size"]["height"],
+                    ):
+                        raise TychoraError(
+                            "INVALID_REQUEST",
+                            "Document image exceeds40million pixels or has inconsistent dimensions",
+                        )
+                    decoded.verify()
+                image_ref = artifacts.put_stream(
+                    io.BytesIO(pixels), header[5:].split(";", 1)[0]
+                )
             page = (
                 int(native_ref.split("/")[-1])
                 if native_ref.startswith("#/pages/")
@@ -662,6 +957,10 @@ class DoclingParser:
             config.values.extraction.model_dump(mode="json"),
             {"ocr": False, "image_scale": 1.0, "tables": "accurate", "device": "cpu"},
         )
+        if self.policy is not None:
+            from tychora.application.pdf_processing import policy_sha256
+
+            parser = digest("docling-pdf-policy-parser-v1", policy_sha256(self.policy))
         from tychora.ingestion.document_records import document_normalizer_fingerprint
 
         normalizer = document_normalizer_fingerprint(kind, registry)
@@ -683,19 +982,119 @@ class DoclingParser:
             if original_image is not None
             else None,
         }
+        if self.policy is not None:
+            from .ocr_evidence import collect_ocr_page_evidence
+
+            evidence = collect_ocr_page_evidence(self._evidence, original, self.policy)
+            from .ocr_lineage import evidence_document, validate_parser_lineage
+
+            if self.policy.origin_proof:
+                validate_parser_lineage(
+                    mapped.units,
+                    {page.physical_page: page for page in evidence},
+                    self._lineage,
+                )
+            bindings = tuple(
+                DocumentImageBinding(
+                    native_ref=asset.native_ref, artifact_ref=asset.artifact_ref
+                )
+                for asset in assets
+            )
+            evidence_payload = canonical_bytes(
+                evidence_document(
+                    evidence,
+                    self._lineage,
+                    self.policy.origin_proof,
+                    native=self._native_text_evidence,
+                )
+            )
+            bindings_payload = canonical_bytes(
+                {
+                    "version": "scan-external-images@1",
+                    "bindings": [
+                        binding.model_dump(mode="json") for binding in bindings
+                    ],
+                }
+            )
+            self._reserve_metadata(evidence_payload)
+            self._reserve_metadata(bindings_payload)
+            evidence_ref = artifacts.put_stream(
+                io.BytesIO(evidence_payload), "application/json"
+            )
+            bindings_ref = artifacts.put_stream(
+                io.BytesIO(bindings_payload), "application/json"
+            )
+            diagnostics = [
+                diagnostic
+                for diagnostic in diagnostics
+                if diagnostic.code != "OCR_DISABLED"
+            ]
+            for page in evidence:
+                diagnostics.append(
+                    Diagnostic(
+                        code="OCR_TRANSCRIBED"
+                        if page.transcript
+                        else "OCR_NO_TEXT_DETECTED",
+                        native_ref=f"#/pages/{page.physical_page}",
+                        message="OCR is derived and requires review."
+                        if page.transcript
+                        else "The qualified detector returned no text; this is not a blank-page assertion.",
+                    )
+                )
+            for page in self.policy.blank_pages:
+                diagnostics.append(
+                    Diagnostic(
+                        code="KNOWN_BLANK_PAGE",
+                        native_ref=f"#/pages/{page}",
+                        message="Structural analysis found a known blank page.",
+                    )
+                )
+            data.update(
+                pdf_processing=self.policy.model_dump(mode="json"),
+                image_representation="scan-external-images@1",
+                image_bindings=[
+                    binding.model_dump(mode="json") for binding in bindings
+                ],
+                ocr_pages=[page.model_dump(mode="json") for page in evidence],
+                ocr_evidence_ref=evidence_ref.model_dump(mode="json"),
+                image_bindings_ref=bindings_ref.model_dump(mode="json"),
+                diagnostics=[
+                    diagnostic.model_dump(mode="json") for diagnostic in diagnostics
+                ],
+            )
+            if self.policy.origin_proof:
+                data["ocr_lineage"] = self._lineage
+            if self.policy.text_coordinates:
+                data["native_text_evidence"] = self._native_text_evidence
         encoded = extraction_document(data)
+        if self.policy is not None:
+            self._reserve_metadata(encoded)
         if len(encoded) > MAX_EXTRACTION_BYTES:
             raise TychoraError(
-                "INVALID_REQUEST",
+                "LIMIT_EXCEEDED" if self.policy is not None else "INVALID_REQUEST",
                 "Extraction manifest exceeds16MiB; no document content was truncated",
             )
         retained = artifacts.put_stream(io.BytesIO(encoded), "application/json")
-        return ExtractionArtifact.model_validate_json(
-            canonical_bytes(
-                {
-                    **data,
-                    "document_json": document_json,
-                    "raw_document_ref": retained.model_dump(mode="json"),
-                }
+        from pydantic import ValidationError
+
+        from .ocr_evidence import OcrOriginError
+
+        try:
+            return ExtractionArtifact.model_validate_json(
+                canonical_bytes(
+                    {
+                        **data,
+                        "document_json": document_json,
+                        "raw_document_ref": retained.model_dump(mode="json"),
+                    }
+                )
             )
-        )
+        except ValidationError as exc:
+            if self.policy is not None and any(
+                isinstance(error.get("ctx", {}).get("error"), OcrOriginError)
+                for error in exc.errors()
+            ):
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "PDF OCR origin proof is invalid"
+                ) from exc
+            raise

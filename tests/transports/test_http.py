@@ -896,7 +896,6 @@ async def test_settings_post_commit_cancellation_finishes_cleanup_and_returns_su
             await original_close()
 
         monkeypatch.setattr(old_services.source_jobs, "aclose", held_close)
-        app.state.runtime.admit(activation=True)
         try:
             activation = asyncio.create_task(
                 app.state.settings.activate(
@@ -911,7 +910,7 @@ async def test_settings_post_commit_cancellation_finishes_cleanup_and_returns_su
             assert (root / "workspace.toml").read_text() == candidate
             assert app.state.runtime.services is not old_services
         finally:
-            app.state.runtime.release(activation=True)
+            release.set()
         await app.state.runtime.services.source_jobs.aclose()
 
 
@@ -948,7 +947,6 @@ async def test_settings_cancellation_during_cleanup_fallback_is_committed_succes
 
         monkeypatch.setattr(old_services.source_jobs, "aclose", failed_async_close)
         monkeypatch.setattr(old_services.source_jobs, "close", held_sync_close)
-        app.state.runtime.admit(activation=True)
         try:
             activation = asyncio.create_task(
                 app.state.settings.activate(
@@ -964,7 +962,6 @@ async def test_settings_cancellation_during_cleanup_fallback_is_committed_succes
             assert (root / "workspace.toml").read_text() == candidate
         finally:
             release.set()
-            app.state.runtime.release(activation=True)
         await app.state.runtime.services.source_jobs.aclose()
 
 
@@ -1027,6 +1024,20 @@ async def test_indexed_settings_allow_credential_and_rerank_but_reject_represent
                 )
                 assert incompatible.status_code == 409, incompatible.text
                 assert incompatible.json()["code"] == "PROFILE_INCOMPATIBLE"
+            from hashlib import sha256
+
+            guided = {
+                "base_workspace_sha256": sha256(safe.encode()).hexdigest(),
+                "changes": [
+                    {"path": "extraction.parser", "action": "set", "value": "code"}
+                ],
+            }
+            preview = await client.post("/v1/settings/preview", json=guided)
+            assert preview.status_code == 200, preview.text
+            assert not preview.json()["activation_allowed"]
+            assert preview.json()["blockers"] == ["PROFILE_INCOMPATIBLE"]
+            denied = await client.patch("/v1/settings", json=guided)
+            assert denied.json()["code"] == "PROFILE_INCOMPATIBLE"
             assert (root / "workspace.toml").read_text() == safe
         await app.state.runtime.services.source_jobs.aclose()
 
@@ -1082,6 +1093,20 @@ async def test_settings_activation_rejects_active_accepted_job(tmp_path):
                 assert added.status_code == 202
                 assert await asyncio.to_thread(started.wait, 3)
                 previous = (root / "workspace.toml").read_text()
+                from hashlib import sha256
+
+                patch = {
+                    "base_workspace_sha256": sha256(previous.encode()).hexdigest(),
+                    "changes": [{"path": "limits.limit", "action": "set", "value": 12}],
+                }
+                preview = await client.post("/v1/settings/preview", json=patch)
+                assert preview.status_code == 200, preview.text
+                assert preview.json()["activation_allowed"]
+                guided = await client.patch("/v1/settings", json=patch)
+                assert (
+                    guided.status_code == 409
+                    and guided.json()["code"] == "WORKSPACE_BUSY"
+                )
                 busy = await client.put(
                     "/v1/settings",
                     json={"profile": "local", "workspace_toml": previous},
@@ -1932,3 +1957,92 @@ async def test_health_requires_proven_whole_workspace_read(
         assert response.status_code == 403
         assert "verified_payloads" not in response.text
         assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_retained_content_routes_return_exact_windows_and_gate_read(tmp_path):
+    from tychora.ports.execution import ExecutionContext
+
+    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+        owner = kb._workspace.owner
+        app = create_app(
+            owner,
+            kb._workspace.services,
+            LocalAuth(
+                {
+                    "owner": kb.scope,
+                    "writer": kb.scope.model_copy(
+                        update={"capabilities": frozenset({"write"})}
+                    ),
+                },
+                authority="127.0.0.1:8765",
+            ),
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://127.0.0.1:8765",
+            headers={"Authorization": "Bearer owner"},
+        ) as client:
+            added = await client.post(
+                "/v1/sources",
+                json={
+                    "type": "text",
+                    "source_key": "content",
+                    "collection_id": "default",
+                    "kind": "manual@1",
+                    "format": "text",
+                    "text": "Exact 😀 e\u0301 <script> content. " * 80,
+                    "metadata": {
+                        "title": "Content",
+                        "publisher": "Fixture",
+                        "edition": "1",
+                    },
+                },
+            )
+            status = await app.state.runtime.services.jobs.wait(
+                added.json()["id"], ExecutionContext(), timeout=5
+            )
+            assert status.state == "succeeded"
+            (
+                source,
+                revision,
+                extraction,
+                uid,
+                start,
+                end,
+                text,
+            ) = await owner.run_blocking(
+                lambda: owner.db.execute(
+                    "SELECT r.source_id,e.revision_id,e.extraction_id,c.unit_id,c.char_start,c.char_end,u.text "
+                    "FROM chunks c JOIN evidence_units u USING(unit_id) JOIN extractions e ON e.extraction_id=c.extraction_id "
+                    "JOIN revisions r USING(revision_id) ORDER BY u.ordinal,c.char_start LIMIT 1"
+                ).fetchone(),
+                ExecutionContext(),
+            )
+            path = f"/v1/sources/{source}/revisions/{revision}/extractions/{extraction}"
+            response = await client.get(path + "/windows", params={"limit": 1})
+            assert response.status_code == 200, response.text
+            first = response.json()
+            assert first["windows"][0]["text"] == text[start:end]
+            assert first["next_cursor"]
+            assert response.headers["cache-control"] == "no-store"
+            units = await client.get(path + "/units")
+            assert units.status_code == 200
+            assert units.json()["units"][0]["id"] == uid
+            for suffix in ("/units", "/windows"):
+                denied = await client.get(
+                    path + suffix, headers={"Authorization": "Bearer writer"}
+                )
+                assert denied.status_code == 403
+                invalid = await client.get(path + suffix, params={"limit": 51})
+                assert invalid.status_code == 400
+            resolved = await client.get(
+                path + "/windows", params={"chunk_id": first["windows"][0]["id"]}
+            )
+            assert resolved.json()["windows"] == first["windows"]
+            continued = await client.get(
+                path + "/windows", params={"limit": 1, "cursor": first["next_cursor"]}
+            )
+            assert continued.status_code == 200
+            assert continued.json()["windows"][0]["id"] != first["windows"][0]["id"]
+        await app.state.runtime.services.source_jobs.aclose()

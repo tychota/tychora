@@ -1,0 +1,45 @@
+{
+  "subject": "sources",
+  "definitions": [
+    {
+      "id": "5372b6c3-0e49-56f1-b6fb-777656679103",
+      "version": "1",
+      "label": "dashboard-synthetic-manual",
+      "definition": {
+        "collection_id": "00000000-0000-4000-8000-000000000001",
+        "label": "dashboard-synthetic-manual",
+        "next_revision_cursor": null,
+        "revisions": [
+          {
+            "extractions": [
+              {
+                "channels_truncated": false,
+                "extraction_id": "841db554ddb6ee67617c75a031bb57ee1b775db409b3e35e4fe4f5d9a254d83a",
+                "stages": {
+                  "extraction": "retained",
+                  "lexical": "ready"
+                }
+              }
+            ],
+            "extractions_truncated": false,
+            "kind_id": "manual@1",
+            "revision_id": "1121a973d0f6aadedfecd9437c9ba61aaccca93a681cf6543e12c7a42cba2bf0",
+            "stages": {
+              "capture": "retained"
+            }
+          }
+        ],
+        "scope_limited": false,
+        "source_type": "document",
+        "stages": {
+          "registration": "registered"
+        }
+      },
+      "schema_digest": "1292862696fcd373be52d8b1bba724d23419ed361b74a9ea2b9c18f863e88d6e"
+    }
+  ],
+  "counts": [],
+  "capabilities": [],
+  "capability_status": [],
+  "next_cursor": null
+}

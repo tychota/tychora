@@ -17,13 +17,18 @@ from tychora.contracts.identity import JsonValue
 MAX_ITEMS = 100_000
 
 
-def map_document(export: JsonValue, original: ArtifactRef) -> MappedDocument:
+def map_document(
+    export: JsonValue, original: ArtifactRef, *, coordinates=None
+) -> MappedDocument:
+    from .text_coordinates import project_document
+
     document = cast(dict[str, Any], export)
     if (
         not isinstance(document, Mapping)
         or document.get("schema_name") != "DoclingDocument"
     ):
         raise ValueError("Expected complete DoclingDocument export")
+    projections = project_document(document, coordinates)
     items: dict[str, dict[str, Any]] = {}
     for group in (
         "texts",
@@ -134,7 +139,7 @@ def map_document(export: JsonValue, original: ArtifactRef) -> MappedDocument:
             headings.append((level, text))
         provenance = []
         locators = []
-        for prov in item.get("prov", []):
+        for prov_index, prov in enumerate(item.get("prov", [])):
             page = pages.get(str(prov["page_no"]))
             if page is None or page.get("page_no") != prov["page_no"]:
                 raise ValueError("Docling provenance references unavailable page")
@@ -151,11 +156,16 @@ def map_document(export: JsonValue, original: ArtifactRef) -> MappedDocument:
             else:
                 raise ValueError("Unknown Docling coordinate origin")
             span = tuple(prov["charspan"])
-            domain, source_length, text_offset = document_text_domain(
-                FrozenJsonMap(item)
+            qualified = ref in projections
+            domain, source_length, text_offset = (
+                ("docling_assembly_step", 0, 0)
+                if qualified
+                else document_text_domain(FrozenJsonMap(item))
             )
-            if domain != "docling_nontext_item" and not (
-                0 <= span[0] <= span[1] <= source_length
+            if (
+                not qualified
+                and domain != "docling_nontext_item"
+                and not (0 <= span[0] <= span[1] <= source_length)
             ):
                 raise ValueError("Impossible Docling text-item charspan")
             geometry = Geometry(
@@ -183,6 +193,8 @@ def map_document(export: JsonValue, original: ArtifactRef) -> MappedDocument:
                 if domain != "docling_nontext_item"
                 else len(text)
             )
+            if qualified:
+                start, end = projections[ref][prov_index]
             if domain != "docling_orig_text_item" or end > start:
                 locators.append(
                     DocumentLocator(

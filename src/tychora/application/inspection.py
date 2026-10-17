@@ -21,6 +21,9 @@ from tychora.contracts.evidence import Excerpt, RelationPath
 from tychora.contracts.graph import GraphBudget
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.operations import (
+    ExtractionContentRequest,
+    ExtractionUnitsPage,
+    ExtractionWindowsPage,
     InspectionItem,
     InspectionResult,
     InspectRequest,
@@ -71,6 +74,8 @@ class InspectionService:
         self.owner = owner
         self.graph = graph
         self.compiler = EligibilityCompiler(owner.store)
+        # Opaque continuations never disclose excluded row IDs or positions.
+        self._content_cursors: dict[str, tuple[str, int]] = {}
 
     def _attempt(self, snapshot, scope: RequestScope):
         preferred = (
@@ -105,7 +110,9 @@ class InspectionService:
                 },
             }
         )
-        return self.compiler.compile_attempt(snapshot, scope, query, self.owner.config)
+        return self.compiler.compile_attempt(
+            snapshot, scope, query, self.owner.config, _retained_inspection=True
+        )
 
     def _artifact(
         self,
@@ -316,6 +323,34 @@ class InspectionService:
                         )
                     )
                 summary["scope_limited"] = limited
+            elif (
+                isinstance(parsed, dict)
+                and parsed.get("type") == "document_vision_capability"
+            ):
+                from tychora.contracts.composition import VisionCapabilityDiagnostics
+
+                try:
+                    diagnostic = VisionCapabilityDiagnostics.model_validate_json(
+                        payload
+                    )
+                    from tychora.contracts.identity import canonical_bytes
+
+                    if canonical_bytes(diagnostic.model_dump(mode="json")) != payload:
+                        raise ValueError
+                except (ValueError, TypeError):
+                    raise TychoraError(
+                        "INTEGRITY_ERROR", "Retained PDF diagnostics are invalid."
+                    ) from None
+                if diagnostic.pdf_coverage is not None:
+                    summary["pdf_coverage"] = diagnostic.pdf_coverage.model_dump(
+                        mode="json"
+                    )
+                    if diagnostic.pdf_coverage.ocr_pages:
+                        summary["ocr_review_state"] = "needs_review"
+                    summary["detection_note"] = (
+                        "No-text-detected is detector-relative, not a blank-page assertion."
+                    )
+                    summary["scope_limited"] = False
             else:
                 summary["unavailable_fields"] = ["resolution_records", "rates"]
         return InspectionResult(
@@ -332,7 +367,7 @@ class InspectionService:
             ),
         )
 
-    def _inspect_evidence(self, request, snapshot, attempt):
+    def _inspect_evidence(self, request, snapshot, attempt, *, prepared=None):
         owner = self.owner
         row = owner.db.execute(
             "SELECT e.extraction_id,x.revision_id FROM evidence_units e "
@@ -372,7 +407,8 @@ class InspectionService:
         else:
             # The retained representation validator reconstructs exact per-range
             # ownership from canonical locators/source parts, never from originals.
-            prepared = prepare_extraction(_retained_rows(owner.store, member))
+            if prepared is None:
+                prepared = prepare_extraction(_retained_rows(owner.store, member))
             representation = next(
                 (item for item in prepared.units if item.unit.unit_id == request.id),
                 None,
@@ -381,15 +417,25 @@ class InspectionService:
                 raise TychoraError(
                     "INTEGRITY_ERROR", "Retained source range is unavailable."
                 )
-            mode_name = owner.config.values.mode or owner.config.values.default_mode
-            if mode_name is None:
-                raise TychoraError(
-                    "PROFILE_INCOMPATIBLE", "Inspection mode is unavailable."
+            if unit.unit_type == "asset_proxy":
+                # The compiled retained attempt already applies the selected
+                # (including caller-use fallback) mode's derived review policy
+                # and the complete source/asset dependency closure. Proxies are
+                # atomic; a ranged read cannot bypass their admission.
+                if request.id not in attempt.view.proxy_unit_ids:
+                    _deny()
+            else:
+                mode_name = owner.config.values.mode or owner.config.values.default_mode
+                if mode_name is None:
+                    raise TychoraError(
+                        "PROFILE_INCOMPATIBLE", "Inspection mode is unavailable."
+                    )
+                mode = cast(FrozenJsonMap, owner.store.registry.modes[mode_name])
+                allowed_reviews = set(
+                    cast(tuple[str, ...], mode["original_review_states"])
                 )
-            mode = cast(FrozenJsonMap, owner.store.registry.modes[mode_name])
-            allowed_reviews = set(cast(tuple[str, ...], mode["original_review_states"]))
-            if unit.review_state not in allowed_reviews:
-                _deny()
+                if unit.review_state not in allowed_reviews:
+                    _deny()
             for interval in selected:
                 dependencies = frozenset(
                     dependency
@@ -715,6 +761,30 @@ class InspectionService:
     ) -> InspectionResult:
         return await self.owner.run_blocking(
             lambda: self._inspect_sync(request, scope, ctx), ctx
+        )
+
+    async def extraction_units(
+        self,
+        request: ExtractionContentRequest,
+        scope: RequestScope,
+        ctx: ExecutionContext,
+    ) -> ExtractionUnitsPage:
+        from tychora.application.retained_content import content_page
+
+        return await self.owner.run_blocking(
+            lambda: content_page(self, request, scope, ctx, windows=False), ctx
+        )
+
+    async def extraction_windows(
+        self,
+        request: ExtractionContentRequest,
+        scope: RequestScope,
+        ctx: ExecutionContext,
+    ) -> ExtractionWindowsPage:
+        from tychora.application.retained_content import content_page
+
+        return await self.owner.run_blocking(
+            lambda: content_page(self, request, scope, ctx, windows=True), ctx
         )
 
     async def relations(

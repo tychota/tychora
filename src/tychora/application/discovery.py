@@ -22,6 +22,8 @@ from tychora.contracts.operations import (
     DefinitionEntry,
     DiscoverRequest,
     DiscoveryResult,
+    KindMetadataField,
+    KindMetadataForm,
     NamedCount,
     SourceChannelCoverage,
     SourceChannelPage,
@@ -179,7 +181,7 @@ def _scoped_cursor(
         limit,
     ]
     mac = hmac.new(
-        owner._runtime.record["token"].encode(),
+        owner._runtime.instance_secret,
         canonical_bytes(binding),
         hashlib.sha256,
     ).hexdigest()
@@ -210,7 +212,7 @@ def _scoped_after(
         ):
             raise ValueError
         expected = hmac.new(
-            owner._runtime.record["token"].encode(),
+            owner._runtime.instance_secret,
             canonical_bytes(value[:4]),
             hashlib.sha256,
         ).hexdigest()
@@ -269,6 +271,12 @@ class DiscoveryService:
                     ),
                 }
             case "settings":
+                from tychora.ingestion.composition import (
+                    MAX_COMPOSITION_GROUP_BYTES,
+                    MAX_COMPOSITION_INPUT_BYTES,
+                    MAX_COMPOSITION_REPLAY_BYTES,
+                )
+
                 safe = self.config.inspect(owner_authorized=False)
                 values = cast(FrozenJsonMap, safe["values"])
                 return {
@@ -283,6 +291,18 @@ class DiscoveryService:
                                 "health_scope": "whole_workspace",
                                 "health_capability": "read",
                                 "resume_deletions_capability": "manage",
+                            },
+                            "document_composition_inputs": {
+                                "legacy": {
+                                    "aggregate_bytes": MAX_COMPOSITION_INPUT_BYTES,
+                                },
+                                "pdf-streamed-images@1": {
+                                    "raw_images": "exact_declared_bindings_streamed",
+                                    "nonraw_aggregate_bytes": MAX_COMPOSITION_INPUT_BYTES,
+                                    "unique_encoded_group_bytes": MAX_COMPOSITION_GROUP_BYTES,
+                                    "unique_inputs_and_products_bytes": MAX_COMPOSITION_REPLAY_BYTES,
+                                    "maximum_pdf_retained_bytes": 1073741824,
+                                },
                             },
                             "parser_limits": {
                                 "native_source_bytes": min(
@@ -341,7 +361,7 @@ class DiscoveryService:
                 "FROM revisions r JOIN sources s USING(source_id) "
                 "JOIN collections c USING(collection_id) "
                 "JOIN kinds k USING(kind_id) "
-                "WHERE c.workspace_id=? ORDER BY r.revision_id",
+                "WHERE c.workspace_id=? AND json_extract(c.policy_json,'$.archived_at') IS NULL ORDER BY r.revision_id",
                 (owner.workspace_id,),
             )
             sources: dict[str, set[str]] = {}
@@ -404,7 +424,11 @@ class DiscoveryService:
             raise TychoraError("INVALID_REQUEST", "Source page limit is invalid.")
 
         def read() -> tuple[tuple, ...]:
-            selector = "s.source_id=?" if source_id is not None else "s.source_id>?"
+            selector = (
+                "s.source_id=?"
+                if source_id is not None
+                else "s.source_id>? AND json_extract(c.policy_json,'$.archived_at') IS NULL"
+            )
             return tuple(
                 owner.db.execute(
                     "SELECT s.source_id,s.source_key,s.source_type,s.collection_id "
@@ -561,7 +585,18 @@ class DiscoveryService:
                     raise TychoraError(
                         "INTEGRITY_ERROR", "Vision capability diagnostic differs."
                     ) from None
-                vision_status = {"vision": "incomplete"}
+                if diagnostic.gaps:
+                    vision_status["vision"] = "incomplete"
+                if diagnostic.pdf_coverage is not None:
+                    coverage = diagnostic.pdf_coverage
+                    vision_status["pdf_processing"] = (
+                        "indexed_with_gaps"
+                        if coverage.no_text_detected_pages
+                        else "processed"
+                    )
+                    if coverage.ocr_pages:
+                        vision_status["ocr"] = "needs_review"
+                    vision_status["pdf_coverage"] = coverage.model_dump(mode="json")
         channel_rows = self.owner.db.execute(
             "SELECT f.channel,b.state FROM index_batches b "
             "JOIN index_families f USING(family_id) "
@@ -752,8 +787,8 @@ class DiscoveryService:
             if row is None or original is None or original[0] != "present":
                 raise TychoraError("NOT_FOUND", "Selectable extraction is unavailable.")
 
-            def read_ref(ref: ArtifactRef) -> bytes:
-                if ref.size_bytes > 16 * 1024 * 1024:
+            def read_ref(ref: ArtifactRef, maximum: int = 16 * 1024 * 1024) -> bytes:
+                if ref.size_bytes > maximum:
                     raise TychoraError(
                         "INVALID_REQUEST", "Selection inspection exceeds its limit."
                     )
@@ -784,7 +819,12 @@ class DiscoveryService:
             raw = read_ref(raw_ref)
             raw_data = json.loads(raw)["data"]
             doc_ref = ArtifactRef.model_validate(raw_data["docling_json_ref"])
-            parsed = replay_document(raw, read_ref(doc_ref), raw_ref)
+            parsed = replay_document(
+                raw,
+                read_ref(doc_ref),
+                raw_ref,
+                read_declared=lambda ref: read_ref(ref, 256 * 1024 * 1024),
+            )
             if (
                 parsed.registration.source.source_id != source_id
                 or parsed.registration.revision.revision_id != revision_id
@@ -1076,6 +1116,127 @@ class DiscoveryService:
             )
             compiler.revalidate_epoch(view, "delivery")
             return summary
+
+    async def kind_metadata_schema(
+        self, kind_id: str, scope: RequestScope, ctx: ExecutionContext
+    ) -> KindMetadataForm:
+        """Expose only a current authorized kind's bounded, retained schema closure."""
+        if self.owner is None:
+            raise TychoraError("NOT_FOUND", "Kind metadata is unavailable.")
+        owner = self.owner
+
+        def read():
+            ctx.checkpoint()
+            granted = owner.scope.narrow(scope)
+            kind = self.registry.kinds.get(kind_id)
+            if (
+                "read" not in granted.capabilities
+                or not granted.collection_ids
+                or not isinstance(kind, Mapping)
+                or not set(kind.get("allowed_uses", granted.uses)) & granted.uses
+                or owner.db.execute(
+                    "SELECT 1 FROM collections WHERE workspace_id=? "
+                    "AND access_floor<=? AND collection_id IN "
+                    "(SELECT value FROM json_each(?)) LIMIT 1",
+                    (
+                        owner.workspace_id,
+                        granted.access_ceiling,
+                        json.dumps(sorted(granted.collection_ids)),
+                    ),
+                ).fetchone()
+                is None
+            ):
+                raise TychoraError("NOT_FOUND", "Kind metadata is unavailable.")
+            envelope = cast(dict, self.registry.historical_definitions()[kind_id])
+            schema_id = envelope["schema_bindings"]["metadata_schema"]
+            schemas = envelope["schemas"]
+            nodes = 0
+
+            def count_nodes(node):
+                nonlocal nodes
+                nodes += 1
+                if nodes > 64:
+                    raise TychoraError(
+                        "BUDGET_TOO_SMALL", "Metadata schema node budget exceeded."
+                    )
+                if isinstance(node, Mapping):
+                    for group in ("properties", "$defs"):
+                        for child in node.get(group, {}).values():
+                            count_nodes(child)
+                    for key in ("items", "additionalProperties"):
+                        if key in node:
+                            count_nodes(node[key])
+
+            for schema in schemas.values():
+                count_nodes(schema)
+            root = schemas[schema_id]
+            fields = []
+            for name, definition in root.get("properties", {}).items():
+                types = (
+                    definition.get("type", ())
+                    if isinstance(definition, Mapping)
+                    else ()
+                )
+                types = (types,) if isinstance(types, str) else tuple(types)
+                advanced = (
+                    not types
+                    or bool(
+                        set(types) - {"string", "integer", "number", "boolean", "null"}
+                    )
+                    or isinstance(definition, Mapping)
+                    and "$ref" in definition
+                )
+                fields.append(
+                    KindMetadataField(
+                        name=name,
+                        required=name in root.get("required", ()),
+                        value_types=types,
+                        description=definition.get("description", "")
+                        if isinstance(definition, Mapping)
+                        else "",
+                        constraints=FrozenJsonMap(definition)
+                        if isinstance(definition, Mapping)
+                        else definition,
+                        advanced=advanced,
+                    )
+                )
+            form = KindMetadataForm(
+                kind_id=kind_id,
+                schema_id=schema_id,
+                schema_digests=envelope["schema_digests"],
+                fields=tuple(fields),
+                schemas=schemas,
+                schema_reference_bindings=envelope["schema_reference_bindings"],
+                # Simple fields describe a closed object only. Preserve every
+                # other root constraint for the schema-aware advanced editor.
+                advanced=bool(
+                    set(root)
+                    - {
+                        "$id",
+                        "$schema",
+                        "$defs",
+                        "title",
+                        "description",
+                        "type",
+                        "properties",
+                        "required",
+                        "additionalProperties",
+                    }
+                )
+                or root.get("type") != "object"
+                or bool(
+                    set(root.get("required", ())) - root.get("properties", {}).keys()
+                )
+                or root.get("additionalProperties", True) is not False
+                or any(field.advanced for field in fields),
+            )
+            if len(form.model_dump_json().encode("utf-8")) > 256 * 1024:
+                raise TychoraError(
+                    "BUDGET_TOO_SMALL", "Metadata schema response budget exceeded."
+                )
+            return form
+
+        return await owner.run_blocking(read, ctx)
 
     def definition(
         self, subject: str, item_id: str, scope: RequestScope

@@ -1,0 +1,48 @@
+{
+  "applied_scope": {
+    "access_ceiling": 0,
+    "capabilities": ["read", "manage", "write", "vision"],
+    "collection_ids": ["00000000-0000-4000-8000-000000000001"],
+    "principal_id": "local-owner",
+    "upload_providers": [],
+    "uses": ["audit", "lookup", "compose"]
+  },
+  "budget_contract": {
+    "max_response_bytes": 1048576,
+    "max_tokens": 6000,
+    "render_targets": [
+      {
+        "profile_digest": "674de1ffb3131f1b740058883d66c7a2020000265dfe6e3586ba9f979d11c562",
+        "renderer": "canonical-json@1",
+        "schema_digest": "282f343a6cd3180439fab75e289cf38d07c21dc17d43bbe68071839bdf27c774",
+        "serialization": "canonical-json-utf8"
+      }
+    ],
+    "tokenizer_id": "cl100k_base"
+  },
+  "checks": {
+    "assertion_ids": [],
+    "assertions": [],
+    "decisions": [],
+    "predicates": [],
+    "status": "not_evaluated",
+    "truncated": false
+  },
+  "citations": [],
+  "coverage": {
+    "completed_channels": ["exact", "lexical"],
+    "status": "complete",
+    "unavailable_channels": [],
+    "warnings": []
+  },
+  "coverage_gaps": [],
+  "decision_requirements": [],
+  "relations": [],
+  "run_id": "05e7654d-0853-470e-ac0c-d45db9376a2d",
+  "schema_version": "1",
+  "segments": [],
+  "snapshot_id": "35c14d487fe68ec6f5395f62bf812cb10f2bd21dbc3359d49475ecbbe2389381",
+  "trace": null,
+  "visuals": [],
+  "warnings": []
+}

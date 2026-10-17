@@ -11,7 +11,9 @@ from typing import TYPE_CHECKING
 
 from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.adapters.sqlite.publication import PublicationReceipts
+from tychora.application.acquired_source import AcquiredSource
 from tychora.application.bridge import ClientBridge
+from tychora.application.collections import CollectionService
 from tychora.application.discovery import DiscoveryService
 from tychora.application.inspection import InspectionService
 from tychora.application.jobs import JobService
@@ -36,6 +38,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class Services:
+    collections: CollectionService
     discovery: DiscoveryService
     inspection: InspectionService
     jobs: JobService
@@ -72,6 +75,7 @@ class SourceJobScheduler:
         source: SourceInput | str,
         scope: RequestScope,
         key: str | None,
+        acquired: AcquiredSource | None = None,
     ) -> JobHandle:
         if self._closing:
             raise TychoraError(
@@ -91,7 +95,14 @@ class SourceJobScheduler:
                 ctx = ExecutionContext()
                 if operation == "add":
                     assert isinstance(source, SourceInput)
-                    handle = await self.sources.accept_add(source, scope, key, ctx=ctx)
+                    if acquired is None:
+                        handle = await self.sources.accept_add(
+                            source, scope, key, ctx=ctx
+                        )
+                    else:
+                        handle = await self.sources.accept_add(
+                            source, scope, key, ctx=ctx, acquired=acquired
+                        )
                 else:
                     assert isinstance(source, str)
                     handle, source = await self.sources.accept_sync(
@@ -101,9 +112,14 @@ class SourceJobScheduler:
                     slots.release()
                     return handle
                 work_ctx = ExecutionContext()
-                task = asyncio.create_task(
+                execution = (
                     self.sources.execute_accepted(handle, source, scope, ctx=work_ctx)
+                    if acquired is None
+                    else self.sources.execute_accepted(
+                        handle, source, scope, ctx=work_ctx, acquired=acquired
+                    )
                 )
+                task = asyncio.create_task(execution)
                 self._tasks[handle.id] = (task, work_ctx)
 
                 def completed(finished: asyncio.Task[JobHandle]) -> None:
@@ -129,6 +145,13 @@ class SourceJobScheduler:
         self, source: SourceInput, scope: RequestScope, key: str | None = None
     ) -> JobHandle:
         return await self.bridge.acall(self._submit("add", source, scope, key))
+
+    async def add_acquired_async(
+        self, acquired: AcquiredSource, scope: RequestScope, key: str | None = None
+    ) -> JobHandle:
+        return await self.bridge.acall(
+            self._submit("add", acquired.source, scope, key, acquired)
+        )
 
     def sync(
         self, source_id: str, scope: RequestScope, key: str | None = None
@@ -206,6 +229,27 @@ class SourceJobScheduler:
             source = await self.jobs.owner.run_blocking(
                 retained_source, ExecutionContext()
             )
+
+            def admit_retry():
+                from .collection_policy import require_active_collection
+
+                row = self.jobs.owner.db.execute(
+                    "SELECT workspace_id,access_floor,policy_json FROM collections WHERE collection_id=?",
+                    (str(source.root.collection_id),),
+                ).fetchone()
+                granted = self.jobs.owner.scope.narrow(scope)
+                if (
+                    row is None
+                    or row[0] != self.jobs.owner.workspace_id
+                    or row[1] > granted.access_ceiling
+                    or str(source.root.collection_id) not in granted.collection_ids
+                ):
+                    raise TychoraError(
+                        "FORBIDDEN_SCOPE", "Retry collection is unavailable."
+                    )
+                require_active_collection(row[2])
+
+            await self.jobs.owner.run_blocking(admit_retry, ExecutionContext())
             if status.state == "running":
                 status = await scoped.recover(job_id, ExecutionContext())
             if status.state in {"failed", "interrupted"}:
@@ -371,6 +415,10 @@ def build_services(
         vision_credential=providers.vision_credential,
     )
     jobs = JobService(owner, repository, owner.scope)
+    if owner.managed_default_owner:
+        owner._managed_scope_listeners.append(
+            lambda scope: setattr(jobs, "scope", scope)
+        )
     query = QueryService(
         owner,
         output_counter=counter,
@@ -386,6 +434,7 @@ def build_services(
     )
     evaluations = EvaluationService(owner, query, repository)
     return Services(
+        collections=CollectionService(owner),
         discovery=DiscoveryService(config, Registry.from_config(config), owner),
         inspection=InspectionService(owner, graph=providers.graph),
         jobs=jobs,

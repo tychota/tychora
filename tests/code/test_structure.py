@@ -34,7 +34,7 @@ from tychora.contracts.identity import digest, extraction_id, revision_id, sourc
 from tychora.ports.language import Definition, SourceSpan
 
 
-def _registration(tmp_path: Path):
+def _registration(tmp_path: Path, extra_payloads: dict[str, bytes] | None = None):
     artifacts = LocalArtifacts(tmp_path / "artifacts")
     payloads = {
         "a.py": (
@@ -43,10 +43,12 @@ def _registration(tmp_path: Path):
         ),
         "nested/b.ts": b"export function build(): number { return 2; }\n",
         "notes.bin": b"\xffsynthetic\rnote",
+        **(extra_payloads or {}),
     }
     entries = []
     parsed = []
     adapters = {
+        **{path: PythonAdapter() for path in extra_payloads or {}},
         "a.py": PythonAdapter(),
         "nested/b.ts": TypeScriptAdapter("typescript"),
     }
@@ -206,6 +208,31 @@ def test_mixed_repository_retains_replays_and_registers_exact_file_facts(tmp_pat
     assert store.commit_extraction(bundle) == bundle.extraction.extraction_id
     symbols = [unit for unit in bundle.units if unit.unit_type == "symbol"]
     assert [unit.text for unit in store.hydrate(tuple(u.unit_id for u in symbols))]
+
+
+def test_recursive_function_commits_a_calls_self_link(tmp_path):
+    artifacts, registration, parsed = _registration(
+        tmp_path,
+        {"rec.py": b"def countdown(n):\n    return countdown(n - 1) if n else 0\n"},
+    )
+    retained = retain_code_extraction(registration, parsed, registry(), artifacts)
+    bundle = normalize_code(retained, registry())
+    assert retained.assertions_ref is not None
+    with artifacts.open_verified(retained.assertions_ref) as stream:
+        calls = [
+            item["data"]
+            for item in map(json.loads, stream)
+            if item["data"]["predicate"] == "calls@1"
+        ]
+    units = {unit.unit_id: unit for unit in bundle.units}
+    selfs = [c for c in calls if c["subject"]["unit_id"] == c["object"]["unit_id"]]
+    assert len(selfs) == 1
+    assert selfs[0]["subject"]["entity_id"] == selfs[0]["object"]["entity_id"]
+    assert units[selfs[0]["subject"]["unit_id"]].text.startswith("def countdown")
+
+    db = open_corpus(tmp_path / "corpus.sqlite3", initialize=True)
+    store = CorpusStore(db, registry=registry(), artifacts=artifacts)
+    assert store.commit_extraction(bundle) == bundle.extraction.extraction_id
 
 
 def test_same_bytes_at_two_paths_keep_distinct_file_and_definition_identity(tmp_path):

@@ -112,8 +112,8 @@ class LexicalIndex:
                     + sum(map(len, assets.values())),
                     distinct_candidate_count=len(sources) + len(assets),
                     lexical_statistics_epoch=epoch,
-                    complete=len(sources) <= candidate_limit
-                    and len(assets) <= candidate_limit,
+                    # All eligible rows were scored; the cap only bounds the result.
+                    complete=True,
                 )
             finally:
                 for table in (

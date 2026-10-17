@@ -1,0 +1,137 @@
+{
+  "applied_scope": {
+    "access_ceiling": 0,
+    "capabilities": ["vision", "manage", "read", "write"],
+    "collection_ids": ["00000000-0000-4000-8000-000000000001"],
+    "principal_id": "local-owner",
+    "upload_providers": [],
+    "uses": ["lookup", "compose", "audit"]
+  },
+  "budget_contract": {
+    "max_response_bytes": 1048576,
+    "max_tokens": 6000,
+    "render_targets": [
+      {
+        "profile_digest": "674de1ffb3131f1b740058883d66c7a2020000265dfe6e3586ba9f979d11c562",
+        "renderer": "canonical-json@1",
+        "schema_digest": "282f343a6cd3180439fab75e289cf38d07c21dc17d43bbe68071839bdf27c774",
+        "serialization": "canonical-json-utf8"
+      }
+    ],
+    "tokenizer_id": "cl100k_base"
+  },
+  "checks": {
+    "assertion_ids": [],
+    "assertions": [],
+    "decisions": [],
+    "predicates": [],
+    "status": "not_evaluated",
+    "truncated": false
+  },
+  "citations": [
+    {
+      "asset_id": "4850ee99be1ed46ac88446557245b330329d0f33f46423c6e056413fe73fdf58",
+      "locators": [
+        {
+          "artifact_ref": "9713c4b030e8bf378805b99ee81067ec71be690207c68a989294a0c6ed333529",
+          "geometry": {
+            "domain": "points",
+            "x0": 0,
+            "x1": 400,
+            "y0": 0,
+            "y1": 500
+          },
+          "native_ref": "synthetic-ocr-scan",
+          "physical_page": 1,
+          "printed_page": null,
+          "type": "image"
+        }
+      ],
+      "physical_page": 1,
+      "printed_page": null,
+      "revision_id": "29104697d37f532d060b398681512637f70911eb680a402dcd13aeb839e194fc",
+      "source_id": "ed08112c-c07e-51a9-b392-cc1e2b40e87f",
+      "source_ref": "synthetic-ocr-scan",
+      "unit_id": null
+    }
+  ],
+  "coverage": {
+    "completed_channels": ["exact", "lexical"],
+    "status": "complete",
+    "unavailable_channels": [],
+    "warnings": []
+  },
+  "coverage_gaps": [],
+  "decision_requirements": [],
+  "relations": [],
+  "run_id": "f55f176e-13cd-45ba-901b-28b49ae495e4",
+  "schema_version": "1",
+  "segments": [],
+  "snapshot_id": "73bfcc9e7ee4d66c11073e971b4a06659e1b20d198494ff0db3f16e7c10de30b",
+  "trace": null,
+  "visuals": [
+    {
+      "asset_id": "4850ee99be1ed46ac88446557245b330329d0f33f46423c6e056413fe73fdf58",
+      "asset_ref": "3cd6d8fecd0b46801ce737156a3754fc78493321c2e69c4f0770abad9c1abb71",
+      "caption": null,
+      "citations": [
+        {
+          "asset_id": "4850ee99be1ed46ac88446557245b330329d0f33f46423c6e056413fe73fdf58",
+          "locators": [
+            {
+              "artifact_ref": "9713c4b030e8bf378805b99ee81067ec71be690207c68a989294a0c6ed333529",
+              "geometry": {
+                "domain": "points",
+                "x0": 0,
+                "x1": 400,
+                "y0": 0,
+                "y1": 500
+              },
+              "native_ref": "synthetic-ocr-scan",
+              "physical_page": 1,
+              "printed_page": null,
+              "type": "image"
+            }
+          ],
+          "physical_page": 1,
+          "printed_page": null,
+          "revision_id": "29104697d37f532d060b398681512637f70911eb680a402dcd13aeb839e194fc",
+          "source_id": "ed08112c-c07e-51a9-b392-cc1e2b40e87f",
+          "source_ref": "synthetic-ocr-scan",
+          "unit_id": null
+        }
+      ],
+      "locator": {
+        "artifact_ref": "9713c4b030e8bf378805b99ee81067ec71be690207c68a989294a0c6ed333529",
+        "geometry": {
+          "domain": "points",
+          "x0": 0,
+          "x1": 400,
+          "y0": 0,
+          "y1": 500
+        },
+        "native_ref": "synthetic-ocr-scan",
+        "physical_page": 1,
+        "printed_page": null,
+        "type": "image"
+      },
+      "proxies": [
+        {
+          "dependencies": [
+            "c7b8f8fdfa2e616ac55aa1a4d95934453ae0f00c29c836e836fa68e56648661e",
+            "4850ee99be1ed46ac88446557245b330329d0f33f46423c6e056413fe73fdf58"
+          ],
+          "label": "ocr",
+          "origin": "ocr",
+          "proxy_id": "7c6488bbf253f4fcd5441dfc5e3df11518c6fa297fb1208aaaecdec10c522366",
+          "review_state": "needs_review",
+          "text": "The reader's algo-\nCopper column.\nrithms preserve\nA separate sequence\nevery violet record.\ncontains amber notes.\nReview the evidence.\nKeep each source.\nItem\nCount\nViolet\n7\nAmber\n9\nMargin note"
+        }
+      ],
+      "revision_id": "29104697d37f532d060b398681512637f70911eb680a402dcd13aeb839e194fc",
+      "selection_reasons": ["proxy_match"],
+      "source_id": "ed08112c-c07e-51a9-b392-cc1e2b40e87f"
+    }
+  ],
+  "warnings": []
+}
