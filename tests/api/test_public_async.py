@@ -184,7 +184,7 @@ async def test_two_public_queries_complete_while_parser_job_is_held(
                 },
             }
         )
-        first_status = await kb.jobs.wait(first.id, timeout=scaled(120))
+        first_status = await kb.jobs.wait(first.id, timeout=min(scaled(120), 300))
         assert first_status.state == "succeeded", first_status.error_code
         monkeypatch.setattr(DoclingParser, "aextract", held_parser)
         parser_job = await kb.sources.add(
