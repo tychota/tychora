@@ -6210,7 +6210,7 @@ git commit -m "feat: curate bench-v1 from public sources and schedule benchmark 
 - Consumes: only the public API that exists at `b91d808` (`Tychora.open`, `kb.sources.add`, `kb.jobs.wait`, `kb.search`, `kb.evaluations.register_dataset`, `kb.evaluations.run`, `kb.evaluations.get`) and `tests/fixtures/evaluation/corpus.json`.
 - Produces: `measure(workspace: Path, commit: str) -> dict` in the script; the committed baseline document `{"schema": "tychora.evaluation-baseline", "version": 1, "commit", "dataset", "variants": {"lexical": {metric: value}}, "unavailable": {"hybrid": reason, "reranked": reason}}`.
 
-The executable synthetic corpus is the existing evaluation set that runs offline. Hybrid and reranked stages need a text family and a reranker, which need Voyage credentials; they are recorded as unavailable offline, and the online command is given below. The code gold set baseline (G22) is owned and recorded by code health.
+The executable synthetic corpus is the existing evaluation set that runs offline. Hybrid and reranked stages need a text family and a reranker, which need Voyage credentials; they are recorded as unavailable offline, and the online command is given below. The code gold set baseline (G22) is a phase-1-HEAD baseline recorded by Task 12b (`tests/fixtures/evaluation/code-gold/baseline.json`); it cannot be measured at b91d808, where the repository source exceeds the evaluation binding budget. Phase 4's gate "evaluation metrics ≥ phase-1 baseline" names both baselines.
 
 - [ ] **Step 1: Write the baseline script**
 

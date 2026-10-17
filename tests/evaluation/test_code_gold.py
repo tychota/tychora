@@ -24,7 +24,6 @@ from tests.helpers.code_gold import (
 )
 from tests.helpers.timing import scaled
 from tychora import Tychora
-from tychora.contracts.errors import TychoraError
 from tychora.ports.execution import ExecutionContext
 
 pytestmark = [pytest.mark.slow, pytest.mark.assets("TYCHORA_TEST_CODE_CORPUS")]
@@ -42,10 +41,6 @@ VARIANTS = (
         "overrides": {"channels": ["lexical", "structural_graph"], "rerank": False},
     },
 )
-
-
-class RetainedBindingBudgetExceeded(Exception):
-    """The evaluation refused a whole-repository extraction as over its retained-binding budget."""
 
 
 def _repository(tmp_path: Path) -> Path:
@@ -68,14 +63,6 @@ def _wait(kb, job_id, budget):
             return status
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=RetainedBindingBudgetExceeded,
-    reason=(
-        "whole-repository code extraction exceeds the evaluation retained-binding "
-        "budget; engine core v2 phase 1 makes repository sources fit"
-    ),
-)
 def test_code_gold_set_runs_offline_with_valid_locators(tmp_path):
     repo = _repository(tmp_path)
     config = code_profile_config(tmp_path, "limit=10\nmax_tokens=30000")
@@ -115,25 +102,17 @@ def test_code_gold_set_runs_offline_with_valid_locators(tmp_path):
                 lambda: owner.store.resolve_snapshot(None), ExecutionContext()
             )
         )
-        try:
-            run = kb.evaluations.run(
-                {
-                    "dataset_id": DATASET_ID,
-                    "split": "test",
-                    "snapshot_id": snapshot.snapshot_id,
-                    "variants": list(VARIANTS),
-                    "seed": 0,
-                    "repetitions": 1,
-                    "offline": True,
-                }
-            )
-        except TychoraError as error:
-            if (
-                error.code == "LIMIT_EXCEEDED"
-                and "retained binding budget" in error.message
-            ):
-                raise RetainedBindingBudgetExceeded(error.message) from error
-            raise
+        run = kb.evaluations.run(
+            {
+                "dataset_id": DATASET_ID,
+                "split": "test",
+                "snapshot_id": snapshot.snapshot_id,
+                "variants": list(VARIANTS),
+                "seed": 0,
+                "repetitions": 1,
+                "offline": True,
+            }
+        )
         assert _wait(kb, run.id, scaled(900)).state == "succeeded"
         report = kb.evaluations.get(run.id)
 

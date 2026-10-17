@@ -1,0 +1,17 @@
+{
+  "dataset": "tychora-code-gold-v1",
+  "variants": {
+    "lexical": {
+      "definition_recall": 0.0435,
+      "file_mrr": 0.7101,
+      "file_ndcg": 0.7469,
+      "file_recall": 0.8696
+    },
+    "lexical_structural": {
+      "definition_recall": 0.0,
+      "file_mrr": 0.6848,
+      "file_ndcg": 0.7279,
+      "file_recall": 0.8696
+    }
+  }
+}
