@@ -1,0 +1,12 @@
+# Engine-core benchmark corpus: 100 seeded synthetic documents, 20 marker queries
+# and the "verification outcome" strict-mode probe. No download is needed.
+schema = "tychora.bench-corpus"
+version = 1
+name = "bench-small"
+
+[synthetic]
+seed = 20261016
+count = 100
+markdown_share = 0.6
+verification_share = 0.3
+queries = 20
