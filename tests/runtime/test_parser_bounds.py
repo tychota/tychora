@@ -246,9 +246,8 @@ def test_missing_rss_support_fails_before_spawn(tmp_path, monkeypatch):
     assert not multiprocessing.active_children()
 
 
-def test_sampled_rss_threshold_reaps_an_entered_child(tmp_path, monkeypatch):
-    from types import SimpleNamespace
-
+def _run_blocked_parser_with_monitor(tmp_path, monkeypatch, memory_info):
+    """Run a blocked parser child under a fake psutil monitor; return its marker and error."""
     import psutil
 
     from tychora.application.runtime import ParserExecutionLimits, parser_process
@@ -259,7 +258,7 @@ def test_sampled_rss_threshold_reaps_an_entered_child(tmp_path, monkeypatch):
 
     class Monitor:
         def memory_info(self):
-            return SimpleNamespace(rss=2 if marker.exists() else 0)
+            return memory_info(marker)
 
     monkeypatch.setattr(psutil, "Process", lambda _: Monitor())
     with pytest.raises(TychoraError) as error:
@@ -268,44 +267,42 @@ def test_sampled_rss_threshold_reaps_an_entered_child(tmp_path, monkeypatch):
             (path,),
             limits=ParserExecutionLimits(1, 10, 1, 100, ExecutionContext()),
         )
-    assert error.value.code == "LIMIT_EXCEEDED"
+    assert not multiprocessing.active_children()
+    return marker, error.value
+
+
+def _live_child_rss(marker):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(rss=2 if marker.exists() else 0)
+
+
+def test_sampled_rss_threshold_reaps_an_entered_child(tmp_path, monkeypatch):
+    marker, error = _run_blocked_parser_with_monitor(
+        tmp_path, monkeypatch, _live_child_rss
+    )
+    assert error.code == "LIMIT_EXCEEDED"
     assert marker.exists()
     with pytest.raises(ProcessLookupError):
         os.kill(int(marker.read_text()), 0)
-    assert not multiprocessing.active_children()
 
 
 def test_transient_rss_sampling_failures_are_retried_then_enforced(
     tmp_path, monkeypatch
 ):
-    from types import SimpleNamespace
-
     import psutil
 
-    from tychora.application.runtime import ParserExecutionLimits, parser_process
-
-    marker = tmp_path / "parser-child-live"
-    path = tmp_path / "input"
-    path.write_text(str(tmp_path))
     failures = []
 
-    class Monitor:
-        def memory_info(self):
-            if len(failures) < 2:
-                failures.append(1)
-                raise psutil.AccessDenied()
-            return SimpleNamespace(rss=2 if marker.exists() else 0)
+    def flaky(marker):
+        if len(failures) < 2:
+            failures.append(1)
+            raise psutil.AccessDenied()
+        return _live_child_rss(marker)
 
-    monkeypatch.setattr(psutil, "Process", lambda _: Monitor())
-    with pytest.raises(TychoraError) as error:
-        parser_process(
-            blocked_parser,
-            (path,),
-            limits=ParserExecutionLimits(1, 10, 1, 100, ExecutionContext()),
-        )
+    _, error = _run_blocked_parser_with_monitor(tmp_path, monkeypatch, flaky)
     assert len(failures) == 2
-    assert error.value.code == "LIMIT_EXCEEDED"
-    assert not multiprocessing.active_children()
+    assert error.code == "LIMIT_EXCEEDED"
 
 
 def test_persistent_rss_sampling_failure_of_a_live_child_is_reported(
@@ -313,21 +310,8 @@ def test_persistent_rss_sampling_failure_of_a_live_child_is_reported(
 ):
     import psutil
 
-    from tychora.application.runtime import ParserExecutionLimits, parser_process
+    def denied(marker):
+        raise psutil.AccessDenied()
 
-    path = tmp_path / "input"
-    path.write_text(str(tmp_path))
-
-    class Monitor:
-        def memory_info(self):
-            raise psutil.AccessDenied()
-
-    monkeypatch.setattr(psutil, "Process", lambda _: Monitor())
-    with pytest.raises(TychoraError) as error:
-        parser_process(
-            blocked_parser,
-            (path,),
-            limits=ParserExecutionLimits(1, 10, 1, 100, ExecutionContext()),
-        )
-    assert error.value.code == "CAPABILITY_MISSING"
-    assert not multiprocessing.active_children()
+    _, error = _run_blocked_parser_with_monitor(tmp_path, monkeypatch, denied)
+    assert error.code == "CAPABILITY_MISSING"
