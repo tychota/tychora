@@ -51,6 +51,15 @@ SPEC_REASONS = {
     },
 }
 
+# Reasons that classify existing storage, owner and endpoint failures.
+CLASSIFIED_REASONS = {
+    "NOT_FOUND": {"workspace.absent"},
+    "WORKSPACE_BUSY": {"owner.absent"},
+    "PROFILE_INCOMPATIBLE": {"workspace.schema_mismatch"},
+    "INTEGRITY_ERROR": {"workspace.database_invalid", "runtime.endpoint_unsafe"},
+    "CAPABILITY_MISSING": {"sqlite.version_unsupported"},
+}
+
 
 def test_spec_reasons_are_registered_under_their_codes():
     for code, reasons in SPEC_REASONS.items():
@@ -70,7 +79,10 @@ RETRYABLE = {
 
 def test_registry_is_exactly_the_closed_set():
     expected = {
-        reason: code for code, reasons in SPEC_REASONS.items() for reason in reasons
+        reason: code
+        for table in (SPEC_REASONS, CLASSIFIED_REASONS)
+        for code, reasons in table.items()
+        for reason in reasons
     }
     assert {key: entry.code for key, entry in REASONS.items()} == expected
 

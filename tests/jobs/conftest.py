@@ -46,7 +46,7 @@ def jobs(tmp_path):
 
     path = tmp_path / "corpus.sqlite3"
     db = open_corpus(path, initialize=True)
-    db.execute("INSERT INTO workspaces VALUES ('workspace',1,NULL,0,0,'2026-01-01')")
+    db.execute("INSERT INTO workspaces VALUES ('workspace',2,NULL,0,0,'2026-01-01')")
     db.execute(
         "INSERT INTO collections VALUES ('collection','workspace','manuals','Manuals',0,'{}')"
     )

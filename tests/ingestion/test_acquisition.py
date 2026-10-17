@@ -167,7 +167,7 @@ def test_capture_is_durable_job_input_and_replay_does_not_read_live_path(tmp_pat
     db = open_corpus(tmp_path / "corpus.sqlite3", initialize=True)
     try:
         db.execute(
-            "INSERT INTO workspaces VALUES ('workspace',1,NULL,0,0,'2026-01-01')"
+            "INSERT INTO workspaces VALUES ('workspace',2,NULL,0,0,'2026-01-01')"
         )
         db.execute(
             "INSERT INTO collections VALUES ('00000000-0000-4000-8000-000000000010','workspace','manuals','Manuals',0,'{}')"

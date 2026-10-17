@@ -39,7 +39,7 @@ def test_incompatible_open_never_migrates(tmp_path, tamper):
     if tamper == "checksum":
         db.execute("UPDATE schema_migrations SET checksum='wrong'")
     elif tamper == "version":
-        db.execute("UPDATE schema_migrations SET version=2")
+        db.execute("UPDATE schema_migrations SET version=1")
     elif tamper == "table":
         db.execute("DROP TABLE evaluation_results")
     else:
@@ -51,6 +51,8 @@ def test_incompatible_open_never_migrates(tmp_path, tamper):
     with pytest.raises(TychoraError) as error:
         open_corpus(path, initialize=True)
     assert error.value.code == "PROFILE_INCOMPATIBLE"
+    if tamper in ("checksum", "version"):
+        assert error.value.reason == "workspace.format_old"
     with sqlite3.connect(path) as check:
         assert (
             check.execute(

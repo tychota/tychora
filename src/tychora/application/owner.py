@@ -31,6 +31,7 @@ from uuid import UUID, uuid4
 from tychora.adapters.files.cas import LocalArtifacts
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
+from tychora.adapters.sqlite.migrations import SCHEMA_VERSION, format_old_error
 from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef
@@ -148,6 +149,7 @@ class WorkspaceOwner:
             owner.path.mkdir(parents=True, exist_ok=True)
             owner._runtime.acquire()
             owner._worker.submit(owner._initialize).result()
+            owner._worker.submit(owner._require_current_format).result()
             owner._runtime.publish(owner.workspace_id)
             yield owner
         finally:
@@ -203,7 +205,7 @@ class WorkspaceOwner:
                     )
             self.workspace_id = str(uuid4())
             self.db.execute(
-                "INSERT INTO workspaces (workspace_id,schema_version,created_at) VALUES (?,1,?)",
+                "INSERT INTO workspaces (workspace_id,schema_version,created_at) VALUES (?,2,?)",
                 (self.workspace_id, datetime.now(UTC).isoformat()),
             )
             self.db.commit()
@@ -250,6 +252,12 @@ class WorkspaceOwner:
             required_slots=frozenset(required_slots),
             leases=self.leases,
         )
+
+    def _require_current_format(self) -> None:
+        """Refuse a workspace whose recorded storage format is not the packaged one."""
+        with self.store.uow.read() as tx:
+            if tx.workspace.format_version() != SCHEMA_VERSION:
+                raise format_old_error()
 
     def policy_epoch(self) -> int:
         """Return the workspace policy epoch; the owner thread calls this."""

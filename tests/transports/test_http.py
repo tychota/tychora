@@ -59,7 +59,7 @@ async def test_maintenance_health_and_migration_use_scoped_http_service(tmp_path
             assert denied.status_code == 403
             unsupported = await client.post(
                 "/v1/jobs",
-                json={"operation": "migrate", "target_version": "2"},
+                json={"operation": "migrate", "target_version": "3"},
                 headers={"Authorization": "Bearer owner"},
             )
             assert unsupported.json()["code"] == "PROFILE_INCOMPATIBLE"

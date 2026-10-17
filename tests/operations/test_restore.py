@@ -786,6 +786,6 @@ def test_archived_v2_collection_and_active_v1_survive_backup_restore(tmp_path):
         )
         assert default.archived_at is None
         result = restored.management.run(
-            {"operation": "migrate", "target_version": "1"}
+            {"operation": "migrate", "target_version": "2"}
         )
         assert result

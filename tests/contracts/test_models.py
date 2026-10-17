@@ -433,7 +433,7 @@ def test_query_result_roundtrip_preserves_exact_excerpts_and_nested_records():
             "provider": "voyage",
             "action": "grant",
         },
-        {"operation": "migrate", "target_version": "2"},
+        {"operation": "migrate", "target_version": "3"},
     ],
 )
 def test_maintenance_variant_roundtrips(variant):

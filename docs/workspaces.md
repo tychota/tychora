@@ -34,3 +34,13 @@ Only an explicitly managed installation owner can create a collection. The loopb
 Archiving blocks new ingestion, PDF preparation/receipt processing, provider work and publication in that collection, and removes its evidence from ordinary query and inventory eligibility. It retains identity, original data, authorized exact inspection and job history. Reactivation changes lifecycle without rewriting source/revision/unit IDs. Archive is distinct from withdrawal and purge.
 
 New collections start active at access floor zero with no provider upload consent. The existing `provider-upload-consent` maintenance operation remains the consent editor; revocation takes effect against current canonical policy. Consent mutations preserve lifecycle and default kind. An optional registered `default_kind_id` guides new intake only; omitted edit values preserve it, explicit null restores inheritance. Inheritance offers `document@1` only where registered; legacy profiles have no title-only default. Metadata forms come from the selected kind's registered schema.
+
+## Storage format
+
+Workspaces use storage format 2. A workspace or export archive written by an
+older Tychora is refused with `PROFILE_INCOMPATIBLE` and reason
+`workspace.format_old`. Recreate it from its retained originals:
+
+    tychora --workspace ./knowledge-v2 manage rebuild workspace --from ./knowledge
+
+The old workspace is opened read-only and is never modified.

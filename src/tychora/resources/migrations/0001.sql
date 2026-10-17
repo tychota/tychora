@@ -8,7 +8,7 @@ CREATE TABLE schema_migrations (
 
 CREATE TABLE workspaces (
   workspace_id TEXT PRIMARY KEY,
-  schema_version INTEGER NOT NULL,
+  schema_version INTEGER NOT NULL CHECK(schema_version=2),
   active_snapshot_id TEXT REFERENCES snapshots(snapshot_id),
   policy_epoch INTEGER NOT NULL DEFAULT 0,
   lexical_statistics_epoch INTEGER NOT NULL DEFAULT 0,

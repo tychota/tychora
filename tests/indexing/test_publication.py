@@ -344,7 +344,7 @@ def make_projected_corpus(tmp_path, config_factory, *, legacy=False) -> Projecte
     )
     old = seed_bundle("old source text")
     db.execute(
-        "INSERT INTO workspaces (workspace_id,schema_version,created_at) VALUES (?,1,?)",
+        "INSERT INTO workspaces (workspace_id,schema_version,created_at) VALUES (?,2,?)",
         (old.workspace.workspace_id, old.workspace.created_at),
     )
     db.execute(
