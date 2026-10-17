@@ -10,6 +10,7 @@ import json
 import shutil
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Literal, Protocol
 from uuid import UUID
@@ -102,6 +103,10 @@ class RebuildTarget(Protocol):
 
     def cancel(self, job_id: str) -> str:
         """Cancel a job, wait briefly for it to settle and return its state."""
+        ...
+
+    def stop_jobs(self) -> None:
+        """Stop the job service so that no job publishes afterwards."""
         ...
 
     def restore_policy(self, sources: tuple[InventorySource, ...]) -> int:
@@ -297,15 +302,45 @@ def _replay_reviews(
     return replayed
 
 
-def _settle_and_restore(
-    target: RebuildTarget, inventory: WorkspaceInventory, progress: _Progress
-) -> None:
-    """Cancel what is still running, then carry the old policy over."""
-    try:
-        for job_id in sorted(progress.in_flight):
-            target.cancel(job_id)
-    finally:
-        target.restore_policy(inventory.sources)
+def _finish(
+    target: RebuildTarget,
+    inventory: WorkspaceInventory,
+    progress: _Progress,
+    marker: Path,
+    *,
+    completed: bool,
+) -> list[Exception]:
+    """Cancel what runs, stop the job service, restore policy, then release the target.
+
+    Every step runs even when an earlier one fails, and the failures are returned
+    rather than raised so that the caller decides which error stays visible. The
+    marker is removed only when the rebuild completed and every step before the
+    release succeeded.
+    """
+    failures: list[Exception] = []
+
+    def step(action: Callable[[], object]) -> bool:
+        try:
+            action()
+        except Exception as error:  # noqa: BLE001 - collected and reported by the caller
+            failures.append(error)
+            return False
+        return True
+
+    clean = True
+    for job_id in sorted(progress.in_flight):
+        clean = step(partial(target.cancel, job_id)) and clean
+    clean = step(target.stop_jobs) and clean
+    clean = step(partial(target.restore_policy, inventory.sources)) and clean
+    if completed and clean:
+        step(partial(marker.unlink))
+    step(target.close)
+    return failures
+
+
+def _note_cleanup_failures(error: BaseException, failures: list[Exception]) -> None:
+    for failure in failures:
+        error.add_note(f"cleanup also failed: {type(failure).__name__}: {failure}")
 
 
 def rebuild_workspace(
@@ -336,27 +371,28 @@ def rebuild_workspace(
         shutil.copyfile(old_root / "workspace.toml", new_root / "workspace.toml")
     target = open_target(new_root, rebuild_scope(inventory.collections))
     progress = _Progress()
-    report: WorkspaceRebuildReport | None = None
+    marker = new_root / INCOMPLETE_MARKER
     try:
-        (new_root / INCOMPLETE_MARKER).write_text("")
+        marker.write_text("")
         target.seed_collections(inventory.collections)
         replay = _Replay(old_root, target, kind_map or {}, progress, ctx)
         for source in inventory.sources:
             _replay_source(replay, source)
         replayed = _replay_reviews(inventory, target, progress)
-        report = WorkspaceRebuildReport(
-            old_workspace_id=inventory.workspace_id,
-            new_workspace_id=target.workspace_id,
-            collections=len(inventory.collections),
-            sources=tuple(progress.sources),
-            skipped=tuple(progress.skipped),
-            reviews_replayed=replayed,
+    except BaseException as error:
+        _note_cleanup_failures(
+            error, _finish(target, inventory, progress, marker, completed=False)
         )
-        return report
-    finally:
-        try:
-            _settle_and_restore(target, inventory, progress)
-            if report is not None:
-                (new_root / INCOMPLETE_MARKER).unlink()
-        finally:
-            target.close()
+        raise
+    failures = _finish(target, inventory, progress, marker, completed=True)
+    if failures:
+        _note_cleanup_failures(failures[0], failures[1:])
+        raise failures[0]
+    return WorkspaceRebuildReport(
+        old_workspace_id=inventory.workspace_id,
+        new_workspace_id=target.workspace_id,
+        collections=len(inventory.collections),
+        sources=tuple(progress.sources),
+        skipped=tuple(progress.skipped),
+        reviews_replayed=replayed,
+    )
