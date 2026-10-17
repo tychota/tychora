@@ -58,6 +58,28 @@ def test_spec_reasons_are_registered_under_their_codes():
             assert REASONS[reason].code == code
 
 
+RETRYABLE = {
+    "owner.live",
+    "queue.full",
+    "publication.rebase",
+    "provider.unreachable",
+    "provider.rate_limited",
+    "provider.timeout",
+}
+
+
+def test_registry_is_exactly_the_closed_set():
+    expected = {
+        reason: code for code, reasons in SPEC_REASONS.items() for reason in reasons
+    }
+    assert {key: entry.code for key, entry in REASONS.items()} == expected
+
+
+def test_retryable_is_pinned_for_every_reason():
+    for key, entry in REASONS.items():
+        assert entry.retryable is (key in RETRYABLE), key
+
+
 def test_every_reason_is_well_formed():
     for key, entry in REASONS.items():
         assert key == entry.reason
