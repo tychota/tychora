@@ -203,6 +203,9 @@ def register_routes(app: FastAPI) -> None:
                 "policy_epoch": await owner.run_blocking(
                     owner.policy_epoch, ExecutionContext()
                 ),
+                # The handshake document's own string version, like every
+                # versioned document; the workspace storage format is the
+                # separate integer `workspaces.schema_version`.
                 "schema_version": "1",
                 "protocol_version": 1,
                 "workspace_id": owner.workspace_id,

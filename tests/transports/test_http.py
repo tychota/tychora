@@ -1502,7 +1502,10 @@ def test_app_lifespan_drains_jobs_before_borrowed_owner_closes(tmp_path):
             base_url="http://127.0.0.1:8765",
             headers={"Authorization": "Bearer owner-token"},
         ) as client:
-            assert client.get("/v1/handshake").status_code == 200
+            handshake = client.get("/v1/handshake")
+            assert handshake.status_code == 200
+            # A document version, not the integer workspace storage format.
+            assert handshake.json()["schema_version"] == "1"
         # The app drained its service loop before the borrowed owner released storage.
         from tychora.ports.execution import ExecutionContext
 
