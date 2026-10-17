@@ -130,8 +130,8 @@ def test_ci_setup_stops_after_bounded_transient_failures(monkeypatch):
     monkeypatch.setattr("time.sleep", delays.append)
     with pytest.raises(subprocess.CalledProcessError):
         provisioner.run_setup(["uv", "run"], {})
-    assert len(calls) == 3
-    assert len(delays) == 2
+    assert len(calls) == 5
+    assert delays == [5, 10, 20, 40]
 
 
 def test_code_corpus_export_is_pinned_by_git_tree(tmp_path: Path):
