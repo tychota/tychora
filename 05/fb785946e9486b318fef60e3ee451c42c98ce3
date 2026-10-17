@@ -1,0 +1,94 @@
+src/tychora/adapters/sqlite/policy.py
+  s_ab847b2c6c265a::t_388cff78783edb 8
+  s_ab847b2c6c265a::t_8776821dc6940a 153
+src/tychora/application/reranking.py
+  s_ab847b2c6c265a::t_039a056f3077eb 675-676,679
+src/tychora/application/visual.py
+  s_ab847b2c6c265a::t_039a056f3077eb 324-325,327
+src/tychora/adapters/sqlite/publication.py
+  s_ab847b2c6c265a::t_388cff78783edb 15
+  s_ab847b2c6c265a::t_a3d980617ed931 586
+  s_ab847b2c6c265a::t_ae4bf5ac9a12d8 480,492,694
+src/tychora/application/sources.py
+  s_ab847b2c6c265a::t_039a056f3077eb 880,1905
+  s_ab847b2c6c265a::t_f2c2d01da35e8a 445,1210,1240,1501
+  s_ab847b2c6c265a::t_20ed242b10e21a 296
+src/tychora/adapters/sqlite/jobs.py
+  s_ab847b2c6c265a::t_388cff78783edb 13
+  s_ab847b2c6c265a::t_7e1b68eb1d0567 202
+tests/application/test_collections.py
+  s_ab847b2c6c265a::t_e4ba68ef332d88 136-140
+tests/architecture/test_single_row_readers.py
+  s_ab847b2c6c265a::t_d702d4504e7a8d 1-50
+src/tychora/application/restore.py
+  s_ab847b2c6c265a::t_f2c2d01da35e8a 183,252
+src/tychora/application/collections.py
+  s_ab847b2c6c265a::t_039a056f3077eb 37
+src/tychora/indexing/coordinator.py
+  s_ab847b2c6c265a::t_a3d980617ed931 829
+  s_ab847b2c6c265a::t_20ed242b10e21a 828,1234-1235
+  s_ab847b2c6c265a::t_f2c2d01da35e8a 229,632,812
+tests/storage/test_repositories.py
+  s_ab847b2c6c265a::t_d9f3a614f32fc5 96-124,128-133
+  s_ab847b2c6c265a::t_0b71318f07c482 4,125-127
+quality/baseline.json
+  s_ab847b2c6c265a::t_0b71318f07c482 5,59,365,398-399,403-404,410-412,418-419,432,441,446,456,458,475,503,529,584,602,918,921-923,928,933,938,940,943-944,948
+src/tychora/application/removal.py
+  s_ab847b2c6c265a::t_f2c2d01da35e8a 283,356,524,545
+tests/runtime/test_upload_policy.py
+  s_ab847b2c6c265a::t_e01b08d139b0c7 190-195
+src/tychora/interfaces/http/routes.py
+  s_ab847b2c6c265a::t_039a056f3077eb 204
+src/tychora/application/owner.py
+  s_ab847b2c6c265a::t_039a056f3077eb 254-263,924
+src/tychora/adapters/sqlite/evaluations.py
+  s_ab847b2c6c265a::t_388cff78783edb 9
+  s_ab847b2c6c265a::t_20ed242b10e21a 192-193,260,290
+  s_ab847b2c6c265a::t_6837577cd04195 68
+src/tychora/application/vision_selection.py
+  s_ab847b2c6c265a::t_f2c2d01da35e8a 98
+src/tychora/application/consent.py
+  s_ab847b2c6c265a::t_039a056f3077eb 130
+src/tychora/application/query.py
+  s_ab847b2c6c265a::t_f2c2d01da35e8a 1313
+src/tychora/adapters/sqlite/corpus.py
+  s_ab847b2c6c265a::t_039a056f3077eb 8,69
+  s_ab847b2c6c265a::t_7a8864221bed4f 119,147
+src/tychora/application/default_bindings.py
+  s_ab847b2c6c265a::t_039a056f3077eb 356,381
+src/tychora/adapters/sqlite/history.py
+  s_ab847b2c6c265a::t_a2f205cfdec91b 264
+  s_ab847b2c6c265a::t_388cff78783edb 12
+src/tychora/evaluation/runner.py
+  s_ab847b2c6c265a::t_3dcb7cc9695393 289
+  s_ab847b2c6c265a::t_20ed242b10e21a 290
+src/tychora/adapters/sqlite/graph.py
+  s_ab847b2c6c265a::t_388cff78783edb 9
+  s_ab847b2c6c265a::t_a3d980617ed931 48
+  s_ab847b2c6c265a::t_b79cc5cf70a6db 77
+src/tychora/adapters/sqlite/eligibility.py
+  s_ab847b2c6c265a::t_388cff78783edb 9
+  s_ab847b2c6c265a::t_20ed242b10e21a 226,600
+  s_ab847b2c6c265a::t_3dcb7cc9695393 582
+  s_ab847b2c6c265a::t_eb230bf97e4d4d 292
+src/tychora/application/discovery.py
+  s_ab847b2c6c265a::t_37b077248d7331 566,798,1090
+src/tychora/application/inspection.py
+  s_ab847b2c6c265a::t_4274c7377d88c0 139
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "05fb785946e9486b318fef60e3ee451c42c98ce3",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
