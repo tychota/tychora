@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from tychora.adapters.sqlite.eligibility import _retained_rows
+from tychora.adapters.sqlite.eligibility import retained_rows
+from tychora.adapters.sqlite.retained_bindings import (
+    asset_extraction,
+    binding_footprint,
+    binding_key,
+)
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import (
     Citation,
@@ -28,8 +35,24 @@ MAX_BINDING_BYTES = 16 * 1024 * 1024
 MAX_BINDING_ROWS = 16_384
 
 
+@dataclass(frozen=True, slots=True)
+class _Resident:
+    """One hydrated binding's footprint and the units and assets it holds."""
+
+    rows: int
+    size: int
+    unit_ids: tuple[str, ...]
+    asset_ids: tuple[str, ...]
+
+
 class RetainedBindingCache:
-    """Bounded, pinned comparison-local canonical bindings; never an authorization cache."""
+    """Bounded, pinned comparison-local canonical bindings; never an authorization cache.
+
+    The budget bounds the bindings held at once. A binding is a whole extraction or,
+    for a code unit, the one file of the extraction it cites. A binding larger than
+    the budget is refused; otherwise the least recently used bindings are released
+    until it fits, and a released binding is hydrated again when next cited.
+    """
 
     def __init__(self, owner: WorkspaceOwner, snapshot_id: str) -> None:
         self.owner = owner
@@ -40,175 +63,83 @@ class RetainedBindingCache:
         self.binding_count = 0
         self.bytes_used = 0
         self.rows_used = 0
+        self._resident: OrderedDict[tuple[str, str | None], _Resident] = OrderedDict()
+        self._holders: dict[str, tuple[str, str | None]] = {}
 
-    def _preflight(self, member) -> tuple[int, int]:
-        """Measure UTF-8 payloads and row overhead in SQLite before Python hydration."""
-        db = self.owner.db
-        extraction = member.extraction_id
-        revision = member.revision_id
-        if db.execute(
-            "SELECT 1 FROM locators l JOIN evidence_units u USING(unit_id) "
-            "WHERE u.extraction_id=? "
-            "AND json_extract(l.details_json,'$.artifact_ref') IS NOT l.artifact_sha "
-            "LIMIT 1",
-            (extraction,),
-        ).fetchone():
+    def _release_until_fits(self, rows: int, size: int) -> None:
+        """Refuse a binding above the budget; release least recently used ones for it."""
+        if rows > MAX_BINDING_ROWS or size > MAX_BINDING_BYTES:
             raise TychoraError(
-                "INTEGRITY_ERROR", "Retained locator artifact binding differs"
+                "LIMIT_EXCEEDED",
+                "Evaluation retained binding budget exceeded",
+                reason="evaluation.binding_budget",
             )
-        specs = (
-            (
-                "sources",
-                "source_id=?",
-                (member.source_id,),
-                ("source_key", "registration_json"),
-            ),
-            (
-                "revisions",
-                "revision_id=?",
-                (revision,),
-                ("title", "metadata_json", "allowed_uses_json"),
-            ),
-            (
-                "extractions",
-                "extraction_id=?",
-                (extraction,),
-                ("parser_fingerprint", "normalizer_fingerprint"),
-            ),
-            (
-                "evidence_units",
-                "extraction_id=?",
-                (extraction,),
-                (
-                    "text",
-                    "heading_path_json",
-                    "attributes_json",
-                    "native_ref",
-                    "boundary_key",
-                ),
-            ),
-            (
-                "locators l JOIN evidence_units u USING(unit_id)",
-                "u.extraction_id=?",
-                (extraction,),
-                ("l.details_json", "l.source_ref"),
-            ),
-            (
-                "assets",
-                "extraction_id=?",
-                (extraction,),
-                ("locator_json", "caption", "native_ref"),
-            ),
-            (
-                "unit_assets ua JOIN evidence_units u USING(unit_id)",
-                "u.extraction_id=?",
-                (extraction,),
-                ("ua.role",),
-            ),
-            (
-                "asset_proxies p JOIN evidence_units u ON u.unit_id=p.proxy_unit_id",
-                "u.extraction_id=?",
-                (extraction,),
-                ("p.origin_type",),
-            ),
-            (
-                "asset_proxy_dependencies d JOIN evidence_units u ON u.unit_id=d.proxy_unit_id",
-                "u.extraction_id=?",
-                (extraction,),
-                (),
-            ),
-            (
-                "structured_records sr JOIN evidence_units u USING(unit_id)",
-                "u.extraction_id=?",
-                (extraction,),
-                ("sr.data_json",),
-            ),
-            (
-                "identifiers i JOIN evidence_units u USING(unit_id)",
-                "u.extraction_id=?",
-                (extraction,),
-                ("i.normalized_value", "i.original_value"),
-            ),
-            (
-                "revision_artifacts",
-                "revision_id=?",
-                (revision,),
-                ("source_ref", "role"),
-            ),
-            (
-                "artifacts a",
-                (
-                    "a.artifact_sha IN ("
-                    "SELECT original_sha FROM revisions WHERE revision_id=? UNION "
-                    "SELECT document_artifact_sha FROM extractions WHERE extraction_id=? UNION "
-                    "SELECT artifact_sha FROM revision_artifacts WHERE revision_id=? UNION "
-                    "SELECT artifact_sha FROM assets WHERE extraction_id=? UNION "
-                    "SELECT p.derivation_sha FROM asset_proxies p JOIN evidence_units u "
-                    "ON u.unit_id=p.proxy_unit_id WHERE u.extraction_id=? UNION "
-                    "SELECT l.artifact_sha FROM locators l JOIN evidence_units u "
-                    "USING(unit_id) WHERE u.extraction_id=?)"
-                ),
-                (revision, extraction, revision, extraction, extraction, extraction),
-                ("a.media_type", "a.storage_key"),
-            ),
-        )
-        rows = 0
-        size = 0
-        for table, where, args, columns in specs:
-            payload = "+".join(
-                f"COALESCE(LENGTH(CAST({column} AS BLOB)),0)" for column in columns
-            )
-            estimated = f"1024+{payload}" if payload else "1024"
-            count, byte_count = db.execute(
-                f"SELECT COUNT(*),COALESCE(SUM({estimated}),0) FROM {table} WHERE {where}",
-                args,
-            ).fetchone()
-            rows += count
-            size += byte_count
-            if (
-                rows + self.rows_used > MAX_BINDING_ROWS
-                or size + self.bytes_used > MAX_BINDING_BYTES
-            ):
-                raise TychoraError(
-                    "LIMIT_EXCEEDED", "Evaluation retained binding budget exceeded"
-                )
-        return rows, size
+        while self._resident and (
+            rows + self.rows_used > MAX_BINDING_ROWS
+            or size + self.bytes_used > MAX_BINDING_BYTES
+        ):
+            _, released = self._resident.popitem(last=False)
+            self.rows_used -= released.rows
+            self.bytes_used -= released.size
+            for unit_id in released.unit_ids:
+                self.units.pop(unit_id, None)
+                self._holders.pop(unit_id, None)
+            for asset_id in released.asset_ids:
+                self.assets.pop(asset_id, None)
+                self._holders.pop(asset_id, None)
 
-    def _load(self, extraction_id: str) -> None:
+    def _load(self, extraction_id: str, relative_path: str | None = None) -> None:
+        """Bind one pinned extraction, or one code file of it, within the budget."""
         if self.members is None:
             snapshot = self.owner.store.resolve_snapshot(self.snapshot_id)
             self.members = {member.extraction_id: member for member in snapshot.members}
         member = self.members.get(extraction_id)
         if member is None:
             return
-        rows, size = self._preflight(member)
-        retained = _retained_rows(self.owner.store, member)
+        rows, size = binding_footprint(self.owner.db, member, relative_path)
+        self._release_until_fits(rows, size)
+        retained = retained_rows(self.owner.store, member, relative_path)
+        key = extraction_id, relative_path
+        self._resident[key] = _Resident(
+            rows,
+            size,
+            tuple(unit.unit_id for unit in retained.units),
+            tuple(asset.asset_id for asset in retained.assets),
+        )
         self.rows_used += rows
         self.bytes_used += size
         self.binding_count += 1
         for unit in retained.units:
             self.units[unit.unit_id] = (member, retained, unit)
+            self._holders[unit.unit_id] = key
         for asset in retained.assets:
             self.assets[asset.asset_id] = (member, retained, asset)
+            self._holders[asset.asset_id] = key
+
+    def _touch(self, identifier: str) -> None:
+        """Mark the binding holding a unit or asset as most recently used."""
+        key = self._holders.get(identifier)
+        if key is not None:
+            self._resident.move_to_end(key)
 
     def unit(self, unit_id: str):
+        """The pinned binding of a unit; a code unit binds only its own file."""
         if unit_id not in self.units:
-            row = self.owner.db.execute(
-                "SELECT extraction_id FROM evidence_units WHERE unit_id=?", (unit_id,)
-            ).fetchone()
-            if row is not None:
-                self._load(row[0])
+            key = binding_key(self.owner.db, unit_id)
+            if key is not None:
+                self._load(*key)
             self.units.setdefault(unit_id, None)
+        self._touch(unit_id)
         return self.units[unit_id]
 
     def asset(self, asset_id: str):
+        """The pinned binding of an asset, from its whole extraction."""
         if asset_id not in self.assets:
-            row = self.owner.db.execute(
-                "SELECT extraction_id FROM assets WHERE asset_id=?", (asset_id,)
-            ).fetchone()
-            if row is not None:
-                self._load(row[0])
+            extraction_id = asset_extraction(self.owner.db, asset_id)
+            if extraction_id is not None:
+                self._load(extraction_id)
             self.assets.setdefault(asset_id, None)
+        self._touch(asset_id)
         return self.assets[asset_id]
 
 

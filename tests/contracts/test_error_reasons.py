@@ -60,6 +60,7 @@ CLASSIFIED_REASONS = {
     "PROFILE_INCOMPATIBLE": {"workspace.schema_mismatch"},
     "INTEGRITY_ERROR": {"workspace.database_invalid", "runtime.endpoint_unsafe"},
     "CAPABILITY_MISSING": {"storage.version_unsupported"},
+    "LIMIT_EXCEEDED": {"evaluation.binding_budget"},
 }
 
 

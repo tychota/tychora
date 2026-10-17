@@ -9,7 +9,7 @@ from __future__ import annotations
 import secrets
 from typing import TYPE_CHECKING
 
-from tychora.adapters.sqlite.eligibility import _retained_rows
+from tychora.adapters.sqlite.eligibility import retained_rows
 from tychora.contracts.base import CodepointRange
 from tychora.contracts.corpus import ChunkRow
 from tychora.contracts.errors import TychoraError
@@ -144,7 +144,7 @@ def content_page(
         )
         columns = [column[0] for column in cursor.description]
         candidates = cursor.fetchall()
-        retained = _retained_rows(owner.store, member) if windows else None
+        retained = retained_rows(owner.store, member) if windows else None
         prepared = prepare_extraction(retained) if retained is not None else None
         page_type = ExtractionWindowsPage if windows else ExtractionUnitsPage
         field = "windows" if windows else "units"

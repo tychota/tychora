@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, cast
 
 from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
-from tychora.adapters.sqlite.eligibility import _retained_rows
+from tychora.adapters.sqlite.eligibility import retained_rows
 from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.application.discovery import (
     _permitted_resolutions,
@@ -406,7 +406,7 @@ class InspectionService:
             # The retained representation validator reconstructs exact per-range
             # ownership from canonical locators/source parts, never from originals.
             if prepared is None:
-                prepared = prepare_extraction(_retained_rows(owner.store, member))
+                prepared = prepare_extraction(retained_rows(owner.store, member))
             representation = next(
                 (item for item in prepared.units if item.unit.unit_id == request.id),
                 None,
