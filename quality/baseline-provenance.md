@@ -1,12 +1,9 @@
 # Baseline provenance
 
-`baseline.json` and `jscpd/*.json` were measured locally on 2026-10-16 (macOS, Python 3.12, `COVERAGE_CORE=sysmon`),
-pending a re-measure on the Ubuntu reference runner.
+`baseline.json` and `jscpd/*.json` were measured on the Ubuntu 22.04 reference runner by the `check.yml` workflow
+dispatched with `baseline=true` (run 38996751848, commit 09f1a79), on 2026-10-17.
 
-`test_runtime_seconds` (110.8 s, Apple-silicon macOS) and `coverage_line` (85.13) are local values. The re-measure
-(`workflow_dispatch` with `baseline=true`, artifact `quality-baseline`) must be run and its artifact committed before
-`feat/code-health` merges; until then the first CI `check` may fail the runtime ratchet. Replace this note afterwards.
-
-Comparison with the design's initial figures: duplication_python 1.33 (1.32), duplication_tests 4.76 (4.74),
-modules_in_import_cycles 47 (76; type-only `TYPE_CHECKING` imports are excluded by design), missing_docstrings 1031
-(down from 1055), coverage_line 85.13.
+Values to remember when comparing with a laptop: `test_runtime_seconds` is 841.1 s on the runner (about 110 s on
+Apple-silicon macOS) and `coverage_line` is 87.53. Branch coverage and mutation scores are nightly entries recorded by
+the `health-nightly.yml` workflow dispatched with `baseline=true`; a `baseline=true` dispatch of `check.yml` rebuilds
+this file from scratch, so record the nightly entries again afterwards.
