@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw, ImageFont
 from typer.testing import CliRunner
 
 from tests.helpers.assets import asset_path
+from tests.helpers.timing import scaled
 from tychora import Tychora
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.identity import source_id as canonical_source_id
@@ -968,7 +969,9 @@ def test_first_selected_add_retains_original_and_reports_incomplete_vision(
         )
     with Tychora.open(workspace, config=config, token_counter=Counter()) as kb:
         accepted = kb.sources.add(selected)
-        assert kb.jobs.wait(accepted.id).state == "succeeded"
+        assert (
+            kb.jobs.wait(accepted.id, timeout=min(scaled(30), 300)).state == "succeeded"
+        )
         assert len(sent) == 1
         sid = canonical_source_id(UUID(str(kb.default_collection_id)), "first")
         revision = kb.sources.revisions(sid).revisions[0].revision_id
