@@ -373,6 +373,23 @@ def _parser_entry(
         output.close()
 
 
+def _sample_rss(monitor, child) -> int | None:
+    """Child RSS, or None once the child has exited.
+
+    macOS can retire a task port just before multiprocessing observes the process
+    sentinel: reap that exit or retry briefly, and never continue a child that stays
+    unmonitored.
+    """
+    for attempt in range(_RSS_SAMPLE_ATTEMPTS):
+        try:
+            return monitor.memory_info().rss
+        except Exception:  # noqa: BLE001 - unavailable platform/process inspection
+            child.join(0.05 * 2**attempt)
+            if not child.is_alive():
+                return None
+    raise TychoraError("CAPABILITY_MISSING", "Parser RSS monitoring is unavailable")
+
+
 def parser_process[T](
     call: Callable[[tuple[Path, ...]], T],
     paths: tuple[Path, ...],
@@ -402,23 +419,9 @@ def parser_process[T](
             or now - batch_started >= limits.batch_seconds
         ):
             raise TychoraError("DEADLINE_EXCEEDED", "PDF parser deadline exceeded")
-        assert monitor is not None
-        rss = None
-        # macOS can retire its task port just before multiprocessing observes the
-        # process sentinel. Reap that exit, or retry briefly; never continue a child
-        # that stays unmonitored.
-        for attempt in range(_RSS_SAMPLE_ATTEMPTS):
-            try:
-                rss = monitor.memory_info().rss
-                break
-            except Exception:  # noqa: BLE001 - unavailable platform/process inspection
-                child.join(0.05 * 2**attempt)
-                if not child.is_alive():
-                    return
+        rss = _sample_rss(monitor, child)
         if rss is None:
-            raise TychoraError(
-                "CAPABILITY_MISSING", "Parser RSS monitoring is unavailable"
-            )
+            return
         if rss > limits.rss_bytes:
             raise TychoraError("LIMIT_EXCEEDED", "Parser RSS threshold exceeded")
 
