@@ -4,7 +4,10 @@ import ast
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parents[2] / "src" / "tychora"
-SQL_FREE_MODULES: tuple[str, ...] = ("ports/repositories.py",)
+SQL_FREE_MODULES: tuple[str, ...] = (
+    "ports/repositories.py",
+    "application/workspace_rebuild.py",
+)
 SQL_CALLS = {"execute", "executemany", "executescript"}
 
 

@@ -6,16 +6,30 @@ import os
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+from tychora.adapters.sqlite.workspace_inventory import (
+    InventoryCollection,
+    InventorySource,
+    restore_policy,
+    seed_collections,
+)
 from tychora.application.bridge import ClientBridge
+from tychora.application.job_wait import wait_until_settled
 from tychora.application.owner import WorkspaceOwner
 from tychora.application.runtime import ServiceRuntime, close_owned_runtimes
 from tychora.application.services import Services, build_services
+from tychora.application.workspace_rebuild import (
+    RebuildTarget,
+    WorkspaceRebuildReport,
+    rebuild_workspace,
+)
 from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.resolve import resolve_config, selected_workspace_profile
+from tychora.contracts.corpus import ReviewTarget
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.requests import RequestScope, SourceInput
 from tychora.ports.execution import ExecutionContext
@@ -284,3 +298,108 @@ class LocalWorkspace:
         if normalized.get("collection_id") == "default":
             normalized["collection_id"] = str(self.default_collection_id)
         return SourceInput.from_mapping(normalized)
+
+
+_REBUILD_JOB_SECONDS = 3600.0
+
+
+class _LocalRebuildTarget:
+    """A freshly created local workspace receiving rebuilt sources."""
+
+    def __init__(self, workspace: LocalWorkspace) -> None:
+        self._workspace = workspace
+        self.workspace_id = workspace.owner.workspace_id
+
+    def _on_owner[T](self, call: Callable[[], T]) -> T:
+        owner = self._workspace.owner
+        return self._workspace.bridge.call(owner.run_blocking(call, ExecutionContext()))
+
+    def kinds(self) -> frozenset[str]:
+        """Kind identifiers the new workspace's registry knows."""
+        return frozenset(self._workspace.owner.store.registry.kinds)
+
+    def seed_collections(self, collections: tuple[InventoryCollection, ...]) -> int:
+        """Create or refresh the collections; return how many were created."""
+        owner = self._workspace.owner
+        return self._on_owner(
+            lambda: seed_collections(owner.db, owner.workspace_id, collections)
+        )
+
+    def add(self, source: SourceInput) -> str:
+        """Start a source job and return its identifier."""
+        workspace = self._workspace
+        return workspace.services.source_jobs.add(source, workspace.scope, None).id
+
+    def wait(self, job_id: str) -> str:
+        """Wait for a job to settle, in bounded calls, and return its final state."""
+        workspace = self._workspace
+
+        def wait_once(timeout: float):
+            return workspace.bridge.call(
+                workspace.services.jobs.wait(
+                    job_id, ExecutionContext(), timeout=timeout
+                )
+            )
+
+        return wait_until_settled(wait_once, _REBUILD_JOB_SECONDS).state
+
+    def restore_policy(
+        self, sources: tuple[InventorySource, ...], revision_ids: frozenset[str]
+    ) -> int:
+        """Carry access floors, ranks, uses and declared review states over."""
+        owner = self._workspace.owner
+        return self._on_owner(
+            lambda: restore_policy(owner.db, owner.workspace_id, sources, revision_ids)
+        )
+
+    def record_revision_review(self, revision_id: str, state: str, actor: str) -> None:
+        """Record a review event for a rebuilt revision."""
+        store = self._workspace.owner.store
+        self._on_owner(
+            lambda: store.record_review(
+                ReviewTarget(revision_id=revision_id), state, actor
+            )
+        )
+
+    def close(self) -> None:
+        """Release the new workspace."""
+        self._workspace.close()
+
+
+def open_rebuild_target(
+    path: Path,
+    scope: RequestScope,
+    *,
+    providers: ProviderBindings | None = None,
+    token_counter: TokenCounter | None = None,
+) -> RebuildTarget:
+    """Create the destination workspace of a rebuild with an explicit grant."""
+    return _LocalRebuildTarget(
+        LocalWorkspace(
+            path,
+            scope=scope,
+            config=None,
+            providers=providers,
+            token_counter=token_counter,
+        )
+    )
+
+
+def rebuild_workspace_from(
+    old: Path,
+    destination: Path,
+    *,
+    kind_map: Mapping[str, str] | None = None,
+    providers: ProviderBindings | None = None,
+    token_counter: TokenCounter | None = None,
+) -> WorkspaceRebuildReport:
+    """Recreate ``destination`` in the current format from ``old``'s originals."""
+    return rebuild_workspace(
+        Path(old),
+        Path(destination),
+        ExecutionContext(),
+        open_target=partial(
+            open_rebuild_target, providers=providers, token_counter=token_counter
+        ),
+        kind_map=kind_map,
+    )
