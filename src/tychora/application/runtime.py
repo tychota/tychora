@@ -266,7 +266,9 @@ class RuntimeIdentity:
                 raise
         except OSError:
             raise TychoraError(
-                "INTEGRITY_ERROR", "Runtime path is unavailable or unsafe"
+                "INTEGRITY_ERROR",
+                "Runtime path is unavailable or unsafe",
+                reason="runtime.path_unsafe",
             ) from None
 
     def publish(self, workspace_id: str) -> None:

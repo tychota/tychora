@@ -80,6 +80,12 @@ _ENTRIES = (
     ),
     Reason(
         "INTEGRITY_ERROR",
+        "runtime.path_unsafe",
+        False,
+        "Make the workspace's .runtime a plain directory owned by you, then retry.",
+    ),
+    Reason(
+        "INTEGRITY_ERROR",
         "invariant.unexpected",
         False,
         "Report the diagnostic ID; this is a defect in Tychora.",

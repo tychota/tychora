@@ -27,6 +27,12 @@ def require_no_live_owner(root: Path, message: str) -> None:
         fd = os.open(root / ".runtime" / "owner.lock", os.O_RDONLY | os.O_NOFOLLOW)
     except FileNotFoundError:
         return
+    except OSError:
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Runtime path is unavailable or unsafe",
+            reason="runtime.path_unsafe",
+        ) from None
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
