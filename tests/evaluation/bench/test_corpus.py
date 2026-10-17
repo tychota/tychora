@@ -74,6 +74,19 @@ def test_load_corpus_refuses_a_foreign_file(tmp_path):
         load_corpus("missing", tmp_path)
 
 
+@pytest.mark.parametrize("queries", ["../outside.jsonl", "/etc/hosts", "sub/../../x"])
+def test_load_corpus_reads_queries_only_under_the_benchmarks_root(tmp_path, queries):
+    root = tmp_path / "benchmarks"
+    root.mkdir()
+    (tmp_path / "outside.jsonl").write_text("")
+    (root / "escape.toml").write_text(
+        f'schema = "tychora.bench-corpus"\nversion = 1\nname = "escape"\n'
+        f'queries = "{queries}"\n'
+    )
+    with pytest.raises(BenchCorpusError, match="benchmarks root"):
+        load_corpus("escape", root)
+
+
 def _corpus(
     data: bytes, transform: Literal["rasterize@150dpi"] | None = None
 ) -> BenchCorpus:
