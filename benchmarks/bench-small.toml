@@ -3,6 +3,8 @@
 schema = "tychora.bench-corpus"
 version = 1
 name = "bench-small"
+# Hosts documents may be downloaded from (https only); none are needed here.
+allowed_hosts = []
 
 [synthetic]
 seed = 20261016

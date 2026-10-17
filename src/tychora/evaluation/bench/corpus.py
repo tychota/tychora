@@ -1,11 +1,16 @@
 """Benchmark corpus definitions, their digest, queries and verified downloads."""
 
 import hashlib
+import http.client
+import os
 import tomllib
 import urllib.request
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
+
+from pydantic import model_validator
 
 from tychora.contracts.base import Contract, NonEmptyStr, Sha256
 from tychora.contracts.identity import digest
@@ -49,8 +54,16 @@ class BenchCorpus(Contract):
 
     name: NonEmptyStr
     synthetic: SynthSpec
+    allowed_hosts: tuple[NonEmptyStr, ...] = ()
     documents: tuple[BenchDocument, ...]
     queries: tuple[BenchQuery, ...]
+
+    @model_validator(mode="after")
+    def downloads_stay_on_allowed_hosts(self) -> "BenchCorpus":
+        """Refuse any document URL that is not https on a declared host."""
+        for document in self.documents:
+            check_url(document.source_key, document.url, self.allowed_hosts)
+        return self
 
     def digest(self) -> str:
         """Return the identity of everything that defines the corpus and queries."""
@@ -59,6 +72,44 @@ class BenchCorpus(Contract):
 
 class BenchCorpusError(ValueError):
     """A corpus file or a download that cannot be used as pinned."""
+
+
+def check_url(source_key: str, url: str, allowed_hosts: Sequence[str]) -> None:
+    """Raise unless ``url`` is https on one of the allowed hosts."""
+    parts = urlsplit(url)
+    if parts.scheme != "https" or parts.hostname not in allowed_hosts:
+        raise BenchCorpusError(
+            f"{source_key}: {url} is not an https URL on an allowed host"
+        )
+
+
+class GuardedRedirect(urllib.request.HTTPRedirectHandler):
+    """Follow redirects only to https URLs on the allowed hosts."""
+
+    def __init__(self, allowed_hosts: Sequence[str]):
+        self.allowed_hosts = tuple(allowed_hosts)
+
+    def redirect_request(self, req, *details, **options):
+        """Refuse a redirect that leaves https or the allowed hosts."""
+        newurl = details[-1] if details else options["newurl"]
+        parts = urlsplit(newurl)
+        if parts.scheme != "https" or parts.hostname not in self.allowed_hosts:
+            raise BenchCorpusError(f"redirect to {newurl} is not allowed")
+        return super().redirect_request(req, *details, **options)
+
+
+def write_atomic(path: Path, data: bytes) -> None:
+    """Write ``data`` durably next to ``path`` and rename it into place."""
+    partial = path.with_name(path.name + ".part")
+    try:
+        with partial.open("wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        partial.replace(path)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
 
 
 def _range_label(
@@ -132,6 +183,7 @@ def load_corpus(name: str, root: Path) -> BenchCorpus:
         {
             "name": data["name"],
             "synthetic": data["synthetic"],
+            "allowed_hosts": data.get("allowed_hosts", []),
             "documents": data.get("documents", []),
             "queries": queries,
         }
@@ -144,9 +196,39 @@ def all_queries(corpus: BenchCorpus) -> tuple[BenchQuery, ...]:
     return corpus.queries + synthetic
 
 
-def _urlopen(url: str) -> Any:
-    request = urllib.request.Request(url, headers={"User-Agent": "tychora-bench/1"})
-    return urllib.request.urlopen(request, timeout=120)
+def _guarded_open(hosts: Sequence[str]) -> Callable[[str], Any]:
+    director = urllib.request.build_opener(GuardedRedirect(hosts))
+
+    def open_url(url: str) -> Any:
+        request = urllib.request.Request(url, headers={"User-Agent": "tychora-bench/1"})
+        return director.open(request, timeout=120)
+
+    return open_url
+
+
+def _download(
+    document: BenchDocument, opener: Callable[[str], Any], max_bytes: int
+) -> bytes:
+    """Read one document, naming it in every failure."""
+    try:
+        with opener(document.url) as response:
+            data = response.read(max_bytes + 1)
+    except BenchCorpusError as error:
+        raise BenchCorpusError(f"{document.source_key}: {error}") from None
+    except (OSError, http.client.HTTPException) as error:
+        raise BenchCorpusError(
+            f"{document.source_key}: download from {document.url} failed: {error!r}"
+        ) from None
+    if len(data) > max_bytes:
+        raise BenchCorpusError(
+            f"{document.source_key}: download exceeds {max_bytes} bytes"
+        )
+    if hashlib.sha256(data).hexdigest() != document.sha256:
+        raise BenchCorpusError(
+            f"{document.source_key}: bytes from {document.url} differ from the"
+            " pinned SHA-256 (changed upstream or truncated)"
+        )
+    return data
 
 
 def fetch_corpus(
@@ -157,29 +239,26 @@ def fetch_corpus(
 ) -> int:
     """Download missing public documents into ``cache``; return how many were fetched.
 
-    A document whose bytes differ from the pinned SHA-256 (changed upstream or
-    truncated) stops the run by name and leaves nothing in the cache.
+    Only https URLs on the corpus's allowed hosts are opened. A document whose
+    bytes differ from the pinned SHA-256 (changed upstream or truncated), or whose
+    transfer fails, stops the run by name and leaves nothing in the cache.
     """
+    for document in corpus.documents:
+        check_url(document.source_key, document.url, corpus.allowed_hosts)
     cache.mkdir(parents=True, exist_ok=True)
+    fetch = opener or _guarded_open(corpus.allowed_hosts)
     fetched = 0
     for document in corpus.documents:
         target = cache / document.sha256
         if target.is_file():
             continue
-        with (opener or _urlopen)(document.url) as response:
-            data = response.read(max_bytes + 1)
-        if len(data) > max_bytes:
+        data = _download(document, fetch, max_bytes)
+        try:
+            write_atomic(target, data)
+        except OSError as error:
             raise BenchCorpusError(
-                f"{document.source_key}: download exceeds {max_bytes} bytes"
-            )
-        if hashlib.sha256(data).hexdigest() != document.sha256:
-            raise BenchCorpusError(
-                f"{document.source_key}: bytes from {document.url} differ from the"
-                " pinned SHA-256 (changed upstream or truncated)"
-            )
-        partial = target.with_name(target.name + ".part")
-        partial.write_bytes(data)
-        partial.replace(target)
+                f"{document.source_key}: cannot store the download: {error!r}"
+            ) from None
         fetched += 1
     return fetched
 
@@ -194,6 +273,12 @@ def document_bytes(document: BenchDocument, cache: Path) -> bytes:
     if document.transform is None:
         return data
     derived = cache / f"{document.sha256}.{document.transform.replace('@', '-')}.pdf"
-    if not derived.is_file():
-        derived.write_bytes(rasterize_pdf(data))
-    return derived.read_bytes()
+    seal = derived.with_name(derived.name + ".sha256")
+    if derived.is_file() and seal.is_file():
+        scan = derived.read_bytes()
+        if hashlib.sha256(scan).hexdigest() == seal.read_text().strip():
+            return scan
+    scan = rasterize_pdf(data)
+    write_atomic(derived, scan)
+    write_atomic(seal, hashlib.sha256(scan).hexdigest().encode())
+    return scan
