@@ -1310,9 +1310,7 @@ class QueryService:
             raise TychoraError(
                 "FORBIDDEN_SCOPE", "Image query ownership is not eligible."
             )
-        ref = ArtifactRef(
-            sha256=row[2], size_bytes=row[9], media_type=row[10], storage_key=row[11]
-        )
+        ref = ArtifactRef.from_row((row[2], *row[9:12]))
         try:
             from PIL import Image, ImageOps
         except ImportError:

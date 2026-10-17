@@ -563,12 +563,7 @@ class DiscoveryService:
                 (extraction,),
             ).fetchone()
             if row is not None:
-                ref = ArtifactRef(
-                    sha256=row[0],
-                    size_bytes=row[1],
-                    media_type=row[2],
-                    storage_key=row[3],
-                )
+                ref = ArtifactRef.from_row(row)
                 if ref.size_bytes > 65536 or ref.media_type != "application/json":
                     raise TychoraError(
                         "INTEGRITY_ERROR", "Vision capability diagnostic differs."
@@ -800,9 +795,7 @@ class DiscoveryService:
                     )
                 return payload
 
-            root_ref = ArtifactRef(
-                sha256=row[0], size_bytes=row[1], media_type=row[2], storage_key=row[3]
-            )
+            root_ref = ArtifactRef.from_row(row)
             root = json.loads(read_ref(root_ref))
             if root.get("data", {}).get("representation") != "document-composition@1":
                 raise TychoraError(
@@ -1094,12 +1087,7 @@ class DiscoveryService:
                 raise TychoraError(
                     "INTEGRITY_ERROR", "Code resolution artifact is unavailable."
                 )
-            ref = ArtifactRef(
-                sha256=row[1],
-                size_bytes=ref_row[0],
-                media_type=ref_row[1],
-                storage_key=ref_row[2],
-            )
+            ref = ArtifactRef.from_row((row[1], *ref_row[:3]))
             with owner.artifacts.open_verified(ref) as stream:
                 try:
                     payload = json.load(stream)

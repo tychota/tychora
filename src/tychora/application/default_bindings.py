@@ -353,10 +353,7 @@ def compose_default_bindings(
             )
             runtimes.append(visual_runtime)
             cleanup.callback(visual_runtime.close)
-            epoch = owner.db.execute(
-                "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
-                (owner.workspace_id,),
-            ).fetchone()[0]
+            epoch = owner.policy_epoch()
             access = OwnerVisualAccess(owner, owner.scope, epoch)
             access.read_scope((), ExecutionContext())
             visual_embedder = VoyageVisualEmbedder(
@@ -381,10 +378,7 @@ def compose_default_bindings(
             )
             runtimes.append(rerank_runtime)
             cleanup.callback(rerank_runtime.close)
-            epoch = owner.db.execute(
-                "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
-                (owner.workspace_id,),
-            ).fetchone()[0]
+            epoch = owner.policy_epoch()
             access = OwnerRerankAccess(owner, owner.scope, epoch)
             reranker = VoyageReranker(
                 capabilities=rerank_caps,

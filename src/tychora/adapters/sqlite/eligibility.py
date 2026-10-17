@@ -6,6 +6,7 @@ import json
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
+from tychora.adapters.sqlite.repositories import SqliteWorkspaceRepository, artifact_ref
 from tychora.application.collection_policy import collection_is_active
 from tychora.configuration.global_facets import (
     ROLE as GLOBAL_FACET_ROLE,
@@ -222,12 +223,7 @@ def read_eligibility_facts(
         raise _integrity("Eligibility requires its own short read")
     db.execute("BEGIN")
     try:
-        epoch_row = db.execute(
-            "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
-            (snapshot.workspace_id,),
-        ).fetchone()
-        if epoch_row is None:
-            raise _integrity("Snapshot workspace is unavailable")
+        policy_epoch_value = SqliteWorkspaceRepository(db).policy_epoch()
         revision_facts: list[RevisionFact] = []
         unit_facts: list[UnitFact] = []
         chunk_facts: list[ChunkFact] = []
@@ -293,12 +289,7 @@ def read_eligibility_facts(
                 marker = marker_rows[0]
                 try:
                     with store.artifacts.open_verified(
-                        ArtifactRef(
-                            sha256=marker[1],
-                            size_bytes=marker[2],
-                            media_type=marker[3],
-                            storage_key=marker[4],
-                        )
+                        artifact_ref(marker[1:5])
                     ) as stream:
                         if stream.read(65537) != global_binding:
                             raise TychoraError(
@@ -588,7 +579,7 @@ def read_eligibility_facts(
             )
         )
         result = EligibilityFacts(
-            policy_epoch=epoch_row[0],
+            policy_epoch=policy_epoch_value,
             revisions=tuple(revision_facts),
             units=tuple(unit_facts),
             chunks=tuple(chunk_facts),
@@ -606,10 +597,4 @@ def read_eligibility_facts(
 
 
 def policy_epoch(store: CorpusStore, workspace_id: str) -> int:
-    row = store.db.execute(
-        "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
-        (workspace_id,),
-    ).fetchone()
-    if row is None:
-        raise _integrity("Eligibility snapshot is unavailable")
-    return row[0]
+    return SqliteWorkspaceRepository(store.db).policy_epoch()

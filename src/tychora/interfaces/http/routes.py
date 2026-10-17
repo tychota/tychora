@@ -201,11 +201,7 @@ def register_routes(app: FastAPI) -> None:
             {
                 "managed_workspace_owner": request.state.managed_workspace_owner,
                 "policy_epoch": await owner.run_blocking(
-                    lambda: owner.db.execute(
-                        "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
-                        (owner.workspace_id,),
-                    ).fetchone()[0],
-                    ExecutionContext(),
+                    owner.policy_epoch, ExecutionContext()
                 ),
                 "schema_version": "1",
                 "protocol_version": 1,

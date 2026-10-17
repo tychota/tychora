@@ -226,9 +226,7 @@ class ProjectionCoordinator:
         ).fetchone()
         if row is None or row[4] != "running":
             _fail("Projection job is not running")
-        return ArtifactRef(
-            sha256=row[0], size_bytes=row[1], media_type=row[2], storage_key=row[3]
-        )
+        return ArtifactRef.from_row(row)
 
     def _windows(self, bundle: ExtractionBundle) -> tuple[SearchWindow, ...]:
         prepared = prepare_extraction(bundle)
@@ -631,12 +629,7 @@ class ProjectionCoordinator:
             ).fetchone()
             if artifact is None or artifact[3] != "present":
                 _fail("Canonical image artifact is unavailable")
-            ref = ArtifactRef(
-                sha256=asset.artifact_sha,
-                size_bytes=artifact[0],
-                media_type=artifact[1],
-                storage_key=artifact[2],
-            )
+            ref = ArtifactRef.from_row((asset.artifact_sha, *artifact[:3]))
             try:
                 from PIL import Image, ImageOps
             except ImportError:
@@ -816,12 +809,7 @@ class ProjectionCoordinator:
                 ).fetchone()
                 if artifact is None or artifact[4] != "present":
                     _fail("Graph assertion root is unavailable")
-                root = ArtifactRef(
-                    sha256=artifact[0],
-                    size_bytes=artifact[1],
-                    media_type=artifact[2],
-                    storage_key=artifact[3],
-                )
+                root = ArtifactRef.from_row(artifact)
             unit_ids = tuple(
                 row[0]
                 for row in self.store.db.execute(
@@ -837,9 +825,8 @@ class ProjectionCoordinator:
                     unit_ids=unit_ids,
                 )
             )
-        watermark = self.store.db.execute(
-            "SELECT COALESCE(MAX(decision_id),0) FROM assertion_decisions"
-        ).fetchone()[0]
+        with self.store.uow.read() as tx:
+            watermark = tx.workspace.decision_watermark()
         spec = GraphGenerationSpec(
             generation_id=digest(
                 "graph-generation-v2",
@@ -1244,9 +1231,8 @@ class ProjectionCoordinator:
             )
         slots = tuple(current.slots)
         if self.config.values.index.graph != "disabled":
-            watermark = self.store.db.execute(
-                "SELECT COALESCE(MAX(decision_id),0) FROM assertion_decisions"
-            ).fetchone()[0]
+            with self.store.uow.read() as tx:
+                watermark = tx.workspace.decision_watermark()
             graph = next((slot for slot in slots if slot.slot == "graph"), None)
             if (
                 graph is None

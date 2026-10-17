@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, NoReturn
 from uuid import UUID
 
 from tychora.adapters.files.references import MAX_MANIFEST_BYTES, required_closure
+from tychora.adapters.sqlite.repositories import SqliteWorkspaceRepository, artifact_ref
 from tychora.application.collection_policy import (
     collection_is_active,
     require_active_collection,
@@ -476,9 +477,7 @@ def check_publication_target(store: CorpusStore, plan: PublicationPlan) -> str |
         _fail("Publication capture exceeds its verified metadata budget")
     capture = _read_json(
         store,
-        ArtifactRef(
-            sha256=row[0], size_bytes=row[1], media_type=row[2], storage_key=row[3]
-        ),
+        artifact_ref(row),
     )
     auth_row = store.db.execute(
         "SELECT a.artifact_sha,a.size_bytes,a.media_type,a.storage_key FROM job_steps js "
@@ -490,12 +489,7 @@ def check_publication_target(store: CorpusStore, plan: PublicationPlan) -> str |
         _fail("Publication source authorization is unavailable")
     auth_doc = _read_json(
         store,
-        ArtifactRef(
-            sha256=auth_row[0],
-            size_bytes=auth_row[1],
-            media_type=auth_row[2],
-            storage_key=auth_row[3],
-        ),
+        artifact_ref(auth_row),
     )
     try:
         if capture["type"] != "job_capture" or capture["schema_version"] != "1":
@@ -589,9 +583,7 @@ def publish_snapshot(store: CorpusStore, plan: PublicationPlan) -> str:
                     receipt = graph.batches[0].receipt
                     if not isinstance(receipt, GraphBatchReceipt):
                         _fail("Graph publication receipt is invalid")
-                    watermark = store.db.execute(
-                        "SELECT COALESCE(MAX(decision_id),0) FROM assertion_decisions"
-                    ).fetchone()[0]
+                    watermark = SqliteWorkspaceRepository(store.db).decision_watermark()
                     if receipt.decision_watermark != watermark:
                         raise TychoraError(
                             "WORKSPACE_BUSY",
@@ -699,12 +691,7 @@ def resolve_snapshot(store: CorpusStore, selector: str | None) -> SnapshotView:
     ).fetchone()
     if artifact is None or artifact[4] != "present":
         _fail("Snapshot manifest is unavailable")
-    ref = ArtifactRef(
-        sha256=artifact[0],
-        size_bytes=artifact[1],
-        media_type=artifact[2],
-        storage_key=artifact[3],
-    )
+    ref = artifact_ref(artifact)
     document = _read_json(store, ref)
     if document.get("type") != "snapshot" or document.get("schema_version") != "1":
         _fail("Snapshot manifest type differs")

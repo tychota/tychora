@@ -95,9 +95,7 @@ def _verified_selected_extraction(
     if len(rows) > 1000:
         _invalid()
     for row in rows:
-        ref = ArtifactRef(
-            sha256=row[0], size_bytes=row[1], media_type=row[2], storage_key=row[3]
-        )
+        ref = ArtifactRef.from_row(row)
         if ref.size_bytes > 16 * 1024 * 1024:
             continue
         with owner.artifacts.open_verified(ref) as stream:

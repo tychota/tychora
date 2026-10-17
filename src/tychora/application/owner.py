@@ -251,6 +251,16 @@ class WorkspaceOwner:
             leases=self.leases,
         )
 
+    def policy_epoch(self) -> int:
+        """Return the workspace policy epoch; the owner thread calls this."""
+        with self.store.uow.read() as tx:
+            return tx.workspace.policy_epoch()
+
+    def decision_watermark(self) -> int:
+        """Return the highest recorded decision sequence; the owner thread calls this."""
+        with self.store.uow.read() as tx:
+            return tx.workspace.decision_watermark()
+
     @contextmanager
     def maintenance_barrier(self) -> Iterator[None]:
         """Hold the owner-thread canonical cut and pause physical CAS mutations.
@@ -911,11 +921,7 @@ class CanonicalUploadPolicy:
             _deny()
 
     def _check_epoch(self, policy_epoch: int) -> None:
-        epoch = self._owner.db.execute(
-            "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
-            (self._owner.workspace_id,),
-        ).fetchone()
-        if epoch is None or type(policy_epoch) is not int or epoch[0] != policy_epoch:
+        if type(policy_epoch) is not int or self._owner.policy_epoch() != policy_epoch:
             raise TychoraError(
                 "SCOPE_CHANGED",
                 "Workspace policy changed; retry authorization",
