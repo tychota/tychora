@@ -487,3 +487,20 @@ def test_a_stopped_job_service_refuses_new_jobs_but_the_workspace_stays_usable(
         assert target.restore_policy(inventory.sources) >= 0
     finally:
         target.close()
+
+
+def test_a_replayed_review_keeps_the_time_of_the_old_decision(old, tmp_path):
+    root, alpha_revision = old
+    with _edit(root) as db:
+        db.execute(
+            "UPDATE review_events SET created_at='2026-02-03T04:05:06+00:00' "
+            "WHERE revision_id=?",
+            (alpha_revision,),
+        )
+    rebuild_workspace_from(root, tmp_path / "new", token_counter=Counter())
+    with Tychora.open(tmp_path / "new", token_counter=Counter()) as kb:
+        assert _read(
+            kb,
+            "SELECT created_at FROM review_events WHERE revision_id=?",
+            alpha_revision,
+        ) == [("2026-02-03T04:05:06+00:00",)]

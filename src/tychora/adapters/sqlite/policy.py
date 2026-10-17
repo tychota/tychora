@@ -82,7 +82,18 @@ class PolicyRepository:
         ).fetchone()
         return event[0] if event else declared
 
-    def record_review(self, target: ReviewTarget, state: str, actor: str) -> int:
+    def record_review(
+        self,
+        target: ReviewTarget,
+        state: str,
+        actor: str,
+        *,
+        decided_at: datetime | None = None,
+    ) -> int:
+        if decided_at is not None and decided_at.tzinfo is None:
+            raise TychoraError(
+                "INVALID_REQUEST", "A decision time must be timezone-aware"
+            )
         if (
             state not in ("unreviewed", "needs_review", "accepted", "rejected")
             or not actor.strip()
@@ -92,7 +103,14 @@ class PolicyRepository:
             column, identifier, (_, _, workspace, _) = self._subject(target)
             cursor = self.db.execute(
                 f"INSERT INTO review_events ({column},state,actor_id,created_at) VALUES (?,?,?,?)",
-                (identifier, state, actor, now()),
+                (
+                    identifier,
+                    state,
+                    actor,
+                    now()
+                    if decided_at is None
+                    else decided_at.astimezone(UTC).isoformat(),
+                ),
             )
             self._bump(workspace)
             event_id = cursor.lastrowid

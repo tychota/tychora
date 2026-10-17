@@ -6,6 +6,7 @@ import os
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack
 from dataclasses import dataclass
+from datetime import datetime
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -372,10 +373,14 @@ class _LocalRebuildTarget:
             lambda: restore_policy(owner.db, owner.workspace_id, sources)
         )
 
-    def record_review(self, target: ReviewTarget, state: str, actor: str) -> None:
-        """Record a review event for a revision, unit or asset."""
+    def record_review(
+        self, target: ReviewTarget, state: str, actor: str, decided_at: datetime
+    ) -> None:
+        """Record a review event, dated as the old decision, for a revision, unit or asset."""
         store = self._workspace.owner.store
-        self._on_owner(lambda: store.record_review(target, state, actor))
+        self._on_owner(
+            lambda: store.record_review(target, state, actor, decided_at=decided_at)
+        )
 
     def close(self) -> None:
         """Release the new workspace."""
