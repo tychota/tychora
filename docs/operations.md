@@ -17,7 +17,7 @@ tychora --workspace ./knowledge inspect job JOB_ID --json
 tychora --workspace ./knowledge manage export ./knowledge-backup
 tychora manage import ./knowledge-backup ./knowledge-restored
 tychora --workspace ./knowledge-restored manage health --verify-payloads
-tychora --workspace ./knowledge-restored manage rebuild text graph
+tychora --workspace ./knowledge-restored manage rebuild native text graph
 tychora --workspace ./knowledge-restored manage health --verify-native
 ```
 
