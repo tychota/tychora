@@ -560,6 +560,14 @@ class CaseEvaluation(Contract):
     metrics: MetricSet
 
 
+class LabelFailure(Contract):
+    """A gold case skipped because one of its labels did not resolve."""
+
+    case_id: Identifier
+    reason: Literal["label.missing", "label.ambiguous"]
+    detail: str
+
+
 class EvaluationReport(Contract):
     dataset_id: Identifier
     split: NonEmptyStr
@@ -567,3 +575,4 @@ class EvaluationReport(Contract):
     cases: tuple[CaseEvaluation, ...]
     aggregate: MetricSet
     created_at: datetime
+    label_failures: tuple[LabelFailure, ...] = ()
