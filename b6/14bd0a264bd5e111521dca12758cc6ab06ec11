@@ -1,0 +1,21 @@
+tests/release/test_installed_wheel.py
+  s_ab847b2c6c265a::t_1911d6b224ae9b 96
+dashboard/src/test/documents.test.tsx
+  s_ab847b2c6c265a::t_9a9bb5fae9680a 276-283
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b614bd0a264bd5e111521dca12758cc6ab06ec11",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
