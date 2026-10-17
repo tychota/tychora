@@ -108,7 +108,11 @@ def main() -> None:
         configuration = workspace / "workspace.toml"
         with configuration.open("a") as stream:
             stream.write("\n[configuration]\noffline = true\n")
-        fixtures = Path(os.environ.get("TYCHORA_E2E_FIXTURE_DIR", temporary))
+        fixtures = Path(
+            os.environ.get("TYCHORA_E2E_FIXTURE_DIR")
+            or Path(__file__).resolve().parents[2]
+            / ".superpowers/verification/dashboard-e2e/ocr-intake-fixtures"
+        )
         scenario = os.environ.get("TYCHORA_E2E_SCENARIO", "local")
         prepare(scenario, workspace, fixtures)
         config = resolve_config(configuration, "local", {})
