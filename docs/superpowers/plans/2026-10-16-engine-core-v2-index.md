@@ -52,6 +52,15 @@ Every task of every phase implicitly includes these.
 
 If any prerequisite is missing, stop and report; do not work around it.
 
+## Carried over from phase 1
+
+Phase 1 leaves out interface members that nothing calls yet, because the dead-code gate (G12) refuses members without a caller. The index names stay binding; the first phase that calls a member adds it under its exact name:
+
+- `UnitOfWork`, `ReadTransaction`, `WriteTransaction` protocols in `ports/repositories.py`; `WorkspaceOwner.uow`.
+- `WorkspaceRepository.format_version`, `bump_policy_epoch`, `bump_lexical_epoch`; `ArtifactRepository.require`.
+
+Phase 4 also routes the remaining raw `lexical_statistics_epoch` reads (`application/query.py`, `adapters/sqlite/publication.py`, `retrieval/lexical.py`) through the workspace repository; the phase-1 guard only pins `policy_epoch` reads. Phase 4 further owns the code-gold `definition_recall` fix (output budget stubs drop `definition_key`), the full-repository code search (about 12 s per search at phase-1 HEAD) and the query p95 measured above budget on `bench-small`.
+
 ## Format changes across phases
 
 The format is declared once (phase 1: `SCHEMA_VERSION = 2`) and the DDL of `0001.sql` grows in phases 2 to 7. Each DDL change updates `SCHEMA_CHECKSUM` in `src/tychora/adapters/sqlite/migrations.py` in the same commit. A workspace created on an intermediate commit fails to open after a later phase with `PROFILE_INCOMPATIBLE` reason `workspace.format_old`; it is recreated with `tychora manage rebuild workspace --from <old-path>`, which phase 1 delivers precisely so that every later DDL change has a recovery path. No release is cut between phases (the `binary.yml` and `build.yml` release jobs are not triggered for intermediate tags).
