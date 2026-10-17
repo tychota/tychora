@@ -205,3 +205,47 @@ def test_cli_dashboard_link_and_startup_link_exchange_against_live_owner(tmp_pat
         stdout, _ = process.communicate(timeout=5)
     assert f"http://{record['authority']}/dashboard/#launch=" in stdout
     assert record["token"] not in stdout
+
+
+def _hold_standalone(path: Path):
+    """Open the workspace in a child process through the Python API, no server."""
+    script = """
+import sys
+from pathlib import Path
+from tychora import Tychora
+class Counter:
+    model = "synthetic-output-test-counter"
+    tokenizer_id = "cl100k_base"
+    def count(self, text):
+        return len(text)
+with Tychora.open(Path(sys.argv[1]), token_counter=Counter()):
+    print("ready", flush=True)
+    sys.stdin.readline()
+"""
+    process = subprocess.Popen(
+        [sys.executable, "-c", script, str(path)],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+    )
+    assert process.stdout is not None
+    assert process.stdout.readline().strip() == "ready", process.stderr
+    return process
+
+
+def test_standalone_owner_without_endpoint_is_busy_not_integrity(tmp_path):
+    workspace = tmp_path / "workspace"
+    process = _hold_standalone(workspace)
+    try:
+        with pytest.raises(TychoraError) as error:
+            connect_local(workspace)
+        assert error.value.code == "WORKSPACE_BUSY"
+        assert error.value.reason == "owner.live"
+        assert error.value.retryable is True
+    finally:
+        assert process.stdin is not None
+        process.stdin.write("\n")
+        process.stdin.flush()
+        process.wait(timeout=30)
