@@ -93,7 +93,7 @@ def test_full_installed_wheel_native_sdk_document_http_mcp_and_restore(
             source_tests / "qualification" / name, target_tests / "qualification" / name
         )
     shutil.copy2(source_tests / "__init__.py", target_tests / "__init__.py")
-    for name in ("__init__.py", "ladybug.py"):
+    for name in ("__init__.py", "ladybug.py", "timing.py"):
         shutil.copy2(source_tests / "helpers" / name, target_tests / "helpers" / name)
     shutil.copy2(
         source_tests / "cli/test_commands.py", target_tests / "cli/test_commands.py"
