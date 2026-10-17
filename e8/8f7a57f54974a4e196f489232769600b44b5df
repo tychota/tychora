@@ -1,0 +1,28 @@
+src/tychora/api.py
+  s_ab847b2c6c265a::t_d21cca27c8d40a 364,367
+  s_ab847b2c6c265a::t_784d945b35722b 365-366
+src/tychora/application/workspace_rebuild.py
+  s_ab847b2c6c265a::t_d21cca27c8d40a 13,108-111,305-329,333-343,374,376,382-384,386-398
+  s_ab847b2c6c265a::t_784d945b35722b 330-332
+src/tychora/application/services.py
+  s_ab847b2c6c265a::t_784d945b35722b 71,320-324,326,328,330
+tests/application/test_workspace_rebuild.py
+  s_ab847b2c6c265a::t_0f6beb2709ad7f 392-452
+  s_ab847b2c6c265a::t_784d945b35722b 453-489
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e88f7a57f54974a4e196f489232769600b44b5df",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
