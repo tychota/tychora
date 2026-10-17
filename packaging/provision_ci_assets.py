@@ -93,9 +93,12 @@ def _retryable_download_failure(stderr: str) -> bool:
     return False
 
 
+_ATTEMPTS = 5
+
+
 def run_setup(command: list[str], env: dict[str, str]) -> None:
     """Retry only an explicitly transient public asset download failure."""
-    for attempt in range(1, 4):
+    for attempt in range(1, _ATTEMPTS + 1):
         result = subprocess.run(
             command, env=env, capture_output=True, text=True, check=False
         )
@@ -105,10 +108,12 @@ def run_setup(command: list[str], env: dict[str, str]) -> None:
             sys.stderr.write(result.stderr)
         if result.returncode == 0:
             return
-        if attempt == 3 or not _retryable_download_failure(result.stderr):
+        if attempt == _ATTEMPTS or not _retryable_download_failure(result.stderr):
             result.check_returncode()
-        print(f"Retrying public asset setup ({attempt + 1}/3)", file=sys.stderr)
-        time.sleep(5 * attempt)
+        print(
+            f"Retrying public asset setup ({attempt + 1}/{_ATTEMPTS})", file=sys.stderr
+        )
+        time.sleep(5 * 2 ** (attempt - 1))  # 5, 10, 20, 40 s: 75 s in total
 
 
 def main() -> None:
