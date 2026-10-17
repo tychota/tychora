@@ -92,7 +92,9 @@ class PolicyRepository:
     ) -> int:
         if decided_at is not None and decided_at.tzinfo is None:
             raise TychoraError(
-                "INVALID_REQUEST", "A decision time must be timezone-aware"
+                "INVALID_REQUEST",
+                "A decision time must be timezone-aware",
+                reason="review.time_naive",
             )
         if (
             state not in ("unreviewed", "needs_review", "accepted", "rejected")

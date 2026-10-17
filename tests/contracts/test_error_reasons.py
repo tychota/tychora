@@ -61,7 +61,7 @@ CLASSIFIED_REASONS = {
     "INTEGRITY_ERROR": {"workspace.database_invalid", "runtime.endpoint_unsafe"},
     "CAPABILITY_MISSING": {"storage.version_unsupported"},
     "LIMIT_EXCEEDED": {"evaluation.binding_budget"},
-    "INVALID_REQUEST": {"bench.incomparable"},
+    "INVALID_REQUEST": {"bench.incomparable", "review.time_naive"},
 }
 
 
