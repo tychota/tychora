@@ -9,7 +9,7 @@ from tychora.adapters.voyage.validation import (
 )
 from tychora.contracts.embeddings import EmbeddingRecord
 from tychora.contracts.errors import TychoraError
-from tychora.indexing.receipts import vector_value_sha
+from tychora.contracts.vector_batches import vector_value_sha
 
 
 @pytest.mark.parametrize("values", [[0.0, 0.0], [math.nan, 1.0], [1.0]])
