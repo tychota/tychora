@@ -191,8 +191,8 @@ def create_family(
     if claimed not in (None, nonce):
         raise TychoraError(
             "WORKSPACE_BUSY",
-            "Another writer created this index family first.",
-            reason="publication.rebase",
+            "A concurrent index family creation claimed this identity first.",
+            reason="family.claimed",
         )
     tx.families.create(family, nonce, identity_sha)
 

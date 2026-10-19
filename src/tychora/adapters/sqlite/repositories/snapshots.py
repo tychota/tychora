@@ -13,6 +13,14 @@ from .batches import BATCH_SELECT, batch_from_row
 from .workspace import require_write
 
 
+def _ambiguous_workspace() -> TychoraError:
+    return TychoraError(
+        "INTEGRITY_ERROR",
+        "Workspace identity is missing or ambiguous.",
+        reason="canonical.row_invalid",
+    )
+
+
 def _integrity(message: str) -> TychoraError:
     return TychoraError("INTEGRITY_ERROR", message, reason="canonical.binding_mismatch")
 
@@ -28,7 +36,7 @@ class SqliteSnapshotRepository:
         """Return the active snapshot ID, or ``None`` before the first publication."""
         rows = self._db.execute("SELECT active_snapshot_id FROM workspaces").fetchall()
         if len(rows) != 1:
-            raise _integrity("Canonical workspace identity is ambiguous")
+            raise _ambiguous_workspace()
         return rows[0][0]
 
     def set_active(self, snapshot_id: str) -> None:
@@ -38,7 +46,7 @@ class SqliteSnapshotRepository:
             "UPDATE workspaces SET active_snapshot_id=?", (snapshot_id,)
         ).rowcount
         if updated != 1:
-            raise _integrity("Canonical workspace identity is ambiguous")
+            raise _ambiguous_workspace()
 
     def insert_page(self, page: MembershipPage, manifest: ArtifactRef) -> None:
         """Store a page and its rows once; an identical repeat is a no-op."""

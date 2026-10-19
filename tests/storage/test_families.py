@@ -97,6 +97,7 @@ def test_family_creation_rechecks_the_nonce_in_its_write_transaction(seeded):
     with pytest.raises(TychoraError) as error, uow.write() as tx:
         create_family(tx, _family(workspace, "c" * 64, late), late, "c" * 64)
     assert error.value.code == "WORKSPACE_BUSY"
-    assert error.value.reason == "publication.rebase"
+    assert error.value.reason == "family.claimed"
+    assert "concurrent" in str(error.value)
     with uow.read() as tx:
         assert tx.families.nonce("lexical", "c" * 64) == first

@@ -167,3 +167,58 @@ def test_read_transaction_cannot_write_batches(seeded_batch, write):
         calls[write](tx)
     assert error.value.reason == "invariant.unexpected"
     assert db.execute("SELECT state FROM index_batches").fetchone()[0] == "building"
+
+
+@pytest.mark.parametrize("state", ["removed", "failed"])
+def test_begin_revives_a_removed_or_failed_batch(seeded_batch, state):
+    db, uow, batch, entries = seeded_batch
+    with uow.write() as tx:
+        tx.batches.begin(batch)
+        tx.batches.mark_ready(batch.batch_id, 1)
+        db.execute("UPDATE index_batches SET state=?", (state,))
+    with uow.write() as tx:
+        tx.batches.begin(batch)
+        row = tx.batches.get(batch.batch_id)
+        assert row is not None
+        assert (row.state, row.actual_count) == ("building", None)
+        tx.batches.write_lexical(
+            batch.batch_id, (LexicalRecord(chunk_id=entries[0], body="Record"),)
+        )
+        tx.batches.mark_ready(batch.batch_id, 1)
+    with uow.read() as tx:
+        assert tx.batches.count_ready((batch.batch_id,)) == 1
+
+
+def test_revival_refuses_a_different_row(seeded_batch):
+    db, uow, batch, _ = seeded_batch
+    with uow.write() as tx:
+        tx.batches.begin(batch)
+        db.execute("UPDATE index_batches SET state='removed'")
+    forged = batch.model_copy(update={"expected_count": 2})
+    with pytest.raises(TychoraError) as error, uow.write() as tx:
+        tx.batches.begin(forged)
+    assert error.value.reason == "canonical.binding_mismatch"
+    assert db.execute("SELECT state FROM index_batches").fetchone()[0] == "removed"
+
+
+@pytest.mark.parametrize("write", ["lexical", "vectors"])
+def test_rows_for_an_unknown_batch_are_refused(seeded_batch, write):
+    _, uow, _, entries = seeded_batch
+    with pytest.raises(TychoraError) as error, uow.write() as tx:
+        if write == "lexical":
+            tx.batches.write_lexical("unknown", (LexicalRecord(chunk_id=entries[0]),))
+        else:
+            tx.batches.write_vectors(
+                "unknown",
+                (
+                    VectorRecordRow(
+                        record_id="r" * 64,
+                        chunk_id=entries[0],
+                        asset_id=None,
+                        input_sha="a" * 64,
+                        row_index=0,
+                    ),
+                ),
+            )
+    assert error.value.code == "INTEGRITY_ERROR"
+    assert error.value.reason == "canonical.binding_mismatch"

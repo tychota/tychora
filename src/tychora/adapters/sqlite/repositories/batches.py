@@ -112,8 +112,20 @@ class SqliteBatchRepository:
         if stored != values:
             raise _mismatch(f"A {table} row differs from its immutable value")
 
+    def _require_batch(self, batch_id: str) -> None:
+        if (
+            self._db.execute(
+                "SELECT 1 FROM index_batches WHERE batch_id=?", (batch_id,)
+            ).fetchone()
+            is None
+        ):
+            raise _mismatch("Rows name an index batch that was never begun")
+
     def begin(self, batch: NewBatch) -> None:
-        """Store a building batch once; an identical repeat is a no-op."""
+        """Store a building batch once; an identical repeat is a no-op.
+
+        A removed or failed batch with the same immutable values builds again.
+        """
         require_write(self._db, self._writable)
         self._artifacts.register(batch.input_manifest)
         if batch.vectors is not None:
@@ -125,15 +137,22 @@ class SqliteBatchRepository:
             values,
         )
         stored = self._db.execute(
-            f"SELECT {_IMMUTABLE_COLUMNS} FROM index_batches WHERE batch_id=?",
+            f"SELECT {_IMMUTABLE_COLUMNS},state FROM index_batches WHERE batch_id=?",
             (batch.batch_id,),
         ).fetchone()
-        if stored != values:
+        if stored is None or stored[:-1] != values:
             raise _mismatch("Index batch differs from its immutable row")
+        if stored[-1] in ("removed", "failed"):
+            self._db.execute(
+                "UPDATE index_batches SET state='building',actual_count=NULL "
+                "WHERE batch_id=?",
+                (batch.batch_id,),
+            )
 
     def write_lexical(self, batch_id: str, records: tuple[LexicalRecord, ...]) -> None:
         """Store a batch's lexical records; stored records never change."""
         require_write(self._db, self._writable)
+        self._require_batch(batch_id)
         for r in records:
             values = (
                 batch_id,
@@ -149,6 +168,7 @@ class SqliteBatchRepository:
     def write_vectors(self, batch_id: str, rows: tuple[VectorRecordRow, ...]) -> None:
         """Store a batch's vector record rows; stored rows never change."""
         require_write(self._db, self._writable)
+        self._require_batch(batch_id)
         for r in rows:
             values = (
                 r.record_id,
