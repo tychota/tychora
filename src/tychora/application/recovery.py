@@ -13,7 +13,7 @@ from uuid import uuid4
 from tychora.adapters.files.references import from_backup
 from tychora.adapters.sqlite.graph import read_graph_build
 from tychora.adapters.sqlite.jobs import JobRepository
-from tychora.adapters.sqlite.vector_owners import vector_owner_rows
+from tychora.adapters.sqlite.vector_owners import OwnerRow, vector_owner_rows
 from tychora.application.removal import RemovalService
 from tychora.application.restore import RESTORE_SUSPENSION, deletion_suspended
 from tychora.configuration.indexed_representation import pinned_runtime_compatible
@@ -329,7 +329,7 @@ def _bindings_match_receipt(batch: PublicationBatch) -> bool:
     )
 
 
-def _vector_owners(owner_rows: tuple[tuple, ...]) -> tuple[VectorOwner, ...]:
+def _vector_owners(owner_rows: tuple[OwnerRow, ...]) -> tuple[VectorOwner, ...]:
     """Owners of the records described by (record, revision, extraction, unit, asset) rows."""
     return tuple(
         VectorOwner(
@@ -337,7 +337,7 @@ def _vector_owners(owner_rows: tuple[tuple, ...]) -> tuple[VectorOwner, ...]:
             revision_id=revision_id,
             extraction_id=extraction_id,
             owner_kind="unit" if unit_id else "asset",
-            owner_id=unit_id or asset_id,
+            owner_id=unit_id or asset_id or "",  # empty fails the Identifier check
         )
         for record_id, revision_id, extraction_id, unit_id, asset_id in owner_rows
     )
@@ -348,7 +348,7 @@ def vector_batch_records(
     batch: PublicationBatch,
     artifacts,
     *,
-    owner_rows: tuple[tuple, ...] = (),
+    owner_rows: tuple[OwnerRow, ...] = (),
 ) -> VectorBatch:
     """Rebuild the exact retained float32 rows bound to the sealed receipt.
 
@@ -405,9 +405,15 @@ def vector_batch_records(
             "Retained vector is not normalized float32",
             reason="canonical.row_invalid",
         ) from None
-    return VectorBatch(
-        family_id=family.family_id, records=records, owners=_vector_owners(owner_rows)
-    )
+    try:
+        owners = _vector_owners(owner_rows)
+        return VectorBatch(family_id=family.family_id, records=records, owners=owners)
+    except ValueError:
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Vector owner rows differ from the batch records",
+            reason="canonical.binding_mismatch",
+        ) from None
 
 
 def verify_native_vector(
