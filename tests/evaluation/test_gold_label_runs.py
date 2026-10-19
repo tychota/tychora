@@ -66,18 +66,23 @@ def _evaluate(kb, dataset_id: str):
 
 def _open_with_guide(tmp_path):
     kb = Tychora.open(tmp_path / "ws", token_counter=Counter())
-    job = kb.sources.add(
-        {
-            "type": "text",
-            "source_key": "guide",
-            "collection_id": "default",
-            "kind": "document@1",
-            "format": "text",
-            "text": TEXT,
-            "metadata": {"title": "Guide"},
-        }
-    )
-    assert kb.jobs.wait(job.id).state == "succeeded"
+    try:
+        job = kb.sources.add(
+            {
+                "type": "text",
+                "source_key": "guide",
+                "collection_id": "default",
+                "kind": "document@1",
+                "format": "text",
+                "text": TEXT,
+                "metadata": {"title": "Guide"},
+            }
+        )
+        assert kb.jobs.wait(job.id).state == "succeeded"
+    except BaseException:
+        # An unclosed workspace hangs the worker when the garbage collector finalizes it.
+        kb.close()
+        raise
     return kb
 
 
