@@ -915,23 +915,17 @@ class RecoveryService:
     def _verify_native_on_owner(
         self, ctx: ExecutionContext
     ) -> tuple[str | None, int, int, int]:
-        """Read bounded ready projections in the pinned active snapshot only."""
+        """Verify every ready batch of the pinned active snapshot, one batch at a time."""
         store = self.owner.store
         if store.active_snapshot_id() is None:
             return None, 0, 0, 0
-        records = generations = skipped = batches = 0
+        records = generations = skipped = 0
         with store.pin_snapshot(None) as snapshot:
             for slot in store.snapshot_slots(snapshot, fresh=True):
                 if slot.slot not in {"text", "image", "graph"}:
                     continue
                 for batch in slot.batches:
                     ctx.checkpoint()
-                    batches += 1
-                    if batches > 128:
-                        raise TychoraError(
-                            "CAPABILITY_MISSING",
-                            "Native health exceeds 128 batch budget",
-                        )
                     row = self.owner.db.execute(
                         "SELECT state FROM index_batches WHERE batch_id=? AND family_id=?",
                         (batch.batch_id, slot.family.family_id),
@@ -954,7 +948,7 @@ class RecoveryService:
                                 "INTEGRITY_ERROR", "Vector receipt type differs"
                             )
                         records += receipt.count
-                        if records > 8192 or receipt.count > 2048:
+                        if receipt.count > 2048:
                             raise TychoraError(
                                 "CAPABILITY_MISSING",
                                 "Native health exceeds vector record budget",

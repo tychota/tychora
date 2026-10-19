@@ -730,13 +730,30 @@ def test_native_recovery_rejects_sql_drift_before_native_write(
     )
 
 
-def test_native_gc_prunes_only_unprotected_vector_batch_then_rebuilds(
-    projected_corpus, tmp_path
-):
+def _recovery_owner(f, path, grant=None):
     from contextlib import nullcontext
     from types import SimpleNamespace
 
     from tychora.application.leases import LeaseSet
+
+    active = f.store.resolve_snapshot(None)
+    return SimpleNamespace(
+        comparison_admission=ComparisonAdmission(),
+        scope=grant or f.scope,
+        store=f.store,
+        db=f.store.db,
+        artifacts=f.store.artifacts,
+        path=path,
+        workspace_id=active.workspace_id,
+        leases=LeaseSet(),
+        restore_deletion_suspended=False,
+        maintenance_barrier=nullcontext,
+    )
+
+
+def test_native_gc_prunes_only_unprotected_vector_batch_then_rebuilds(
+    projected_corpus, tmp_path
+):
     from tychora.application.recovery import RecoveryReport, RecoveryService
 
     f = projected_corpus
@@ -757,18 +774,7 @@ def test_native_gc_prunes_only_unprotected_vector_batch_then_rebuilds(
     grant = f.scope.model_copy(
         update={"capabilities": frozenset({"manage", "read", "write"})}
     )
-    owner = SimpleNamespace(
-        comparison_admission=ComparisonAdmission(),
-        scope=grant,
-        store=f.store,
-        db=f.store.db,
-        artifacts=f.store.artifacts,
-        path=tmp_path,
-        workspace_id=active.workspace_id,
-        leases=LeaseSet(),
-        restore_deletion_suspended=False,
-        maintenance_barrier=nullcontext,
-    )
+    owner = _recovery_owner(f, tmp_path, grant)
 
     class IsolatedRecovery(RecoveryService):
         def _reconcile_on_owner(
@@ -1239,3 +1245,14 @@ def test_image_batches_own_each_record_by_its_asset():
     (owner,) = _asset_owners(cast(ExtractionBundle, bundle), {"rec": "a" * 64})
     assert (owner.owner_kind, owner.owner_id) == ("asset", "a" * 64)
     assert (owner.revision_id, owner.extraction_id) == ("r" * 64, "x" * 64)
+
+
+def test_native_health_covers_more_than_128_batches(projected_corpus, tmp_path):
+    from tychora.application.recovery import RecoveryService
+
+    f = projected_corpus
+    for index in range(130):
+        f.add_revision(f"health outcome {index}", source_key=f"h{index}.md")
+    owner = _recovery_owner(f, tmp_path)
+    report = RecoveryService(owner)._verify_native_on_owner(ExecutionContext())
+    assert report[1] >= 130
