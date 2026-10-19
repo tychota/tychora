@@ -2,7 +2,6 @@
 
 import json
 import sqlite3
-from collections import OrderedDict
 from contextlib import contextmanager
 from typing import NoReturn, cast
 
@@ -27,7 +26,7 @@ from tychora.ports.vectors import VectorIndex
 from .migrations import SCHEMA_VERSION
 from .policy import PolicyRepository
 from .publication import publish_snapshot
-from .retained_slots import load_retained_slots
+from .retained_slots import RetainedBatchCache, load_retained_slots
 from .validation import validate_bundle, verify_artifacts
 
 
@@ -41,10 +40,6 @@ def _row(value: Contract) -> dict:
         key: _json(item) if key.endswith("_json") else item
         for key, item in result.items()
     }
-
-
-# Published snapshots whose retained slots stay in memory for repeated queries.
-SLOT_CACHE_SNAPSHOTS = 4
 
 
 def _fail(message: str) -> NoReturn:
@@ -75,7 +70,7 @@ class CorpusStore(PolicyRepository):
         self.leases = leases if leases is not None else LeaseSet()
         self.publication_context = publication_context
         self.uow = SqliteUnitOfWork(db)
-        self._slot_cache: OrderedDict[str, tuple[RetainedSlot, ...]] = OrderedDict()
+        self.batch_cache = RetainedBatchCache()
 
     @contextmanager
     def immediate_transaction(self):
@@ -184,29 +179,18 @@ class CorpusStore(PolicyRepository):
         with self.leases.pin(frozenset({view.snapshot_id})):
             yield view
 
-    def snapshot_slots(self, view: SnapshotView) -> tuple[RetainedSlot, ...]:
+    def snapshot_slots(
+        self, view: SnapshotView, *, fresh: bool = False
+    ) -> tuple[RetainedSlot, ...]:
         """Return each slot of a snapshot with the contents of its batches.
 
-        Published snapshots are immutable, so the last few stay cached by ID; an
-        entry is dropped once its snapshot is no longer published.
+        Loaded batches are cached by batch ID, so a query after an add reads only
+        the add's new batches. ``fresh`` reads every batch from SQL and its input
+        manifest again, so recovery sees drift introduced after an earlier load.
         """
-        published = (
-            self.db.execute(
-                "SELECT 1 FROM snapshots WHERE snapshot_id=?", (view.snapshot_id,)
-            ).fetchone()
-            is not None
+        return load_retained_slots(
+            self.db, self.artifacts, view, None if fresh else self.batch_cache
         )
-        cached = self._slot_cache.pop(view.snapshot_id, None)
-        slots = (
-            cached
-            if cached is not None and published
-            else load_retained_slots(self.db, self.artifacts, view)
-        )
-        if published:
-            self._slot_cache[view.snapshot_id] = slots
-            while len(self._slot_cache) > SLOT_CACHE_SNAPSHOTS:
-                self._slot_cache.popitem(last=False)
-        return slots
 
     def _insert(self, table: str, row: dict, keys: tuple[str, ...]):
         # Identifiers originate only in the closed repository mappings below.
