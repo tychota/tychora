@@ -506,7 +506,7 @@ def test_collected_unclosed_workspace_releases_its_lock(tmp_path):
     import sys
 
     code = """
-import gc, sys
+import gc, os, sys
 from tychora import Tychora
 failures = []
 sys.unraisablehook = failures.append
@@ -514,6 +514,7 @@ kb = Tychora.open(sys.argv[1])
 del kb
 gc.collect()
 assert not failures, [str(failure.exc_value) for failure in failures]
+assert not os.path.exists(os.path.join(sys.argv[1], ".runtime", "endpoint.json"))
 with Tychora.open(sys.argv[1]):
     print('reopened')
 """
