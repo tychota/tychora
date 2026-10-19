@@ -155,9 +155,12 @@ class ProjectedCorpus:
     def prepare_revision(
         self, text: str, *, source_key: str = "manual.md", edition: str = "1"
     ):
-        bundle = seed_bundle(text, source_key=source_key, edition=edition).model_copy(
-            update={"chunks": ()}
-        )
+        bundle = seed_bundle(text, source_key=source_key, edition=edition)
+        return self.prepare_bundle(bundle)
+
+    def prepare_bundle(self, bundle: ExtractionBundle):
+        """Accept a job and plan publishing ``bundle`` over the active snapshot."""
+        bundle = bundle.model_copy(update={"chunks": ()})
         job = self.jobs.accept(
             "add", self.scope, None, {"sha": bundle.revision.original_sha}, self.config
         )
