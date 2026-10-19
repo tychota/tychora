@@ -1,5 +1,9 @@
 name: Locked checks
 
+# Pull-request budget: every job below runs in parallel and the slowest path
+# (a test shard, then the report gates) finishes in about 10 minutes. The per-file
+# isolation run lives in health-nightly.yml; see docs/contributing.md "CI".
+
 on:
   pull_request:
   push:
@@ -14,15 +18,20 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   tests:
-    name: Tests (${{ matrix.runner }})
+    name: Tests (${{ matrix.runner }}, shard ${{ matrix.shard }}/3)
     strategy:
       fail-fast: false
       matrix:
         runner: [ubuntu-22.04, macos-15]
+        shard: [1, 2, 3]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -33,29 +42,46 @@ jobs:
           enable-cache: true
       - name: Install locked stack
         run: uv sync --locked --all-extras --group dev --group test-fixtures
+      - name: Restore pinned public models
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ runner.temp }}/tychora-public-models
+          key: public-models-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/tychora/resources/model-assets.json') }}
       - name: Provision pinned public test assets
         run: python packaging/provision_ci_assets.py --cache "$RUNNER_TEMP/tychora-public-models" --workspace "$RUNNER_TEMP/tychora-asset-setup" --github-env "$GITHUB_ENV"
+      # Each shard keeps the tests whose node-id hash falls in it (tools/health/shard.py).
+      # The coverage threshold applies to the combined data in the report-gates job,
+      # so a shard does not fail on its partial total.
       - name: Unit and local integration tests (parallel, random order, line coverage)
         env:
           COVERAGE_CORE: sysmon
+          COVERAGE_FILE: reports/shard-${{ matrix.shard }}.coverage
           TYCHORA_TEST_TIMEOUT_FACTOR: "3"
+          SHARD: ${{ matrix.shard }}
         run: >-
-          uv run --locked pytest tests -q -n auto
+          uv run --locked python -m pytest -p tools.health.shard --shard "$SHARD/3"
+          tests -q -n auto
           -m 'not live and not qualification and not release and not slow and not quarantine'
-          --cov --cov-config=quality/coverage-line.toml --cov-report=json:reports/coverage.json
-          --junitxml=reports/junit.xml
-      - name: Keep reports for the health job
+          --cov --cov-config=quality/coverage-line.toml --cov-report= --cov-fail-under=0
+          --junitxml="reports/junit-$SHARD.xml"
+      - name: Keep reports for the report gates
         if: always() && matrix.runner == 'ubuntu-22.04'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: test-reports
-          path: reports/
+          name: test-reports-${{ matrix.shard }}
+          path: |
+            reports/junit-${{ matrix.shard }}.xml
+            reports/shard-${{ matrix.shard }}.coverage
           retention-days: 7
 
   clean-machine:
-    name: Clean machine and isolation
+    name: Clean machine (shard ${{ matrix.shard }}/2)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -67,24 +93,40 @@ jobs:
       - name: Install locked stack
         run: uv sync --locked --all-extras --group dev --group test-fixtures
       - name: Default suite without assets or variables
+        env:
+          SHARD: ${{ matrix.shard }}
         run: >-
           env -i PATH="$PATH" HOME="$HOME" TYCHORA_TEST_TIMEOUT_FACTOR=2
-          uv run --locked pytest tests -q -n auto -rs
+          uv run --locked python -m pytest -p tools.health.shard --shard "$SHARD/2"
+          tests -q -n auto -rs
           -m 'not live and not qualification and not release and not quarantine'
-          --junitxml=reports/clean-junit.xml
-      - name: Each listed test file alone
-        run: env -i PATH="$PATH" HOME="$HOME" uv run --locked python -m tools.health isolate
+          --junitxml="reports/clean-junit-$SHARD.xml"
       - name: Keep the clean-machine report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: clean-reports
-          path: reports/clean-junit.xml
+          name: clean-reports-${{ matrix.shard }}
+          path: reports/clean-junit-${{ matrix.shard }}.xml
           retention-days: 7
 
-  health:
-    name: Code-health gates
+  # One stable check name for branch protection, whatever the shard count.
+  tests-passed:
+    name: Tests
     needs: [tests, clean-machine]
+    if: always()
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Every test and clean-machine shard passed
+        env:
+          TESTS: ${{ needs.tests.result }}
+          CLEAN: ${{ needs.clean-machine.result }}
+        run: |
+          echo "tests: $TESTS, clean machine: $CLEAN"
+          test "$TESTS" = success && test "$CLEAN" = success
+
+  health-static:
+    name: Code-health gates (static)
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -108,16 +150,65 @@ jobs:
       - name: Dashboard unit coverage
         working-directory: dashboard
         run: npm run coverage
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: test-reports
-          path: reports
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: clean-reports
-          path: reports
       - name: Checker self-tests
         run: uv run --locked pytest tools/health/tests -q
+      - name: Code-health gates that need no test report
+        run: uv run --locked python -m tools.health check --test-reports without
+
+  health-reports:
+    name: Code-health gates (test reports)
+    needs: [tests, clean-machine]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.9.28"
+          enable-cache: true
+      - name: Install locked checks and resolved stack
+        run: uv sync --locked --all-extras --group dev --group audit --group test-fixtures
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: test-reports-*
+          path: reports/shards
+          merge-multiple: true
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: clean-reports-*
+          path: reports/shards
+          merge-multiple: true
+      # The merged files keep the single-run names and meaning the gates read:
+      # reports/coverage.json (union of the shards' lines, threshold enforced here),
+      # reports/junit.xml and reports/clean-junit.xml (one testsuite per shard).
+      - name: Merge the shard reports
+        run: |
+          uv run --locked python -m tools.health merge-junit --output reports/junit.xml reports/shards/junit-*.xml
+          uv run --locked python -m tools.health merge-junit --output reports/clean-junit.xml reports/shards/clean-junit-*.xml
+          uv run --locked coverage combine --rcfile=quality/coverage-line.toml --data-file=reports/.coverage reports/shards/shard-*.coverage
+          uv run --locked coverage json --rcfile=quality/coverage-line.toml --data-file=reports/.coverage -o reports/coverage.json
+      - name: Keep the merged reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: merged-test-reports
+          path: |
+            reports/junit.xml
+            reports/clean-junit.xml
+            reports/coverage.json
+          retention-days: 7
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: github.event_name == 'workflow_dispatch' && inputs.baseline
+        with:
+          node-version-file: dashboard/.nvmrc
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - name: Dashboard tools and coverage for the baseline (manual dispatch only)
+        if: github.event_name == 'workflow_dispatch' && inputs.baseline
+        working-directory: dashboard
+        run: npm ci --ignore-scripts && npm run coverage
       - name: Measure the initial baseline (manual dispatch only)
         if: github.event_name == 'workflow_dispatch' && inputs.baseline
         run: |
@@ -130,5 +221,5 @@ jobs:
           name: quality-baseline
           path: quality/
           retention-days: 7
-      - name: Code-health gates
-        run: uv run --locked python -m tools.health check
+      - name: Code-health gates that read the test reports
+        run: uv run --locked python -m tools.health check --test-reports only
