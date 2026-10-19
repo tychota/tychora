@@ -62,8 +62,10 @@ jobs:
             echo "$wheel"
             grep '^Tag:' "$wheel"
           done
+      # 52 independent tests of 7-20 s each (Docling parses), none dominant: xdist
+      # spreads them over the runner's cores (276 s serial, 97 s with 3 workers locally).
       - name: Run native and SDK qualification gates
-        run: uv run --locked --all-extras --group test-fixtures pytest -m qualification tests/qualification -q
+        run: uv run --locked --all-extras --group test-fixtures pytest -m qualification tests/qualification -q -n auto
       - name: Verify minimal base installation
         shell: bash
         run: |
