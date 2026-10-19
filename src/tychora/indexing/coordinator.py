@@ -173,6 +173,16 @@ def _input_manifest(
     )
 
 
+def _require_not_pruned(row: BatchRow | None) -> None:
+    """Refuse a batch whose native records were pruned; it is rebuilt natively first."""
+    if row is not None and row.state == "pending":
+        raise TychoraError(
+            "INDEX_INCOMPLETE",
+            "The batch's native records were pruned; rebuild the native index",
+            reason="batch.missing",
+        )
+
+
 def _batch_id(family_id: str, extraction_id: str | None, ref: ArtifactRef) -> str:
     return digest("index-batch-v1", family_id, extraction_id, ref.sha256)
 
@@ -533,12 +543,7 @@ class ProjectionCoordinator:
         """
         with self.store.uow.read() as tx:
             row = tx.batches.find(family.family_id, bundle.extraction.extraction_id)
-        if row is not None and row.state == "pending":
-            raise TychoraError(
-                "INDEX_INCOMPLETE",
-                "The source's native batch was pruned; rebuild the native index",
-                reason="batch.missing",
-            )
+        _require_not_pruned(row)
         return row if row is not None and row.state == "ready" else None
 
     def _store_batch(
@@ -1145,6 +1150,7 @@ class ProjectionCoordinator:
         )
         with self.store.uow.read() as tx:
             stored = tx.batches.get(batch.batch_id)
+        _require_not_pruned(stored)
         if stored is None or stored.state != "ready":
             self._store_batch(batch, lambda tx: None)
         return batch
