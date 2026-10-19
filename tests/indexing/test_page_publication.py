@@ -258,3 +258,219 @@ def test_retained_slots_rebuild_the_published_batches(projected):
             assert len(retained.lexical_records) == batch.expected_count
         if batch.slot == "text":
             assert len(retained.vector_records) == batch.expected_count
+
+
+def test_second_query_on_a_snapshot_reads_no_manifest_and_no_lexical_body(projected):
+    f = projected
+    first_id = f.add_revision("cached slot text", source_key="cache.md")
+    view = f.store.resolve_snapshot(first_id)
+    statements: list[str] = []
+    f.store.db.set_trace_callback(statements.append)
+    try:
+        first = f.store.read_eligibility_facts(view)
+        opened = []
+        original = f.store.artifacts.open_verified
+
+        def spy(ref):
+            opened.append(ref.sha256)
+            return original(ref)
+
+        with patch.object(f.store.artifacts, "open_verified", spy):
+            second = f.store.read_eligibility_facts(view)
+    finally:
+        f.store.db.set_trace_callback(None)
+    assert set(opened) <= {view.config_sha}
+    assert not any(
+        "FROM lexical_records" in sql and "body" in sql for sql in statements
+    )
+    assert second.slots == first.slots
+    fresh_id = f.add_revision("a later activation", source_key="later.md")
+    fresh = f.store.read_eligibility_facts(f.store.resolve_snapshot(fresh_id))
+
+    def lexical(facts):
+        slot = next(slot for slot in facts.slots if slot.slot == "lexical")
+        return {batch.batch_id for batch in slot.batches}
+
+    assert lexical(fresh) - lexical(first)
+
+
+def test_disabling_a_channel_after_publication_drops_its_batches(projected, tmp_path):
+    from tychora.configuration.resolve import resolve_config
+
+    f = projected
+    f.add_revision("edition one text", source_key="e.md")
+    settings = tmp_path / "lexical-only.toml"
+    settings.write_text('schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n')
+    f.coordinator.config = resolve_config(settings, "test", {})
+    f.store.required_slots = frozenset({"lexical"})
+    snapshot_id = f.add_edition("edition two text", source_key="e.md", edition="2")
+    view = f.store.resolve_snapshot(snapshot_id)
+    assert view.family("text") is None
+    slots = {
+        row[0]
+        for row in f.store.db.execute(
+            "SELECT DISTINCT b.slot FROM snapshot_pages sp "
+            "JOIN page_batches b USING(page_id) WHERE sp.snapshot_id=? AND sp.bucket=?",
+            (snapshot_id, bucket_of(_source_id(f.store, "e.md"))),
+        )
+    }
+    assert slots == {"lexical"}
+
+
+def test_a_pruned_graph_root_batch_is_a_typed_missing_batch(projected):
+    from tychora.contracts.graph import (
+        GraphBatchReceipt,
+        GraphGenerationSpec,
+        GraphManifest,
+    )
+    from tychora.contracts.identity import digest
+
+    f = projected
+    view = f.store.resolve_snapshot(None)
+    family = f.coordinator._graph_family(
+        view.workspace_id, view.config_sha, "2024-01-01T00:00:00Z"
+    )
+    manifest = GraphManifest(
+        spec=GraphGenerationSpec(
+            generation_id="generation",
+            family_id=family.family_id,
+            config_sha=family.config_sha,
+            registry_digest=f.store.registry.registry_digest,
+            workspace_id=view.workspace_id,
+            decision_watermark=0,
+        ),
+        entity_ids=(),
+        evidence_ids=(),
+        assertion_ids=(),
+        content_digest=digest("content"),
+    )
+    receipt = GraphBatchReceipt(
+        generation_id="generation",
+        family_id=family.family_id,
+        config_sha=family.config_sha,
+        decision_watermark=0,
+        manifest_digest=digest("manifest"),
+        entity_count=0,
+        evidence_count=0,
+        assertion_count=0,
+    )
+    batch = f.coordinator._graph_root_batch(manifest, receipt)
+    f.store.db.execute(
+        "UPDATE index_batches SET state='pending' WHERE batch_id=?", (batch.batch_id,)
+    )
+    f.store.db.commit()
+    with pytest.raises(TychoraError) as error:
+        f.coordinator._graph_root_batch(manifest, receipt)
+    assert (error.value.code, error.value.reason) == (
+        "INDEX_INCOMPLETE",
+        "batch.missing",
+    )
+
+
+def _shared_bucket_keys() -> tuple[str, str]:
+    """A source key in the default collection and one in ``OTHER`` sharing a bucket."""
+    from uuid import UUID
+
+    from tests.helpers.corpus import COLLECTION
+    from tychora.contracts.identity import source_id
+
+    buckets = {
+        bucket_of(source_id(UUID(OTHER), f"y{index}.md")): f"y{index}.md"
+        for index in range(600)
+    }
+    for index in range(600):
+        key = f"x{index}.md"
+        bucket = bucket_of(source_id(UUID(COLLECTION), key))
+        if bucket in buckets:
+            return key, buckets[bucket]
+    raise AssertionError("no shared bucket")
+
+
+OTHER = "6b4a3c51-6f39-4a5a-8f9b-0a0a5f6c2d11"
+
+
+def test_archived_member_is_exempt_only_when_its_prior_row_is_unchanged(projected):
+    from datetime import UTC, datetime
+
+    from tests.helpers.corpus import seed_bundle
+    from tychora.adapters.sqlite.publication import _check_members
+    from tychora.application.collection_policy import parse_collection_policy
+
+    f = projected
+    x_key, y_key = _shared_bucket_keys()
+    _, _, y_plan = f.prepare_bundle(
+        seed_bundle("archived y", source_key=y_key, collection=OTHER)
+    )
+    f.store.publish_snapshot(y_plan)
+    raw = f.store.db.execute(
+        "SELECT policy_json FROM collections WHERE collection_id=?", (OTHER,)
+    ).fetchone()[0]
+    archived = parse_collection_policy(raw).model_copy(
+        update={"archived_at": datetime.now(UTC)}
+    )
+    f.store.db.execute(
+        "UPDATE collections SET policy_json=? WHERE collection_id=?",
+        (archived.model_dump_json(), OTHER),
+    )
+    f.store.db.commit()
+    bundle, _, plan = f.prepare_revision("active x", source_key=x_key)
+    target = bundle.source.source_id
+    (page,) = plan.new_pages
+    assert {m.source_id for m in page.members} == {
+        target,
+        y_plan.new_pages[0].members[0].source_id,
+    }
+    _check_members(f.store, plan, target)
+    forged_members = tuple(
+        m if m.source_id == target else m.model_copy(update={"is_default": False})
+        for m in page.members
+    )
+    forged = plan.model_copy(
+        update={"new_pages": (page.model_copy(update={"members": forged_members}),)}
+    )
+    with pytest.raises(TychoraError) as error:
+        _check_members(f.store, forged, target)
+    assert error.value.code == "FORBIDDEN_SCOPE"
+
+
+def test_text_batch_without_complete_groups_is_refused_when_loaded(projected):
+    import json
+    from io import BytesIO
+
+    from tychora.contracts.identity import canonical_bytes
+
+    f = projected
+    view = f.store.resolve_snapshot(None)
+    sha, size, media, key = f.store.db.execute(
+        "SELECT a.artifact_sha,a.size_bytes,a.media_type,a.storage_key "
+        "FROM snapshot_batches s JOIN index_batches b USING(batch_id) "
+        "JOIN artifacts a ON a.artifact_sha=b.input_manifest_sha "
+        "WHERE s.snapshot_id=? AND s.slot='text'",
+        (view.snapshot_id,),
+    ).fetchone()
+    from tychora.contracts.artifacts import ArtifactRef
+
+    with f.store.artifacts.open_verified(
+        ArtifactRef(sha256=sha, size_bytes=size, media_type=media, storage_key=key)
+    ) as stream:
+        document = json.load(stream)
+    document["data"]["representations"] = document["data"]["representations"][1:]
+    forged = f.store.artifacts.put_stream(
+        BytesIO(canonical_bytes(document)), "application/json"
+    )
+    f.store.db.execute(
+        "INSERT INTO artifacts (artifact_sha,size_bytes,media_type,storage_key,created_at) "
+        "VALUES (?,?,?,?,'2026-01-01T00:00:00+00:00')",
+        (forged.sha256, forged.size_bytes, forged.media_type, forged.storage_key),
+    )
+    f.store.db.execute(
+        "UPDATE index_batches SET input_manifest_sha=? WHERE input_manifest_sha=?",
+        (forged.sha256, sha),
+    )
+    f.store.db.commit()
+    with pytest.raises(TychoraError) as error:
+        f.store.snapshot_slots(view)
+    assert (error.value.code, error.value.reason) == (
+        "INDEX_INCOMPLETE",
+        "batch.missing",
+    )

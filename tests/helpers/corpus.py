@@ -57,6 +57,7 @@ def seed_bundle(
     source_key: str = "manual.md",
     kind: str = "manual@1",
     edition: str = "1",
+    collection: str = COLLECTION,
 ) -> ExtractionBundle:
     import json
 
@@ -68,7 +69,7 @@ def seed_bundle(
     metadata = FrozenJsonMap(samples[kind]["metadata"])
     original = artifact(text.encode("utf-8"))
     document = artifact(identity.canonical_bytes({"text": text}), "application/json")
-    sid = identity.source_id(UUID(COLLECTION), source_key)
+    sid = identity.source_id(UUID(collection), source_key)
     metadata_sha = identity.digest("metadata-v1", metadata)
     rid = identity.revision_id(sid, original.sha256, edition, metadata_sha)
     eid = identity.extraction_id(rid, "synthetic-parser@1", "synthetic-normalizer@1")
@@ -97,14 +98,14 @@ def seed_bundle(
             workspace_id="83322a35-016b-458b-b941-ae3c4a0dba60", created_at=CREATED
         ),
         collection=CollectionRow(
-            collection_id=COLLECTION,
+            collection_id=collection,
             workspace_id="83322a35-016b-458b-b941-ae3c4a0dba60",
-            slug="manuals",
+            slug="manuals" if collection == COLLECTION else f"c-{collection[:8]}",
             title="Manuals",
         ),
         source=SourceRow(
             source_id=sid,
-            collection_id=COLLECTION,
+            collection_id=collection,
             source_key=source_key,
             created_at=CREATED,
         ),
