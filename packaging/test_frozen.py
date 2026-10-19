@@ -573,7 +573,7 @@ def native_crash_cut(
     )
     assert before["recovery"]["native_pending_batches"] == 2
     root_before = canonical_root(restored)
-    command = [str(artifact), *options, "manage", "rebuild", slot]
+    command = [str(artifact), *options, "manage", "rebuild", "native", slot]
     if sys.platform == "darwin":
         command = [
             "/usr/bin/sandbox-exec",
@@ -651,6 +651,7 @@ def native_crash_cut(
             *options,
             "manage",
             "rebuild",
+            "native",
             "text",
             "graph",
             cwd=cwd,
@@ -882,6 +883,7 @@ def native_recovery(artifact: Path, cwd: Path, model_bundle: str) -> None:
             *args,
             "manage",
             "rebuild",
+            "native",
             "text",
             "graph",
             cwd=cwd,
