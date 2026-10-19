@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from collections.abc import Callable, Mapping
 from contextlib import ExitStack
@@ -34,6 +35,7 @@ from tychora.adapters.docling.parser import DoclingParser
 from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.adapters.sqlite.publication import PublicationReceipts
 from tychora.application.collection_policy import require_active_collection
+from tychora.application.snapshot_gc import SnapshotGc
 from tychora.configuration.global_facets import (
     ROLE as GLOBAL_FACET_ROLE,
 )
@@ -95,6 +97,7 @@ if TYPE_CHECKING:
     from tychora.ports.language import SyntaxResult
 
 # Matches the owner's per-authorization dependency bound.
+_LOG = logging.getLogger(__name__)
 MAX_UPLOAD_DEPENDENCIES = 2048
 
 
@@ -917,7 +920,25 @@ class SourceService:
             await self.owner.run_blocking(
                 lambda: jobs.complete(handle.id, result_snapshot_id=snapshot_id), ctx
             )
+            await self.owner.run_blocking(
+                self._collect_after_publication, ExecutionContext()
+            )
         return snapshot_id
+
+    def _collect_after_publication(self) -> None:
+        """Run one bounded collection pass; its failure never fails the job.
+
+        The pass only marks released payloads; ``manage gc`` and the next owner
+        start unlink them. A failed pass is retried by the next publication.
+        """
+        try:
+            SnapshotGc(self.owner).collect(ExecutionContext(), limit=64)
+        except TychoraError as error:
+            _LOG.warning(
+                "Snapshot collection after publication failed: %s (%s)",
+                error.code,
+                error.reason,
+            )
 
     async def _text_records(
         self,

@@ -30,6 +30,11 @@ class LeaseSet:
         with self._lock:
             return bool(self._counts)
 
+    def pinned(self) -> frozenset[str]:
+        """Return every key at least one holder leases now."""
+        with self._lock:
+            return frozenset(key for key, count in self._counts.items() if count > 0)
+
     @contextmanager
     def exclusive_if_idle(self) -> Iterator[bool]:
         """Fence new pins while a destructive owner operation checks and acts."""

@@ -211,6 +211,12 @@ _ENTRIES = (
         "The snapshot was collected or never published; query the active snapshot.",
     ),
     Reason(
+        "FORBIDDEN_SCOPE",
+        "scope.whole_workspace",
+        False,
+        "Run the operation with a grant that covers every collection of the workspace.",
+    ),
+    Reason(
         "INVALID_REQUEST",
         "range.unsatisfiable",
         False,

@@ -15,8 +15,9 @@ from tychora.contracts.snapshots import (
     SlotFamily,
     membership_sha,
 )
+from tychora.ports.repositories import BatchRow, GcReport
 
-from .artifacts import artifact_ref
+from .artifacts import SqliteArtifactRepository, artifact_ref
 from .batches import BATCH_SELECT, batch_from_row
 from .families import FAMILY_COLUMNS, family_from_row
 from .workspace import SqliteWorkspaceRepository, require_write
@@ -26,6 +27,25 @@ _SNAPSHOT_ROW = (
     "FROM snapshots WHERE snapshot_id=?"
 )
 _FAMILY_COLUMNS = ",".join(f"f.{name}" for name in FAMILY_COLUMNS.split(","))
+# Most recently published snapshots kept besides the active one, its parent and
+# every snapshot a query run, an evaluation, a job or a lease still needs.
+RETAINED_SNAPSHOTS = 16
+_IN_IDS = "IN (SELECT value FROM json_each(?))"
+_RETAINED = (
+    "SELECT active_snapshot_id FROM workspaces WHERE active_snapshot_id IS NOT NULL "
+    "UNION SELECT s.parent_snapshot_id FROM snapshots s JOIN workspaces w "
+    "ON s.snapshot_id=w.active_snapshot_id WHERE s.parent_snapshot_id IS NOT NULL "
+    "UNION SELECT snapshot_id FROM (SELECT snapshot_id FROM snapshots "
+    "ORDER BY published_at DESC,snapshot_id DESC LIMIT ?) "
+    "UNION SELECT snapshot_id FROM query_runs WHERE expires_at>? "
+    "UNION SELECT snapshot_id FROM evaluation_runs "
+    "UNION SELECT base_snapshot_id FROM jobs WHERE base_snapshot_id IS NOT NULL "
+    "AND state IN ('queued','running','cancelling')"
+)
+_UNBOUND_BATCH = (
+    "NOT EXISTS (SELECT 1 FROM page_batches p WHERE p.batch_id=b.batch_id) "
+    "AND NOT EXISTS (SELECT 1 FROM snapshot_root_batches r WHERE r.batch_id=b.batch_id)"
+)
 
 
 def _ambiguous_workspace() -> TychoraError:
@@ -279,3 +299,162 @@ class SqliteSnapshotRepository:
             )
         except ValueError:
             raise _integrity("Membership page rows differ from its identity") from None
+
+    def retained_ids(self, keep_last: int = RETAINED_SNAPSHOTS) -> frozenset[str]:
+        """Return the snapshots the retention rule keeps.
+
+        The rule keeps the active snapshot and its parent, the last
+        ``keep_last`` published, those of unexpired query runs and of
+        evaluation runs, and the recorded base of every unfinished job.
+        """
+        rows = self._db.execute(
+            _RETAINED, (keep_last, datetime.now(UTC).isoformat())
+        ).fetchall()
+        return frozenset(row[0] for row in rows)
+
+    def collect(
+        self,
+        limit: int = 64,
+        *,
+        leased: frozenset[str] = frozenset(),
+        include_unpublished: bool = False,
+    ) -> GcReport:
+        """Delete unretained snapshots and orphan pages; mark orphan batches removed.
+
+        At most ``limit`` snapshots go, oldest first. ``leased`` names snapshots
+        and batches in use outside SQL; neither is collected. Batches the
+        deleted snapshots and pages bound become ``removed`` once nothing binds
+        them. ``include_unpublished`` also marks every other unbound batch,
+        unless a job is unfinished, because its batches are not yet bound.
+        Released snapshot and page manifests become ``delete_pending``.
+        """
+        require_write(self._db, self._writable)
+        keep = self.retained_ids(RETAINED_SNAPSHOTS) | leased
+        doomed = [
+            row[0]
+            for row in self._db.execute(
+                f"SELECT snapshot_id FROM snapshots WHERE snapshot_id NOT {_IN_IDS} "
+                "ORDER BY published_at,snapshot_id LIMIT ?",
+                (json.dumps(sorted(keep)), limit),
+            )
+        ]
+        manifests, pages, roots = self._delete_snapshots(doomed)
+        page_ids, page_manifests, page_batches = self._delete_orphan_pages(
+            pages, everywhere=include_unpublished
+        )
+        skipped = include_unpublished and self._jobs_unfinished()
+        orphans = self._orphan_batches(
+            roots | page_batches, leased, everywhere=include_unpublished and not skipped
+        )
+        # The report carries each batch's state before it became removed.
+        orphan_rows = self._batch_rows(orphans)
+        self._db.execute(
+            f"UPDATE index_batches SET state='removed' WHERE batch_id {_IN_IDS}",
+            (json.dumps(orphans),),
+        )
+        return GcReport(
+            snapshots=tuple(doomed),
+            pages=page_ids,
+            orphan_batches=orphan_rows,
+            released_artifacts=self._release(manifests | page_manifests),
+            unpublished_skipped=skipped,
+        )
+
+    def _delete_snapshots(
+        self, doomed: list[str]
+    ) -> tuple[set[str], set[str], set[str]]:
+        """Delete snapshot rows; return their manifests, pages and root batches."""
+        ids = json.dumps(doomed)
+
+        def column(sql: str) -> set[str]:
+            return {row[0] for row in self._db.execute(sql, (ids,))}
+
+        manifests = column(
+            f"SELECT manifest_sha FROM snapshots WHERE snapshot_id {_IN_IDS}"
+        )
+        pages = column(
+            f"SELECT page_id FROM snapshot_pages WHERE snapshot_id {_IN_IDS}"
+        )
+        roots = column(
+            f"SELECT batch_id FROM snapshot_root_batches WHERE snapshot_id {_IN_IDS}"
+        )
+        # Table names come only from this literal tuple, children first.
+        for table in (
+            "snapshot_pages",
+            "snapshot_indexes",
+            "snapshot_root_batches",
+            "snapshots",
+        ):
+            self._db.execute(f"DELETE FROM {table} WHERE snapshot_id {_IN_IDS}", (ids,))
+        return manifests, pages, roots
+
+    def _delete_orphan_pages(
+        self, candidates: set[str], *, everywhere: bool
+    ) -> tuple[tuple[str, ...], set[str], set[str]]:
+        """Delete pages no snapshot binds; return them, their manifests and batches."""
+        rows = self._db.execute(
+            "SELECT page_id,manifest_sha FROM membership_pages p WHERE NOT EXISTS "
+            "(SELECT 1 FROM snapshot_pages s WHERE s.page_id=p.page_id) "
+            f"AND (? OR p.page_id {_IN_IDS}) ORDER BY page_id",
+            (int(everywhere), json.dumps(sorted(candidates))),
+        ).fetchall()
+        ids = json.dumps([row[0] for row in rows])
+        batches = {
+            row[0]
+            for row in self._db.execute(
+                f"SELECT batch_id FROM page_batches WHERE page_id {_IN_IDS}", (ids,)
+            )
+        }
+        # Table names come only from this literal tuple, children first.
+        for table in ("page_batches", "page_members", "membership_pages"):
+            self._db.execute(f"DELETE FROM {table} WHERE page_id {_IN_IDS}", (ids,))
+        return tuple(row[0] for row in rows), {row[1] for row in rows}, batches
+
+    def _jobs_unfinished(self) -> bool:
+        return (
+            self._db.execute(
+                "SELECT 1 FROM jobs WHERE state IN ('queued','running','cancelling') "
+                "LIMIT 1"
+            ).fetchone()
+            is not None
+        )
+
+    def _orphan_batches(
+        self, candidates: set[str], leased: frozenset[str], *, everywhere: bool
+    ) -> list[str]:
+        """Return unbound, unleased batches: published candidates, or every one."""
+        return [
+            row[0]
+            for row in self._db.execute(
+                f"SELECT batch_id FROM index_batches b WHERE {_UNBOUND_BATCH} "
+                f"AND batch_id NOT {_IN_IDS} AND (? OR (state IN ('ready','pending') "
+                f"AND batch_id {_IN_IDS})) ORDER BY batch_id",
+                (
+                    json.dumps(sorted(leased)),
+                    int(everywhere),
+                    json.dumps(sorted(candidates)),
+                ),
+            )
+        ]
+
+    def _batch_rows(self, batch_ids: list[str]) -> tuple[BatchRow, ...]:
+        rows = self._db.execute(
+            BATCH_SELECT + f"WHERE b.batch_id {_IN_IDS} ORDER BY b.batch_id",
+            (json.dumps(batch_ids),),
+        ).fetchall()
+        return tuple(batch_from_row(row) for row in rows)
+
+    def _release(self, shas: set[str]) -> tuple[str, ...]:
+        """Mark manifests no snapshot or page row binds as ``delete_pending``."""
+        artifacts = SqliteArtifactRepository(self._db, writable=self._writable)
+        released = []
+        for sha in sorted(shas):
+            if self._db.execute(
+                "SELECT 1 FROM snapshots WHERE manifest_sha=? UNION ALL "
+                "SELECT 1 FROM membership_pages WHERE manifest_sha=? LIMIT 1",
+                (sha, sha),
+            ).fetchone():
+                continue
+            if artifacts.release(sha):
+                released.append(sha)
+        return tuple(released)

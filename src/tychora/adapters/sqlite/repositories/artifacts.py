@@ -86,3 +86,19 @@ class SqliteArtifactRepository:
             (ref.sha256,),
         )
         return True
+
+    def release(self, sha256: str) -> bool:
+        """Mark a present artifact ``delete_pending``; return whether it was present.
+
+        The caller has checked that no row it owns binds the artifact; payload
+        reconciliation checks every other root again before it unlinks.
+        """
+        require_write(self._db, self._writable)
+        return (
+            self._db.execute(
+                "UPDATE artifacts SET payload_state='delete_pending' "
+                "WHERE artifact_sha=? AND payload_state='present'",
+                (sha256,),
+            ).rowcount
+            == 1
+        )

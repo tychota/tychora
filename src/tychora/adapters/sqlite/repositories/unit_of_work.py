@@ -22,6 +22,19 @@ from .snapshots import SqliteSnapshotRepository
 from .workspace import SqliteWorkspaceRepository
 
 
+@contextmanager
+def typed_storage_errors() -> Iterator[None]:
+    """Report a SQLite failure, a busy database included, as a typed error."""
+    try:
+        yield
+    except sqlite3.Error as error:
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            f"Storage operation failed: {type(error).__name__}",
+            reason="invariant.unexpected",
+        ) from error
+
+
 class SqliteTransaction:
     """Repositories bound to the connection's current transaction."""
 

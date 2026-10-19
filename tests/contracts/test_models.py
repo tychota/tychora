@@ -434,6 +434,7 @@ def test_query_result_roundtrip_preserves_exact_excerpts_and_nested_records():
             "action": "grant",
         },
         {"operation": "migrate", "target_version": "3"},
+        {"operation": "gc", "limit": 10, "include_unpublished": False},
     ],
 )
 def test_maintenance_variant_roundtrips(variant):

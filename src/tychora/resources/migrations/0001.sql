@@ -332,7 +332,7 @@ END;
 CREATE TABLE snapshots (
   snapshot_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(workspace_id),
-  parent_snapshot_id TEXT REFERENCES snapshots(snapshot_id),
+  parent_snapshot_id TEXT,
   membership_sha TEXT NOT NULL,
   config_sha TEXT NOT NULL,
   manifest_sha TEXT NOT NULL REFERENCES artifacts(artifact_sha),
@@ -400,8 +400,8 @@ CREATE TABLE jobs (
   effective_config_sha TEXT NOT NULL REFERENCES artifacts(artifact_sha),
   captured_inputs_sha TEXT REFERENCES artifacts(artifact_sha),
   state TEXT NOT NULL CHECK(state IN ('queued','running','cancelling','cancelled','failed','complete')),
-  base_snapshot_id TEXT REFERENCES snapshots(snapshot_id),
-  result_snapshot_id TEXT REFERENCES snapshots(snapshot_id),
+  base_snapshot_id TEXT,
+  result_snapshot_id TEXT,
   request_artifact_sha TEXT REFERENCES artifacts(artifact_sha),
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -441,7 +441,7 @@ CREATE TABLE job_events (
 
 CREATE TABLE query_runs (
   run_id TEXT PRIMARY KEY,
-  snapshot_id TEXT NOT NULL REFERENCES snapshots(snapshot_id),
+  snapshot_id TEXT NOT NULL,
   principal_id TEXT NOT NULL,
   scope_digest TEXT NOT NULL,
   policy_epoch INTEGER NOT NULL,

@@ -156,6 +156,25 @@ def health(
 
 
 @group.command()
+def gc(
+    ctx: typer.Context,
+    limit: int = typer.Option(
+        1024, min=1, max=100_000, help="Most snapshots deleted in one run."
+    ),
+    published_only: bool = typer.Option(
+        False, "--published-only", help="Keep batches no snapshot ever published."
+    ),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Delete unretained snapshots and the pages, batches and payloads only they used."""
+    _run(
+        ctx,
+        {"operation": "gc", "limit": limit, "include_unpublished": not published_only},
+        json_output=json_output,
+    )
+
+
+@group.command()
 def evaluate(
     ctx: typer.Context,
     dataset_id: str,

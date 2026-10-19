@@ -7,8 +7,14 @@ from hashlib import sha256
 from typing import Any
 
 from tychora.contracts.errors import TychoraError
+from tychora.contracts.graph import GraphBatchReceipt
 from tychora.contracts.identity import canonical_bytes, digest
-from tychora.contracts.publication import LexicalBatchReceipt, LexicalRecord, NewBatch
+from tychora.contracts.publication import (
+    BatchReceiptVariant,
+    LexicalBatchReceipt,
+    LexicalRecord,
+    NewBatch,
+)
 from tychora.contracts.vectors import BatchReceipt
 from tychora.ports.repositories import BatchRow, VectorRecordRow
 
@@ -29,6 +35,16 @@ _IMMUTABLE_COLUMNS = (
 )
 _LEXICAL_COLUMNS = "batch_id,chunk_id,identifiers,title,headings,body,context"
 _VECTOR_COLUMNS = "record_id,batch_id,chunk_id,asset_id,input_sha,row_index"
+_REMOVED_IDS = (
+    "SELECT batch_id FROM index_batches WHERE state='removed' "
+    "AND batch_id IN (SELECT value FROM json_each(?))"
+)
+_RECEIPT_TYPES: dict[str, type[BatchReceiptVariant]] = {
+    "lexical": LexicalBatchReceipt,
+    "text": BatchReceipt,
+    "image": BatchReceipt,
+    "graph": GraphBatchReceipt,
+}
 _STORED_ROWS = {
     "lexical": "SELECT COUNT(*) FROM lexical_records WHERE batch_id=?",
     "text": "SELECT COUNT(*) FROM vector_records WHERE batch_id=?",
@@ -268,3 +284,77 @@ class SqliteBatchRepository:
             (snapshot_id, slot),
         ).fetchall()
         return tuple(batch_from_row(row) for row in rows)
+
+    def receipt(self, batch_id: str) -> BatchReceiptVariant | None:
+        """Return the stored receipt of a batch, or ``None`` when absent."""
+        row = self._db.execute(
+            "SELECT f.channel,b.receipt_json FROM index_batches b "
+            "JOIN index_families f USING(family_id) WHERE b.batch_id=?",
+            (batch_id,),
+        ).fetchone()
+        if row is None or row[1] is None:
+            return None
+        try:
+            return _RECEIPT_TYPES[row[0]].model_validate_json(row[1])
+        except (KeyError, ValueError):
+            raise TychoraError(
+                "INTEGRITY_ERROR",
+                "Index batch receipt is invalid.",
+                reason="canonical.row_invalid",
+            ) from None
+
+    def record_ids(self, batch_id: str) -> tuple[str, ...]:
+        """Return the batch's vector record IDs in ID order."""
+        return tuple(
+            row[0]
+            for row in self._db.execute(
+                "SELECT record_id FROM vector_records WHERE batch_id=? ORDER BY record_id",
+                (batch_id,),
+            )
+        )
+
+    def purge(self, batch_ids: tuple[str, ...]) -> tuple[str, ...]:
+        """Delete removed batches and their rows; return artifacts released for deletion.
+
+        Only batches still ``removed`` lose their rows, so a batch built again
+        since it was marked keeps them. Deleted lexical rows bump the lexical
+        epoch once. An artifact no remaining batch binds is marked
+        ``delete_pending``; unlinking it is left to payload reconciliation.
+        """
+        require_write(self._db, self._writable)
+        ids = json.dumps(sorted(set(batch_ids)))
+        shas = {
+            sha
+            for row in self._db.execute(
+                "SELECT input_manifest_sha,vectors_sha FROM index_batches "
+                f"WHERE batch_id IN ({_REMOVED_IDS})",
+                (ids,),
+            )
+            for sha in row
+            if sha is not None
+        }
+        lexical = self._db.execute(
+            f"DELETE FROM lexical_records WHERE batch_id IN ({_REMOVED_IDS})", (ids,)
+        ).rowcount
+        self._db.execute(
+            f"DELETE FROM vector_records WHERE batch_id IN ({_REMOVED_IDS})", (ids,)
+        )
+        self._db.execute(
+            f"DELETE FROM index_batches WHERE batch_id IN ({_REMOVED_IDS})", (ids,)
+        )
+        if lexical:
+            self._workspace.bump_lexical_epoch()
+        return self._release(shas)
+
+    def _release(self, shas: set[str]) -> tuple[str, ...]:
+        released = []
+        for sha in sorted(shas):
+            if self._db.execute(
+                "SELECT 1 FROM index_batches WHERE input_manifest_sha=? OR vectors_sha=? "
+                "LIMIT 1",
+                (sha, sha),
+            ).fetchone():
+                continue
+            if self._artifacts.release(sha):
+                released.append(sha)
+        return tuple(released)
