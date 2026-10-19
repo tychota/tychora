@@ -1,12 +1,15 @@
 """Real vector storage contract."""
 
+import os
 import struct
 import subprocess
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+import tychora
 from tychora.adapters.chroma import index as chroma_index
 from tychora.adapters.chroma.index import ChromaVectorIndex
 from tychora.contracts.embeddings import EmbeddingRecord
@@ -291,8 +294,16 @@ sys.stdout.flush()
 os._exit(0)
 """
     path = tmp_path / "writer-exit"
+    # The writer imports the same tychora as this test, also when that copy is
+    # not installed, as mutmut's mutants/src is not.
+    source_root = str(Path(tychora.__file__).resolve().parents[1])
+    inherited = os.environ.get("PYTHONPATH")
     completed = subprocess.run(
         [sys.executable, "-c", script, str(path), vector_family.spec.model_dump_json()],
+        env={
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join(filter(None, (source_root, inherited))),
+        },
         check=True,
         capture_output=True,
         text=True,
