@@ -29,6 +29,11 @@ _IMMUTABLE_COLUMNS = (
 )
 _LEXICAL_COLUMNS = "batch_id,chunk_id,identifiers,title,headings,body,context"
 _VECTOR_COLUMNS = "record_id,batch_id,chunk_id,asset_id,input_sha,row_index"
+_STORED_ROWS = {
+    "lexical": "SELECT COUNT(*) FROM lexical_records WHERE batch_id=?",
+    "text": "SELECT COUNT(*) FROM vector_records WHERE batch_id=?",
+    "image": "SELECT COUNT(*) FROM vector_records WHERE batch_id=?",
+}
 
 
 def _mismatch(message: str) -> TychoraError:
@@ -125,6 +130,8 @@ class SqliteBatchRepository:
         """Store a building batch once; an identical repeat is a no-op.
 
         A removed or failed batch with the same immutable values builds again.
+        A failed batch first loses its partial rows; a removed batch keeps its
+        rows, which the same identity binds to the same content.
         """
         require_write(self._db, self._writable)
         self._artifacts.register(batch.input_manifest)
@@ -142,12 +149,36 @@ class SqliteBatchRepository:
         ).fetchone()
         if stored is None or stored[:-1] != values:
             raise _mismatch("Index batch differs from its immutable row")
+        if stored[-1] == "failed":
+            self._discard_rows(batch.batch_id)
         if stored[-1] in ("removed", "failed"):
             self._db.execute(
                 "UPDATE index_batches SET state='building',actual_count=NULL "
                 "WHERE batch_id=?",
                 (batch.batch_id,),
             )
+
+    def _discard_rows(self, batch_id: str) -> None:
+        lexical = self._db.execute(
+            "DELETE FROM lexical_records WHERE batch_id=?", (batch_id,)
+        ).rowcount
+        self._db.execute("DELETE FROM vector_records WHERE batch_id=?", (batch_id,))
+        if lexical:
+            self._workspace.bump_lexical_epoch()
+
+    def _require_stored_count(self, batch_id: str, actual_count: int) -> None:
+        row = self._db.execute(
+            "SELECT f.channel FROM index_batches b JOIN index_families f "
+            "USING(family_id) WHERE b.batch_id=?",
+            (batch_id,),
+        ).fetchone()
+        if row is None:
+            raise _mismatch("Only a building batch can become ready")
+        query = _STORED_ROWS.get(row[0])
+        if query is not None:
+            stored = self._db.execute(query, (batch_id,)).fetchone()[0]
+            if stored != actual_count:
+                raise _mismatch("Batch rows differ from its ready count")
 
     def write_lexical(self, batch_id: str, records: tuple[LexicalRecord, ...]) -> None:
         """Store a batch's lexical records; stored records never change."""
@@ -181,8 +212,12 @@ class SqliteBatchRepository:
             self._insert_once("vector_records", _VECTOR_COLUMNS, 1, values)
 
     def mark_ready(self, batch_id: str, actual_count: int) -> None:
-        """Mark a building batch ready; a batch with lexical rows bumps the epoch once."""
+        """Mark a building batch ready once its stored rows match ``actual_count``.
+
+        A batch with lexical rows bumps the lexical epoch once.
+        """
         require_write(self._db, self._writable)
+        self._require_stored_count(batch_id, actual_count)
         moved = self._db.execute(
             "UPDATE index_batches SET state='ready',actual_count=? "
             "WHERE batch_id=? AND state='building'",

@@ -10,6 +10,7 @@ from tests.helpers.corpus import reader
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.repositories import SqliteUnitOfWork
 from tychora.contracts.errors import TychoraError
+from tychora.contracts.publication import LexicalRecord
 from tychora.contracts.snapshots import (
     MembershipPage,
     PageMember,
@@ -20,8 +21,10 @@ from tychora.contracts.snapshots import (
 
 
 def _page(db, uow, batch):
+    chunk_id = db.execute("SELECT chunk_id FROM chunks").fetchone()[0]
     with uow.write() as tx:
         tx.batches.begin(batch)
+        tx.batches.write_lexical(batch.batch_id, (LexicalRecord(chunk_id=chunk_id),))
         tx.batches.mark_ready(batch.batch_id, 1)
     with uow.read() as tx:
         row = tx.batches.get(batch.batch_id)
