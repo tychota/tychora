@@ -22,6 +22,9 @@ class Gate:
     group: Group
     measure: Callable[[Path], list[Metric]]
     fast: bool = False
+    # Reads reports/ written by the CI test jobs (merged shard JUnit and coverage),
+    # so it can only run after them; every other gate starts with the checkout.
+    test_reports: bool = False
 
 
 GATES: tuple[Gate, ...] = (
@@ -39,11 +42,11 @@ GATES: tuple[Gate, ...] = (
     Gate("G14", "Docstrings", "pr", external.docstrings),
     Gate("G14", "Public API docstrings", "pr", static.public_api_docstrings),
     Gate("G15", "Plan references", "pr", static.plan_references, fast=True),
-    Gate("G16", "Coverage, lines", "pr", testruns.line_coverage),
+    Gate("G16", "Coverage, lines", "pr", testruns.line_coverage, test_reports=True),
     Gate("G16", "Coverage, dashboard", "pr", testruns.dashboard_coverage),
     Gate("G16", "Coverage, branches", "nightly", testruns.branch_coverage),
-    Gate("G17", "Clean-machine suite", "pr", testruns.clean_suite),
-    Gate("G18", "Test runtime", "pr", testruns.runtime),
+    Gate("G17", "Clean-machine suite", "pr", testruns.clean_suite, test_reports=True),
+    Gate("G18", "Test runtime", "pr", testruns.runtime, test_reports=True),
     Gate("G19", "Advisories", "pr", advisories.advisories),
     Gate("G20", "Lock freshness", "pr", advisories.lock_freshness),
     Gate("G21", "Mutation score", "nightly", testruns.mutation),
@@ -57,8 +60,17 @@ GATES: tuple[Gate, ...] = (
 )
 
 
-def select(group: str, ids: str = "", *, fast: bool = False) -> list[Gate]:
-    """Gates of a group ("pr", "nightly" or "all"), optionally narrowed by id or --fast."""
+TestReports = Literal["any", "without", "only"]
+
+
+def select(
+    group: str, ids: str = "", *, fast: bool = False, test_reports: TestReports = "any"
+) -> list[Gate]:
+    """Gates of a group ("pr", "nightly" or "all"), optionally narrowed by id or --fast.
+
+    test_reports="without" keeps the gates that need no CI test report and
+    "only" the gates that read one, so CI can start the former immediately.
+    """
     wanted = {gate_id.strip() for gate_id in ids.split(",") if gate_id.strip()}
     chosen = [
         gate
@@ -66,10 +78,12 @@ def select(group: str, ids: str = "", *, fast: bool = False) -> list[Gate]:
         if (group == "all" or gate.group == group)
         and (not wanted or gate.id in wanted)
         and (not fast or gate.fast)
+        and (test_reports == "any" or gate.test_reports == (test_reports == "only"))
     ]
     if not chosen:
         raise SystemExit(
-            f"no gate selected (group={group!r}, ids={ids!r}, fast={fast})"
+            f"no gate selected (group={group!r}, ids={ids!r}, fast={fast}, "
+            f"test_reports={test_reports!r})"
         )
     if wanted - {gate.id for gate in chosen}:
         raise SystemExit(

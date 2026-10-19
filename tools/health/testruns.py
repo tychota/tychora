@@ -112,8 +112,37 @@ def outcomes(junit: str) -> dict[str, str]:
     return results
 
 
+def merge_junit(reports: list[str]) -> str:
+    """One <testsuites> holding the <testsuite> of every shard report, unchanged.
+
+    The shards partition the selection, so a test id present in two reports means
+    the split is broken and is an error rather than a silently overwritten outcome.
+    """
+    merged = ET.Element("testsuites")
+    seen: set[str] = set()
+    for report in reports:
+        root = ET.fromstring(report)
+        for suite in (
+            [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+        ):
+            for case in suite.iter("testcase"):
+                test_id = f"{case.get('classname')}::{case.get('name')}"
+                if test_id in seen:
+                    raise ValueError(f"{test_id} is in more than one shard report")
+                seen.add(test_id)
+            merged.append(suite)
+    if not seen:
+        raise ValueError("the shard reports contain no test case")
+    return ET.tostring(merged, encoding="unicode")
+
+
 def suite_seconds(junit: str) -> float:
-    """Wall time of the session recorded by pytest's JUnit writer."""
+    """Session time recorded by pytest's JUnit writer, summed over the testsuites.
+
+    A report merged from shards holds one testsuite per shard, so the value is the
+    sum of the shard sessions (the test time of the whole selection), not the
+    wall-clock of the parallel CI run.
+    """
     root = ET.fromstring(junit)
     suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
     if not suites:
@@ -138,7 +167,7 @@ def clean_suite(root: Path) -> list[Metric]:
 
 
 def runtime(root: Path) -> list[Metric]:
-    """G18: pull-request suite wall time; at most 15% above the baseline."""
+    """G18: pull-request suite time (sum of the shard sessions); at most 15% above the baseline."""
     junit = read_report(root / "reports/junit.xml")
     for seconds, test in slowest(junit):
         print(f"[slowest] {seconds:7.1f}s {test}")
