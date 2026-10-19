@@ -37,3 +37,15 @@ def test_unknown_gate_is_rejected():
 def test_empty_selection_is_rejected():
     with pytest.raises(SystemExit, match="no gate selected"):
         select("nightly", fast=True)
+
+
+def test_report_gates_split_from_the_gates_that_start_immediately():
+    reading = select("pr", test_reports="only")
+    assert [(gate.id, gate.title) for gate in reading] == [
+        ("G16", "Coverage, lines"),
+        ("G17", "Clean-machine suite"),
+        ("G18", "Test runtime"),
+    ]
+    static = select("pr", test_reports="without")
+    assert {gate.title for gate in static}.isdisjoint(gate.title for gate in reading)
+    assert len(static) + len(reading) == len(select("pr"))

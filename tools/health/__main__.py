@@ -1,4 +1,4 @@
-"""`python -m tools.health check|update|report|flaky|isolate`: the code-health command line."""
+"""`python -m tools.health check|update|report|flaky|isolate|merge-junit`: the code-health command line."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from tools.health.model import (
     save_baseline,
     updated_entry,
 )
-from tools.health.testruns import flaky_tests
+from tools.health.testruns import flaky_tests, merge_junit
 
 DEFAULT_SELECTION = "not live and not qualification and not release and not quarantine"
 ISOLATION_LIST = Path("tools/health/isolation.txt")
@@ -178,6 +178,12 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument(
             "--fast", action="store_true", help="G1-G3, G7 and G15 only"
         )
+        command.add_argument(
+            "--test-reports",
+            choices=("any", "without", "only"),
+            default="any",
+            help="only the gates that need no CI test report (without) or that read one (only)",
+        )
         if name == "update":
             command.add_argument("--initial", action="store_true")
         if name == "report":
@@ -187,6 +193,9 @@ def main(argv: list[str] | None = None) -> int:
     flaky.add_argument("reports", nargs="+", type=Path)
     isolation = commands.add_parser("isolate")
     isolation.add_argument("--root", type=Path, default=Path.cwd())
+    merging = commands.add_parser("merge-junit")
+    merging.add_argument("--output", type=Path, required=True)
+    merging.add_argument("reports", nargs="+", type=Path)
     args = parser.parse_args(argv)
 
     if args.command == "flaky":
@@ -196,10 +205,17 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if differing else 0
     if args.command == "isolate":
         return isolate(args.root)
+    if args.command == "merge-junit":
+        merged = merge_junit([path.read_text() for path in args.reports])
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(merged)
+        return 0
     if args.command == "report" and args.architecture:
         write_report(args.root, args.architecture, args.previous)
         return 0
-    gates = select(args.group, args.gates, fast=args.fast)
+    gates = select(
+        args.group, args.gates, fast=args.fast, test_reports=args.test_reports
+    )
     if args.command == "check":
         return check(args.root, gates)
     if args.command == "update":

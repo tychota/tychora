@@ -161,6 +161,37 @@ def test_junit_outcomes_runtime_and_slowest():
     assert testruns.slowest(JUNIT, 1) == [(40.2, "tests.a::test_fail")]
 
 
+def _shard_report(time, *cases):
+    body = "".join(
+        f'<testcase classname="tests.{c}" name="test_{c}" time="1.0"/>' for c in cases
+    )
+    return f'<testsuites><testsuite name="pytest" time="{time}">{body}</testsuite></testsuites>'
+
+
+def test_merged_shard_reports_sum_session_times_and_keep_every_outcome():
+    merged = testruns.merge_junit(
+        [_shard_report(100.5, "a", "b"), _shard_report(120.0, "c")]
+    )
+    # G18 reads the sum of the shard sessions, not the longest shard.
+    assert testruns.suite_seconds(merged) == 220.5
+    assert set(testruns.outcomes(merged)) == {
+        "tests.a::test_a",
+        "tests.b::test_b",
+        "tests.c::test_c",
+    }
+    assert (
+        testruns.merge_junit([JUNIT])
+        and testruns.suite_seconds(testruns.merge_junit([JUNIT])) == 221.5
+    )
+
+
+def test_a_test_in_two_shard_reports_is_an_error():
+    with pytest.raises(ValueError, match="tests.a::test_a"):
+        testruns.merge_junit([_shard_report(1, "a"), _shard_report(1, "a")])
+    with pytest.raises(ValueError, match="no test case"):
+        testruns.merge_junit(["<testsuites/>"])
+
+
 def test_flaky_tests_differ_between_seeds():
     other = JUNIT.replace('<failure message="x"/>', "")
     assert testruns.flaky_tests([JUNIT, other, JUNIT]) == ["tests.a::test_fail"]
