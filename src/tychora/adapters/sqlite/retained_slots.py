@@ -3,6 +3,7 @@
 Eligibility, native recovery and default bindings read these until the query
 path joins against batches directly. Every row is checked against the batch's
 receipt and input manifest, so drift in SQL is refused rather than served.
+Lexical records carry their chunk IDs only: their text stays in the FTS index.
 """
 
 import json
@@ -90,31 +91,54 @@ def _receipt(db: sqlite3.Connection, item: SlotFamily, row: BatchRow):
 def _lexical(
     db: sqlite3.Connection, batch_id: str, entries: list[str]
 ) -> tuple[LexicalRecord, ...]:
-    rows = {
-        row[0]: LexicalRecord(
-            chunk_id=row[0],
-            identifiers=row[1],
-            title=row[2],
-            headings=row[3],
-            body=row[4],
-            context=row[5],
-        )
+    """Return the batch's lexical records by chunk ID, in input order."""
+    stored = [
+        row[0]
         for row in db.execute(
-            "SELECT chunk_id,identifiers,title,headings,body,context "
-            "FROM lexical_records WHERE batch_id=?",
-            (batch_id,),
+            "SELECT chunk_id FROM lexical_records WHERE batch_id=?", (batch_id,)
         )
-    }
-    if set(rows) != set(entries) or len(rows) != len(entries):
+    ]
+    if set(stored) != set(entries) or len(stored) != len(entries):
         raise _differs("Lexical SQL differs from its batch input")
-    return tuple(rows[chunk_id] for chunk_id in entries)
+    return tuple(LexicalRecord(chunk_id=chunk_id) for chunk_id in entries)
+
+
+def _complete_groups(representations: list, entries: list) -> bool:
+    """True when every entry has one group with sorted, non-empty dependencies."""
+    try:
+        return [item["record_id"] for item in representations] == entries and all(
+            isinstance(item["group_id"], str)
+            and item["dependency_ids"]
+            and item["dependency_ids"] == sorted(item["dependency_ids"])
+            for item in representations
+        )
+    except (KeyError, TypeError):
+        return False
+
+
+def _groups(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return a text batch's group representations by record, all present and paired."""
+    representations = data.get("representations")
+    if not isinstance(representations, list) or not _complete_groups(
+        representations, data["entries"]
+    ):
+        raise TychoraError(
+            "INDEX_INCOMPLETE",
+            "Text batch needs rebuilt group ownership",
+            reason="batch.missing",
+        )
+    return {item["record_id"]: item for item in representations}
 
 
 def _vectors(
-    db: sqlite3.Connection, batch_id: str, receipt: BatchReceipt, data: dict[str, Any]
+    db: sqlite3.Connection,
+    item: SlotFamily,
+    batch_id: str,
+    receipt: BatchReceipt,
+    data: dict[str, Any],
 ) -> tuple[VectorRecordBinding, ...]:
-    sealed = {item.record_id: item for item in receipt.records}
-    groups = {item["record_id"]: item for item in data.get("representations", ())}
+    sealed = {record.record_id: record for record in receipt.records}
+    groups = _groups(data) if item.slot == "text" else {}
     rows = db.execute(
         "SELECT record_id,chunk_id,asset_id,input_sha,row_index FROM vector_records "
         "WHERE batch_id=? ORDER BY record_id",
@@ -178,7 +202,7 @@ def _batch(
             lexical_records=_lexical(db, row.batch_id, list(data["entries"]))
             if isinstance(receipt, LexicalBatchReceipt)
             else (),
-            vector_records=_vectors(db, row.batch_id, receipt, data)
+            vector_records=_vectors(db, item, row.batch_id, receipt, data)
             if isinstance(receipt, BatchReceipt)
             else (),
         )
