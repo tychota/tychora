@@ -56,7 +56,7 @@ SPEC_REASONS = {
 # Reasons that classify existing storage, owner and endpoint failures.
 CLASSIFIED_REASONS = {
     "NOT_FOUND": {"workspace.absent"},
-    "WORKSPACE_BUSY": {"owner.absent"},
+    "WORKSPACE_BUSY": {"owner.absent", "family.claimed"},
     "PROFILE_INCOMPATIBLE": {"workspace.schema_mismatch"},
     "INTEGRITY_ERROR": {
         "workspace.database_invalid",
@@ -79,6 +79,7 @@ RETRYABLE = {
     "owner.live",
     "queue.full",
     "publication.rebase",
+    "family.claimed",
     "provider.unreachable",
     "provider.rate_limited",
     "provider.timeout",

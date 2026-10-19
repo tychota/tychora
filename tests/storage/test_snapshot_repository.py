@@ -1,11 +1,14 @@
 """Pages are content-addressed rows; inserting one twice is a no-op."""
 
+import sqlite3
 from hashlib import sha256
 from io import BytesIO
 
 import pytest
 
 from tests.helpers.corpus import reader
+from tychora.adapters.sqlite.connection import open_corpus
+from tychora.adapters.sqlite.repositories import SqliteUnitOfWork
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.snapshots import (
     MembershipPage,
@@ -143,3 +146,36 @@ def test_read_transaction_cannot_write_snapshots(seeded_batch, write):
             tx.snapshots.set_active("s" * 64)
     assert error.value.reason == "invariant.unexpected"
     assert db.execute("SELECT COUNT(*) FROM membership_pages").fetchone()[0] == 0
+
+
+def test_snapshot_page_bucket_must_match_the_page(seeded_batch):
+    db, uow, batch, _ = seeded_batch
+    page, manifest = _page(db, uow, batch)
+    with uow.write() as tx:
+        tx.artifacts.register(manifest)
+        tx.snapshots.insert_page(page, manifest)
+        _snapshot(db, page, manifest)
+    with pytest.raises(sqlite3.IntegrityError), uow.write():
+        db.execute(
+            "INSERT INTO snapshot_pages (snapshot_id,bucket,page_id) VALUES (?,?,?)",
+            ("s" * 64, (page.bucket + 1) % 256, page.page_id),
+        )
+    indexes = {
+        row[0]
+        for row in db.execute(
+            "SELECT name FROM pragma_index_list('snapshot_root_batches')"
+        )
+    }
+    assert "snapshot_root_batches_batch" in indexes
+
+
+def test_missing_workspace_row_is_an_invalid_row(tmp_path):
+    db = open_corpus(tmp_path / "w.sqlite3", initialize=True)
+    uow = SqliteUnitOfWork(db)
+    with pytest.raises(TychoraError) as error, uow.read() as tx:
+        tx.snapshots.active_id()
+    assert error.value.reason == "canonical.row_invalid"
+    with pytest.raises(TychoraError) as error, uow.write() as tx:
+        tx.snapshots.set_active("s" * 64)
+    assert error.value.reason == "canonical.row_invalid"
+    db.close()

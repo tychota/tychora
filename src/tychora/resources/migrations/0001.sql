@@ -377,7 +377,8 @@ CREATE TABLE membership_pages (
   page_id TEXT PRIMARY KEY,
   bucket INTEGER NOT NULL CHECK(bucket BETWEEN 0 AND 255),
   manifest_sha TEXT NOT NULL REFERENCES artifacts(artifact_sha),
-  member_count INTEGER NOT NULL CHECK(member_count>=0)
+  member_count INTEGER NOT NULL CHECK(member_count>=0),
+  UNIQUE(page_id,bucket)
 ) STRICT;
 CREATE TABLE page_members (
   page_id TEXT NOT NULL REFERENCES membership_pages(page_id),
@@ -400,16 +401,18 @@ CREATE INDEX page_batches_batch ON page_batches(batch_id);
 CREATE TABLE snapshot_pages (
   snapshot_id TEXT NOT NULL REFERENCES snapshots(snapshot_id),
   bucket INTEGER NOT NULL CHECK(bucket BETWEEN 0 AND 255),
-  page_id TEXT NOT NULL REFERENCES membership_pages(page_id),
-  PRIMARY KEY(snapshot_id,bucket)
+  page_id TEXT NOT NULL,
+  PRIMARY KEY(snapshot_id,bucket),
+  FOREIGN KEY(page_id,bucket) REFERENCES membership_pages(page_id,bucket)
 ) STRICT;
-CREATE INDEX snapshot_pages_page ON snapshot_pages(page_id);
+CREATE INDEX snapshot_pages_page ON snapshot_pages(page_id,bucket);
 CREATE TABLE snapshot_root_batches (
   snapshot_id TEXT NOT NULL REFERENCES snapshots(snapshot_id),
   slot TEXT NOT NULL,
   batch_id TEXT NOT NULL REFERENCES index_batches(batch_id),
   PRIMARY KEY(snapshot_id,slot,batch_id)
 ) STRICT;
+CREATE INDEX snapshot_root_batches_batch ON snapshot_root_batches(batch_id);
 
 CREATE TABLE jobs (
   job_id TEXT PRIMARY KEY,

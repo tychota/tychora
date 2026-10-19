@@ -121,6 +121,12 @@ _ENTRIES = (
         "Retry; another publication changed the base snapshot.",
     ),
     Reason(
+        "WORKSPACE_BUSY",
+        "family.claimed",
+        True,
+        "Retry; a concurrent index family creation claimed this configuration.",
+    ),
+    Reason(
         "INDEX_INCOMPLETE",
         "channel.unavailable",
         False,
