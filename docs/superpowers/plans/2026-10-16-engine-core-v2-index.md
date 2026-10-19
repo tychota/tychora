@@ -135,6 +135,7 @@ class ArtifactRepository(Protocol):
     def get(self, sha256: str) -> ArtifactRef | None: ...
     def require(self, sha256: str) -> ArtifactRef: ...   # INTEGRITY_ERROR payload.missing
     def register(self, ref: ArtifactRef) -> bool: ...     # True when inserted
+    def revive(self, ref: ArtifactRef) -> bool: ...       # released row back to present; caller verifies bytes (phase 2)
 
 class ReadTransaction(Protocol):
     workspace: WorkspaceRepository
@@ -228,9 +229,11 @@ class IndexFamily(Contract): ...               # moved here from contracts/publi
 class SlotFamily(Contract): slot: NonEmptyStr; family: IndexFamily; required: bool = True
 def compute_page_id(bucket: int, members: Sequence[PageMember]) -> str
 def membership_sha(page_ids: Sequence[str]) -> str
-def snapshot_id_v2(workspace_id: str, base_snapshot_id: str | None, job_id: str,
-                   config_sha: str, families: Sequence[SlotFamily], page_ids: Sequence[str],
-                   *, root_batch_ids: Sequence[str] = ()) -> str
+@dataclass(frozen=True)
+class SnapshotBinding:                         # everything but the pages a snapshot identity binds
+    workspace_id: str; base_snapshot_id: str | None; job_id: str; config_sha: str
+    families: Sequence[SlotFamily]; root_batch_ids: Sequence[str] = ()
+def snapshot_id_v2(binding: SnapshotBinding, page_ids: Sequence[str]) -> str
 
 # src/tychora/contracts/publication.py (rewritten)
 class NewBatch(Contract):
@@ -269,7 +272,7 @@ class SnapshotRepository(Protocol):
     def set_active(self, snapshot_id: str) -> None: ...
     def retained_ids(self, keep_last: int = 16) -> frozenset[str]: ...
     def collect(self, limit: int = 64, *, leased: frozenset[str] = frozenset(),
-                include_building: bool = False) -> GcReport: ...
+                include_unpublished: bool = False) -> GcReport: ...
     def footprint(self, snapshot_id: str) -> PublicationFootprint: ...
 class BatchRepository(Protocol):
     def begin(self, batch: NewBatch) -> None: ...                 # state building
