@@ -5,9 +5,14 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from tychora.contracts.errors import TychoraError
-from tychora.ports.repositories import ArtifactRepository, WorkspaceRepository
+from tychora.ports.repositories import (
+    ArtifactRepository,
+    FamilyRepository,
+    WorkspaceRepository,
+)
 
 from .artifacts import SqliteArtifactRepository
+from .families import SqliteFamilyRepository
 from .workspace import SqliteWorkspaceRepository
 
 
@@ -16,10 +21,12 @@ class SqliteTransaction:
 
     workspace: WorkspaceRepository
     artifacts: ArtifactRepository
+    families: FamilyRepository
 
     def __init__(self, db: sqlite3.Connection, *, writable: bool) -> None:
         self.workspace = SqliteWorkspaceRepository(db)
         self.artifacts = SqliteArtifactRepository(db, writable=writable)
+        self.families = SqliteFamilyRepository(db, writable=writable)
 
 
 class SqliteUnitOfWork:

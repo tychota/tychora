@@ -266,8 +266,12 @@ CREATE TABLE index_families (
   config_sha TEXT NOT NULL,
   config_json TEXT NOT NULL CHECK(json_valid(config_json)),
   backend_namespace TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  identity_sha TEXT NOT NULL CHECK(length(identity_sha)=64),
+  creation_nonce TEXT NOT NULL CHECK(length(creation_nonce)=36),
+  created_at TEXT NOT NULL,
+  UNIQUE(channel,identity_sha,creation_nonce)
 ) STRICT;
+CREATE INDEX families_identity ON index_families(channel,identity_sha,created_at);
 
 CREATE TABLE index_batches (
   batch_id TEXT PRIMARY KEY,

@@ -1,5 +1,7 @@
 """HTTP boundary behavior against real application services."""
 
+from uuid import UUID
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -276,9 +278,9 @@ async def test_extraction_and_channel_coverage_continue_in_bounded_pages(tmp_pat
                     synthetic_family = f"{number + 1000:064x}"
                     owner.db.execute(
                         "INSERT INTO index_families SELECT ?,channel,backend,provider,"
-                        "model,dimension,config_sha,config_json,backend_namespace,created_at "
-                        "FROM index_families WHERE family_id=?",
-                        (synthetic_family, family),
+                        "model,dimension,config_sha,config_json,backend_namespace,"
+                        "identity_sha,?,created_at FROM index_families WHERE family_id=?",
+                        (synthetic_family, str(UUID(int=number + 1)), family),
                     )
                     owner.db.execute(
                         "INSERT INTO index_batches SELECT ?,?, ?,input_manifest_sha,"

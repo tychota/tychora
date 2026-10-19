@@ -12,7 +12,11 @@ from typing import TYPE_CHECKING, NoReturn
 from uuid import UUID
 
 from tychora.adapters.files.references import MAX_MANIFEST_BYTES, required_closure
-from tychora.adapters.sqlite.repositories import SqliteWorkspaceRepository, artifact_ref
+from tychora.adapters.sqlite.repositories import (
+    SqliteFamilyRepository,
+    SqliteWorkspaceRepository,
+    artifact_ref,
+)
 from tychora.application.collection_policy import (
     collection_is_active,
     require_active_collection,
@@ -24,6 +28,7 @@ from tychora.contracts.graph import GraphBatchReceipt, graph_manifest_digest
 from tychora.contracts.identity import canonical_bytes, digest, source_id
 from tychora.contracts.jobs import JobAuthorization, PublicationReceipt
 from tychora.contracts.publication import (
+    IndexFamily,
     LexicalBatchReceipt,
     PublicationPlan,
     SnapshotView,
@@ -302,6 +307,16 @@ def _register_artifact(store: CorpusStore, ref: ArtifactRef) -> None:
     )
 
 
+def _require_created_family(db: sqlite3.Connection, family: IndexFamily) -> None:
+    """Refuse a plan whose family was not created, or differs from its stored row."""
+    if SqliteFamilyRepository(db, writable=False).get(family.family_id) != family:
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Publication family was not created before its batches.",
+            reason="canonical.binding_mismatch",
+        )
+
+
 def insert_snapshot_bindings(store: CorpusStore, plan: PublicationPlan) -> None:
     """Insert all immutable bindings inside the caller's immediate transaction."""
     if not store.db.in_transaction:
@@ -323,22 +338,7 @@ def insert_snapshot_bindings(store: CorpusStore, plan: PublicationPlan) -> None:
         _register_artifact(store, ref)
     for slot in plan.slots:
         family = slot.family
-        store._insert(
-            "index_families",
-            {
-                "family_id": family.family_id,
-                "channel": family.channel,
-                "backend": family.backend,
-                "provider": family.provider,
-                "model": family.model,
-                "dimension": family.dimension,
-                "config_sha": family.config_sha,
-                "config_json": canonical_bytes(family.config_json).decode(),
-                "backend_namespace": family.backend_namespace,
-                "created_at": family.created_at,
-            },
-            ("family_id",),
-        )
+        _require_created_family(db, family)
         for batch in slot.batches:
             receipt = batch.receipt
             count = (

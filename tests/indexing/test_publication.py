@@ -15,11 +15,20 @@ from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.adapters.sqlite.publication import publication_manifest
+from tychora.adapters.sqlite.repositories import SqliteUnitOfWork
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.embeddings import EmbeddingCapabilities, EmbeddingRecord
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.identity import canonical_bytes, digest, family_id, space_id
+from tychora.contracts.identity import (
+    canonical_bytes,
+    digest,
+    family_id,
+    new_family_nonce,
+    space_id,
+    vector_record_id,
+)
+from tychora.contracts.identity import family_id as derive_family_id
 from tychora.contracts.indexing import FamilySpec
 from tychora.contracts.publication import (
     IndexFamily,
@@ -194,8 +203,12 @@ class PublishedCorpus:
             revision_id=bundle.revision.revision_id,
             extraction_id=bundle.extraction.extraction_id,
         )
-        family_id = digest(
-            "lexical-family-v1", bundle.workspace.workspace_id, self.config.sha256
+        uow = SqliteUnitOfWork(self.store.db)
+        with uow.read() as tx:
+            nonce = tx.families.nonce("lexical", self.config.sha256)
+        nonce = nonce or new_family_nonce()
+        family_id = derive_family_id(
+            bundle.workspace.workspace_id, self.config.sha256, nonce
         )
         family = IndexFamily(
             family_id=family_id,
@@ -208,6 +221,8 @@ class PublishedCorpus:
             backend_namespace="lexical",
             created_at=bundle.workspace.created_at,
         )
+        with uow.write() as tx:
+            tx.families.create(family, nonce, self.config.sha256)
         entries = (bundle.chunks[0].chunk_id,)
         input_manifest = reader().put_stream(
             BytesIO(
@@ -401,6 +416,11 @@ def make_projected_corpus(tmp_path, config_factory, *, legacy=False) -> Projecte
                 for key, value in family.config_json.items()
                 if key != "capabilities"
             }
+            # A pre-proof family row was stored without its capability proof.
+            store.db.execute(
+                "UPDATE index_families SET config_json=? WHERE family_id=?",
+                (canonical_bytes(old_json).decode(), family.family_id),
+            )
             return family.model_copy(
                 update={"config_json": FrozenJsonMap(old_json)}
             ), spec
@@ -929,3 +949,18 @@ def test_archive_after_preparation_blocks_canonical_publication(projected_corpus
         corpus.store.publish_snapshot(plan)
     assert error.value.code == "FORBIDDEN_SCOPE"
     assert corpus.store.active_snapshot_id() == active
+
+
+def test_vector_record_ids_are_bound_to_the_family(projected_corpus):
+    f = projected_corpus
+    rows = f.store.db.execute(
+        "SELECT v.record_id,v.chunk_id,v.input_sha,b.family_id FROM vector_records v "
+        "JOIN index_batches b USING(batch_id)"
+    ).fetchall()
+    assert rows
+    for record_id, chunk_id, input_sha, family in rows:
+        assert record_id == vector_record_id(family, chunk_id, input_sha)
+    nonce = f.store.db.execute(
+        "SELECT creation_nonce FROM index_families WHERE channel='text'"
+    ).fetchone()[0]
+    assert len(nonce) == 36

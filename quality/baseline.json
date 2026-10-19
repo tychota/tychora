@@ -391,7 +391,7 @@
     },
     "function_length": {
       "direction": "lower",
-      "measured_at": "8a90f8731716",
+      "measured_at": "dcdc68aeab9f",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex.search": 143,
         "src/tychora/adapters/code/capture.py::RepositoryCapture._run": 89,
@@ -427,7 +427,7 @@
         "src/tychora/adapters/sqlite/graph.py::read_graph_build": 155,
         "src/tychora/adapters/sqlite/lexical.py::LexicalIndex.search": 103,
         "src/tychora/adapters/sqlite/publication.py::_verify_batches": 135,
-        "src/tychora/adapters/sqlite/publication.py::insert_snapshot_bindings": 155,
+        "src/tychora/adapters/sqlite/publication.py::insert_snapshot_bindings": 140,
         "src/tychora/adapters/sqlite/publication.py::publish_snapshot": 150,
         "src/tychora/adapters/sqlite/publication.py::resolve_snapshot": 89,
         "src/tychora/adapters/sqlite/validation.py::validate_bundle": 427,
@@ -499,9 +499,7 @@
         "src/tychora/evaluation/provenance.py::verify_result_locators": 91,
         "src/tychora/evaluation/runner.py::EvaluationService.run": 203,
         "src/tychora/formatting/render.py::render_unchecked": 132,
-        "src/tychora/indexing/coordinator.py::ProjectionCoordinator._graph_slot": 109,
-        "src/tychora/indexing/coordinator.py::ProjectionCoordinator._image_batch": 88,
-        "src/tychora/indexing/coordinator.py::ProjectionCoordinator._text_batch": 91,
+        "src/tychora/indexing/coordinator.py::ProjectionCoordinator._graph_slot": 90,
         "src/tychora/indexing/coordinator.py::ProjectionCoordinator.finalize": 134,
         "src/tychora/indexing/coordinator.py::ProjectionCoordinator.prepare": 142,
         "src/tychora/indexing/representations.py::_prepare_proxy_unit": 81,
@@ -549,7 +547,7 @@
         "src/tychora/retrieval/visuals.py::_visual": 92,
         "src/tychora/retrieval/visuals.py::select_visuals": 109
       },
-      "value": 155
+      "value": 153
     },
     "integrity_raises_without_reason": {
       "direction": "lower",

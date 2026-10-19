@@ -1,10 +1,16 @@
 import sqlite3
+from uuid import uuid4
 
 import pytest
 
 from tests.helpers.corpus import reader, registry, seed_bundle
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
+from tychora.adapters.sqlite.migrations import (
+    EARLIER_FORMAT_TWO_CHECKSUMS,
+    SCHEMA_CHECKSUM,
+    open_verified_import,
+)
 from tychora.contracts.errors import TychoraError
 
 
@@ -102,6 +108,8 @@ def populated(tmp_path):
             config_sha=sha,
             config_json="{}",
             backend_namespace=fid,
+            identity_sha=sha,
+            creation_nonce=str(uuid4()),
             created_at="now",
         )
     for bid, fid, bundle in [
@@ -500,3 +508,38 @@ def test_fts_membership_grouping_and_transactional_statistics(populated):
         ).fetchone()[0]
         == 2
     )
+
+
+def test_known_earlier_checksum_reports_format_old(tmp_path):
+    assert (
+        "5899bf5b00ec52d686602369801491bdc6e50d6e9dd803e790bb1cd32d15cabe"
+        in EARLIER_FORMAT_TWO_CHECKSUMS
+    )
+    assert SCHEMA_CHECKSUM not in EARLIER_FORMAT_TWO_CHECKSUMS
+    path = tmp_path / "corpus.sqlite3"
+    db = open_corpus(path, initialize=True)
+    db.execute(
+        "UPDATE schema_migrations SET checksum=?", (EARLIER_FORMAT_TWO_CHECKSUMS[0],)
+    )
+    db.close()
+    with pytest.raises(TychoraError) as error:
+        open_corpus(path)
+    assert error.value.code == "PROFILE_INCOMPATIBLE"
+    assert error.value.reason == "workspace.format_old"
+    with pytest.raises(TychoraError) as imported:
+        open_verified_import(path)
+    assert imported.value.reason == "workspace.format_old"
+
+
+def test_unknown_checksum_reports_schema_mismatch(tmp_path):
+    path = tmp_path / "corpus.sqlite3"
+    db = open_corpus(path, initialize=True)
+    db.execute("UPDATE schema_migrations SET checksum=?", ("0" * 64,))
+    db.close()
+    with pytest.raises(TychoraError) as error:
+        open_corpus(path)
+    assert error.value.code == "PROFILE_INCOMPATIBLE"
+    assert error.value.reason == "workspace.schema_mismatch"
+    with pytest.raises(TychoraError) as imported:
+        open_verified_import(path)
+    assert imported.value.reason == "workspace.schema_mismatch"
