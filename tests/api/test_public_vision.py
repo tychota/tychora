@@ -566,15 +566,9 @@ def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_targ
     page.setFont("Helvetica", 15)
     page.drawString(72, 700, "Native source paragraph remains authoritative.")
     page.showPage()
-    # More than 20 text items so that the image candidates sort after the first
-    # page of 20 selection candidates. Heading/body pairs stay separate layout
-    # items on one page; one PDF page per item made each of the five parses slow.
-    for index in range(11):
-        page.setFont("Helvetica-Bold", 16)
-        page.drawString(72, 770 - 68 * index, f"Additional section {index:02d}")
-        page.setFont("Helvetica", 11)
-        page.drawString(72, 750 - 68 * index, f"Additional native body {index:02d}.")
-    page.showPage()
+    for index in range(21):
+        page.drawString(72, 700, f"Additional native page {index:02d}.")
+        page.showPage()
     pixels = Image.new("RGB", (600, 140), "white")
     ImageDraw.Draw(pixels).rectangle((50, 30, 170, 100), fill="blue")
     encoded = BytesIO()
