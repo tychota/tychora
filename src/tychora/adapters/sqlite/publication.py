@@ -322,16 +322,18 @@ def _check_base_and_job(
         _fail("Publication workspace identity differs")
 
 
-def _prior_extractions(store: CorpusStore, plan: PublicationPlan) -> set[str]:
-    """Extractions the base selected in the buckets the new pages replace."""
+def _prior_members(
+    store: CorpusStore, plan: PublicationPlan
+) -> set[tuple[str, str, str, int]]:
+    """Exact member rows the base selected in the buckets the new pages replace."""
     if plan.base_snapshot_id is None:
         return set()
     return {
-        row[0]
+        (row[0], row[1], row[2], row[3])
         for row in store.db.execute(
-            "SELECT m.extraction_id FROM snapshot_pages sp "
-            "JOIN page_members m USING(page_id) WHERE sp.snapshot_id=? "
-            "AND sp.bucket IN (SELECT value FROM json_each(?))",
+            "SELECT m.source_id,m.revision_id,m.extraction_id,m.is_default "
+            "FROM snapshot_pages sp JOIN page_members m USING(page_id) "
+            "WHERE sp.snapshot_id=? AND sp.bucket IN (SELECT value FROM json_each(?))",
             (
                 plan.base_snapshot_id,
                 json.dumps([page.bucket for page in plan.new_pages]),
@@ -345,8 +347,9 @@ def _check_members(
 ) -> None:
     """New pages' members are registered, not withdrawn and in an active collection.
 
-    An archived collection keeps a member the base already selected, unless the
-    member is this publication's own source.
+    An archived collection keeps a member only when the base selected exactly the
+    same row (source, revision, extraction, default) and the member is not this
+    publication's own source.
     """
     members = {m.extraction_id: m for page in plan.new_pages for m in page.members}
     rows = {
@@ -360,7 +363,7 @@ def _check_members(
             (json.dumps(sorted(members)),),
         )
     }
-    prior: set[str] | None = None
+    prior: set[tuple[str, str, str, int]] | None = None
     for extraction_id, member in members.items():
         row = rows.get(extraction_id)
         if row is None or row[:3] != (
@@ -371,8 +374,14 @@ def _check_members(
             _fail("Snapshot member is not a registered extraction")
         if collection_is_active(row[3]):
             continue
-        prior = _prior_extractions(store, plan) if prior is None else prior
-        if target is None or member.source_id == target or extraction_id not in prior:
+        prior = _prior_members(store, plan) if prior is None else prior
+        unchanged = (
+            member.source_id,
+            member.revision_id,
+            extraction_id,
+            int(member.is_default),
+        ) in prior
+        if target is None or member.source_id == target or not unchanged:
             require_active_collection(row[3])
 
 
