@@ -129,9 +129,10 @@ def test_mark_ready_requires_a_known_batch(seeded_batch):
 
 
 def test_mark_ready_refuses_a_different_count_once_ready(seeded_batch):
-    _, uow, batch, _ = seeded_batch
+    _, uow, batch, entries = seeded_batch
     with uow.write() as tx:
         tx.batches.begin(batch)
+        tx.batches.write_lexical(batch.batch_id, (LexicalRecord(chunk_id=entries[0]),))
         tx.batches.mark_ready(batch.batch_id, 1)
     with pytest.raises(TychoraError) as error, uow.write() as tx:
         tx.batches.mark_ready(batch.batch_id, 2)
@@ -174,6 +175,7 @@ def test_begin_revives_a_removed_or_failed_batch(seeded_batch, state):
     db, uow, batch, entries = seeded_batch
     with uow.write() as tx:
         tx.batches.begin(batch)
+        tx.batches.write_lexical(batch.batch_id, (LexicalRecord(chunk_id=entries[0]),))
         tx.batches.mark_ready(batch.batch_id, 1)
         db.execute("UPDATE index_batches SET state=?", (state,))
     with uow.write() as tx:
@@ -181,9 +183,7 @@ def test_begin_revives_a_removed_or_failed_batch(seeded_batch, state):
         row = tx.batches.get(batch.batch_id)
         assert row is not None
         assert (row.state, row.actual_count) == ("building", None)
-        tx.batches.write_lexical(
-            batch.batch_id, (LexicalRecord(chunk_id=entries[0], body="Record"),)
-        )
+        tx.batches.write_lexical(batch.batch_id, (LexicalRecord(chunk_id=entries[0]),))
         tx.batches.mark_ready(batch.batch_id, 1)
     with uow.read() as tx:
         assert tx.batches.count_ready((batch.batch_id,)) == 1
@@ -222,3 +222,56 @@ def test_rows_for_an_unknown_batch_are_refused(seeded_batch, write):
             )
     assert error.value.code == "INTEGRITY_ERROR"
     assert error.value.reason == "canonical.binding_mismatch"
+
+
+def test_failed_batch_is_rebuilt_from_scratch(seeded_batch):
+    db, uow, batch, entries = seeded_batch
+    with uow.write() as tx:
+        _extra_chunk(db, "extra-chunk")
+        tx.batches.begin(batch)
+        tx.batches.write_lexical(batch.batch_id, (LexicalRecord(chunk_id=entries[0]),))
+        db.execute("UPDATE index_batches SET state='failed'")
+    before = _epoch(db)
+    records = (
+        LexicalRecord(chunk_id=entries[0], body="Record"),
+        LexicalRecord(chunk_id="extra-chunk", body="Other"),
+    )
+    with uow.write() as tx:
+        tx.batches.begin(batch)
+        assert db.execute("SELECT COUNT(*) FROM lexical_records").fetchone()[0] == 0
+        assert _epoch(db) == before + 1
+        tx.batches.write_lexical(batch.batch_id, records)
+        tx.batches.mark_ready(batch.batch_id, 2)
+    assert _epoch(db) == before + 2
+    with uow.read() as tx:
+        row = tx.batches.get(batch.batch_id)
+        assert row is not None and (row.state, row.actual_count) == ("ready", 2)
+
+
+def test_mark_ready_refuses_a_count_that_differs_from_stored_rows(seeded_batch):
+    db, uow, batch, entries = seeded_batch
+    with uow.write() as tx:
+        _extra_chunk(db, "extra-chunk")
+        tx.batches.begin(batch)
+        tx.batches.write_lexical(
+            batch.batch_id,
+            (LexicalRecord(chunk_id=entries[0]), LexicalRecord(chunk_id="extra-chunk")),
+        )
+    with pytest.raises(TychoraError) as error, uow.write() as tx:
+        tx.batches.mark_ready(batch.batch_id, 1)
+    assert error.value.reason == "canonical.binding_mismatch"
+    assert db.execute("SELECT state FROM index_batches").fetchone()[0] == "building"
+
+
+def test_removed_batch_revives_with_its_rows(seeded_batch):
+    db, uow, batch, entries = seeded_batch
+    with uow.write() as tx:
+        tx.batches.begin(batch)
+        tx.batches.write_lexical(batch.batch_id, (LexicalRecord(chunk_id=entries[0]),))
+        tx.batches.mark_ready(batch.batch_id, 1)
+        db.execute("UPDATE index_batches SET state='removed'")
+    with uow.write() as tx:
+        tx.batches.begin(batch)
+        tx.batches.mark_ready(batch.batch_id, 1)
+    assert db.execute("SELECT COUNT(*) FROM lexical_records").fetchone()[0] == 1
+    assert db.execute("SELECT state FROM index_batches").fetchone()[0] == "ready"
