@@ -17,7 +17,7 @@
     },
     "cognitive_complexity": {
       "direction": "lower",
-      "measured_at": "0711a22f7964",
+      "measured_at": "ff020c392165",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::search": 58,
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::upsert_batch": 16,
@@ -107,8 +107,8 @@
         "src/tychora/application/query.py::QueryService::_replay_ready": 18,
         "src/tychora/application/query.py::QueryService::_validate_provider_families": 64,
         "src/tychora/application/recovery.py::RecoveryService::_prune_native_on_owner": 34,
-        "src/tychora/application/recovery.py::RecoveryService::_rebuild_native_on_owner": 78,
-        "src/tychora/application/recovery.py::RecoveryService::_verify_native_on_owner": 64,
+        "src/tychora/application/recovery.py::RecoveryService::_rebuild_native_on_owner": 74,
+        "src/tychora/application/recovery.py::RecoveryService::_verify_native_batch": 28,
         "src/tychora/application/recovery.py::verify_canonical_native_batch": 20,
         "src/tychora/application/removal.py::RemovalService::_live_root": 18,
         "src/tychora/application/removal.py::RemovalService::_manifest_closure": 18,
@@ -382,7 +382,7 @@
     },
     "function_length": {
       "direction": "lower",
-      "measured_at": "d27839c36ee3",
+      "measured_at": "ff020c392165",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex.search": 143,
         "src/tychora/adapters/code/capture.py::RepositoryCapture._run": 89,
@@ -448,8 +448,7 @@
         "src/tychora/application/query.py::QueryService._validate_provider_families": 164,
         "src/tychora/application/query.py::QueryService.search": 120,
         "src/tychora/application/recovery.py::RecoveryService._prune_native_on_owner": 103,
-        "src/tychora/application/recovery.py::RecoveryService._rebuild_native_on_owner": 166,
-        "src/tychora/application/recovery.py::RecoveryService._verify_native_on_owner": 106,
+        "src/tychora/application/recovery.py::RecoveryService._rebuild_native_on_owner": 158,
         "src/tychora/application/recovery.py::verify_canonical_native_batch": 93,
         "src/tychora/application/removal.py::RemovalService._plan": 107,
         "src/tychora/application/removal.py::RemovalService.purge_originals": 98,
@@ -530,11 +529,11 @@
         "src/tychora/retrieval/visuals.py::_visual": 92,
         "src/tychora/retrieval/visuals.py::select_visuals": 109
       },
-      "value": 145
+      "value": 144
     },
     "integrity_raises_without_reason": {
       "direction": "lower",
-      "measured_at": "baac23592d6f",
+      "measured_at": "ff020c392165",
       "per_key": {
         "src/tychora/adapters/code/capture.py": 3,
         "src/tychora/adapters/code/normalize.py": 3,
@@ -572,7 +571,7 @@
         "src/tychora/application/pdf_intake.py": 15,
         "src/tychora/application/pdf_processing.py": 2,
         "src/tychora/application/query.py": 18,
-        "src/tychora/application/recovery.py": 36,
+        "src/tychora/application/recovery.py": 35,
         "src/tychora/application/removal.py": 11,
         "src/tychora/application/reranking.py": 9,
         "src/tychora/application/restore.py": 21,
@@ -602,7 +601,7 @@
         "src/tychora/retrieval/segments.py": 8,
         "src/tychora/retrieval/visuals.py": 4
       },
-      "value": 354
+      "value": 353
     },
     "layering_exceptions": {
       "direction": "lower",
@@ -909,7 +908,7 @@
     },
     "raw_sql_outside_adapters": {
       "direction": "lower",
-      "measured_at": "0923de834cc6",
+      "measured_at": "ff020c392165",
       "per_key": {
         "src/tychora/api.py": 3,
         "src/tychora/application/collections.py": 10,
@@ -922,7 +921,7 @@
         "src/tychora/application/owner.py": 21,
         "src/tychora/application/pdf_intake.py": 2,
         "src/tychora/application/query.py": 8,
-        "src/tychora/application/recovery.py": 19,
+        "src/tychora/application/recovery.py": 18,
         "src/tychora/application/removal.py": 30,
         "src/tychora/application/reranking.py": 7,
         "src/tychora/application/restore.py": 24,
@@ -938,11 +937,11 @@
         "src/tychora/interfaces/http/client.py": 1,
         "src/tychora/retrieval/visuals.py": 1
       },
-      "value": 220
+      "value": 219
     },
     "size_rules": {
       "direction": "lower",
-      "measured_at": "baac23592d6f",
+      "measured_at": "ff020c392165",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::PLR0915": 1,
         "src/tychora/adapters/code/normalize.py::PLR0913": 2,
@@ -987,7 +986,7 @@
         "src/tychora/application/pdf_intake.py::PLR0915": 2,
         "src/tychora/application/query.py::PLR0913": 2,
         "src/tychora/application/query.py::PLR0915": 2,
-        "src/tychora/application/recovery.py::PLR0915": 2,
+        "src/tychora/application/recovery.py::PLR0915": 1,
         "src/tychora/application/removal.py::PLR0911": 1,
         "src/tychora/application/reranking.py::PLR0913": 1,
         "src/tychora/application/reranking.py::PLR0915": 1,
@@ -1056,7 +1055,7 @@
         "src/tychora/retrieval/segments.py::PLR0913": 5,
         "src/tychora/retrieval/segments.py::PLR0915": 1
       },
-      "value": 159
+      "value": 158
     },
     "test_runtime_seconds": {
       "direction": "lower",

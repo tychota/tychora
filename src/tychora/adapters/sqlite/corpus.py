@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import NoReturn, cast
 
@@ -17,7 +18,13 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit, Geometry
 from tychora.contracts.graph import EligibilityView
 from tychora.contracts.identity import canonical_bytes, digest
-from tychora.contracts.publication import PublicationPlan, RetainedSlot, SnapshotView
+from tychora.contracts.publication import (
+    PublicationPlan,
+    RetainedBatch,
+    RetainedSlot,
+    SnapshotView,
+)
+from tychora.contracts.snapshots import SlotFamily
 from tychora.ports.artifacts import Artifacts
 from tychora.ports.execution import ExecutionContext
 from tychora.ports.graph import GraphStore
@@ -26,7 +33,11 @@ from tychora.ports.vectors import VectorIndex
 from .migrations import SCHEMA_VERSION
 from .policy import PolicyRepository
 from .publication import publish_snapshot
-from .retained_slots import RetainedBatchCache, load_retained_slots
+from .retained_slots import (
+    RetainedBatchCache,
+    iter_retained_batches,
+    load_retained_slots,
+)
 from .validation import validate_bundle, verify_artifacts
 
 
@@ -193,6 +204,18 @@ class CorpusStore(PolicyRepository):
         """
         return load_retained_slots(
             self.db, self.artifacts, view, None if fresh else self.batch_cache
+        )
+
+    def iter_snapshot_batches(
+        self,
+        view: SnapshotView,
+        *,
+        slots: frozenset[str] | None = None,
+        before_each: Callable[[], None] | None = None,
+    ) -> Iterator[tuple[SlotFamily, RetainedBatch]]:
+        """Stream a snapshot's batches fresh from SQL, one held at a time."""
+        return iter_retained_batches(
+            self.db, self.artifacts, view, slots=slots, before_each=before_each
         )
 
     def _insert(self, table: str, row: dict, keys: tuple[str, ...]):

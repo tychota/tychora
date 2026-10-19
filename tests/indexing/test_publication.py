@@ -1255,4 +1255,22 @@ def test_native_health_covers_more_than_128_batches(projected_corpus, tmp_path):
         f.add_revision(f"health outcome {index}", source_key=f"h{index}.md")
     owner = _recovery_owner(f, tmp_path)
     report = RecoveryService(owner)._verify_native_on_owner(ExecutionContext())
-    assert report[1] >= 130
+    snapshot = f.store.resolve_snapshot(None)
+    expected = sum(
+        slot.batches[i].receipt.count
+        for slot in f.store.snapshot_slots(snapshot)
+        if slot.slot in {"text", "image"}
+        for i in range(len(slot.batches))
+    )
+    batches = sum(
+        len(slot.batches)
+        for slot in f.store.snapshot_slots(snapshot)
+        if slot.slot in {"text", "image", "graph"}
+    )
+    graphs = sum(
+        len(slot.batches)
+        for slot in f.store.snapshot_slots(snapshot)
+        if slot.slot == "graph"
+    )
+    assert batches > 128
+    assert report == (snapshot.snapshot_id, expected, graphs, 0)

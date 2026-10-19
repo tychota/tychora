@@ -720,15 +720,7 @@ class RecoveryService:
                 if slot.slot not in channels:
                     continue
                 for batch in slot.batches:
-                    row = self.owner.db.execute(
-                        "SELECT state FROM index_batches WHERE batch_id=? AND family_id=?",
-                        (batch.batch_id, slot.family.family_id),
-                    ).fetchone()
-                    if row is None or row[0] not in {"pending", "ready"}:
-                        raise TychoraError(
-                            "INTEGRITY_ERROR", "Native batch state differs"
-                        )
-                    if row[0] == "ready":
+                    if self._native_batch_state(batch, slot.family) == "ready":
                         continue
                     if slot.slot in {"text", "image"}:
                         receipt, physical = self._reverify_vector(
@@ -915,103 +907,102 @@ class RecoveryService:
     def _verify_native_on_owner(
         self, ctx: ExecutionContext
     ) -> tuple[str | None, int, int, int]:
-        """Verify every ready batch of the pinned active snapshot, one batch at a time."""
+        """Verify every ready batch of the pinned active snapshot.
+
+        Batches stream fresh from SQL one at a time, with a cancellation
+        checkpoint before each read, so memory stays bounded by one batch.
+        """
         store = self.owner.store
         if store.active_snapshot_id() is None:
             return None, 0, 0, 0
         records = generations = skipped = 0
         with store.pin_snapshot(None) as snapshot:
-            for slot in store.snapshot_slots(snapshot, fresh=True):
-                if slot.slot not in {"text", "image", "graph"}:
-                    continue
-                for batch in slot.batches:
-                    ctx.checkpoint()
-                    row = self.owner.db.execute(
-                        "SELECT state FROM index_batches WHERE batch_id=? AND family_id=?",
-                        (batch.batch_id, slot.family.family_id),
-                    ).fetchone()
-                    if row is None or row[0] not in {"pending", "ready"}:
-                        raise TychoraError(
-                            "INTEGRITY_ERROR", "Native batch state differs"
-                        )
-                    if row[0] == "pending":
-                        skipped += 1
-                        continue
-                    unavailable = getattr(self.owner, "_native_unavailable", {})
-                    if slot.slot in unavailable:
-                        raise TychoraError("INTEGRITY_ERROR", unavailable[slot.slot])
-                    verify_canonical_native_batch(store, slot.family, batch)
-                    if slot.slot in {"text", "image"}:
-                        receipt = batch.receipt
-                        if not isinstance(receipt, BatchReceipt):
-                            raise TychoraError(
-                                "INTEGRITY_ERROR", "Vector receipt type differs"
-                            )
-                        records += receipt.count
-                        if receipt.count > 2048:
-                            raise TychoraError(
-                                "CAPABILITY_MISSING",
-                                "Native health exceeds vector record budget",
-                            )
-                        index = store.vector_indexes.get(slot.family.family_id)
-                        if index is None:
-                            raise TychoraError(
-                                "CAPABILITY_MISSING",
-                                "Native vector index is unavailable",
-                            )
-                        checked = index.verify_batch(receipt)
-                        if (
-                            not checked.ready
-                            or not checked.config_matches
-                            or checked.missing_record_ids
-                            or checked.mismatched_record_ids
-                        ):
-                            raise TychoraError(
-                                "INTEGRITY_ERROR", "Ready native vector bytes differ"
-                            )
-                    else:
-                        receipt = batch.receipt
-                        manifest = batch.graph_manifest
-                        if (
-                            not isinstance(receipt, GraphBatchReceipt)
-                            or manifest is None
-                        ):
-                            raise TychoraError(
-                                "INTEGRITY_ERROR", "Graph receipt type differs"
-                            )
-                        if (
-                            len(manifest.evidence_ids) > 20_000
-                            or len(manifest.assertion_ids) > 20_000
-                        ):
-                            raise TychoraError(
-                                "CAPABILITY_MISSING",
-                                "Native health exceeds graph member budget",
-                            )
-                        graph = store.graph_indexes.get(receipt.generation_id)
-                        if graph is None or not hasattr(graph, "prepare_build"):
-                            raise TychoraError(
-                                "CAPABILITY_MISSING",
-                                "Native graph index is unavailable",
-                            )
-                        if graph.sealed_receipt(receipt.generation_id) != receipt:
-                            raise TychoraError(
-                                "INTEGRITY_ERROR", "Ready graph seal differs"
-                            )
-                        build = read_graph_build(store, manifest.spec, ctx)
-                        if GraphManifest.from_build(build) != manifest:
-                            raise TychoraError(
-                                "INTEGRITY_ERROR", "Graph canonical input differs"
-                            )
-                        graph.prepare_build(build)
-                        if (
-                            graph.seal_generation(receipt.generation_id, manifest, ctx)
-                            != receipt
-                        ):
-                            raise TychoraError(
-                                "INTEGRITY_ERROR", "Ready graph members differ"
-                            )
-                        generations += 1
+            for slot, batch in store.iter_snapshot_batches(
+                snapshot,
+                slots=frozenset({"text", "image", "graph"}),
+                before_each=ctx.checkpoint,
+            ):
+                found, made, passed = self._verify_native_batch(store, slot, batch, ctx)
+                records += found
+                generations += made
+                skipped += passed
+                del batch
         return snapshot.snapshot_id, records, generations, skipped
+
+    def _native_batch_state(self, batch: RetainedBatch, family: IndexFamily) -> str:
+        """Return ``pending`` or ``ready``; any other recorded state is drift."""
+        row = self.owner.db.execute(
+            "SELECT state FROM index_batches WHERE batch_id=? AND family_id=?",
+            (batch.batch_id, family.family_id),
+        ).fetchone()
+        if row is None or row[0] not in {"pending", "ready"}:
+            raise TychoraError("INTEGRITY_ERROR", "Native batch state differs")
+        return row[0]
+
+    def _verify_native_batch(
+        self, store, slot, batch: RetainedBatch, ctx: ExecutionContext
+    ) -> tuple[int, int, int]:
+        """Verify one loaded batch; return its records, graph generations, skips."""
+        if self._native_batch_state(batch, slot.family) == "pending":
+            return 0, 0, 1
+        unavailable = getattr(self.owner, "_native_unavailable", {})
+        if slot.slot in unavailable:
+            raise TychoraError("INTEGRITY_ERROR", unavailable[slot.slot])
+        verify_canonical_native_batch(store, slot.family, batch)
+        if slot.slot in {"text", "image"}:
+            receipt = batch.receipt
+            if not isinstance(receipt, BatchReceipt):
+                raise TychoraError("INTEGRITY_ERROR", "Vector receipt type differs")
+            if receipt.count > 2048:
+                raise TychoraError(
+                    "CAPABILITY_MISSING",
+                    "Native health exceeds vector record budget",
+                )
+            index = store.vector_indexes.get(slot.family.family_id)
+            if index is None:
+                raise TychoraError(
+                    "CAPABILITY_MISSING",
+                    "Native vector index is unavailable",
+                )
+            checked = index.verify_batch(receipt)
+            if (
+                not checked.ready
+                or not checked.config_matches
+                or checked.missing_record_ids
+                or checked.mismatched_record_ids
+            ):
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Ready native vector bytes differ"
+                )
+            return receipt.count, 0, 0
+        else:
+            receipt = batch.receipt
+            manifest = batch.graph_manifest
+            if not isinstance(receipt, GraphBatchReceipt) or manifest is None:
+                raise TychoraError("INTEGRITY_ERROR", "Graph receipt type differs")
+            if (
+                len(manifest.evidence_ids) > 20_000
+                or len(manifest.assertion_ids) > 20_000
+            ):
+                raise TychoraError(
+                    "CAPABILITY_MISSING",
+                    "Native health exceeds graph member budget",
+                )
+            graph = store.graph_indexes.get(receipt.generation_id)
+            if graph is None or not hasattr(graph, "prepare_build"):
+                raise TychoraError(
+                    "CAPABILITY_MISSING",
+                    "Native graph index is unavailable",
+                )
+            if graph.sealed_receipt(receipt.generation_id) != receipt:
+                raise TychoraError("INTEGRITY_ERROR", "Ready graph seal differs")
+            build = read_graph_build(store, manifest.spec, ctx)
+            if GraphManifest.from_build(build) != manifest:
+                raise TychoraError("INTEGRITY_ERROR", "Graph canonical input differs")
+            graph.prepare_build(build)
+            if graph.seal_generation(receipt.generation_id, manifest, ctx) != receipt:
+                raise TychoraError("INTEGRITY_ERROR", "Ready graph members differ")
+            return 0, 1, 0
 
     def resume_pending_deletions(
         self, scope: RequestScope, ctx: ExecutionContext

@@ -560,22 +560,72 @@ def test_fresh_slots_detect_sql_drift_after_a_cached_load(projected):
         f.store.snapshot_slots(view, fresh=True)
 
 
-def test_native_recovery_reads_slots_fresh(projected):
+def _health_service(f):
     from types import SimpleNamespace
 
     from tychora.application.recovery import RecoveryService
+
+    return RecoveryService(SimpleNamespace(store=f.store, db=f.store.db))
+
+
+def test_native_recovery_streams_batches_without_loading_every_slot(projected):
     from tychora.ports.execution import ExecutionContext
 
     f = projected
-    calls = []
-    original = f.store.snapshot_slots
+    with patch.object(
+        f.store, "snapshot_slots", side_effect=AssertionError("loads every slot")
+    ):
+        _health_service(f)._verify_native_on_owner(ExecutionContext())
 
-    def spy(view, **kwargs):
-        calls.append(kwargs)
-        return original(view, **kwargs)
 
-    with patch.object(f.store, "snapshot_slots", spy):
-        RecoveryService(
-            SimpleNamespace(store=f.store, db=f.store.db)
-        )._verify_native_on_owner(ExecutionContext())
-    assert calls == [{"fresh": True}]
+def test_native_health_holds_at_most_one_batch_at_a_time(projected):
+    import gc
+    import weakref
+
+    from tychora.adapters.sqlite import retained_slots
+    from tychora.ports.execution import ExecutionContext
+
+    f = projected
+    for index in range(3):
+        f.add_revision(f"streamed {index}", source_key=f"s{index}.md")
+    original = retained_slots._batch
+    live: list[weakref.ref] = []
+    peaks: list[int] = []
+
+    def spy(*args):
+        gc.collect()
+        peaks.append(sum(ref() is not None for ref in live))
+        batch = original(*args)
+        live.append(weakref.ref(batch))
+        return batch
+
+    with patch.object(retained_slots, "_batch", spy):
+        _health_service(f)._verify_native_on_owner(ExecutionContext())
+    assert len(peaks) >= 3
+    assert max(peaks) == 0
+
+
+def test_native_health_cancelled_mid_run_stops_before_loading_next_batch(projected):
+    from tychora.adapters.sqlite import retained_slots
+    from tychora.ports.execution import ExecutionContext
+
+    f = projected
+    for index in range(3):
+        f.add_revision(f"cancelled {index}", source_key=f"c{index}.md")
+    ctx = ExecutionContext()
+    original = retained_slots._batch
+    loads = []
+
+    def spy(*args):
+        loads.append(args[-1].batch_id)
+        batch = original(*args)
+        ctx.cancelled.set()
+        return batch
+
+    with (
+        patch.object(retained_slots, "_batch", spy),
+        pytest.raises(TychoraError) as raised,
+    ):
+        _health_service(f)._verify_native_on_owner(ctx)
+    assert raised.value.code == "CANCELLED"
+    assert len(loads) == 1

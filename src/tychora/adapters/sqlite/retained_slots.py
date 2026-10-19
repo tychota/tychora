@@ -9,6 +9,7 @@ Lexical records carry their chunk IDs only: their text stays in the FTS index.
 import json
 import sqlite3
 from collections import OrderedDict
+from collections.abc import Callable, Iterator
 from typing import Any
 
 from tychora.adapters.files.references import MAX_MANIFEST_BYTES
@@ -297,3 +298,27 @@ def load_retained_slots(
         )
         for item in view.families
     )
+
+
+def iter_retained_batches(
+    db: sqlite3.Connection,
+    artifacts: Artifacts,
+    view: SnapshotView,
+    *,
+    slots: frozenset[str] | None = None,
+    before_each: Callable[[], None] | None = None,
+) -> Iterator[tuple[SlotFamily, RetainedBatch]]:
+    """Yield the batches of ``view`` one at a time, each read fresh from SQL.
+
+    Nothing is cached and only the batch being yielded is held, so a caller
+    that drops it keeps memory bounded by one batch. ``before_each`` runs
+    before each batch is read, so a caller can stop between batches.
+    """
+    rows = SqliteBatchRepository(db, writable=False)
+    for item in view.families:
+        if slots is not None and item.slot not in slots:
+            continue
+        for row in rows.for_snapshot(view.snapshot_id, item.slot):
+            if before_each is not None:
+                before_each()
+            yield item, _batch(db, artifacts, item, row)
