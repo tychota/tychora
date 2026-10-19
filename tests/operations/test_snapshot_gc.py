@@ -605,3 +605,45 @@ def test_crash_after_unlink_before_its_row_update_converges(tmp_path, monkeypatc
             with pytest.raises(RuntimeError):
                 kb.management.run({"operation": "gc"})
         _assert_converged(kb, owner)
+
+
+def test_reclaim_walks_the_roots_once_however_many_payloads_are_pending(
+    tmp_path, monkeypatch
+):
+    with Tychora.open(tmp_path / "kb", token_counter=CharacterCounter()) as kb:
+        owner = _stale_workspace(kb, monkeypatch)
+        _collect(owner, limit=1000)
+        pending = [
+            row[0]
+            for row in _db(owner).execute(
+                "SELECT artifact_sha FROM artifacts WHERE payload_state='delete_pending'"
+            )
+        ]
+        assert len(pending) > 2
+        walks = 0
+        closure = RemovalService._manifest_closure
+
+        def counting(self, *args, **kwargs):
+            nonlocal walks
+            walks += 1
+            return closure(self, *args, **kwargs)
+
+        monkeypatch.setattr(RemovalService, "_manifest_closure", counting)
+
+        def reconcile(candidates):
+            nonlocal walks
+            walks = 0
+            service = RemovalService(owner, kb._workspace.services.jobs.repository)
+            counts = _on_owner(
+                owner, lambda: service.reconcile_pending_deletions(candidates)
+            )
+            return walks, counts
+
+        with owner.store.leases.pin(frozenset({"hold"})):
+            one, _ = reconcile(frozenset(pending[:1]))
+            every, counts = reconcile(None)
+        assert counts["pending_payloads"] == len(pending)
+        assert 0 < every == one
+        every, counts = reconcile(None)
+        assert counts["deleted_payloads"] == len(pending)
+        assert every <= one

@@ -17,7 +17,7 @@
     },
     "cognitive_complexity": {
       "direction": "lower",
-      "measured_at": "0923de834cc6",
+      "measured_at": "d27839c36ee3",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::search": 58,
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::upsert_batch": 16,
@@ -110,7 +110,7 @@
         "src/tychora/application/recovery.py::RecoveryService::_rebuild_native_on_owner": 78,
         "src/tychora/application/recovery.py::RecoveryService::_verify_native_on_owner": 68,
         "src/tychora/application/recovery.py::verify_canonical_native_batch": 20,
-        "src/tychora/application/removal.py::RemovalService::_live_root": 29,
+        "src/tychora/application/removal.py::RemovalService::_live_root": 18,
         "src/tychora/application/removal.py::RemovalService::_manifest_closure": 18,
         "src/tychora/application/removal.py::RemovalService::_plan": 37,
         "src/tychora/application/removal.py::RemovalService::purge_originals": 22,
@@ -382,7 +382,7 @@
     },
     "function_length": {
       "direction": "lower",
-      "measured_at": "0923de834cc6",
+      "measured_at": "d27839c36ee3",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex.search": 143,
         "src/tychora/adapters/code/capture.py::RepositoryCapture._run": 89,
@@ -451,7 +451,6 @@
         "src/tychora/application/recovery.py::RecoveryService._rebuild_native_on_owner": 166,
         "src/tychora/application/recovery.py::RecoveryService._verify_native_on_owner": 106,
         "src/tychora/application/recovery.py::verify_canonical_native_batch": 93,
-        "src/tychora/application/removal.py::RemovalService._live_root": 83,
         "src/tychora/application/removal.py::RemovalService._plan": 107,
         "src/tychora/application/removal.py::RemovalService.purge_originals": 98,
         "src/tychora/application/reranking.py::load_retained_representation": 225,
@@ -531,7 +530,7 @@
         "src/tychora/retrieval/visuals.py::_visual": 92,
         "src/tychora/retrieval/visuals.py::select_visuals": 109
       },
-      "value": 146
+      "value": 145
     },
     "integrity_raises_without_reason": {
       "direction": "lower",
