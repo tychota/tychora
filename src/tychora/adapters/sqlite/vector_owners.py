@@ -3,6 +3,18 @@
 from __future__ import annotations
 
 import sqlite3
+from typing import NamedTuple
+
+
+class OwnerRow(NamedTuple):
+    """One vector record with its revision, extraction and owning unit or asset."""
+
+    record: str
+    revision: str
+    extraction: str
+    unit: str | None
+    asset: str | None
+
 
 _OWNER_ROWS = (
     "SELECT v.record_id,e.revision_id,b.extraction_id,c.unit_id,v.asset_id "
@@ -13,11 +25,9 @@ _OWNER_ROWS = (
 )
 
 
-def vector_owner_rows(
-    db: sqlite3.Connection, batch_id: str
-) -> tuple[tuple[str, str, str, str | None, str | None], ...]:
+def vector_owner_rows(db: sqlite3.Connection, batch_id: str) -> tuple[OwnerRow, ...]:
     """Return (record, revision, extraction, unit, asset) per record, by record ID.
 
     The unit is set for text records and the asset for image records.
     """
-    return tuple(tuple(row) for row in db.execute(_OWNER_ROWS, (batch_id,)))
+    return tuple(OwnerRow(*row) for row in db.execute(_OWNER_ROWS, (batch_id,)))

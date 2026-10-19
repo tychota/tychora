@@ -18,6 +18,7 @@ from tychora.adapters.sqlite.publication import publication_manifest
 from tychora.adapters.sqlite.repositories import SqliteUnitOfWork
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
+from tychora.contracts.corpus import ExtractionBundle
 from tychora.contracts.embeddings import EmbeddingCapabilities, EmbeddingRecord
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import (
@@ -1226,3 +1227,63 @@ def test_native_rebuild_restores_owner_metadata(projected_corpus, tmp_path):
         ExecutionContext(),
     )
     assert _chroma_metadata(fresh, ids) == original
+
+
+@pytest.mark.parametrize("damage", ["no_owner", "partial", "unknown_record"])
+def test_native_rebuild_rejects_owner_rows_that_differ_from_the_batch(
+    projected_corpus, tmp_path, damage
+):
+    from tychora.adapters.sqlite.vector_owners import vector_owner_rows
+    from tychora.application.recovery import (
+        vector_batch_records,
+        verify_native_vector,
+    )
+
+    f = projected_corpus
+    slot = next(
+        slot for slot in f.store.resolve_snapshot(None).slots if slot.slot == "text"
+    )
+    batch = slot.batches[0]
+    rows = vector_owner_rows(f.store.db, batch.batch_id)
+    if damage == "no_owner":
+        rows = (rows[0]._replace(unit=None, asset=None), *rows[1:])
+    elif damage == "partial":
+        rows = rows[:-1] if len(rows) > 1 else (rows[0]._replace(record="x"),)
+    else:
+        rows = (rows[0]._replace(record="0" * 64), *rows[1:])
+    with pytest.raises(TychoraError) as raised:
+        verify_native_vector(
+            slot.family,
+            batch,
+            lambda: vector_batch_records(
+                slot.family, batch, f.store.artifacts, owner_rows=rows
+            ),
+            RecordingVector(tmp_path / "damaged"),
+            ExecutionContext(),
+        )
+    assert raised.value.code == "INTEGRITY_ERROR"
+    assert raised.value.reason == "canonical.binding_mismatch"
+
+
+def test_asset_rows_rebuild_asset_owners():
+    from tychora.adapters.sqlite.vector_owners import OwnerRow
+    from tychora.application.recovery import _vector_owners
+
+    (owner,) = _vector_owners((OwnerRow("rec", "rev", "ext", None, "asset-1"),))
+    assert (owner.owner_kind, owner.owner_id) == ("asset", "asset-1")
+    assert (owner.revision_id, owner.extraction_id) == ("rev", "ext")
+
+
+def test_image_batches_own_each_record_by_its_asset():
+    from types import SimpleNamespace
+    from typing import cast
+
+    from tychora.indexing.coordinator import _asset_owners
+
+    bundle = SimpleNamespace(
+        revision=SimpleNamespace(revision_id="r" * 64),
+        extraction=SimpleNamespace(extraction_id="x" * 64),
+    )
+    (owner,) = _asset_owners(cast(ExtractionBundle, bundle), {"rec": "a" * 64})
+    assert (owner.owner_kind, owner.owner_id) == ("asset", "a" * 64)
+    assert (owner.revision_id, owner.extraction_id) == ("r" * 64, "x" * 64)

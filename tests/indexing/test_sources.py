@@ -906,13 +906,14 @@ async def test_png_source_uses_owner_authorized_visual_provider(tmp_path, monkey
             scope=scope,
             ctx=ExecutionContext(),
         )
+        image_index = ChromaVectorIndex(tmp_path / "images")
         coordinator = ProjectionCoordinator(
             store=owner.store,
             artifacts=owner.artifacts,
             config=config,
             counter=Counter(),
             visual_embedder=provider,
-            image_index=ChromaVectorIndex(tmp_path / "images"),
+            image_index=image_index,
         )
         source = SourceInput.model_validate(
             {
@@ -938,6 +939,22 @@ async def test_png_source_uses_owner_authorized_visual_provider(tmp_path, monkey
         image = next(slot for slot in view.slots if slot.slot == "image")
         assert image.batches[0].expected_count >= 1
         assert len(transport.calls) == image.batches[0].expected_count
+        collection, _ = image_index._require()
+        stored = collection.get(
+            ids=[row.record_id for row in image.batches[0].vector_records],
+            include=["metadatas"],
+        )["metadatas"]
+        revision_id = owner.db.execute(
+            "SELECT revision_id FROM extractions WHERE extraction_id=?",
+            (image.batches[0].extraction_id,),
+        ).fetchone()[0]
+        for binding, metadata in zip(
+            image.batches[0].vector_records, stored, strict=True
+        ):
+            assert metadata["owner_kind"] == "asset"
+            assert metadata["owner_id"] == binding.asset_id
+            assert metadata["extraction_id"] == image.batches[0].extraction_id
+            assert metadata["revision_id"] == revision_id
         before_calls = len(transport.calls)
         await service.sync(view.members[0].source_id, scope)
         assert len(transport.calls) == before_calls
