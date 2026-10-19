@@ -474,3 +474,108 @@ def test_text_batch_without_complete_groups_is_refused_when_loaded(projected):
         "INDEX_INCOMPLETE",
         "batch.missing",
     )
+
+
+def _batch_inputs(store, snapshot_id):
+    return dict(
+        store.db.execute(
+            "SELECT b.batch_id,b.input_manifest_sha FROM snapshot_batches s "
+            "JOIN index_batches b USING(batch_id) WHERE s.snapshot_id=?",
+            (snapshot_id,),
+        ).fetchall()
+    )
+
+
+def test_a_query_after_an_add_loads_only_the_new_batches(projected):
+    f = projected
+    first = f.store.resolve_snapshot(None)
+    f.store.read_eligibility_facts(first)
+    second = f.store.resolve_snapshot(
+        f.add_revision("one more source", source_key="more.md")
+    )
+    before = _batch_inputs(f.store, first.snapshot_id)
+    new = {
+        sha
+        for batch_id, sha in _batch_inputs(f.store, second.snapshot_id).items()
+        if batch_id not in before
+    }
+    opened = []
+    original = f.store.artifacts.open_verified
+
+    def spy(ref):
+        opened.append(ref.sha256)
+        return original(ref)
+
+    with patch.object(f.store.artifacts, "open_verified", spy):
+        f.store.read_eligibility_facts(second)
+    assert new
+    assert set(opened) - {second.config_sha} == new
+
+
+def test_snapshots_sharing_batches_share_loaded_batches(projected):
+    f = projected
+    first = f.store.resolve_snapshot(None)
+    second = f.store.resolve_snapshot(
+        f.add_revision("a shared neighbour", source_key="shared.md")
+    )
+
+    def loaded(view):
+        return {b.batch_id: b for s in f.store.snapshot_slots(view) for b in s.batches}
+
+    earlier, later = loaded(first), loaded(second)
+    shared = earlier.keys() & later.keys()
+    assert shared
+    assert all(earlier[key] is later[key] for key in shared)
+
+
+def test_the_batch_cache_evicts_the_least_recently_used_batch_over_its_cap(projected):
+    from tychora.adapters.sqlite.retained_slots import RetainedBatchCache
+
+    f = projected
+    batches = [
+        batch
+        for slot in f.store.snapshot_slots(f.store.resolve_snapshot(None), fresh=True)
+        for batch in slot.batches
+    ]
+    assert len(batches) >= 2
+    cache = RetainedBatchCache(max_records=1)
+    cache.put(batches[0])
+    cache.put(batches[1])
+    assert cache.get(batches[0].batch_id) is None
+    assert cache.get(batches[1].batch_id) is batches[1]
+
+
+def test_fresh_slots_detect_sql_drift_after_a_cached_load(projected):
+    f = projected
+    view = f.store.resolve_snapshot(None)
+    cached = f.store.snapshot_slots(view)
+    f.store.db.execute(
+        "UPDATE vector_records SET input_sha=? WHERE batch_id IN "
+        "(SELECT batch_id FROM snapshot_batches WHERE snapshot_id=? AND slot='text')",
+        ("0" * 64, view.snapshot_id),
+    )
+    f.store.db.commit()
+    assert f.store.snapshot_slots(view) == cached
+    with pytest.raises(TychoraError, match="Vector SQL differs"):
+        f.store.snapshot_slots(view, fresh=True)
+
+
+def test_native_recovery_reads_slots_fresh(projected):
+    from types import SimpleNamespace
+
+    from tychora.application.recovery import RecoveryService
+    from tychora.ports.execution import ExecutionContext
+
+    f = projected
+    calls = []
+    original = f.store.snapshot_slots
+
+    def spy(view, **kwargs):
+        calls.append(kwargs)
+        return original(view, **kwargs)
+
+    with patch.object(f.store, "snapshot_slots", spy):
+        RecoveryService(
+            SimpleNamespace(store=f.store, db=f.store.db)
+        )._verify_native_on_owner(ExecutionContext())
+    assert calls == [{"fresh": True}]

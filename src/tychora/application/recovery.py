@@ -699,7 +699,7 @@ class RecoveryService:
                     "Native recovery requires snapshot collection grants",
                 )
             snapshot_config = validate_retained_config(store.retained_config(snapshot))
-            for slot in (slots := store.snapshot_slots(snapshot)):
+            for slot in (slots := store.snapshot_slots(snapshot, fresh=True)):
                 if slot.slot not in channels:
                     continue
                 if slot.slot in {"text", "image"}:
@@ -925,7 +925,7 @@ class RecoveryService:
             return None, 0, 0, 0
         records = generations = skipped = batches = 0
         with store.pin_snapshot(None) as snapshot:
-            for slot in store.snapshot_slots(snapshot):
+            for slot in store.snapshot_slots(snapshot, fresh=True):
                 if slot.slot not in {"text", "image", "graph"}:
                     continue
                 for batch in slot.batches:

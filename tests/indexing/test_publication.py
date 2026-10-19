@@ -666,6 +666,7 @@ def test_native_recovery_rejects_sql_drift_before_native_write(
 
     f = projected_corpus
     snapshot = f.store.resolve_snapshot(None)
+    # Loading the slots first caches the batch; recovery must still read SQL.
     slot = next(
         slot for slot in f.store.snapshot_slots(snapshot) if slot.slot == "text"
     )
