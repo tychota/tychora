@@ -50,32 +50,39 @@ class ArtifactStat(ArtifactRef):
         return self
 
 
-MANIFEST_TYPES = frozenset(
-    {
-        "repository_capture",
-        "extraction",
-        "assertion",
-        "assertion_index",
-        "registry",
-        "index_input",
-        "snapshot",
-        "vector_cache",
-        "job_capture",
-        "retained_run",
-        "evaluation",
-        "backup",
-    }
-)
+MANIFEST_VERSIONS: dict[str, str | int] = {
+    "repository_capture": "1",
+    "extraction": "1",
+    "assertion": "1",
+    "assertion_index": "1",
+    "registry": "1",
+    "index_input": "1",
+    "snapshot": "2",
+    "membership_page": "2",
+    "publication_plan": "2",
+    "vector_cache": "1",
+    "job_capture": "1",
+    "retained_run": "1",
+    "evaluation": "1",
+    "backup": 1,
+}
 CAPTURE_TYPES = frozenset({"repository_capture", "job_capture"})
 
 
 def validate_manifest_schema(kind: object, version: object) -> None:
-    if not isinstance(kind, str) or kind not in MANIFEST_TYPES:
+    """Reject a manifest type or schema version the format does not register."""
+    if not isinstance(kind, str) or kind not in MANIFEST_VERSIONS:
         raise ValueError("Unknown required manifest type")
-    if not (type(version) is str and version == "1") and not (
-        kind == "backup" and type(version) is int and version == 1
-    ):
+    expected = MANIFEST_VERSIONS[kind]
+    if type(version) is not type(expected) or version != expected:
         raise ValueError("Unknown required manifest schema version")
+
+
+def registered_manifest(artifact: "ArtifactRef", kind: str) -> "ManifestRef":
+    """Link an artifact as its manifest type at the registered schema version."""
+    return ManifestRef(
+        artifact=artifact, type=kind, schema_version=MANIFEST_VERSIONS[kind]
+    )
 
 
 class ManifestRef(Contract):

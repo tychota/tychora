@@ -6,7 +6,7 @@ import pytest
 from tychora.adapters.files import references
 from tychora.adapters.files.cas import LocalArtifacts
 from tychora.adapters.files.references import required_refs
-from tychora.contracts.artifacts import ArtifactRef, ManifestRef
+from tychora.contracts.artifacts import MANIFEST_VERSIONS, ArtifactRef, ManifestRef
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
 
@@ -54,7 +54,7 @@ def artifact(letter="a"):
 
 
 def manifest(kind="extraction", **extra):
-    result = {"type": kind, "schema_version": "1", **extra}
+    result = {"type": kind, "schema_version": MANIFEST_VERSIONS[kind], **extra}
     if kind == "assertion":
         result.update(record_id="record-1", assertion_id="assertion-1")
     return result
@@ -63,7 +63,7 @@ def manifest(kind="extraction", **extra):
 @pytest.mark.parametrize("kind", TYPES)
 def test_registered_types_reject_unknown_version(kind):
     with pytest.raises(TychoraError):
-        required_refs(manifest(kind, schema_version="2"), capture_published=False)
+        required_refs(manifest(kind, schema_version="99"), capture_published=False)
 
 
 @pytest.mark.parametrize("kind", TYPES)

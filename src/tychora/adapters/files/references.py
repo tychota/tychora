@@ -13,6 +13,7 @@ from tychora.contracts.artifacts import (
     ArtifactRef,
     ManifestRef,
     physical_identity,
+    registered_manifest,
     validate_manifest_schema,
 )
 from tychora.contracts.errors import TychoraError
@@ -276,7 +277,7 @@ def from_backup(db, *, artifacts) -> BackupInventory:
             ref = registered.get(sha)
             if ref is None:
                 raise _fail("Required manifest registration is missing")
-            roots.append(ManifestRef(artifact=ref, type=kind, schema_version="1"))
+            roots.append(registered_manifest(ref, kind))
 
     for query, kind in (
         ("SELECT manifest_sha FROM snapshots", "snapshot"),

@@ -72,7 +72,7 @@ def _manifest_document(plan: PublicationPlan) -> dict:
     }
     return {
         "type": "snapshot",
-        "schema_version": "1",
+        "schema_version": "2",
         "required_artifacts": [
             ref.model_dump(mode="json")
             for ref in sorted(caches.values(), key=lambda ref: ref.sha256)
@@ -100,7 +100,7 @@ def _verify_artifacts(store: CorpusStore, plan: PublicationPlan) -> None:
         return _read_json(store, ref.artifact)
 
     closure = required_closure(
-        (ManifestRef(artifact=plan.manifest, type="snapshot", schema_version="1"),),
+        (ManifestRef(artifact=plan.manifest, type="snapshot", schema_version="2"),),
         load=load,
     )
     required = {
@@ -693,7 +693,7 @@ def resolve_snapshot(store: CorpusStore, selector: str | None) -> SnapshotView:
         _fail("Snapshot manifest is unavailable")
     ref = artifact_ref(artifact)
     document = _read_json(store, ref)
-    if document.get("type") != "snapshot" or document.get("schema_version") != "1":
+    if document.get("type") != "snapshot" or document.get("schema_version") != "2":
         _fail("Snapshot manifest type differs")
     try:
         plan = PublicationPlan.model_validate_json(
