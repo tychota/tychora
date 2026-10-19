@@ -6,7 +6,9 @@ import asyncio
 import json
 import os
 from collections.abc import Callable, Mapping
+from contextlib import ExitStack
 from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import date
 from functools import partial
 from hashlib import sha256
@@ -63,7 +65,7 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.extraction import ExtractionArtifact, NativeRegistration
 from tychora.contracts.identity import canonical_bytes, digest, revision_id, source_id
 from tychora.contracts.operations import JobHandle
-from tychora.contracts.publication import PublicationPlan
+from tychora.contracts.publication import PublicationPlan, publication_plan_document
 from tychora.contracts.requests import (
     RequestScope,
     SourceInput,
@@ -158,6 +160,31 @@ def _parse_code_file(
 
 
 _pdf_job_id: ContextVar[str | None] = ContextVar("pdf_job_id", default=None)
+
+
+@dataclass(frozen=True)
+class _Attempt:
+    """What one projection attempt of an accepted add works from."""
+
+    bundle: ExtractionBundle
+    handle: JobHandle
+    jobs: JobRepository
+    capture: CaptureManifest
+    config_ref: ArtifactRef
+    scope: RequestScope
+
+
+def _plan_batch_ids(plan: PublicationPlan) -> frozenset[str]:
+    """Every batch a plan's new pages and root bind."""
+    return frozenset(
+        {
+            batch.batch_id
+            for page in plan.new_pages
+            for member in page.members
+            for batch in member.batches
+        }
+        | {batch.batch_id for batch in plan.root_batches}
+    )
 
 
 class SourceService:
@@ -302,17 +329,7 @@ class SourceService:
 
     @staticmethod
     def _plan_watermark(plan: PublicationPlan) -> int | None:
-        for slot in plan.slots:
-            if slot.slot == "graph":
-                from tychora.contracts.graph import GraphBatchReceipt
-
-                receipt = slot.batches[0].receipt
-                if not isinstance(receipt, GraphBatchReceipt):
-                    raise TychoraError(
-                        "INTEGRITY_ERROR", "Graph plan receipt is malformed"
-                    )
-                return receipt.decision_watermark
-        return None
+        return plan.graph_watermark
 
     def _completed_plan(
         self,
@@ -333,14 +350,16 @@ class SourceService:
         with self.owner.artifacts.open_verified(ref) as stream:
             manifest = json.load(stream)
         try:
+            if manifest.get("type") != "publication_plan":
+                raise ValueError("Checkpoint is not a publication plan")
             plan = PublicationPlan.model_validate_json(
-                canonical_bytes(
-                    {**manifest["data"], "manifest": ref.model_dump(mode="json")}
-                )
+                canonical_bytes(manifest["data"])
             )
-        except (KeyError, TypeError, ValueError):
+        except (AttributeError, KeyError, TypeError, ValueError):
             raise TychoraError(
-                "INTEGRITY_ERROR", "Committed projection plan is malformed"
+                "INTEGRITY_ERROR",
+                "Committed projection plan is malformed",
+                reason="canonical.row_invalid",
             ) from None
         if (
             plan.job_id != handle.id
@@ -348,7 +367,9 @@ class SourceService:
             or plan.config_sha != config_ref.sha256
         ):
             raise TychoraError(
-                "INTEGRITY_ERROR", "Committed projection plan input differs"
+                "INTEGRITY_ERROR",
+                "Committed projection plan input differs",
+                reason="canonical.binding_mismatch",
             )
         return plan
 
@@ -744,53 +765,17 @@ class SourceService:
             bundle = await self.owner.run_blocking(
                 lambda: self._bind_source_metadata(bundle), ctx
             )
-            previous_groups = None
-            previous_records = None
+            attempt = _Attempt(bundle, handle, jobs, capture, config_ref, granted)
+            previous: tuple = (None, None)
             for _attempt in range(3):
-                base = await self.owner.run_blocking(
-                    self.owner.store.active_snapshot_id, ctx
-                )
-                prepared = await self.owner.run_blocking(
-                    lambda base=base: self.coordinator.prepare(
-                        bundle, base, handle, ctx
-                    ),
-                    ctx,
-                )
-                records = await self._text_records(
-                    prepared, granted, previous_groups, previous_records, ctx
-                )
-                previous_groups, previous_records = prepared.text_groups, records
-                visual_records = await self._visual_records(prepared, granted, ctx)
-                await self.owner.run_blocking(
-                    lambda: jobs.stage(handle.id, "project"), ctx
-                )
-                plan = await self.owner.run_blocking(
-                    lambda prepared=prepared, records=records, visual_records=visual_records: (
-                        self.coordinator.finalize(
-                            prepared, records, ctx, visual_records
-                        )
-                    ),
-                    ctx,
-                )
-                await self.owner.run_blocking(
-                    lambda plan=plan, base=base: jobs.checkpoint(
-                        handle.id,
-                        self._plan_step(base, self._plan_watermark(plan)),
-                        self._plan_input(
-                            capture, config_ref, base, self._plan_watermark(plan)
-                        ),
-                        plan.manifest,
-                    ),
-                    ctx,
-                )
-                try:
-                    await self._publish(plan, jobs, handle, ctx)
+                with ExitStack() as leases:
+                    published, previous = await self._project(
+                        attempt, previous, leases, ctx
+                    )
+                if published:
                     return JobHandle(
                         id=handle.id, operation=operation, state="succeeded"
                     )
-                except TychoraError as error:
-                    if error.code != "WORKSPACE_BUSY":
-                        raise
             raise TychoraError(
                 "WORKSPACE_BUSY", "Publication base changed repeatedly", retryable=True
             )
@@ -845,6 +830,75 @@ class SourceService:
                 job_id,
                 TychoraError("JOB_INTERRUPTED", "Job was interrupted", retryable=True),
             )
+
+    async def _project(
+        self,
+        attempt: _Attempt,
+        previous: tuple,
+        leases: ExitStack,
+        ctx: ExecutionContext,
+    ) -> tuple[bool, tuple]:
+        """Prepare, embed, write and publish once against the current base.
+
+        The base snapshot and every batch the plan reuses stay leased until
+        publication returns, so collection cannot remove them in between.
+        Return whether the plan was published and the text groups and records
+        a retry may reuse.
+        """
+        store = self.owner.store
+
+        def prepare():
+            base = store.active_snapshot_id()
+            leases.enter_context(
+                store.leases.pin(frozenset(() if base is None else (base,)))
+            )
+            prepared = self.coordinator.prepare(
+                attempt.bundle, base, attempt.handle, ctx
+            )
+            leases.enter_context(store.leases.pin(frozenset(prepared.reused_batch_ids)))
+            return base, prepared
+
+        base, prepared = await self.owner.run_blocking(prepare, ctx)
+        records = await self._text_records(
+            prepared, attempt.scope, previous[0], previous[1], ctx
+        )
+        visual_records = await self._visual_records(prepared, attempt.scope, ctx)
+        await self.owner.run_blocking(
+            lambda: attempt.jobs.stage(attempt.handle.id, "project"), ctx
+        )
+
+        def finalize() -> PublicationPlan:
+            plan = self.coordinator.finalize(prepared, records, ctx, visual_records)
+            leases.enter_context(store.leases.pin(_plan_batch_ids(plan)))
+            return plan
+
+        plan = await self.owner.run_blocking(finalize, ctx)
+        await self.owner.run_blocking(
+            lambda: self._checkpoint(attempt, base, plan), ctx
+        )
+        try:
+            await self._publish(plan, attempt.jobs, attempt.handle, ctx)
+        except TychoraError as error:
+            if error.code != "WORKSPACE_BUSY":
+                raise
+            return False, (prepared.text_groups, records)
+        return True, (prepared.text_groups, records)
+
+    def _checkpoint(
+        self, attempt: _Attempt, base: str | None, plan: PublicationPlan
+    ) -> None:
+        """Commit the plan document so a resumed job publishes the same plan."""
+        plan_ref = self.owner.artifacts.put_stream(
+            BytesIO(canonical_bytes(publication_plan_document(plan))),
+            "application/json",
+        )
+        watermark = self._plan_watermark(plan)
+        attempt.jobs.checkpoint(
+            attempt.handle.id,
+            self._plan_step(base, watermark),
+            self._plan_input(attempt.capture, attempt.config_ref, base, watermark),
+            plan_ref,
+        )
 
     async def _publish(
         self, plan, jobs: JobRepository, handle: JobHandle, ctx: ExecutionContext

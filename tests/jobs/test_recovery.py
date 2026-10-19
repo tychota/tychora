@@ -45,7 +45,7 @@ def test_publication_receipt_reconciles_completion_without_restarting(jobs, acti
         )
     result = jobs.manifest("retained_run", data={"count": 1})
     jobs.db.execute(
-        "INSERT INTO snapshots VALUES ('published','workspace',NULL,?,?,?,?,NULL,NULL)",
+        "INSERT INTO snapshots VALUES ('published','workspace',NULL,?,?,?,?,'job',0)",
         ("a" * 64, jobs.config.sha256, jobs.config.sha256, "2026-01-01T00:00:00Z"),
     )
     calls = []
@@ -98,7 +98,7 @@ def test_snapshot_completion_requires_same_workspace_and_config(jobs):
     job = jobs.accept("add", jobs.scope, "key", {}, jobs.config)
     jobs.repo.start(job.id)
     jobs.db.execute(
-        "INSERT INTO snapshots VALUES ('wrong','workspace',NULL,?,?,?,?,NULL,NULL)",
+        "INSERT INTO snapshots VALUES ('wrong','workspace',NULL,?,?,?,?,'job',0)",
         ("a" * 64, "b" * 64, jobs.config.sha256, "2026-01-01T00:00:00Z"),
     )
     with pytest.raises(TychoraError):
@@ -121,7 +121,7 @@ def test_recovery_of_published_capture_does_not_require_retired_original(jobs):
     )
     jobs.repo.start(job.id)
     jobs.db.execute(
-        "INSERT INTO snapshots VALUES ('published','workspace',NULL,?,?,?,?,NULL,NULL)",
+        "INSERT INTO snapshots VALUES ('published','workspace',NULL,?,?,?,?,'job',0)",
         ("a" * 64, jobs.config.sha256, jobs.config.sha256, "2026-01-01T00:00:00Z"),
     )
 
@@ -140,7 +140,7 @@ def test_completed_receipt_cannot_add_a_new_result_artifact(jobs):
     job = jobs.accept("add", jobs.scope, "key", {}, jobs.config)
     jobs.repo.start(job.id)
     jobs.db.execute(
-        "INSERT INTO snapshots VALUES ('published','workspace',NULL,?,?,?,?,NULL,NULL)",
+        "INSERT INTO snapshots VALUES ('published','workspace',NULL,?,?,?,?,'job',0)",
         ("a" * 64, jobs.config.sha256, jobs.config.sha256, "2026-01-01T00:00:00Z"),
     )
     jobs.repo.complete(job.id, result_snapshot_id="published")

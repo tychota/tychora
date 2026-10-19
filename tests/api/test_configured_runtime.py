@@ -110,7 +110,7 @@ def test_public_add_persists_native_graph_generation(tmp_path):
                 ).ExecutionContext(),
             )
         )
-        assert any(slot.slot == "graph" and slot.required for slot in view.slots)
+        assert any(slot.slot == "graph" and slot.required for slot in view.families)
     with Tychora.open(workspace, config=config, token_counter=OutputCounter()) as kb:
         assert kb._workspace.services.provider_bindings.graph is not None
         assert kb.search(

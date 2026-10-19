@@ -5,11 +5,7 @@ import sqlite3
 from contextlib import contextmanager
 from typing import NoReturn, cast
 
-from tychora.adapters.sqlite.repositories import (
-    SqliteSnapshotRepository,
-    SqliteUnitOfWork,
-    artifact_ref,
-)
+from tychora.adapters.sqlite.repositories import SqliteUnitOfWork, artifact_ref
 from tychora.application.collection_policy import require_active_collection
 from tychora.application.leases import LeaseSet
 from tychora.configuration.models import ResolvedConfig
@@ -19,9 +15,9 @@ from tychora.contracts.candidates import ChannelCandidates
 from tychora.contracts.corpus import ExtractionBundle, ReviewTarget
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit, Geometry
-from tychora.contracts.graph import EligibilityView, GraphBatchReceipt
+from tychora.contracts.graph import EligibilityView
 from tychora.contracts.identity import canonical_bytes, digest
-from tychora.contracts.publication import PublicationPlan, SnapshotView
+from tychora.contracts.publication import PublicationPlan, RetainedSlot, SnapshotView
 from tychora.ports.artifacts import Artifacts
 from tychora.ports.execution import ExecutionContext
 from tychora.ports.graph import GraphStore
@@ -29,6 +25,8 @@ from tychora.ports.vectors import VectorIndex
 
 from .migrations import SCHEMA_VERSION
 from .policy import PolicyRepository
+from .publication import publish_snapshot
+from .retained_slots import load_retained_slots
 from .validation import validate_bundle, verify_artifacts
 
 
@@ -89,17 +87,8 @@ class CorpusStore(PolicyRepository):
         with self.uow.read() as tx:
             return tx.snapshots.active_id()
 
-    def insert_snapshot_bindings(self, plan: PublicationPlan) -> None:
-        from .publication import insert_snapshot_bindings
-
-        insert_snapshot_bindings(self, plan)
-
-    def set_active_snapshot(self, snapshot_id: str) -> None:
-        SqliteSnapshotRepository(self.db).set_active(snapshot_id)
-
     def publish_snapshot(self, plan: PublicationPlan) -> str:
-        from .publication import publish_snapshot
-
+        """Verify a plan's new pages and batches, then activate its snapshot."""
         return publish_snapshot(self, plan)
 
     def read_eligibility_facts(self, snapshot: SnapshotView):
@@ -171,45 +160,27 @@ class CorpusStore(PolicyRepository):
         return lookup_identifiers(self, namespaced, view, limit)
 
     def resolve_snapshot(self, selector: str | None) -> SnapshotView:
-        from .publication import resolve_snapshot
-
-        return resolve_snapshot(self, selector)
+        """Read the selected or active snapshot from SQL; no artifact is opened."""
+        snapshot_id = selector or self.active_snapshot_id()
+        if snapshot_id is None:
+            raise TychoraError(
+                "NOT_FOUND",
+                "No published snapshot is available",
+                reason="snapshot.absent",
+            )
+        with self.uow.read() as tx:
+            return tx.snapshots.view(snapshot_id)
 
     @contextmanager
     def pin_snapshot(self, selector: str | None):
-        """Hold a resolved snapshot's canonical, native and CAS inputs for a read."""
+        """Lease one snapshot for a read; retention and native GC honour the lease."""
         view = self.resolve_snapshot(selector)
-        keys = frozenset(
-            {
-                view.snapshot_id,
-                *(batch.batch_id for slot in view.slots for batch in slot.batches),
-                *(
-                    batch.receipt.generation_id
-                    for slot in view.slots
-                    for batch in slot.batches
-                    if isinstance(batch.receipt, GraphBatchReceipt)
-                ),
-            }
-        )
-        payloads = frozenset(
-            {
-                view.manifest.sha256,
-                view.config_sha,
-                *(
-                    batch.input_manifest.sha256
-                    for slot in view.slots
-                    for batch in slot.batches
-                ),
-                *(
-                    batch.vectors.sha256
-                    for slot in view.slots
-                    for batch in slot.batches
-                    if batch.vectors is not None
-                ),
-            }
-        )
-        with self.leases.pin(keys), self.artifacts.pin_payloads(payloads):
-            yield self.resolve_snapshot(view.snapshot_id)
+        with self.leases.pin(frozenset({view.snapshot_id})):
+            yield view
+
+    def snapshot_slots(self, view: SnapshotView) -> tuple[RetainedSlot, ...]:
+        """Return each slot of a snapshot with the contents of its batches."""
+        return load_retained_slots(self.db, self.artifacts, view)
 
     def _insert(self, table: str, row: dict, keys: tuple[str, ...]):
         # Identifiers originate only in the closed repository mappings below.

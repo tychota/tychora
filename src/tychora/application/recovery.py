@@ -24,7 +24,7 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.graph import GraphBatchReceipt, GraphManifest
 from tychora.contracts.identity import canonical_bytes, digest, family_id, space_id
 from tychora.contracts.indexing import FamilySpec, IndexRecordDigest
-from tychora.contracts.publication import IndexFamily, PublicationBatch
+from tychora.contracts.publication import IndexFamily, RetainedBatch
 from tychora.contracts.requests import RequestScope
 from tychora.contracts.vector_batches import decode_vector_batch, row_value_sha
 from tychora.contracts.vectors import BatchReceipt, VectorBatch, VectorOwner
@@ -107,8 +107,37 @@ def verify_semantic_vector_family(
         raise TychoraError("INTEGRITY_ERROR", "Retained vector semantic proof differs")
 
 
+def _input_document(store, batch: RetainedBatch) -> tuple[bytes, dict]:
+    """Read a batch's registered input manifest; return its bytes and document."""
+    artifact_row = store.db.execute(
+        "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
+        (batch.input_manifest.sha256,),
+    ).fetchone()
+    if artifact_row != (
+        batch.input_manifest.size_bytes,
+        batch.input_manifest.media_type,
+        batch.input_manifest.storage_key,
+        "present",
+    ):
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Native input artifact SQL differs",
+            reason="canonical.binding_mismatch",
+        )
+    with store.artifacts.open_verified(batch.input_manifest) as stream:
+        raw = stream.read(batch.input_manifest.size_bytes + 1)
+    try:
+        return raw, json.loads(raw)
+    except (ValueError, UnicodeError):
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Native input manifest is malformed",
+            reason="canonical.row_invalid",
+        ) from None
+
+
 def verify_canonical_native_batch(
-    store, family: IndexFamily, batch: PublicationBatch
+    store, family: IndexFamily, batch: RetainedBatch
 ) -> None:
     """Compare the pinned publication plan to every mutable SQL/native input row."""
     db = store.db
@@ -136,7 +165,7 @@ def verify_canonical_native_batch(
     entries = (
         tuple(row.record_id for row in batch.vector_records)
         if family.channel in {"text", "image"}
-        else tuple(batch.graph_manifest.evidence_ids)
+        else tuple(sorted(batch.graph_manifest.evidence_ids))
         if batch.graph_manifest is not None
         else ()
     )
@@ -158,7 +187,7 @@ def verify_canonical_native_batch(
         batch.input_manifest.sha256,
         batch.expected_count,
         count,
-        digest("index-entries-v1", entries),
+        digest("index-entries-v1", entries) if family.channel != "graph" else None,
         canonical_bytes(batch.receipt.model_dump(mode="json")).decode(),
         batch.vectors.sha256 if batch.vectors else None,
     )
@@ -176,26 +205,10 @@ def verify_canonical_native_batch(
         raise TychoraError(
             "INTEGRITY_ERROR", "Native batch SQL differs from sealed plan"
         )
-    artifact_row = db.execute(
-        "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
-        (batch.input_manifest.sha256,),
-    ).fetchone()
-    if artifact_row != (
-        batch.input_manifest.size_bytes,
-        batch.input_manifest.media_type,
-        batch.input_manifest.storage_key,
-        "present",
-    ):
-        raise TychoraError("INTEGRITY_ERROR", "Native input artifact SQL differs")
-    with store.artifacts.open_verified(batch.input_manifest) as stream:
-        raw = stream.read(batch.input_manifest.size_bytes + 1)
-    try:
-        document = json.loads(raw)
-    except (ValueError, UnicodeError):
-        raise TychoraError(
-            "INTEGRITY_ERROR", "Native input manifest is malformed"
-        ) from None
-    expected_data = {"entries": list(entries)}
+    raw, document = _input_document(store, batch)
+    expected_data: dict = {"entries": list(entries)}
+    if batch.graph_manifest is not None:
+        expected_data["graph_manifest"] = batch.graph_manifest.model_dump(mode="json")
     if family.channel == "text":
         expected_data["representations"] = [
             {
@@ -218,7 +231,7 @@ def verify_canonical_native_batch(
         _verify_native_vector_sql(db, batch)
 
 
-def _verify_native_vector_sql(db, batch: PublicationBatch) -> None:
+def _verify_native_vector_sql(db, batch: RetainedBatch) -> None:
     """Check the batch's vector rows and its batch artifact against the sealed plan."""
     rows = db.execute(
         "SELECT record_id,batch_id,chunk_id,asset_id,input_sha,row_index "
@@ -261,7 +274,7 @@ def _verify_native_vector_sql(db, batch: PublicationBatch) -> None:
         )
 
 
-def _vector_family_spec(family: IndexFamily, batch: PublicationBatch) -> FamilySpec:
+def _vector_family_spec(family: IndexFamily, batch: RetainedBatch) -> FamilySpec:
     """Return the family's specification once family, receipt and batch agree."""
     receipt = batch.receipt
     try:
@@ -295,7 +308,7 @@ def _vector_family_spec(family: IndexFamily, batch: PublicationBatch) -> FamilyS
     return spec
 
 
-def _receipt_records(batch: PublicationBatch) -> tuple[IndexRecordDigest, ...]:
+def _receipt_records(batch: RetainedBatch) -> tuple[IndexRecordDigest, ...]:
     """The receipt's record digests; empty unless the receipt is a vector receipt."""
     receipt = batch.receipt
     return receipt.records if isinstance(receipt, BatchReceipt) else ()
@@ -313,7 +326,7 @@ def _row_digests(rows) -> tuple[IndexRecordDigest, ...]:
     )
 
 
-def _bindings_match_receipt(batch: PublicationBatch) -> bool:
+def _bindings_match_receipt(batch: RetainedBatch) -> bool:
     """True when the sealed receipt describes exactly the batch's vector bindings."""
     receipt = batch.receipt
     descriptors = tuple(
@@ -345,7 +358,7 @@ def _vector_owners(owner_rows: tuple[OwnerRow, ...]) -> tuple[VectorOwner, ...]:
 
 def vector_batch_records(
     family: IndexFamily,
-    batch: PublicationBatch,
+    batch: RetainedBatch,
     artifacts,
     *,
     owner_rows: tuple[OwnerRow, ...] = (),
@@ -418,7 +431,7 @@ def vector_batch_records(
 
 def verify_native_vector(
     family: IndexFamily,
-    batch: PublicationBatch,
+    batch: RetainedBatch,
     records: Callable[[], VectorBatch],
     index,
     ctx: ExecutionContext,
@@ -607,7 +620,7 @@ class RecoveryService:
         )
 
     def _reverify_vector(
-        self, family: IndexFamily, batch: PublicationBatch, ctx: ExecutionContext
+        self, family: IndexFamily, batch: RetainedBatch, ctx: ExecutionContext
     ) -> tuple[BatchReceipt, dict]:
         """Rewrite one pending vector batch natively; return its receipt and proof."""
         index = self.owner.store.vector_indexes.get(family.family_id)
@@ -686,7 +699,7 @@ class RecoveryService:
                     "Native recovery requires snapshot collection grants",
                 )
             snapshot_config = validate_retained_config(store.retained_config(snapshot))
-            for slot in snapshot.slots:
+            for slot in (slots := store.snapshot_slots(snapshot)):
                 if slot.slot not in channels:
                     continue
                 if slot.slot in {"text", "image"}:
@@ -707,7 +720,7 @@ class RecoveryService:
                     )
                 for batch in slot.batches:
                     verify_canonical_native_batch(store, slot.family, batch)
-            for slot in snapshot.slots:
+            for slot in slots:
                 if slot.slot not in channels:
                     continue
                 for batch in slot.batches:
@@ -912,7 +925,7 @@ class RecoveryService:
             return None, 0, 0, 0
         records = generations = skipped = batches = 0
         with store.pin_snapshot(None) as snapshot:
-            for slot in snapshot.slots:
+            for slot in store.snapshot_slots(snapshot):
                 if slot.slot not in {"text", "image", "graph"}:
                     continue
                 for batch in slot.batches:

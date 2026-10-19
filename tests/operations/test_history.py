@@ -27,7 +27,8 @@ def history(tmp_path):
         ("a" * 64, 1, "application/json", "a" * 64, now.isoformat()),
     )
     db.execute(
-        "INSERT INTO snapshots(snapshot_id,workspace_id,membership_sha,config_sha,manifest_sha,published_at) VALUES (?,?,?,?,?,?)",
+        "INSERT INTO snapshots(snapshot_id,workspace_id,membership_sha,config_sha,"
+        "manifest_sha,published_at,job_id,member_count) VALUES (?,?,?,?,?,?,'job',0)",
         ("snapshot", "workspace", "b" * 64, "c" * 64, "a" * 64, now.isoformat()),
     )
     db.commit()

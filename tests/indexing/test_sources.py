@@ -115,6 +115,13 @@ class _NoVisualAccess:
         raise AssertionError("Empty image batch must not admit visual operation")
 
 
+async def _slots(owner, view):
+    """Read a snapshot's retained slots on the owner thread."""
+    return await owner.run_blocking(
+        lambda: owner.store.snapshot_slots(view), ExecutionContext()
+    )
+
+
 def _jobs(service: SourceService) -> JobRepository:
     jobs = service._jobs
     assert jobs is not None
@@ -183,6 +190,90 @@ async def test_add_and_sync_native_source_reuse_canonical_extraction(tmp_path):
             )
             == 1
         )
+
+
+@pytest.mark.asyncio
+async def test_projection_leases_its_base_and_bound_batches_until_publication(
+    tmp_path, monkeypatch
+):
+    settings = tmp_path / "workspace.toml"
+    settings.write_text('schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n')
+    config = resolve_config(settings, "test", {})
+    collection = "55825936-6a6a-4d29-945a-327d771a76b7"
+    scope = RequestScope(
+        principal_id="writer",
+        collection_ids=frozenset({collection}),
+        capabilities=frozenset({"write", "manage", "read"}),
+        uses=frozenset({"lookup"}),
+    )
+
+    def text(key: str) -> SourceInput:
+        return SourceInput.from_mapping(
+            {
+                "type": "text",
+                "text": f"Synthetic source {key}.",
+                "format": "text",
+                "kind": "manual@1",
+                "metadata": {
+                    "title": key,
+                    "publisher": "Example Team",
+                    "edition": "1",
+                },
+                "source_key": f"{key}.txt",
+                "collection_id": collection,
+            }
+        )
+
+    with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
+        await owner.run_blocking(
+            lambda: owner.db.execute(
+                'INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
+                (collection, owner.workspace_id, "manuals", "Manuals"),
+            ),
+            ExecutionContext(),
+        )
+        coordinator = ProjectionCoordinator(
+            store=owner.store,
+            artifacts=owner.artifacts,
+            config=config,
+            counter=Counter(),
+        )
+        service = SourceService(owner, coordinator)
+        await service.add(text("first"), scope)
+        base = await owner.run_blocking(
+            owner.store.active_snapshot_id, ExecutionContext()
+        )
+        assert base is not None
+        observed = {}
+        original_finalize = coordinator.finalize
+        original_publish = owner.store.publish_snapshot
+
+        def finalize(prepared, *args):
+            observed["base_at_finalize"] = owner.leases.is_pinned(base)
+            return original_finalize(prepared, *args)
+
+        def publish(plan):
+            bound = {
+                batch.batch_id
+                for page in plan.new_pages
+                for member in page.members
+                for batch in member.batches
+            }
+            observed["bound_before_publish"] = all(
+                owner.leases.is_pinned(batch_id) for batch_id in bound
+            )
+            observed["base_before_publish"] = owner.leases.is_pinned(base)
+            return original_publish(plan)
+
+        monkeypatch.setattr(coordinator, "finalize", finalize)
+        monkeypatch.setattr(owner.store, "publish_snapshot", publish)
+        await service.add(text("second"), scope)
+        assert observed == {
+            "base_at_finalize": True,
+            "bound_before_publish": True,
+            "base_before_publish": True,
+        }
+        assert not owner.leases.any_pinned()
 
 
 @pytest.mark.asyncio
@@ -261,7 +352,9 @@ async def test_image_slot_publishes_required_empty_batch(tmp_path, monkeypatch, 
         view = await owner.run_blocking(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
-        image = next(slot for slot in view.slots if slot.slot == "image")
+        image = next(
+            slot for slot in (await _slots(owner, view)) if slot.slot == "image"
+        )
         assert image.required and len(image.batches) == 1
         assert image.batches[0].expected_count == 0
         receipt = image.batches[0].receipt
@@ -357,7 +450,9 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
         view = await owner.run_blocking(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
-        graph_slot = next(slot for slot in view.slots if slot.slot == "graph")
+        graph_slot = next(
+            slot for slot in (await _slots(owner, view)) if slot.slot == "graph"
+        )
         graph_batch = graph_slot.batches[0]
         assert graph_slot.required and len(view.members) == 2
         assert graph_batch.graph_manifest is not None
@@ -457,19 +552,14 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
                 sha256=row[0], size_bytes=row[1], media_type=row[2], storage_key=row[3]
             )
             with owner.artifacts.open_verified(ref) as stream:
-                root = json.load(stream)
+                document = json.load(stream)
+            assert document["type"] == "publication_plan"
             return PublicationPlan.model_validate_json(
-                canonical_bytes(
-                    {**root["data"], "manifest": ref.model_dump(mode="json")}
-                )
+                canonical_bytes(document["data"])
             )
 
         plan = await owner.run_blocking(stale_plan, ExecutionContext())
-        old_watermark = next(
-            slot.batches[0].receipt.decision_watermark
-            for slot in plan.slots
-            if slot.slot == "graph"
-        )
+        old_watermark = plan.graph_watermark
         assert old_watermark == 0
         await owner.run_blocking(
             lambda: owner.db.execute(
@@ -518,7 +608,7 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
         assert (
             next(
                 slot.batches[0].receipt.decision_watermark
-                for slot in refreshed.slots
+                for slot in (await _slots(owner, refreshed))
                 if slot.slot == "graph"
                 and isinstance(slot.batches[0].receipt, GraphBatchReceipt)
             )
@@ -526,7 +616,9 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
         )
         from tychora.application.recovery import RecoveryService
 
-        active_graph = next(slot for slot in refreshed.slots if slot.slot == "graph")
+        active_graph = next(
+            slot for slot in (await _slots(owner, refreshed)) if slot.slot == "graph"
+        )
         graph_batch = active_graph.batches[0]
         graph_receipt = graph_batch.receipt
         assert isinstance(graph_receipt, GraphBatchReceipt)
@@ -595,10 +687,14 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
         assert list((tmp_path / "data" / ".physical-verification").glob("*.json"))
         recovery = RecoveryService(owner)
         old_graph_batch = next(
-            slot.batches[0].batch_id for slot in view.slots if slot.slot == "graph"
+            slot.batches[0].batch_id
+            for slot in (await _slots(owner, view))
+            if slot.slot == "graph"
         )
         previous_graph_batch = next(
-            slot.batches[0].batch_id for slot in resumed.slots if slot.slot == "graph"
+            slot.batches[0].batch_id
+            for slot in (await _slots(owner, resumed))
+            if slot.slot == "graph"
         )
         active_graph_batch = active_graph.batches[0].batch_id
         with owner.leases.pin(frozenset({view.snapshot_id})):
@@ -751,7 +847,7 @@ async def test_relocated_file_with_identical_bytes_reuses_immutable_registration
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
         assert before.members == after.members
-        assert before.slots[0].batches == after.slots[0].batches
+        assert await _slots(owner, before) == await _slots(owner, after)
         assert (
             await owner.run_blocking(
                 lambda: owner.db.execute("SELECT COUNT(*) FROM extractions").fetchone()[
@@ -936,7 +1032,9 @@ async def test_png_source_uses_owner_authorized_visual_provider(tmp_path, monkey
         view = await owner.run_blocking(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
-        image = next(slot for slot in view.slots if slot.slot == "image")
+        image = next(
+            slot for slot in (await _slots(owner, view)) if slot.slot == "image"
+        )
         assert image.batches[0].expected_count >= 1
         assert len(transport.calls) == image.batches[0].expected_count
         collection, _ = image_index._require()

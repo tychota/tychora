@@ -594,7 +594,7 @@ def test_vector_rebuild_rejects_missing_or_altered_float32_cache(tmp_path):
     from tychora.contracts.indexing import FamilySpec, IndexRecordDigest
     from tychora.contracts.publication import (
         IndexFamily,
-        PublicationBatch,
+        RetainedBatch,
         VectorRecordBinding,
     )
     from tychora.contracts.vector_batches import (
@@ -683,7 +683,7 @@ def test_vector_rebuild_rejects_missing_or_altered_float32_cache(tmp_path):
         backend_namespace="synthetic",
         created_at="2026-01-01T00:00:00+00:00",
     )
-    batch = PublicationBatch(
+    batch = RetainedBatch(
         batch_id="batch",
         family_id=spec.family_id,
         input_manifest=cache,

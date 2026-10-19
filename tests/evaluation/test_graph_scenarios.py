@@ -245,7 +245,10 @@ async def test_published_decisions_and_hidden_parent_support_are_excluded(tmp_pa
         snapshot = await owner.run_blocking(
             lambda: owner.store.resolve_snapshot(None), ctx
         )
-        slot = next(slot for slot in snapshot.slots if slot.slot == "graph")
+        slots = await owner.run_blocking(
+            lambda: owner.store.snapshot_slots(snapshot), ctx
+        )
+        slot = next(slot for slot in slots if slot.slot == "graph")
         graph_batch = slot.batches[0]
         assert isinstance(graph_batch.receipt, GraphBatchReceipt)
         assert graph_batch.receipt.assertion_count == 3

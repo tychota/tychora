@@ -275,3 +275,33 @@ def test_removed_batch_revives_with_its_rows(seeded_batch):
         tx.batches.mark_ready(batch.batch_id, 1)
     assert db.execute("SELECT COUNT(*) FROM lexical_records").fetchone()[0] == 1
     assert db.execute("SELECT state FROM index_batches").fetchone()[0] == "ready"
+
+
+@pytest.mark.parametrize("write", ["lexical", "vectors"])
+def test_rows_for_a_ready_batch_are_refused(seeded_batch, write):
+    db, uow, batch, entries = seeded_batch
+    with uow.write() as tx:
+        tx.batches.begin(batch)
+        tx.batches.write_lexical(batch.batch_id, (LexicalRecord(chunk_id=entries[0]),))
+        tx.batches.mark_ready(batch.batch_id, 1)
+    with pytest.raises(TychoraError) as error, uow.write() as tx:
+        if write == "lexical":
+            tx.batches.write_lexical(
+                batch.batch_id, (LexicalRecord(chunk_id=entries[0], body="late"),)
+            )
+        else:
+            tx.batches.write_vectors(
+                batch.batch_id,
+                (
+                    VectorRecordRow(
+                        record_id="r" * 64,
+                        chunk_id=entries[0],
+                        asset_id=None,
+                        input_sha="a" * 64,
+                        row_index=0,
+                    ),
+                ),
+            )
+    assert error.value.reason == "canonical.binding_mismatch"
+    assert "building" in str(error.value)
+    assert db.execute("SELECT COUNT(*) FROM vector_records").fetchone()[0] == 0

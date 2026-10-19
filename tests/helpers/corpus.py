@@ -56,6 +56,7 @@ def seed_bundle(
     *,
     source_key: str = "manual.md",
     kind: str = "manual@1",
+    edition: str = "1",
 ) -> ExtractionBundle:
     import json
 
@@ -69,7 +70,7 @@ def seed_bundle(
     document = artifact(identity.canonical_bytes({"text": text}), "application/json")
     sid = identity.source_id(UUID(COLLECTION), source_key)
     metadata_sha = identity.digest("metadata-v1", metadata)
-    rid = identity.revision_id(sid, original.sha256, "1", metadata_sha)
+    rid = identity.revision_id(sid, original.sha256, edition, metadata_sha)
     eid = identity.extraction_id(rid, "synthetic-parser@1", "synthetic-normalizer@1")
     text_sha = sha256(text.encode()).hexdigest()
     uid = identity.unit_id(eid, "paragraph:1", 0, text_sha)
@@ -113,7 +114,7 @@ def seed_bundle(
             source_id=sid,
             kind_id=kind,
             original_sha=original.sha256,
-            edition_key="1",
+            edition_key=edition,
             metadata_sha=metadata_sha,
             title=cast(str, metadata["title"]),
             metadata_json=metadata,

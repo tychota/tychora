@@ -117,14 +117,14 @@ class SqliteBatchRepository:
         if stored != values:
             raise _mismatch(f"A {table} row differs from its immutable value")
 
-    def _require_batch(self, batch_id: str) -> None:
-        if (
-            self._db.execute(
-                "SELECT 1 FROM index_batches WHERE batch_id=?", (batch_id,)
-            ).fetchone()
-            is None
-        ):
+    def _require_building(self, batch_id: str) -> None:
+        row = self._db.execute(
+            "SELECT state FROM index_batches WHERE batch_id=?", (batch_id,)
+        ).fetchone()
+        if row is None:
             raise _mismatch("Rows name an index batch that was never begun")
+        if row[0] != "building":
+            raise _mismatch("Rows can only be added to a building index batch")
 
     def begin(self, batch: NewBatch) -> None:
         """Store a building batch once; an identical repeat is a no-op.
@@ -181,9 +181,9 @@ class SqliteBatchRepository:
                 raise _mismatch("Batch rows differ from its ready count")
 
     def write_lexical(self, batch_id: str, records: tuple[LexicalRecord, ...]) -> None:
-        """Store a batch's lexical records; stored records never change."""
+        """Store a building batch's lexical records; stored records never change."""
         require_write(self._db, self._writable)
-        self._require_batch(batch_id)
+        self._require_building(batch_id)
         for r in records:
             values = (
                 batch_id,
@@ -197,9 +197,9 @@ class SqliteBatchRepository:
             self._insert_once("lexical_records", _LEXICAL_COLUMNS, 2, values)
 
     def write_vectors(self, batch_id: str, rows: tuple[VectorRecordRow, ...]) -> None:
-        """Store a batch's vector record rows; stored rows never change."""
+        """Store a building batch's vector record rows; stored rows never change."""
         require_write(self._db, self._writable)
-        self._require_batch(batch_id)
+        self._require_building(batch_id)
         for r in rows:
             values = (
                 r.record_id,

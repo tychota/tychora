@@ -86,7 +86,7 @@ def test_republishing_identical_older_edition_makes_it_default(tmp_path):
             for member in retained_second.members
             if member.is_default
         } == {second_revision}
-        assert current.slots == second_snapshot.slots
+        assert current.families == second_snapshot.families
         query = {"question": "cobalt", "modalities": ["lexical"]}
         assert {segment.revision_id for segment in kb.search(query).segments} == {
             first_revision

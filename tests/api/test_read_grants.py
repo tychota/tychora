@@ -135,7 +135,7 @@ def test_retained_citation_after_same_edition_refresh(tmp_path):
         owner = kb._workspace.owner
         owner.run_blocking_sync(
             lambda: owner.db.execute(
-                "DELETE FROM snapshot_members WHERE extraction_id=?", (xid,)
+                "DELETE FROM page_members WHERE extraction_id=?", (xid,)
             ),
             ExecutionContext(),
         )

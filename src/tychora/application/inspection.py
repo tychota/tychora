@@ -690,7 +690,9 @@ class InspectionService:
                     "snapshot_id": membership,
                     "membership_sha": membership,
                     "members": members,
-                    "slots": (),
+                    "member_count": len(members),
+                    "page_ids": (),
+                    "families": (),
                 }
             )
 

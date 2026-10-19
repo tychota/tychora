@@ -184,7 +184,8 @@ class EngineSession:
         snapshot = self.owner.run_blocking_sync(
             lambda: self.owner.store.resolve_snapshot(None), ExecutionContext()
         )
-        slot = next(slot for slot in snapshot.slots if slot.slot == "text")
+        slot = snapshot.family("text")
+        assert slot is not None
         spec_json = slot.family.config_json["spec"]
         capabilities_json = slot.family.config_json["capabilities"]
         origin_sha = slot.family.config_json["effective_config_sha"]

@@ -20,6 +20,29 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import JsonValue, canonical_bytes
 
 MAX_MANIFEST_BYTES = 16 * 1024 * 1024
+# Typed manifest roots whose closures keep artifacts live, as (query, kind).
+TYPED_MANIFEST_ROOTS = (
+    ("SELECT manifest_sha FROM snapshots", "snapshot"),
+    ("SELECT manifest_sha FROM membership_pages", "membership_page"),
+    ("SELECT input_manifest_sha FROM index_batches", "index_input"),
+    ("SELECT effective_config_sha FROM jobs", "registry"),
+    ("SELECT manifest_sha FROM evaluation_datasets", "evaluation"),
+    (
+        "SELECT retained_payload_sha FROM query_runs WHERE retained_payload_sha IS NOT NULL",
+        "retained_run",
+    ),
+)
+_CAPTURE_AND_EXTRACTION_ROOTS = (
+    (
+        "SELECT captured_inputs_sha FROM jobs WHERE captured_inputs_sha IS NOT NULL",
+        "job_capture",
+    ),
+    ("SELECT document_artifact_sha FROM extractions", "extraction"),
+    (
+        "SELECT assertions_artifact_sha FROM extractions WHERE assertions_artifact_sha IS NOT NULL",
+        "assertion",
+    ),
+)
 MAX_ASSERTION_LINE_BYTES = 1024 * 1024
 MAX_REFERENCES = 10000
 _HEADER_FIELDS = frozenset(
@@ -279,25 +302,7 @@ def from_backup(db, *, artifacts) -> BackupInventory:
                 raise _fail("Required manifest registration is missing")
             roots.append(registered_manifest(ref, kind))
 
-    for query, kind in (
-        ("SELECT manifest_sha FROM snapshots", "snapshot"),
-        ("SELECT input_manifest_sha FROM index_batches", "index_input"),
-        ("SELECT effective_config_sha FROM jobs", "registry"),
-        (
-            "SELECT captured_inputs_sha FROM jobs WHERE captured_inputs_sha IS NOT NULL",
-            "job_capture",
-        ),
-        ("SELECT document_artifact_sha FROM extractions", "extraction"),
-        (
-            "SELECT assertions_artifact_sha FROM extractions WHERE assertions_artifact_sha IS NOT NULL",
-            "assertion",
-        ),
-        (
-            "SELECT retained_payload_sha FROM query_runs WHERE retained_payload_sha IS NOT NULL",
-            "retained_run",
-        ),
-        ("SELECT manifest_sha FROM evaluation_datasets", "evaluation"),
-    ):
+    for query, kind in (*TYPED_MANIFEST_ROOTS, *_CAPTURE_AND_EXTRACTION_ROOTS):
         add_manifest(query, kind)
     for (sha,) in db.execute(
         "SELECT captured_inputs_sha FROM jobs WHERE captured_inputs_sha IS NOT NULL "

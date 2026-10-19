@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from tychora.adapters.sqlite.repositories import SqliteWorkspaceRepository, artifact_ref
 from tychora.adapters.sqlite.retained_bindings import BindingScope
+from tychora.adapters.sqlite.retained_slots import load_retained_slots
 from tychora.application.collection_policy import collection_is_active
 from tychora.configuration.global_facets import (
     ROLE as GLOBAL_FACET_ROLE,
@@ -37,7 +38,7 @@ from tychora.contracts.corpus import (
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.identity import digest
-from tychora.contracts.publication import SnapshotView
+from tychora.contracts.publication import RetainedBatch, RetainedSlot, SnapshotView
 from tychora.indexing.representations import prepare_extraction
 from tychora.retrieval.eligibility import (
     AssetFact,
@@ -52,8 +53,10 @@ if TYPE_CHECKING:
     from .corpus import CorpusStore
 
 
-def _integrity(message: str) -> TychoraError:
-    return TychoraError("INTEGRITY_ERROR", message)
+def _integrity(
+    message: str, reason: str = "canonical.binding_mismatch"
+) -> TychoraError:
+    return TychoraError("INTEGRITY_ERROR", message, reason=reason)
 
 
 def _owners_by_locator(
@@ -205,7 +208,9 @@ def _retained_artifacts(db, artifact_ids: set[str]) -> list[ArtifactRef]:
             (sha,),
         )
         if len(row) != 1:
-            raise _integrity("Retained representation artifact is unavailable")
+            raise _integrity(
+                "Retained representation artifact is unavailable", "payload.missing"
+            )
         value = row[0]
         artifacts.append(
             ArtifactRef(
@@ -260,13 +265,139 @@ def retained_rows(
     )
 
 
+class _Owners(NamedTuple):
+    """Selected chunks, their document order and selected assets, by ID."""
+
+    chunks: dict[str, ChunkFact]
+    order: dict[str, tuple[int, int, str, str]]
+    assets: dict[str, AssetFact]
+
+
+def _require_text_ownership(
+    store: CorpusStore, batch: RetainedBatch, owners: _Owners
+) -> dict[str, list]:
+    """Check the text batch input records its groups; return bindings by group."""
+    with store.artifacts.open_verified(batch.input_manifest) as stream:
+        manifest = json.load(stream)
+    data = manifest.get("data", {})
+    expected = [
+        {
+            "record_id": binding.record_id,
+            "group_id": binding.group_id,
+            "dependency_ids": sorted(binding.dependency_ids),
+        }
+        for binding in batch.vector_records
+    ]
+    if (
+        data.get("entries") != [binding.record_id for binding in batch.vector_records]
+        or data.get("representations") != expected
+        or any(
+            binding.group_id is None
+            or not binding.dependency_ids
+            or binding.chunk_id not in owners.chunks
+            for binding in batch.vector_records
+        )
+    ):
+        raise TychoraError(
+            "INDEX_INCOMPLETE",
+            "Text batch needs rebuilt group ownership",
+            reason="batch.missing",
+        )
+    groups: dict[str, list] = defaultdict(list)
+    for binding in batch.vector_records:
+        groups[binding.group_id or ""].append(binding)
+    return groups
+
+
+def _group_vector_facts(
+    batch: RetainedBatch, group_id: str, bindings: list, owners: _Owners
+) -> list[VectorFact]:
+    """Check one context group's bindings and return its vector facts."""
+    ordered = sorted(bindings, key=lambda binding: owners.order[binding.chunk_id])
+    first = owners.chunks[ordered[0].chunk_id]
+    if any(
+        owners.chunks[item.chunk_id].context_group_key != first.context_group_key
+        or owners.order[item.chunk_id][3] != batch.extraction_id
+        or item.input_sha != ordered[0].input_sha
+        or item.dependency_ids != ordered[0].dependency_ids
+        for item in ordered
+    ):
+        raise _integrity("Text group binding differs from selected extraction")
+    expected_group = digest(
+        "context-group-input-v1",
+        batch.extraction_id,
+        first.context_group_key,
+        [item.chunk_id for item in ordered],
+        ordered[0].input_sha,
+    )
+    dependencies = frozenset(
+        dep for item in ordered for dep in owners.chunks[item.chunk_id].dependency_ids
+    )
+    if group_id != expected_group or dependencies != ordered[0].dependency_ids:
+        raise _integrity("Text group omits or adds represented owners")
+    return [
+        VectorFact(item.record_id, chunk_id=item.chunk_id, dependency_ids=dependencies)
+        for item in ordered
+    ]
+
+
+def _text_vector_facts(
+    store: CorpusStore, batch: RetainedBatch, owners: _Owners
+) -> list[VectorFact]:
+    """Check a text batch's group ownership and return its vector facts."""
+    groups = _require_text_ownership(store, batch, owners)
+    return [
+        fact
+        for group_id, bindings in groups.items()
+        for fact in _group_vector_facts(batch, group_id, bindings, owners)
+    ]
+
+
+def _image_vector_facts(batch: RetainedBatch, owners: _Owners) -> list[VectorFact]:
+    """Bind each image vector to its canonical asset."""
+    facts = []
+    for binding in batch.vector_records:
+        asset = owners.assets.get(binding.asset_id or "")
+        if asset is None:
+            raise _integrity("Image vector has no canonical asset")
+        facts.append(
+            VectorFact(
+                binding.record_id,
+                asset_id=asset.asset_id,
+                dependency_ids=asset.dependency_ids,
+            )
+        )
+    return facts
+
+
+def _vector_facts(
+    store: CorpusStore,
+    slots: tuple[RetainedSlot, ...],
+    selected: set[str],
+    owners: _Owners,
+) -> tuple[VectorFact, ...]:
+    """Vector facts of the selected extractions' text and image batches."""
+    facts: list[VectorFact] = []
+    for slot in slots:
+        for batch in slot.batches:
+            if batch.extraction_id not in selected:
+                continue
+            if slot.slot == "text":
+                facts.extend(_text_vector_facts(store, batch, owners))
+            elif slot.slot == "image":
+                facts.extend(_image_vector_facts(batch, owners))
+    return tuple(facts)
+
+
 def read_eligibility_facts(
     store: CorpusStore, snapshot: SnapshotView
 ) -> EligibilityFacts:
     """Detach one same-epoch policy observation; release the read before dispatch."""
     db = store.db
     if db.in_transaction:
-        raise _integrity("Eligibility requires its own short read")
+        raise _integrity(
+            "Eligibility requires its own short read", "invariant.unexpected"
+        )
     db.execute("BEGIN")
     try:
         policy_epoch_value = SqliteWorkspaceRepository(db).policy_epoch()
@@ -522,102 +653,9 @@ def read_eligibility_facts(
                 )
         chunks_by_id = {item.chunk_id: item for item in chunk_facts}
         assets_by_id = {item.asset_id: item for item in asset_facts}
-        vectors: list[VectorFact] = []
-        for slot in snapshot.slots:
-            for batch in slot.batches:
-                if batch.extraction_id not in selected_extractions:
-                    continue
-                if slot.slot == "text":
-                    with store.artifacts.open_verified(batch.input_manifest) as stream:
-                        manifest = json.load(stream)
-                    data = manifest.get("data", {})
-                    expected = [
-                        {
-                            "record_id": binding.record_id,
-                            "group_id": binding.group_id,
-                            "dependency_ids": sorted(binding.dependency_ids),
-                        }
-                        for binding in batch.vector_records
-                    ]
-                    if (
-                        data.get("entries")
-                        != [binding.record_id for binding in batch.vector_records]
-                        or data.get("representations") != expected
-                        or any(
-                            binding.group_id is None
-                            or not binding.dependency_ids
-                            or binding.chunk_id not in chunks_by_id
-                            for binding in batch.vector_records
-                        )
-                    ):
-                        raise TychoraError(
-                            "INDEX_INCOMPLETE",
-                            "Text batch needs rebuilt group ownership",
-                        )
-                    groups: dict[str, list] = defaultdict(list)
-                    for binding in batch.vector_records:
-                        if binding.group_id is None:
-                            raise TychoraError(
-                                "INDEX_INCOMPLETE",
-                                "Text batch needs rebuilt group ownership",
-                            )
-                        groups[binding.group_id].append(binding)
-                    for group_id, bindings in groups.items():
-                        ordered = sorted(
-                            bindings, key=lambda binding: chunk_order[binding.chunk_id]
-                        )
-                        first = chunks_by_id[ordered[0].chunk_id]
-                        if any(
-                            chunks_by_id[item.chunk_id].context_group_key
-                            != first.context_group_key
-                            or chunk_order[item.chunk_id][3] != batch.extraction_id
-                            or item.input_sha != ordered[0].input_sha
-                            or item.dependency_ids != ordered[0].dependency_ids
-                            for item in ordered
-                        ):
-                            raise _integrity(
-                                "Text group binding differs from selected extraction"
-                            )
-                        expected_group = digest(
-                            "context-group-input-v1",
-                            batch.extraction_id,
-                            first.context_group_key,
-                            [item.chunk_id for item in ordered],
-                            ordered[0].input_sha,
-                        )
-                        dependencies = frozenset(
-                            dep
-                            for item in ordered
-                            for dep in chunks_by_id[item.chunk_id].dependency_ids
-                        )
-                        if (
-                            group_id != expected_group
-                            or dependencies != ordered[0].dependency_ids
-                        ):
-                            raise _integrity(
-                                "Text group omits or adds represented owners"
-                            )
-                        vectors.extend(
-                            VectorFact(
-                                item.record_id,
-                                chunk_id=item.chunk_id,
-                                dependency_ids=dependencies,
-                            )
-                            for item in ordered
-                        )
-                elif slot.slot == "image":
-                    for binding in batch.vector_records:
-                        asset = assets_by_id.get(binding.asset_id)
-                        if asset is None:
-                            raise _integrity("Image vector has no canonical asset")
-                        vectors.append(
-                            VectorFact(
-                                binding.record_id,
-                                asset_id=asset.asset_id,
-                                dependency_ids=asset.dependency_ids,
-                            )
-                        )
-        selected_vectors = tuple(vectors)
+        slots = load_retained_slots(db, store.artifacts, snapshot)
+        owners = _Owners(chunks_by_id, chunk_order, assets_by_id)
+        vectors = _vector_facts(store, slots, selected_extractions, owners)
         decisions = tuple(
             (assertion, decision)
             for assertion, decision in db.execute(
@@ -630,7 +668,8 @@ def read_eligibility_facts(
             units=tuple(unit_facts),
             chunks=tuple(chunk_facts),
             assets=tuple(asset_facts),
-            vectors=selected_vectors,
+            vectors=vectors,
+            slots=slots,
             assertion_decisions=decisions,
             revision_facets=tuple(revision_facets),
             historical_definitions=tuple(sorted(historical.items())),
