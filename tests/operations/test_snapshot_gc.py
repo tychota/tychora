@@ -647,3 +647,32 @@ def test_reclaim_walks_the_roots_once_however_many_payloads_are_pending(
         every, counts = reconcile(None)
         assert counts["deleted_payloads"] == len(pending)
         assert every <= one
+
+
+def test_jobs_orphaned_by_a_crash_are_interrupted_at_open(tmp_path, monkeypatch):
+    with Tychora.open(tmp_path / "kb", token_counter=CharacterCounter()) as kb:
+        owner = kb._workspace.owner
+        _add(kb, "a.md", "Published verification outcome.")
+
+        def crash(plan):
+            raise RuntimeError("simulated crash before activation")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(owner.store, "publish_snapshot", crash)
+            stopped = _add(kb, "b.md", "Unpublished verification outcome.")
+        # The process dies mid-add: the job row still says it runs.
+        _db(owner).execute(
+            "UPDATE jobs SET state='running',error_code=NULL WHERE job_id=?",
+            (stopped.id,),
+        )
+        _db(owner).commit()
+    with Tychora.open(tmp_path / "kb", token_counter=CharacterCounter()) as kb:
+        owner = kb._workspace.owner
+        assert _db(owner).execute(
+            "SELECT state,error_code FROM jobs WHERE job_id=?", (stopped.id,)
+        ).fetchone() == ("failed", "JOB_INTERRUPTED")
+        result = kb.management.run({"operation": "gc"})
+        assert result.gc is not None and result.gc.unpublished_skipped is False
+        assert result.gc.batches > 0
+        assert _count(_db(owner), ORPHAN_BATCHES) == 0
+        assert kb.jobs.get(stopped.id).state == "interrupted"
