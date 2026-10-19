@@ -40,7 +40,7 @@ class VectorRecordBinding(Contract):
     value_sha: Sha256
     chunk_id: Identifier | None = None
     asset_id: Identifier | None = None
-    embedding_cache: ArtifactRef
+    row_index: NonNegativeInt
     group_id: Identifier | None = None
     dependency_ids: frozenset[Identifier] = frozenset()
 
@@ -73,6 +73,17 @@ class PublicationBatch(Contract):
     graph_manifest: GraphManifest | None = None
     lexical_records: tuple[LexicalRecord, ...] = ()
     vector_records: tuple[VectorRecordBinding, ...] = ()
+    vectors: ArtifactRef | None = None
+
+    @model_validator(mode="after")
+    def vectors_match_records(self) -> Self:
+        """Pair the records with their one batch artifact, rows in record order."""
+        if bool(self.vector_records) != (self.vectors is not None):
+            raise ValueError("Vector records and their batch artifact must be paired")
+        ordered = sorted(self.vector_records, key=lambda row: row.record_id)
+        if [row.row_index for row in ordered] != list(range(len(ordered))):
+            raise ValueError("Vector row indexes must follow record order")
+        return self
 
 
 class PublicationSlot(Contract):

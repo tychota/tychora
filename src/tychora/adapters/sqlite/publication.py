@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import struct
 from contextlib import ExitStack
 from datetime import UTC, datetime
-from hashlib import sha256
 from typing import TYPE_CHECKING, NoReturn
 from uuid import UUID
 
@@ -30,8 +28,15 @@ from tychora.contracts.jobs import JobAuthorization, PublicationReceipt
 from tychora.contracts.publication import (
     IndexFamily,
     LexicalBatchReceipt,
+    PublicationBatch,
     PublicationPlan,
     SnapshotView,
+    VectorRecordBinding,
+)
+from tychora.contracts.vector_batches import (
+    VECTOR_BATCH_MEDIA_TYPE,
+    decode_vector_batch,
+    row_value_sha,
 )
 from tychora.contracts.vectors import BatchReceipt
 from tychora.indexing.receipts import receipt_digest
@@ -70,10 +75,10 @@ def _manifest_document(plan: PublicationPlan) -> dict:
         for batch in slot.batches
     }
     caches = {
-        row.embedding_cache.sha256: row.embedding_cache
+        batch.vectors.sha256: batch.vectors
         for slot in plan.slots
         for batch in slot.batches
-        for row in batch.vector_records
+        if batch.vectors is not None
     }
     return {
         "type": "snapshot",
@@ -112,10 +117,10 @@ def _verify_artifacts(store: CorpusStore, plan: PublicationPlan) -> None:
         plan.manifest.sha256,
         *(batch.input_manifest.sha256 for slot in plan.slots for batch in slot.batches),
         *(
-            row.embedding_cache.sha256
+            batch.vectors.sha256
             for slot in plan.slots
             for batch in slot.batches
-            for row in batch.vector_records
+            if batch.vectors is not None
         ),
     }
     if closure != required:
@@ -240,15 +245,10 @@ def _verify_batches(
                     _fail("Vector batch receipt differs from records")
                 if slot.family.dimension is None:
                     _fail("Vector family has no dimension")
-                for row in bindings:
-                    with store.artifacts.open_verified(row.embedding_cache) as stream:
-                        raw = stream.read(row.embedding_cache.size_bytes + 1)
-                    if (
-                        len(raw) != 4 * slot.family.dimension
-                        or sha256(raw).hexdigest() != row.value_sha
-                    ):
-                        _fail("Vector cache differs from actual normalized bytes")
-                    struct.unpack("<" + "f" * slot.family.dimension, raw)
+                if bindings:
+                    _verify_vector_artifact(
+                        store, batch, slot.family.dimension, bindings
+                    )
                 index = store.vector_indexes.get(batch.family_id)
                 if index is None:
                     raise TychoraError(
@@ -292,14 +292,54 @@ def _verify_batches(
                 _fail("Unknown publication receipt")
 
 
-def _register_artifact(store: CorpusStore, ref: ArtifactRef) -> None:
+def _verify_vector_artifact(
+    store: CorpusStore,
+    batch: PublicationBatch,
+    dimension: int,
+    bindings: tuple[VectorRecordBinding, ...],
+) -> None:
+    """Check the batch artifact's rows against the receipt bindings."""
+    if batch.vectors is None:
+        _fail("Vector batch has no artifact")
+    with store.artifacts.open_verified(batch.vectors) as stream:
+        decoded = decode_vector_batch(stream.read(batch.vectors.size_bytes + 1))
+    rows = tuple(
+        (row.record_id, row.input_sha, row_value_sha(row.values))
+        for row in decoded.rows
+    )
+    if (
+        decoded.family_id != batch.family_id
+        or decoded.dimension != dimension
+        or rows != tuple((b.record_id, b.input_sha, b.value_sha) for b in bindings)
+    ):
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Vector batch artifact differs from its receipt",
+            reason="payload.hash_mismatch",
+        )
+
+
+def _register_artifact(
+    store: CorpusStore, ref: ArtifactRef, *, revive: bool = False
+) -> None:
+    """Register an artifact; a released row comes back once its bytes verify."""
     row = store.db.execute(
         "SELECT size_bytes,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
         (ref.sha256,),
     ).fetchone()
     if row is not None:
-        if row != (ref.size_bytes, ref.storage_key, "present"):
+        if row[:2] != (ref.size_bytes, ref.storage_key) or not (
+            row[2] == "present" or revive
+        ):
             _fail("Required publication artifact is unavailable")
+        if row[2] != "present":
+            with store.artifacts.open_verified(ref):
+                pass
+            store.db.execute(
+                "UPDATE artifacts SET payload_state='present',payload_deleted_at=NULL "
+                "WHERE artifact_sha=?",
+                (ref.sha256,),
+            )
         return
     store.db.execute(
         "INSERT INTO artifacts (artifact_sha,size_bytes,media_type,storage_key,created_at) VALUES (?,?,?,?,?)",
@@ -317,61 +357,67 @@ def _require_created_family(db: sqlite3.Connection, family: IndexFamily) -> None
         )
 
 
-def insert_snapshot_bindings(store: CorpusStore, plan: PublicationPlan) -> None:
-    """Insert all immutable bindings inside the caller's immediate transaction."""
-    if not store.db.in_transaction:
-        _fail("Snapshot binding insert requires an immediate transaction")
-    db = store.db
-    for ref in {
+def _batch_row(family: IndexFamily, batch: PublicationBatch) -> dict:
+    """The immutable ``index_batches`` row of a ready batch."""
+    receipt = batch.receipt
+    count = (
+        receipt.count
+        if isinstance(receipt, (LexicalBatchReceipt, BatchReceipt))
+        else receipt.evidence_count
+    )
+    entry_ids = (
+        tuple(row.chunk_id for row in batch.lexical_records)
+        if family.channel == "lexical"
+        else tuple(row.record_id for row in batch.vector_records)
+        if family.channel in {"text", "image"}
+        else tuple(batch.graph_manifest.evidence_ids)
+        if batch.graph_manifest
+        else ()
+    )
+    return {
+        "batch_id": batch.batch_id,
+        "family_id": batch.family_id,
+        "extraction_id": batch.extraction_id,
+        "input_manifest_sha": batch.input_manifest.sha256,
+        "expected_count": batch.expected_count,
+        "actual_count": count,
+        "entry_ids_sha": digest("index-entries-v1", entry_ids),
+        "state": "ready",
+        "receipt_json": canonical_bytes(receipt.model_dump(mode="json")).decode(),
+        "vectors_sha": batch.vectors.sha256 if batch.vectors else None,
+    }
+
+
+def _register_plan_artifacts(store: CorpusStore, plan: PublicationPlan) -> None:
+    """Register the manifest, input manifests and vector batches of a plan."""
+    refs = {
         ref.sha256: ref
         for ref in (
             plan.manifest,
             *(batch.input_manifest for slot in plan.slots for batch in slot.batches),
             *(
-                row.embedding_cache
+                batch.vectors
                 for slot in plan.slots
                 for batch in slot.batches
-                for row in batch.vector_records
+                if batch.vectors is not None
             ),
         )
-    }.values():
-        _register_artifact(store, ref)
+    }
+    for ref in refs.values():
+        _register_artifact(store, ref, revive=ref.media_type == VECTOR_BATCH_MEDIA_TYPE)
+
+
+def insert_snapshot_bindings(store: CorpusStore, plan: PublicationPlan) -> None:
+    """Insert all immutable bindings inside the caller's immediate transaction."""
+    if not store.db.in_transaction:
+        _fail("Snapshot binding insert requires an immediate transaction")
+    db = store.db
+    _register_plan_artifacts(store, plan)
     for slot in plan.slots:
         family = slot.family
         _require_created_family(db, family)
         for batch in slot.batches:
-            receipt = batch.receipt
-            count = (
-                receipt.count
-                if isinstance(receipt, (LexicalBatchReceipt, BatchReceipt))
-                else receipt.evidence_count
-            )
-            entry_ids = (
-                tuple(row.chunk_id for row in batch.lexical_records)
-                if family.channel == "lexical"
-                else tuple(row.record_id for row in batch.vector_records)
-                if family.channel in {"text", "image"}
-                else tuple(batch.graph_manifest.evidence_ids)
-                if batch.graph_manifest
-                else ()
-            )
-            store._insert(
-                "index_batches",
-                {
-                    "batch_id": batch.batch_id,
-                    "family_id": batch.family_id,
-                    "extraction_id": batch.extraction_id,
-                    "input_manifest_sha": batch.input_manifest.sha256,
-                    "expected_count": batch.expected_count,
-                    "actual_count": count,
-                    "entry_ids_sha": digest("index-entries-v1", entry_ids),
-                    "state": "ready",
-                    "receipt_json": canonical_bytes(
-                        receipt.model_dump(mode="json")
-                    ).decode(),
-                },
-                ("batch_id",),
-            )
+            store._insert("index_batches", _batch_row(family, batch), ("batch_id",))
             for row in batch.lexical_records:
                 existing = db.execute(
                     "SELECT batch_id,chunk_id,identifiers,title,headings,body,context FROM lexical_records WHERE batch_id=? AND chunk_id=?",
@@ -403,7 +449,7 @@ def insert_snapshot_bindings(store: CorpusStore, plan: PublicationPlan) -> None:
                         "chunk_id": row.chunk_id,
                         "asset_id": row.asset_id,
                         "input_sha": row.input_sha,
-                        "embedding_cache_sha": row.embedding_cache.sha256,
+                        "row_index": row.row_index,
                     },
                     ("record_id",),
                 )
@@ -554,10 +600,10 @@ def publish_snapshot(store: CorpusStore, plan: PublicationPlan) -> str:
                 for batch in slot.batches
             ),
             *(
-                row.embedding_cache.sha256
+                batch.vectors.sha256
                 for slot in plan.slots
                 for batch in slot.batches
-                for row in batch.vector_records
+                if batch.vectors is not None
             ),
         }
     )

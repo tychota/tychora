@@ -284,7 +284,7 @@ async def test_extraction_and_channel_coverage_continue_in_bounded_pages(tmp_pat
                     )
                     owner.db.execute(
                         "INSERT INTO index_batches SELECT ?,?, ?,input_manifest_sha,"
-                        "expected_count,actual_count,entry_ids_sha,state,receipt_json "
+                        "expected_count,actual_count,entry_ids_sha,state,receipt_json,vectors_sha "
                         "FROM index_batches WHERE batch_id=?",
                         (f"{number + 2000:064x}", synthetic_family, f"{0:064x}", batch),
                     )

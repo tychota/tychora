@@ -207,10 +207,10 @@ class CorpusStore(PolicyRepository):
                     for batch in slot.batches
                 ),
                 *(
-                    row.embedding_cache.sha256
+                    batch.vectors.sha256
                     for slot in view.slots
                     for batch in slot.batches
-                    for row in batch.vector_records
+                    if batch.vectors is not None
                 ),
             }
         )

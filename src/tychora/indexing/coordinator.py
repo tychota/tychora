@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import struct
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from io import BytesIO
@@ -53,6 +52,11 @@ from tychora.contracts.publication import (
     PublicationSlot,
     SnapshotMember,
     VectorRecordBinding,
+)
+from tychora.contracts.vector_batches import (
+    VECTOR_BATCH_MEDIA_TYPE,
+    VectorBatchRow,
+    encode_vector_batch,
 )
 from tychora.contracts.vectors import BatchReceipt, VectorBatch
 from tychora.indexing.groups import build_groups
@@ -504,8 +508,8 @@ class ProjectionCoordinator:
             expected
         ):
             _fail("Text provider returned incomplete or foreign window vectors")
-        bindings = []
         stored = []
+        owners = {}
         for item in records:
             window_id, group = expected[item.record_id]
             if (
@@ -514,25 +518,22 @@ class ProjectionCoordinator:
                 or len(item.values) != spec.dimensions
             ):
                 _fail("Text provider vector differs from exact requested input")
-            raw = struct.pack("<" + "f" * len(item.values), *item.values)
-            cache = self.artifacts.put_stream(
-                BytesIO(raw), "application/vnd.tychora.float32-le"
-            )
-            if cache.sha256 != item.value_sha:
-                _fail("Text provider value digest differs from retained bytes")
             record_id = vector_record_id(family.family_id, window_id, item.input_sha)
             stored.append(item.model_copy(update={"record_id": record_id}))
-            bindings.append(
-                VectorRecordBinding(
-                    record_id=record_id,
-                    chunk_id=window_id,
-                    input_sha=item.input_sha,
-                    value_sha=item.value_sha,
-                    group_id=group.group_id,
-                    dependency_ids=group.dependency_ids,
-                    embedding_cache=cache,
-                )
+            owners[record_id] = (window_id, group)
+        vectors, positions = self._vector_artifact(family, spec.dimensions, stored)
+        bindings = [
+            VectorRecordBinding(
+                record_id=row.record_id,
+                chunk_id=owners[row.record_id][0],
+                input_sha=row.input_sha,
+                value_sha=row.value_sha,
+                group_id=owners[row.record_id][1].group_id,
+                dependency_ids=owners[row.record_id][1].dependency_ids,
+                row_index=positions[row.record_id],
             )
+            for row in stored
+        ]
         receipt = self._native_receipt(self.text_index, spec, stored, ctx)
         entries = tuple(row.record_id for row in bindings)
         manifest = _input_manifest(
@@ -557,7 +558,31 @@ class ProjectionCoordinator:
             expected_count=len(bindings),
             receipt=receipt,
             vector_records=tuple(bindings),
+            vectors=vectors,
         )
+
+    def _vector_artifact(
+        self,
+        family: IndexFamily,
+        dimension: int,
+        records: Sequence[EmbeddingRecord],
+    ) -> tuple[ArtifactRef | None, dict[str, int]]:
+        """Store the batch's float32 rows once; return the artifact and row positions."""
+        if not records:
+            return None, {}
+        rows = tuple(
+            VectorBatchRow(
+                record_id=record.record_id,
+                input_sha=record.input_sha,
+                values=record.values,
+            )
+            for record in sorted(records, key=lambda record: record.record_id)
+        )
+        ref = self.artifacts.put_stream(
+            BytesIO(encode_vector_batch(family.family_id, dimension, rows)),
+            VECTOR_BATCH_MEDIA_TYPE,
+        )
+        return ref, {row.record_id: index for index, row in enumerate(rows)}
 
     @staticmethod
     def _native_receipt(
@@ -732,8 +757,8 @@ class ProjectionCoordinator:
             record.record_id for record in records
         } != set(expected):
             _fail("Visual provider returned incomplete or foreign asset vectors")
-        bindings = []
         stored = []
+        assets = {}
         for record in records:
             item = expected[record.record_id]
             input_sha = digest(
@@ -749,25 +774,22 @@ class ProjectionCoordinator:
                 or len(record.values) != spec.dimensions
             ):
                 _fail("Visual provider vector differs from exact requested asset")
-            raw = struct.pack("<" + "f" * len(record.values), *record.values)
-            cache = self.artifacts.put_stream(
-                BytesIO(raw), "application/vnd.tychora.float32-le"
-            )
-            if cache.sha256 != record.value_sha:
-                _fail("Visual provider value digest differs from retained bytes")
             record_id = vector_record_id(
                 family.family_id, item.asset.asset_id, record.input_sha
             )
             stored.append(record.model_copy(update={"record_id": record_id}))
-            bindings.append(
-                VectorRecordBinding(
-                    record_id=record_id,
-                    asset_id=item.asset.asset_id,
-                    input_sha=record.input_sha,
-                    value_sha=record.value_sha,
-                    embedding_cache=cache,
-                )
+            assets[record_id] = item.asset.asset_id
+        vectors, positions = self._vector_artifact(family, spec.dimensions, stored)
+        bindings = [
+            VectorRecordBinding(
+                record_id=row.record_id,
+                asset_id=assets[row.record_id],
+                input_sha=row.input_sha,
+                value_sha=row.value_sha,
+                row_index=positions[row.record_id],
             )
+            for row in stored
+        ]
         receipt = self._native_receipt(self.image_index, spec, stored, ctx)
         manifest = _input_manifest(
             self.artifacts, tuple(row.record_id for row in bindings)
@@ -782,6 +804,7 @@ class ProjectionCoordinator:
             expected_count=len(bindings),
             receipt=receipt,
             vector_records=tuple(bindings),
+            vectors=vectors,
         )
 
     def _graph_family(
