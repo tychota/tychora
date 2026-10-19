@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+from contextlib import asynccontextmanager
 from io import BytesIO
 from pathlib import Path
 from threading import Event
@@ -192,43 +193,41 @@ async def test_add_and_sync_native_source_reuse_canonical_extraction(tmp_path):
         )
 
 
-@pytest.mark.asyncio
-async def test_projection_leases_its_base_and_bound_batches_until_publication(
-    tmp_path, monkeypatch
-):
+_COLLECTION = "55825936-6a6a-4d29-945a-327d771a76b7"
+
+
+def _text_source(key: str) -> SourceInput:
+    """A one-paragraph text source in the test collection."""
+    return SourceInput.from_mapping(
+        {
+            "type": "text",
+            "text": f"Synthetic source {key}.",
+            "format": "text",
+            "kind": "manual@1",
+            "metadata": {"title": key, "publisher": "Example Team", "edition": "1"},
+            "source_key": f"{key}.txt",
+            "collection_id": _COLLECTION,
+        }
+    )
+
+
+@asynccontextmanager
+async def _text_workspace(tmp_path):
+    """An owner with one collection and a lexical-only source service."""
     settings = tmp_path / "workspace.toml"
     settings.write_text('schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n')
     config = resolve_config(settings, "test", {})
-    collection = "55825936-6a6a-4d29-945a-327d771a76b7"
     scope = RequestScope(
         principal_id="writer",
-        collection_ids=frozenset({collection}),
+        collection_ids=frozenset({_COLLECTION}),
         capabilities=frozenset({"write", "manage", "read"}),
         uses=frozenset({"lookup"}),
     )
-
-    def text(key: str) -> SourceInput:
-        return SourceInput.from_mapping(
-            {
-                "type": "text",
-                "text": f"Synthetic source {key}.",
-                "format": "text",
-                "kind": "manual@1",
-                "metadata": {
-                    "title": key,
-                    "publisher": "Example Team",
-                    "edition": "1",
-                },
-                "source_key": f"{key}.txt",
-                "collection_id": collection,
-            }
-        )
-
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
         await owner.run_blocking(
             lambda: owner.db.execute(
                 'INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
-                (collection, owner.workspace_id, "manuals", "Manuals"),
+                (_COLLECTION, owner.workspace_id, "manuals", "Manuals"),
             ),
             ExecutionContext(),
         )
@@ -238,6 +237,15 @@ async def test_projection_leases_its_base_and_bound_batches_until_publication(
             config=config,
             counter=Counter(),
         )
+        yield owner, SourceService(owner, coordinator), coordinator, scope
+
+
+@pytest.mark.asyncio
+async def test_projection_leases_its_base_and_bound_batches_until_publication(
+    tmp_path, monkeypatch
+):
+    text = _text_source
+    async with _text_workspace(tmp_path) as (owner, service, coordinator, scope):
         service = SourceService(owner, coordinator)
         await service.add(text("first"), scope)
         base = await owner.run_blocking(
@@ -274,6 +282,62 @@ async def test_projection_leases_its_base_and_bound_batches_until_publication(
             "base_before_publish": True,
         }
         assert not owner.leases.any_pinned()
+
+
+@pytest.mark.asyncio
+async def test_interrupted_activation_resumes_the_checkpointed_plan_unchanged(
+    tmp_path, monkeypatch
+):
+    async with _text_workspace(tmp_path) as (owner, service, coordinator, scope):
+        await service.add(_text_source("first"), scope)
+        original_publish = owner.store.publish_snapshot
+
+        def killed(plan):
+            monkeypatch.setattr(owner.store, "publish_snapshot", original_publish)
+            raise TychoraError(
+                "PROVIDER_FAILURE", "Killed before activation", retryable=True
+            )
+
+        monkeypatch.setattr(owner.store, "publish_snapshot", killed)
+        with pytest.raises(TychoraError, match="Killed before activation"):
+            await service.add(_text_source("second"), scope, "resume-second")
+
+        def checkpointed():
+            job_id, sha = owner.db.execute(
+                "SELECT s.job_id,s.output_artifact_sha FROM job_steps s JOIN jobs j "
+                "USING(job_id) WHERE j.idempotency_key='resume-second' "
+                "AND s.step_key LIKE 'projection/plan/%'"
+            ).fetchone()
+            row = owner.db.execute(
+                "SELECT size_bytes,media_type,storage_key FROM artifacts "
+                "WHERE artifact_sha=?",
+                (sha,),
+            ).fetchone()
+            ref = ArtifactRef(
+                sha256=sha, size_bytes=row[0], media_type=row[1], storage_key=row[2]
+            )
+            with owner.artifacts.open_verified(ref) as stream:
+                document = json.load(stream)
+            assert document["type"] == "publication_plan"
+            return job_id, PublicationPlan.model_validate_json(
+                canonical_bytes(document["data"])
+            )
+
+        job_id, plan = await owner.run_blocking(checkpointed, ExecutionContext())
+        await owner.run_blocking(
+            lambda: _jobs(service).retry(job_id), ExecutionContext()
+        )
+
+        def no_prepare(*args):
+            raise AssertionError("a resumed job must not prepare again")
+
+        monkeypatch.setattr(coordinator, "prepare", no_prepare)
+        resumed = await service.add(_text_source("second"), scope, "resume-second")
+        assert (resumed.id, resumed.state) == (job_id, "succeeded")
+        active = await owner.run_blocking(
+            owner.store.active_snapshot_id, ExecutionContext()
+        )
+        assert active == plan.snapshot_id
 
 
 @pytest.mark.asyncio
