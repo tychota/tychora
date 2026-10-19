@@ -287,8 +287,8 @@
     },
     "duplication_python": {
       "direction": "lower",
-      "measured_at": "8a90f8731716",
-      "value": 1.19
+      "measured_at": "c7692178cc85",
+      "value": 1.05
     },
     "duplication_tests": {
       "direction": "lower",
