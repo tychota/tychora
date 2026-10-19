@@ -17,7 +17,7 @@
     },
     "cognitive_complexity": {
       "direction": "lower",
-      "measured_at": "b0eb5415a35e",
+      "measured_at": "baac23592d6f",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::search": 58,
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::upsert_batch": 16,
@@ -70,15 +70,11 @@
         "src/tychora/adapters/sqlite/code_provenance.py::validate_code_record": 19,
         "src/tychora/adapters/sqlite/corpus.py::CorpusStore::_check_membership": 27,
         "src/tychora/adapters/sqlite/corpus.py::CorpusStore::commit_extraction": 43,
-        "src/tychora/adapters/sqlite/eligibility.py::read_eligibility_facts": 176,
+        "src/tychora/adapters/sqlite/eligibility.py::read_eligibility_facts": 98,
         "src/tychora/adapters/sqlite/graph.py::read_graph_build": 53,
         "src/tychora/adapters/sqlite/jobs.py::JobRepository::_reconcile": 18,
         "src/tychora/adapters/sqlite/jobs.py::JobRepository::_verified_manifest": 29,
         "src/tychora/adapters/sqlite/lexical.py::LexicalIndex::search": 16,
-        "src/tychora/adapters/sqlite/publication.py::_verify_artifacts": 48,
-        "src/tychora/adapters/sqlite/publication.py::_verify_batches": 84,
-        "src/tychora/adapters/sqlite/publication.py::publish_snapshot": 46,
-        "src/tychora/adapters/sqlite/publication.py::resolve_snapshot": 17,
         "src/tychora/adapters/sqlite/validation.py::validate_bundle": 240,
         "src/tychora/adapters/sqlite/validation.py::verify_artifacts": 65,
         "src/tychora/adapters/voyage/request.py::VoyageRequestExecutor::post": 20,
@@ -109,7 +105,7 @@
         "src/tychora/application/pdf_intake.py::PdfIntakeService::submit": 18,
         "src/tychora/application/query.py::QueryService::_prepare": 96,
         "src/tychora/application/query.py::QueryService::_replay_ready": 18,
-        "src/tychora/application/query.py::QueryService::_validate_provider_families": 67,
+        "src/tychora/application/query.py::QueryService::_validate_provider_families": 64,
         "src/tychora/application/recovery.py::RecoveryService::_prune_native_on_owner": 36,
         "src/tychora/application/recovery.py::RecoveryService::_rebuild_native_on_owner": 78,
         "src/tychora/application/recovery.py::RecoveryService::_verify_native_on_owner": 68,
@@ -136,7 +132,7 @@
         "src/tychora/application/sources.py::SourceService::_registration": 62,
         "src/tychora/application/sources.py::SourceService::_retained_bundle": 59,
         "src/tychora/application/sources.py::SourceService::_selected_vision_proxy": 30,
-        "src/tychora/application/sources.py::SourceService::execute_accepted": 42,
+        "src/tychora/application/sources.py::SourceService::execute_accepted": 39,
         "src/tychora/application/vision_selection.py::_source_context": 24,
         "src/tychora/application/vision_selection.py::_verified_selected_extraction": 17,
         "src/tychora/application/vision_selection.py::derive_selected_region": 28,
@@ -168,10 +164,6 @@
         "src/tychora/evaluation/runner.py::variant_query": 19,
         "src/tychora/formatting/render.py::_project": 17,
         "src/tychora/formatting/render.py::render_unchecked": 43,
-        "src/tychora/indexing/coordinator.py::ProjectionCoordinator::_graph_slot": 17,
-        "src/tychora/indexing/coordinator.py::ProjectionCoordinator::attach": 34,
-        "src/tychora/indexing/coordinator.py::ProjectionCoordinator::finalize": 51,
-        "src/tychora/indexing/coordinator.py::ProjectionCoordinator::prepare": 38,
         "src/tychora/indexing/groups.py::build_groups": 27,
         "src/tychora/indexing/representations.py::_document_facts": 20,
         "src/tychora/indexing/representations.py::_document_intervals": 20,
@@ -246,7 +238,7 @@
         "src/tychora/retrieval/visuals.py::prepare_visual_candidates": 25,
         "src/tychora/retrieval/visuals.py::select_visuals": 61
       },
-      "value": 226
+      "value": 218
     },
     "coverage_branch": {
       "direction": "higher",
@@ -265,9 +257,9 @@
     },
     "coverage_line": {
       "direction": "higher",
-      "measured_at": "400c858b08b1",
+      "measured_at": "7558693ca4c9",
       "per_key": {
-        "tychora/adapters/sqlite/eligibility.py": 93.7,
+        "tychora/adapters/sqlite/eligibility.py": 92.31,
         "tychora/adapters/sqlite/lexical.py": 94.29,
         "tychora/adapters/sqlite/publication.py": 80.81,
         "tychora/contracts/identity.py": 100.0,
@@ -276,7 +268,7 @@
         "tychora/retrieval/fusion.py": 95.83,
         "tychora/retrieval/lexical_query.py": 95.77
       },
-      "value": 88.19
+      "value": 87.54
     },
     "dashboard_coverage_branches": {
       "direction": "higher",
@@ -290,8 +282,8 @@
     },
     "dead_code_whitelist": {
       "direction": "lower",
-      "measured_at": "8a90f8731716",
-      "value": 38
+      "measured_at": "baac23592d6f",
+      "value": 36
     },
     "duplication_python": {
       "direction": "lower",
@@ -310,7 +302,7 @@
     },
     "function_body_imports": {
       "direction": "lower",
-      "measured_at": "8a90f8731716",
+      "measured_at": "baac23592d6f",
       "per_key": {
         "src/tychora/adapters/code/normalize.py": 1,
         "src/tychora/adapters/code/python.py": 2,
@@ -322,7 +314,7 @@
         "src/tychora/adapters/docling/pdf_batches.py": 27,
         "src/tychora/adapters/files/references.py": 1,
         "src/tychora/adapters/ladybug/traversal.py": 1,
-        "src/tychora/adapters/sqlite/corpus.py": 6,
+        "src/tychora/adapters/sqlite/corpus.py": 3,
         "src/tychora/adapters/sqlite/validation.py": 2,
         "src/tychora/adapters/vision/anthropic.py": 2,
         "src/tychora/adapters/vision/local.py": 2,
@@ -347,7 +339,7 @@
         "src/tychora/application/services.py": 1,
         "src/tychora/application/settings.py": 4,
         "src/tychora/application/setup.py": 7,
-        "src/tychora/application/sources.py": 24,
+        "src/tychora/application/sources.py": 23,
         "src/tychora/application/vision_selection.py": 2,
         "src/tychora/application/visual.py": 1,
         "src/tychora/application/workspace_authority.py": 3,
@@ -362,7 +354,7 @@
         "src/tychora/contracts/extraction.py": 7,
         "src/tychora/contracts/requests.py": 2,
         "src/tychora/evaluation/runner.py": 1,
-        "src/tychora/indexing/coordinator.py": 2,
+        "src/tychora/indexing/coordinator.py": 1,
         "src/tychora/ingestion/assets.py": 1,
         "src/tychora/ingestion/composition.py": 16,
         "src/tychora/ingestion/document_identity.py": 1,
@@ -386,11 +378,11 @@
         "src/tychora/retrieval/response.py": 3,
         "src/tychora/retrieval/segments.py": 1
       },
-      "value": 335
+      "value": 330
     },
     "function_length": {
       "direction": "lower",
-      "measured_at": "b0eb5415a35e",
+      "measured_at": "baac23592d6f",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex.search": 143,
         "src/tychora/adapters/code/capture.py::RepositoryCapture._run": 89,
@@ -412,7 +404,7 @@
         "src/tychora/adapters/docling/pdf_batches.py::run_pdf_batches": 383,
         "src/tychora/adapters/files/archive.py::ArchiveReader.copy_to": 101,
         "src/tychora/adapters/files/assertions.py::verify_assertion_closure": 115,
-        "src/tychora/adapters/files/references.py::from_backup": 218,
+        "src/tychora/adapters/files/references.py::from_backup": 200,
         "src/tychora/adapters/files/url_acquisition.py::UrlAcquisition.open": 110,
         "src/tychora/adapters/ladybug/generation.py::LadybugGraphStore._upsert_assertions": 136,
         "src/tychora/adapters/ladybug/generation.py::LadybugGraphStore.seal_generation": 146,
@@ -422,12 +414,9 @@
         "src/tychora/adapters/ladybug/traversal.py::resolve_graph_traversal_policy": 89,
         "src/tychora/adapters/sqlite/corpus.py::CorpusStore._check_membership": 96,
         "src/tychora/adapters/sqlite/corpus.py::CorpusStore.commit_extraction": 243,
-        "src/tychora/adapters/sqlite/eligibility.py::read_eligibility_facts": 380,
+        "src/tychora/adapters/sqlite/eligibility.py::read_eligibility_facts": 290,
         "src/tychora/adapters/sqlite/graph.py::read_graph_build": 155,
         "src/tychora/adapters/sqlite/lexical.py::LexicalIndex.search": 103,
-        "src/tychora/adapters/sqlite/publication.py::_verify_batches": 130,
-        "src/tychora/adapters/sqlite/publication.py::publish_snapshot": 150,
-        "src/tychora/adapters/sqlite/publication.py::resolve_snapshot": 89,
         "src/tychora/adapters/sqlite/validation.py::validate_bundle": 427,
         "src/tychora/adapters/sqlite/validation.py::verify_artifacts": 104,
         "src/tychora/api.py::LocalWorkspace.__init__": 130,
@@ -461,8 +450,8 @@
         "src/tychora/application/recovery.py::RecoveryService._prune_native_on_owner": 108,
         "src/tychora/application/recovery.py::RecoveryService._rebuild_native_on_owner": 166,
         "src/tychora/application/recovery.py::RecoveryService._verify_native_on_owner": 106,
-        "src/tychora/application/recovery.py::verify_canonical_native_batch": 109,
-        "src/tychora/application/removal.py::RemovalService._live_root": 92,
+        "src/tychora/application/recovery.py::verify_canonical_native_batch": 93,
+        "src/tychora/application/removal.py::RemovalService._live_root": 83,
         "src/tychora/application/removal.py::RemovalService._plan": 107,
         "src/tychora/application/removal.py::RemovalService.purge_originals": 98,
         "src/tychora/application/reranking.py::load_retained_representation": 225,
@@ -482,7 +471,7 @@
         "src/tychora/application/sources.py::SourceService._registration": 275,
         "src/tychora/application/sources.py::SourceService._retained_bundle": 172,
         "src/tychora/application/sources.py::SourceService._selected_vision_proxy": 152,
-        "src/tychora/application/sources.py::SourceService.execute_accepted": 254,
+        "src/tychora/application/sources.py::SourceService.execute_accepted": 218,
         "src/tychora/application/vision_selection.py::derive_selected_region": 128,
         "src/tychora/application/visual.py::OwnerVisualAccess._resolve_item": 88,
         "src/tychora/configuration/registry.py::_validate_definitions": 268,
@@ -497,9 +486,6 @@
         "src/tychora/evaluation/provenance.py::verify_result_locators": 91,
         "src/tychora/evaluation/runner.py::EvaluationService.run": 203,
         "src/tychora/formatting/render.py::render_unchecked": 132,
-        "src/tychora/indexing/coordinator.py::ProjectionCoordinator._graph_slot": 90,
-        "src/tychora/indexing/coordinator.py::ProjectionCoordinator.finalize": 134,
-        "src/tychora/indexing/coordinator.py::ProjectionCoordinator.prepare": 142,
         "src/tychora/indexing/representations.py::_prepare_proxy_unit": 81,
         "src/tychora/indexing/representations.py::_retained_code_files": 82,
         "src/tychora/indexing/representations.py::_validate_retained_code_records": 109,
@@ -545,11 +531,11 @@
         "src/tychora/retrieval/visuals.py::_visual": 92,
         "src/tychora/retrieval/visuals.py::select_visuals": 109
       },
-      "value": 152
+      "value": 146
     },
     "integrity_raises_without_reason": {
       "direction": "lower",
-      "measured_at": "74d9e162399e",
+      "measured_at": "baac23592d6f",
       "per_key": {
         "src/tychora/adapters/code/capture.py": 3,
         "src/tychora/adapters/code/normalize.py": 3,
@@ -566,13 +552,11 @@
         "src/tychora/adapters/ladybug/traversal.py": 2,
         "src/tychora/adapters/sqlite/code_provenance.py": 1,
         "src/tychora/adapters/sqlite/corpus.py": 1,
-        "src/tychora/adapters/sqlite/eligibility.py": 1,
         "src/tychora/adapters/sqlite/evaluations.py": 6,
         "src/tychora/adapters/sqlite/graph.py": 1,
         "src/tychora/adapters/sqlite/history.py": 2,
         "src/tychora/adapters/sqlite/jobs.py": 2,
         "src/tychora/adapters/sqlite/lexical.py": 1,
-        "src/tychora/adapters/sqlite/publication.py": 1,
         "src/tychora/adapters/sqlite/validation.py": 1,
         "src/tychora/adapters/vision/local.py": 3,
         "src/tychora/adapters/voyage/query.py": 2,
@@ -589,7 +573,7 @@
         "src/tychora/application/pdf_intake.py": 15,
         "src/tychora/application/pdf_processing.py": 2,
         "src/tychora/application/query.py": 18,
-        "src/tychora/application/recovery.py": 38,
+        "src/tychora/application/recovery.py": 36,
         "src/tychora/application/removal.py": 11,
         "src/tychora/application/reranking.py": 9,
         "src/tychora/application/restore.py": 21,
@@ -599,11 +583,10 @@
         "src/tychora/application/settings.py": 3,
         "src/tychora/application/settings_draft.py": 1,
         "src/tychora/application/setup.py": 10,
-        "src/tychora/application/sources.py": 23,
+        "src/tychora/application/sources.py": 20,
         "src/tychora/application/visual.py": 4,
         "src/tychora/configuration/resolve.py": 2,
         "src/tychora/evaluation/runner.py": 5,
-        "src/tychora/indexing/coordinator.py": 1,
         "src/tychora/ingestion/acquire.py": 3,
         "src/tychora/ingestion/document_records.py": 2,
         "src/tychora/ingestion/documents.py": 6,
@@ -620,7 +603,7 @@
         "src/tychora/retrieval/segments.py": 8,
         "src/tychora/retrieval/visuals.py": 4
       },
-      "value": 362
+      "value": 354
     },
     "layering_exceptions": {
       "direction": "lower",
@@ -635,7 +618,7 @@
     },
     "missing_docstrings": {
       "direction": "lower",
-      "measured_at": "0bc7df34d850",
+      "measured_at": "baac23592d6f",
       "per_key": {
         "src/tychora/__main__.py::D100": 1,
         "src/tychora/adapters/chroma/index.py::D102": 5,
@@ -673,7 +656,7 @@
         "src/tychora/adapters/ladybug/traversal.py::D102": 3,
         "src/tychora/adapters/sqlite/code_provenance.py::D103": 1,
         "src/tychora/adapters/sqlite/corpus.py::D101": 1,
-        "src/tychora/adapters/sqlite/corpus.py::D102": 12,
+        "src/tychora/adapters/sqlite/corpus.py::D102": 8,
         "src/tychora/adapters/sqlite/eligibility.py::D103": 1,
         "src/tychora/adapters/sqlite/evaluations.py::D101": 1,
         "src/tychora/adapters/sqlite/evaluations.py::D102": 4,
@@ -687,8 +670,6 @@
         "src/tychora/adapters/sqlite/policy.py::D101": 1,
         "src/tychora/adapters/sqlite/policy.py::D102": 5,
         "src/tychora/adapters/sqlite/policy.py::D103": 1,
-        "src/tychora/adapters/sqlite/publication.py::D102": 1,
-        "src/tychora/adapters/sqlite/publication.py::D103": 2,
         "src/tychora/adapters/sqlite/validation.py::D103": 3,
         "src/tychora/adapters/vision/anthropic.py::D101": 1,
         "src/tychora/adapters/vision/anthropic.py::D102": 2,
@@ -806,8 +787,6 @@
         "src/tychora/contracts/pdf_intake.py::D102": 2,
         "src/tychora/contracts/pdf_policy.py::D101": 1,
         "src/tychora/contracts/pdf_policy.py::D102": 2,
-        "src/tychora/contracts/publication.py::D101": 8,
-        "src/tychora/contracts/publication.py::D102": 4,
         "src/tychora/contracts/relationships.py::D101": 4,
         "src/tychora/contracts/relationships.py::D102": 3,
         "src/tychora/contracts/requests.py::D101": 23,
@@ -829,8 +808,6 @@
         "src/tychora/formatting/render.py::D101": 1,
         "src/tychora/formatting/render.py::D102": 1,
         "src/tychora/formatting/render.py::D103": 2,
-        "src/tychora/indexing/coordinator.py::D101": 1,
-        "src/tychora/indexing/coordinator.py::D102": 2,
         "src/tychora/ingestion/acquire.py::D101": 1,
         "src/tychora/ingestion/acquire.py::D102": 1,
         "src/tychora/ingestion/assets.py::D101": 1,
@@ -918,7 +895,7 @@
         "src/tychora/retrieval/segments.py::D101": 1,
         "src/tychora/retrieval/segments.py::D102": 1
       },
-      "value": 1024
+      "value": 1002
     },
     "modules_in_import_cycles": {
       "direction": "lower",
@@ -933,7 +910,7 @@
     },
     "raw_sql_outside_adapters": {
       "direction": "lower",
-      "measured_at": "8a90f8731716",
+      "measured_at": "baac23592d6f",
       "per_key": {
         "src/tychora/api.py": 3,
         "src/tychora/application/collections.py": 10,
@@ -958,15 +935,15 @@
         "src/tychora/application/visual.py": 4,
         "src/tychora/application/workspace_authority.py": 4,
         "src/tychora/evaluation/runner.py": 2,
-        "src/tychora/indexing/coordinator.py": 15,
+        "src/tychora/indexing/coordinator.py": 14,
         "src/tychora/interfaces/http/client.py": 1,
         "src/tychora/retrieval/visuals.py": 1
       },
-      "value": 222
+      "value": 221
     },
     "size_rules": {
       "direction": "lower",
-      "measured_at": "7558693ca4c9",
+      "measured_at": "baac23592d6f",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::PLR0915": 1,
         "src/tychora/adapters/code/normalize.py::PLR0913": 2,
@@ -992,7 +969,6 @@
         "src/tychora/adapters/sqlite/evaluations.py::PLR0913": 1,
         "src/tychora/adapters/sqlite/graph.py::PLR0915": 1,
         "src/tychora/adapters/sqlite/history.py::PLR0913": 2,
-        "src/tychora/adapters/sqlite/publication.py::PLR0915": 2,
         "src/tychora/adapters/sqlite/validation.py::PLR0915": 2,
         "src/tychora/adapters/vision/anthropic.py::PLR0913": 2,
         "src/tychora/adapters/vision/local.py::PLR0913": 1,
@@ -1040,8 +1016,7 @@
         "src/tychora/contracts/identity.py::PLR0913": 1,
         "src/tychora/evaluation/provenance.py::PLR0911": 2,
         "src/tychora/evaluation/runner.py::PLR0915": 1,
-        "src/tychora/indexing/coordinator.py::PLR0913": 4,
-        "src/tychora/indexing/coordinator.py::PLR0915": 1,
+        "src/tychora/indexing/coordinator.py::PLR0913": 3,
         "src/tychora/ingestion/acquire.py::PLR0915": 1,
         "src/tychora/ingestion/composition.py::PLR0913": 1,
         "src/tychora/ingestion/composition.py::PLR0915": 1,
@@ -1082,7 +1057,7 @@
         "src/tychora/retrieval/segments.py::PLR0913": 5,
         "src/tychora/retrieval/segments.py::PLR0915": 1
       },
-      "value": 163
+      "value": 159
     },
     "test_runtime_seconds": {
       "direction": "lower",
