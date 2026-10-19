@@ -1,13 +1,24 @@
 name: Standalone executable qualification
 
+# Every pull request builds the onedir executable and runs its frozen smoke tests
+# (about 8 minutes). The onefile build and acceptance (40 minutes on Linux) runs on
+# main, tags, the nightly schedule, manual dispatch, and pull requests that change
+# packaging inputs; see the "Select the onefile build" step.
 on:
   pull_request:
   push:
     branches: [main]
+    tags: ["v*"]
+  schedule:
+    - cron: "43 2 * * *"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   binary:
@@ -25,10 +36,13 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      # Caches are off on tag refs (the expression below; zizmor cannot evaluate it),
+      # this workflow publishes nothing, and every model file is SHA-256 verified.
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0 # zizmor: ignore[cache-poisoning]
         with:
           version: "0.9.28"
-          enable-cache: true
+          # A tag build may become a release: it starts from no cache.
+          enable-cache: ${{ !startsWith(github.ref, 'refs/tags/') }}
       - name: Record native target and lock
         shell: bash
         run: |
@@ -41,8 +55,32 @@ jobs:
             test "$(uname -m)" = x86_64
           fi
           uv lock --check
+      - name: Select the onefile build
+        id: scope
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          onefile=true
+          if [[ "$EVENT" == pull_request ]]; then
+            # Packaging inputs: the spec, hooks and frozen entry point under packaging/,
+            # the dependency set, this workflow, and the console entry point.
+            # A diff that cannot be computed keeps the onefile build.
+            if changed=$(git diff --name-only "$BASE...$HEAD") && ! grep -Eq '^(packaging/|pyproject\.toml$|uv\.lock$|\.github/workflows/binary\.yml$|src/tychora/interfaces/cli\.py$|src/tychora/__main__\.py$)' <<<"$changed"; then
+              onefile=false
+            fi
+          fi
+          echo "onefile=$onefile" | tee -a "$GITHUB_OUTPUT"
       - name: Bootstrap asset provisioning runtime
         run: uv sync --locked --all-extras --no-default-groups
+      - name: Restore pinned public models
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3 # zizmor: ignore[cache-poisoning]
+        with:
+          path: ${{ runner.temp }}/tychora-public-models
+          key: public-models-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/tychora/resources/model-assets.json') }}
       - name: Provision pinned public parser assets
         env:
           UV_NO_SYNC: "1"
@@ -84,18 +122,21 @@ jobs:
           TYCHORA_BUILD_MODE=onedir UV_NO_SYNC=1 uv run --locked pyinstaller packaging/tychora.spec --noconfirm --clean
           UV_NO_SYNC=1 uv run --locked python packaging/test_frozen.py --artifact dist/tychora-onedir/tychora --features packaging/release-features.json
       - name: Build and accept final onefile executable
+        if: steps.scope.outputs.onefile == 'true'
         shell: bash
         run: |
           TYCHORA_BUILD_MODE=onefile UV_NO_SYNC=1 uv run --locked pyinstaller packaging/tychora.spec --noconfirm --clean
           UV_NO_SYNC=1 uv run --locked python packaging/test_frozen.py --artifact dist/tychora --features packaging/release-features.json
           UV_NO_SYNC=1 uv run --locked python packaging/audit_frozen.py --artifact dist/tychora --notices dist/tychora-notices
       - name: Record target artifact checksum
+        if: steps.scope.outputs.onefile == 'true'
         shell: bash
         run: |
           version=$(UV_NO_SYNC=1 uv run --locked python -c 'import importlib.metadata; print(importlib.metadata.version("tychora"))')
           cp dist/tychora "dist/tychora-${version}-${{ matrix.target }}"
           shasum -a 256 "dist/tychora-${version}-${{ matrix.target }}" dist/tychora-notices/manifest.json packaging/release-features.json
       - name: Measure final target executable
+        if: steps.scope.outputs.onefile == 'true'
         shell: bash
         run: |
           UV_NO_SYNC=1 uv run --locked python packaging/measure_frozen.py --artifact dist/tychora --target "${{ matrix.target }}" --output "$RUNNER_TEMP/tychora-${{ matrix.target }}-measurements.json"
