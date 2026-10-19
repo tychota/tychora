@@ -24,6 +24,7 @@ from tychora.contracts.identity import canonical_bytes, digest, family_id, space
 from tychora.contracts.indexing import FamilySpec, IndexRecordDigest
 from tychora.contracts.publication import IndexFamily, PublicationBatch
 from tychora.contracts.requests import RequestScope
+from tychora.contracts.vector_batches import decode_vector_batch, row_value_sha
 from tychora.contracts.vectors import BatchReceipt, VectorBatch
 from tychora.indexing.receipts import receipt_digest
 from tychora.ports.execution import ExecutionContext
@@ -146,7 +147,7 @@ def verify_canonical_native_batch(
     )
     batch_row = db.execute(
         "SELECT family_id,extraction_id,input_manifest_sha,expected_count,actual_count,"
-        "entry_ids_sha,receipt_json FROM index_batches WHERE batch_id=?",
+        "entry_ids_sha,receipt_json,vectors_sha FROM index_batches WHERE batch_id=?",
         (batch.batch_id,),
     ).fetchone()
     expected_batch = (
@@ -157,6 +158,7 @@ def verify_canonical_native_batch(
         count,
         digest("index-entries-v1", entries),
         canonical_bytes(batch.receipt.model_dump(mode="json")).decode(),
+        batch.vectors.sha256 if batch.vectors else None,
     )
     if (
         batch.family_id != family.family_id
@@ -211,44 +213,54 @@ def verify_canonical_native_batch(
             "INTEGRITY_ERROR", "Native input manifest differs from sealed plan"
         )
     if family.channel in {"text", "image"}:
-        rows = db.execute(
-            "SELECT record_id,batch_id,chunk_id,asset_id,input_sha,embedding_cache_sha "
-            "FROM vector_records WHERE batch_id=? ORDER BY record_id",
-            (batch.batch_id,),
-        ).fetchall()
-        expected_rows = sorted(
-            (
-                row.record_id,
-                batch.batch_id,
-                row.chunk_id,
-                row.asset_id,
-                row.input_sha,
-                row.embedding_cache.sha256,
-            )
-            for row in batch.vector_records
+        _verify_native_vector_sql(db, batch)
+
+
+def _verify_native_vector_sql(db, batch: PublicationBatch) -> None:
+    """Check the batch's vector rows and its batch artifact against the sealed plan."""
+    rows = db.execute(
+        "SELECT record_id,batch_id,chunk_id,asset_id,input_sha,row_index "
+        "FROM vector_records WHERE batch_id=? ORDER BY record_id",
+        (batch.batch_id,),
+    ).fetchall()
+    expected_rows = sorted(
+        (
+            row.record_id,
+            batch.batch_id,
+            row.chunk_id,
+            row.asset_id,
+            row.input_sha,
+            row.row_index,
         )
-        if rows != expected_rows:
-            raise TychoraError(
-                "INTEGRITY_ERROR", "Native vector SQL differs from sealed plan"
-            )
-        for row in batch.vector_records:
-            cache_row = db.execute(
-                "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
-                (row.embedding_cache.sha256,),
-            ).fetchone()
-            if cache_row != (
-                row.embedding_cache.size_bytes,
-                row.embedding_cache.media_type,
-                row.embedding_cache.storage_key,
-                "present",
-            ):
-                raise TychoraError("INTEGRITY_ERROR", "Native vector cache SQL differs")
+        for row in batch.vector_records
+    )
+    if rows != expected_rows:
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Native vector SQL differs from sealed plan",
+            reason="canonical.binding_mismatch",
+        )
+    vectors = batch.vectors
+    artifact_row = db.execute(
+        "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts "
+        "WHERE artifact_sha=?",
+        (vectors.sha256 if vectors else None,),
+    ).fetchone()
+    if vectors is not None and artifact_row != (
+        vectors.size_bytes,
+        vectors.media_type,
+        vectors.storage_key,
+        "present",
+    ):
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Native vector batch artifact SQL differs",
+            reason="canonical.binding_mismatch",
+        )
 
 
-def verified_vector_records(
-    family: IndexFamily, batch: PublicationBatch, artifacts
-) -> VectorBatch:
-    """Rebuild only exact retained float32 bytes bound to the sealed vector receipt."""
+def _vector_family_spec(family: IndexFamily, batch: PublicationBatch) -> FamilySpec:
+    """Return the family's specification once family, receipt and batch agree."""
     receipt = batch.receipt
     try:
         spec = FamilySpec.model_validate_json(
@@ -278,14 +290,43 @@ def verified_vector_records(
         or batch.expected_count != receipt.count
     ):
         raise TychoraError("INTEGRITY_ERROR", "Vector family or receipt differs")
+    return spec
+
+
+def vector_batch_records(
+    family: IndexFamily, batch: PublicationBatch, artifacts
+) -> VectorBatch:
+    """Rebuild only the exact retained float32 rows bound to the sealed receipt."""
+    spec = _vector_family_spec(family, batch)
+    receipt = batch.receipt
+    assert isinstance(receipt, BatchReceipt)
+    if batch.vectors is None or not artifacts.stat(batch.vectors).available:
+        raise TychoraError(
+            "CAPABILITY_MISSING",
+            "Retained vector batch is absent; rebuild the index to recompute it",
+            reason="vectors.cache_absent",
+        )
+    with artifacts.open_verified(batch.vectors) as stream:
+        decoded = decode_vector_batch(stream.read(batch.vectors.size_bytes + 1))
     descriptors = tuple(
         IndexRecordDigest(
-            record_id=row.record_id, input_sha=row.input_sha, value_sha=row.value_sha
+            record_id=row.record_id,
+            input_sha=row.input_sha,
+            value_sha=row_value_sha(row.values),
         )
-        for row in sorted(batch.vector_records, key=lambda item: item.record_id)
+        for row in decoded.rows
     )
-    if receipt.records != descriptors or receipt.digest != receipt_digest(descriptors):
-        raise TychoraError("INTEGRITY_ERROR", "Vector record binding differs")
+    if (
+        decoded.family_id != family.family_id
+        or decoded.dimension != spec.dimensions
+        or receipt.records != descriptors
+        or receipt.digest != receipt_digest(descriptors)
+    ):
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Vector batch artifact differs from its receipt",
+            reason="canonical.binding_mismatch",
+        )
     expected_space = space_id(
         spec.modality,
         spec.provider,
@@ -294,36 +335,23 @@ def verified_vector_records(
         spec.metric,
         spec.representation_fingerprint,
     )
-    records = []
-    for row in sorted(batch.vector_records, key=lambda item: item.record_id):
-        if not artifacts.stat(row.embedding_cache).available:
-            raise TychoraError(
-                "CAPABILITY_MISSING",
-                "Retained vector cache is absent; create a new family and snapshot for authorized recomputation",
+    try:
+        records = tuple(
+            EmbeddingRecord.from_normalized_bytes(
+                record_id=row.record_id,
+                input_sha=row.input_sha,
+                space_id=expected_space,
+                stored=struct.pack(f"<{len(row.values)}f", *row.values),
             )
-        with artifacts.open_verified(row.embedding_cache) as stream:
-            raw = stream.read(row.embedding_cache.size_bytes + 1)
-        if (
-            len(raw) != spec.dimensions * struct.calcsize("<f")
-            or sha256(raw).hexdigest() != row.value_sha
-        ):
-            raise TychoraError(
-                "INTEGRITY_ERROR", "Vector cache differs from sealed float32 bytes"
-            )
-        try:
-            records.append(
-                EmbeddingRecord.from_normalized_bytes(
-                    record_id=row.record_id,
-                    input_sha=row.input_sha,
-                    space_id=expected_space,
-                    stored=raw,
-                )
-            )
-        except ValueError:
-            raise TychoraError(
-                "INTEGRITY_ERROR", "Retained vector is not normalized float32"
-            ) from None
-    return VectorBatch(family_id=family.family_id, records=tuple(records))
+            for row in decoded.rows
+        )
+    except ValueError:
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Retained vector is not normalized float32",
+            reason="canonical.row_invalid",
+        ) from None
+    return VectorBatch(family_id=family.family_id, records=records)
 
 
 def verify_native_vector(
@@ -355,7 +383,7 @@ def verify_native_vector(
     ):
         raise TychoraError("INTEGRITY_ERROR", "Native vector family identity differs")
     if batch.vector_records:
-        records = verified_vector_records(family, batch, artifacts)
+        records = vector_batch_records(family, batch, artifacts)
         if index.upsert_batch(records, ctx) != receipt:
             raise TychoraError("INTEGRITY_ERROR", "Native vector seal differs")
     elif (

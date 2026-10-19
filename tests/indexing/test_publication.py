@@ -643,7 +643,7 @@ def test_native_recovery_replays_retained_vector_bytes_and_preserves_seal(
 def test_native_recovery_rejects_independent_family_identity_corruption(
     projected_corpus, alteration
 ):
-    from tychora.application.recovery import verified_vector_records
+    from tychora.application.recovery import vector_batch_records
 
     f = projected_corpus
     slot = next(
@@ -663,7 +663,7 @@ def test_native_recovery_rejects_independent_family_identity_corruption(
     with pytest.raises(
         TychoraError, match="Vector family (or receipt|specification) differs"
     ):
-        verified_vector_records(family, batch, f.store.artifacts)
+        vector_batch_records(family, batch, f.store.artifacts)
 
 
 def test_native_recovery_rejects_backend_handle_namespace_corruption(
@@ -964,3 +964,70 @@ def test_vector_record_ids_are_bound_to_the_family(projected_corpus):
         "SELECT creation_nonce FROM index_families WHERE channel='text'"
     ).fetchone()[0]
     assert len(nonce) == 36
+
+
+def test_large_text_batch_is_one_artifact(projected_corpus):
+    f = projected_corpus
+    text = "\n\n".join(
+        f"Paragraph {index} records one outcome." for index in range(400)
+    )
+    f.add_revision(text, source_key="large.md")
+    media = dict(
+        f.store.db.execute(
+            "SELECT media_type,COUNT(*) FROM artifacts GROUP BY media_type"
+        ).fetchall()
+    )
+    assert "application/vnd.tychora.float32-le" not in media
+    batches = f.store.db.execute(
+        "SELECT b.batch_id,b.vectors_sha,COUNT(v.record_id) FROM index_batches b "
+        "JOIN vector_records v USING(batch_id) GROUP BY b.batch_id"
+    ).fetchall()
+    assert batches and all(sha is not None for _, sha, _ in batches)
+    assert media["application/vnd.tychora.vector-batch.v1"] == len(batches)
+    indexes = [
+        row[0]
+        for row in f.store.db.execute(
+            "SELECT row_index FROM vector_records WHERE batch_id=? ORDER BY record_id",
+            (batches[-1][0],),
+        )
+    ]
+    assert indexes == list(range(len(indexes)))
+
+
+def test_missing_vector_batch_artifact_reports_cache_absent(projected_corpus):
+    from tychora.application.recovery import vector_batch_records
+
+    f = projected_corpus
+    view = f.store.resolve_snapshot(None)
+    slot = next(slot for slot in view.slots if slot.slot == "text")
+    batch = slot.batches[0]
+    missing = batch.model_copy(
+        update={
+            "vectors": batch.vectors.model_copy(
+                update={"sha256": "0" * 64, "storage_key": "0" * 64}
+            )
+        }
+    )
+    with pytest.raises(TychoraError) as error:
+        vector_batch_records(slot.family, missing, f.store.artifacts)
+    assert error.value.code == "CAPABILITY_MISSING"
+    assert error.value.reason == "vectors.cache_absent"
+
+
+@pytest.mark.parametrize("state", ["delete_pending", "deleted"])
+def test_readding_content_revives_a_released_vector_batch(projected_corpus, state):
+    f = projected_corpus
+    (sha,) = f.store.db.execute(
+        "SELECT vectors_sha FROM index_batches WHERE vectors_sha IS NOT NULL"
+    ).fetchone()
+    stamp = "2026-01-01T00:00:00+00:00" if state == "deleted" else None
+    f.store.db.execute(
+        "UPDATE artifacts SET payload_state=?,payload_deleted_at=? WHERE artifact_sha=?",
+        (state, stamp, sha),
+    )
+    f.store.db.commit()
+    f.add_revision("old source text")
+    assert f.store.db.execute(
+        "SELECT payload_state,payload_deleted_at FROM artifacts WHERE artifact_sha=?",
+        (sha,),
+    ).fetchone() == ("present", None)

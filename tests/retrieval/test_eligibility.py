@@ -43,20 +43,13 @@ from tychora.retrieval.eligibility import (
 
 
 def test_vector_group_dependency_serialization_is_order_independent():
-    artifact = ArtifactRef(
-        sha256=digest("cache"),
-        size_bytes=1,
-        media_type="application/octet-stream",
-        storage_key="cache",
-    )
-
     def binding(dependencies: frozenset[str]) -> VectorRecordBinding:
         return VectorRecordBinding(
             record_id="record",
             chunk_id="chunk",
             input_sha=digest("input"),
             value_sha=digest("value"),
-            embedding_cache=artifact,
+            row_index=0,
             group_id="group",
             dependency_ids=dependencies,
         )
@@ -157,11 +150,13 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
                 chunk_id=chunk_id,
                 input_sha=digest("same-input"),
                 value_sha=digest("value", record_id),
-                embedding_cache=artifact,
+                row_index=index,
                 group_id=group_id,
                 dependency_ids=frozenset(dependencies),
             )
-            for record_id, chunk_id, group_id, dependencies in vectors
+            for index, (record_id, chunk_id, group_id, dependencies) in enumerate(
+                sorted(vectors)
+            )
         )
         receipt = BatchReceipt(
             family_id=text_family.family_id,
@@ -184,6 +179,7 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
             expected_count=len(bindings),
             receipt=receipt,
             vector_records=bindings,
+            vectors=artifact,
         )
         slots.append(
             PublicationSlot(slot="text", family=text_family, batches=(text_batch,))
@@ -204,9 +200,9 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
                 asset_id=asset_id,
                 input_sha=digest("image-input", record_id),
                 value_sha=digest("image-value", record_id),
-                embedding_cache=artifact,
+                row_index=index,
             )
-            for record_id, asset_id in images
+            for index, (record_id, asset_id) in enumerate(sorted(images))
         )
         receipt = BatchReceipt(
             family_id=image_family.family_id,
@@ -229,6 +225,7 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
             expected_count=len(bindings),
             receipt=receipt,
             vector_records=bindings,
+            vectors=artifact,
         )
         slots.append(
             PublicationSlot(slot="image", family=image_family, batches=(image_batch,))

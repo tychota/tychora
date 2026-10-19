@@ -283,6 +283,7 @@ CREATE TABLE index_batches (
   entry_ids_sha TEXT,
   state TEXT NOT NULL CHECK(state IN ('pending','building','ready','failed','removed')),
   receipt_json TEXT CHECK(receipt_json IS NULL OR json_valid(receipt_json)),
+  vectors_sha TEXT REFERENCES artifacts(artifact_sha),
   UNIQUE(batch_id,family_id),
   UNIQUE(family_id,extraction_id)
 ) STRICT;
@@ -293,10 +294,11 @@ CREATE TABLE vector_records (
   chunk_id TEXT REFERENCES chunks(chunk_id),
   asset_id TEXT REFERENCES assets(asset_id),
   input_sha TEXT NOT NULL,
-  embedding_cache_sha TEXT REFERENCES artifacts(artifact_sha),
+  row_index INTEGER NOT NULL CHECK(row_index>=0),
   CHECK((chunk_id IS NOT NULL)+(asset_id IS NOT NULL)=1),
   UNIQUE(batch_id,chunk_id),
-  UNIQUE(batch_id,asset_id)
+  UNIQUE(batch_id,asset_id),
+  UNIQUE(batch_id,row_index)
 ) STRICT;
 
 CREATE TABLE lexical_records (

@@ -585,7 +585,7 @@ def test_vector_rebuild_rejects_missing_or_altered_float32_cache(tmp_path):
 
     from tychora.adapters.files.cas import LocalArtifacts
     from tychora.application.recovery import (
-        verified_vector_records,
+        vector_batch_records,
         verify_native_vector,
     )
     from tychora.contracts.base import FrozenJsonMap
@@ -597,12 +597,16 @@ def test_vector_rebuild_rejects_missing_or_altered_float32_cache(tmp_path):
         PublicationBatch,
         VectorRecordBinding,
     )
+    from tychora.contracts.vector_batches import (
+        VECTOR_BATCH_MEDIA_TYPE,
+        VectorBatchRow,
+        encode_vector_batch,
+    )
     from tychora.contracts.vectors import BatchReceipt
     from tychora.indexing.receipts import receipt_digest
 
     store = LocalArtifacts(tmp_path / "artifacts")
     raw = struct.pack("<ff", 1.0, 0.0)
-    cache = store.put_stream(BytesIO(raw), "application/vnd.tychora.float32-le")
     creation = str(uuid4())
     config_sha = "a" * 64
     spec = FamilySpec(
@@ -620,18 +624,35 @@ def test_vector_rebuild_rejects_missing_or_altered_float32_cache(tmp_path):
         backend_namespace="synthetic",
         backend_space="ip",
     )
+    family_id_value = spec.family_id
     embedding = EmbeddingRecord.from_normalized_bytes(
         record_id="record",
         input_sha="c" * 64,
         space_id=space_id("visual", "synthetic", "synthetic", 2, "cosine", "b" * 64),
         stored=raw,
     )
+    cache = store.put_stream(
+        BytesIO(
+            encode_vector_batch(
+                family_id_value,
+                2,
+                (
+                    VectorBatchRow(
+                        record_id="record",
+                        input_sha=embedding.input_sha,
+                        values=(1.0, 0.0),
+                    ),
+                ),
+            )
+        ),
+        VECTOR_BATCH_MEDIA_TYPE,
+    )
     binding = VectorRecordBinding(
         record_id="record",
         input_sha=embedding.input_sha,
         value_sha=embedding.value_sha,
         asset_id="asset",
-        embedding_cache=cache,
+        row_index=0,
     )
     entry = IndexRecordDigest(
         record_id="record", input_sha=embedding.input_sha, value_sha=embedding.value_sha
@@ -669,17 +690,33 @@ def test_vector_rebuild_rejects_missing_or_altered_float32_cache(tmp_path):
         expected_count=1,
         receipt=receipt,
         vector_records=(binding,),
+        vectors=cache,
     )
-    assert verified_vector_records(family, batch, store).records == (embedding,)
+    assert vector_batch_records(family, batch, store).records == (embedding,)
     (tmp_path / "artifacts" / cache.sha256).write_bytes(b"altered")
     with pytest.raises(TychoraError) as corrupt:
-        verified_vector_records(family, batch, store)
+        vector_batch_records(family, batch, store)
     assert corrupt.value.code == "INTEGRITY_ERROR"
     (tmp_path / "artifacts" / cache.sha256).unlink()
     with pytest.raises(TychoraError) as absent:
-        verified_vector_records(family, batch, store)
+        vector_batch_records(family, batch, store)
     assert absent.value.code == "CAPABILITY_MISSING"
-    store.put_stream(BytesIO(raw), "application/vnd.tychora.float32-le")
+    store.put_stream(
+        BytesIO(
+            encode_vector_batch(
+                family_id_value,
+                2,
+                (
+                    VectorBatchRow(
+                        record_id="record",
+                        input_sha=embedding.input_sha,
+                        values=(1.0, 0.0),
+                    ),
+                ),
+            )
+        ),
+        VECTOR_BATCH_MEDIA_TYPE,
+    )
 
     class AlteredNative:
         def create_family(self, _spec):

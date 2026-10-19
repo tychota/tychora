@@ -172,13 +172,10 @@ class RemovalService:
             ):
                 derived.add(sha)
             for (sha,) in db.execute(
-                "SELECT v.embedding_cache_sha FROM vector_records v "
-                "LEFT JOIN chunks c USING(chunk_id) LEFT JOIN assets a USING(asset_id) "
-                "LEFT JOIN extractions ec ON ec.extraction_id=c.extraction_id "
-                "LEFT JOIN extractions ea ON ea.extraction_id=a.extraction_id "
-                "WHERE v.embedding_cache_sha IS NOT NULL "
-                "AND (ec.revision_id=? OR ea.revision_id=?)",
-                (revision_id, revision_id),
+                "SELECT DISTINCT b.vectors_sha FROM index_batches b "
+                "JOIN extractions e USING(extraction_id) "
+                "WHERE b.vectors_sha IS NOT NULL AND e.revision_id=?",
+                (revision_id,),
             ):
                 derived.add(sha)
             for sha, role_set in sorted(roles.items()):
@@ -428,7 +425,7 @@ class RemovalService:
             "SELECT 1 FROM extractions WHERE document_artifact_sha=? OR assertions_artifact_sha=? OR diagnostics_artifact_sha=? "
             "UNION ALL SELECT 1 FROM assets WHERE artifact_sha=? "
             "UNION ALL SELECT 1 FROM asset_proxies WHERE derivation_sha=? "
-            "UNION ALL SELECT 1 FROM vector_records WHERE embedding_cache_sha=? "
+            "UNION ALL SELECT 1 FROM index_batches WHERE vectors_sha=? "
             "UNION ALL SELECT 1 FROM snapshots WHERE manifest_sha=? "
             "UNION ALL SELECT 1 FROM index_batches WHERE input_manifest_sha=? "
             "UNION ALL SELECT 1 FROM jobs WHERE effective_config_sha=? OR request_artifact_sha=? "

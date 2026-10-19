@@ -320,7 +320,7 @@ def from_backup(db, *, artifacts) -> BackupInventory:
         "SELECT diagnostics_artifact_sha FROM extractions WHERE diagnostics_artifact_sha IS NOT NULL",
         "SELECT artifact_sha FROM assets",
         "SELECT derivation_sha FROM asset_proxies",
-        "SELECT embedding_cache_sha FROM vector_records WHERE embedding_cache_sha IS NOT NULL",
+        "SELECT vectors_sha FROM index_batches WHERE vectors_sha IS NOT NULL",
         "SELECT request_artifact_sha FROM jobs WHERE request_artifact_sha IS NOT NULL",
         "SELECT output_artifact_sha FROM job_steps WHERE output_artifact_sha IS NOT NULL",
         "SELECT reason_artifact_sha FROM review_events WHERE reason_artifact_sha IS NOT NULL",
