@@ -1,8 +1,9 @@
-"""`python -m tools.health check|update|report|flaky|isolate|merge-junit`: the code-health command line."""
+"""`python -m tools.health check|update|report|flaky|isolate|merge-junit|shard`: the code-health command line."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -21,6 +22,7 @@ from tools.health.model import (
     save_baseline,
     updated_entry,
 )
+from tools.health.shard import DURATIONS, record
 from tools.health.testruns import flaky_tests, merge_junit
 
 DEFAULT_SELECTION = "not live and not qualification and not release and not quarantine"
@@ -196,6 +198,16 @@ def main(argv: list[str] | None = None) -> int:
     merging = commands.add_parser("merge-junit")
     merging.add_argument("--output", type=Path, required=True)
     merging.add_argument("reports", nargs="+", type=Path)
+    sharding = commands.add_parser("shard")
+    sharding.add_argument(
+        "--record",
+        nargs="+",
+        type=Path,
+        required=True,
+        metavar="JUNIT",
+        help="write test durations from these JUnit reports (first report wins)",
+    )
+    sharding.add_argument("--output", type=Path, default=DURATIONS)
     args = parser.parse_args(argv)
 
     if args.command == "flaky":
@@ -205,6 +217,10 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if differing else 0
     if args.command == "isolate":
         return isolate(args.root)
+    if args.command == "shard":
+        recorded = record(path.read_text() for path in args.record)
+        args.output.write_text(json.dumps(recorded, indent=1) + "\n")
+        return 0
     if args.command == "merge-junit":
         merged = merge_junit([path.read_text() for path in args.reports])
         args.output.parent.mkdir(parents=True, exist_ok=True)
