@@ -1119,3 +1119,38 @@ async def test_repository_source_uses_spawned_language_adapters(tmp_path, monkey
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
         assert restored.members == view.members
+
+
+@pytest.mark.asyncio
+async def test_registry_artifact_is_written_once_per_retained_sha(
+    tmp_path, monkeypatch
+):
+    from tests.api.test_public_sync import CharacterCounter
+    from tychora import SourceInput, Tychora
+
+    writes = []
+    with Tychora.open(tmp_path / "kb", token_counter=CharacterCounter()) as kb:
+        artifacts = kb._workspace.owner.artifacts
+        original = artifacts.put_stream
+
+        def recording(stream, media_type):
+            ref = original(stream, media_type)
+            writes.append(ref.sha256)
+            return ref
+
+        monkeypatch.setattr(artifacts, "put_stream", recording)
+        for index in range(2):
+            job = kb.sources.add(
+                SourceInput(
+                    type="text",
+                    source_key=f"manual-{index}",
+                    collection_id=kb.default_collection_id,
+                    kind="manual@1",
+                    format="text",
+                    metadata={"title": "T", "publisher": "P", "edition": "1"},
+                    text=f"Record verification outcome {index}.",
+                )
+            )
+            assert kb.jobs.wait(job.id).state == "succeeded"
+        retained = kb._workspace.owner.config.retained_sha
+    assert writes.count(retained) == 1

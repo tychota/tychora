@@ -1583,3 +1583,17 @@ def test_document_tables_never_join_as_plain_neighbors(tmp_path):
         _ranked(rows, prepared, (units[0],)), view, config(tmp_path), Counter()
     ).segments[0]
     assert segment.context_only_unit_ids == ()
+
+
+def test_lane_and_role_read_the_frozen_registry_without_dumping(tmp_path, monkeypatch):
+    from tychora.configuration.models import ResolvedConfig
+    from tychora.retrieval import segments
+
+    resolved = config(tmp_path)
+
+    def forbidden(self, *args, **kwargs):
+        raise AssertionError("lane lookup must not dump the configuration")
+
+    monkeypatch.setattr(ResolvedConfig, "model_dump", forbidden)
+    assert segments._lane(resolved, "manual@1")
+    assert segments._role(resolved, "manual@1", {})
