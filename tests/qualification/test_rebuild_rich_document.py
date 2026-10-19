@@ -61,10 +61,15 @@ def test_rebuild_keeps_asset_ids_and_a_rejected_asset(tmp_path, monkeypatch):
                 "collection_id": "default",
                 "kind": "manual@1",
                 "format": "pdf",
-                "metadata": {"title": "Synthetic field notebook", "edition": "1"},
+                "metadata": {
+                    "title": "Synthetic field notebook",
+                    "publisher": "Example Team",
+                    "edition": "1",
+                },
             }
         )
-        assert kb.jobs.wait(handle.id, timeout=300).state == "succeeded"
+        status = kb.jobs.wait(handle.id, timeout=300)
+        assert status.state == "succeeded", status.error_code
         asset_ids = sorted(row[0] for row in _query(kb, "SELECT asset_id FROM assets"))
         assert len(asset_ids) >= 1
         rejected = asset_ids[0]
