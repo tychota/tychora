@@ -147,3 +147,51 @@ def test_random_sequences_keep_pages_ordered_bounded_and_counted():
             for m in after.members
         )
         page = after
+
+
+def _model_step(
+    model: dict[str, dict[str, bool]],
+    editions: dict[str, str | None],
+    source: str,
+    revision: str,
+    edition: str | None,
+) -> None:
+    """Apply one add to an independent membership model: revision -> default."""
+    kept = {
+        other: False
+        for other in model.get(source, {})
+        if other != revision and editions[other] != edition
+    }
+    model[source] = {**kept, revision: True}
+
+
+def test_random_sequences_match_an_independent_membership_model():
+    for seed in range(20):
+        rng = random.Random(seed)
+        sources = _sources(9, 4)
+        page: MembershipPage | None = None
+        editions: dict[str, str | None] = {}
+        model: dict[str, dict[str, bool]] = {}
+        for step in range(40):
+            source = rng.choice(sources)
+            edition = rng.choice(["1", "2", "3", None])
+            # Re-adding an earlier revision of the source exercises self-replacement.
+            earlier = [r for r in model.get(source, {}) if rng.random() < 0.2]
+            revision = earlier[0] if earlier else f"r{seed}-{step}"
+            edition = editions.get(revision, edition)
+            retained = {
+                m.revision_id: editions[m.revision_id]
+                for m in (page.members if page else ())
+                if m.source_id == source
+            }
+            page = next_page(page, _member(source, revision), retained, edition)
+            editions[revision] = edition
+            _model_step(model, editions, source, revision, edition)
+            expected = {
+                (s, r, default)
+                for s, revisions in model.items()
+                for r, default in revisions.items()
+            }
+            assert {
+                (m.source_id, m.revision_id, m.is_default) for m in page.members
+            } == (expected), (seed, step)
