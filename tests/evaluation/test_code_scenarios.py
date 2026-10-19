@@ -171,7 +171,7 @@ def test_declared_code_definitions_and_graph_ablation(tmp_path, monkeypatch):
                 lambda: owner.store.resolve_snapshot(None), ExecutionContext()
             )
         )
-        assert any(slot.slot == "graph" for slot in snapshot.slots)
+        assert snapshot.family("graph") is not None
         observed = []
         original_augment = query_module.augment
 

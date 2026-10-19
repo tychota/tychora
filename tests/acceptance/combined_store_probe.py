@@ -56,7 +56,13 @@ def run(root: Path, *, isolated_setup: bool = True) -> dict:
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
         findings["after_snapshot"] = snapshot.snapshot_id
-        slot = next(slot for slot in snapshot.slots if slot.slot == "text")
+        slot = next(
+            slot
+            for slot in owner.run_blocking_sync(
+                lambda: owner.store.snapshot_slots(snapshot), ExecutionContext()
+            )
+            if slot.slot == "text"
+        )
         index = ChromaVectorIndex(root / "vectors")
         index.create_family(
             FamilySpec.model_validate_json(

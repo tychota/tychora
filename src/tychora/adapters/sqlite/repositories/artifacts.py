@@ -60,3 +60,29 @@ class SqliteArtifactRepository:
             ),
         )
         return True
+
+    def revive(self, ref: ArtifactRef) -> bool:
+        """Mark a released artifact present again; return whether it was released.
+
+        The caller verifies the bytes before its transaction commits.
+        """
+        require_write(self._db, self._writable)
+        row = self._db.execute(
+            "SELECT size_bytes,storage_key FROM artifacts WHERE artifact_sha=? "
+            "AND payload_state!='present'",
+            (ref.sha256,),
+        ).fetchone()
+        if row is None:
+            return False
+        if tuple(row) != (ref.size_bytes, ref.storage_key):
+            raise TychoraError(
+                "INTEGRITY_ERROR",
+                "A registered artifact differs from its reference.",
+                reason="canonical.binding_mismatch",
+            )
+        self._db.execute(
+            "UPDATE artifacts SET payload_state='present',payload_deleted_at=NULL "
+            "WHERE artifact_sha=?",
+            (ref.sha256,),
+        )
+        return True

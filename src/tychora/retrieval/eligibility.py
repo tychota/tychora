@@ -122,7 +122,7 @@ from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.graph import GraphBatchReceipt, graph_manifest_digest
 from tychora.contracts.identity import JsonValue, canonical_bytes, digest
-from tychora.contracts.publication import SnapshotView
+from tychora.contracts.publication import RetainedSlot, SnapshotView
 from tychora.contracts.requests import (
     AndFilter,
     EqFilter,
@@ -190,6 +190,7 @@ class EligibilityFacts:
     assertion_decisions: tuple[tuple[str, int], ...] = ()
     revision_facets: tuple[tuple[str, str, object], ...] = ()
     historical_definitions: tuple[tuple[str, object], ...] = ()
+    slots: tuple[RetainedSlot, ...] = ()
 
 
 class EligibilityReader(Protocol):
@@ -602,7 +603,7 @@ class EligibilityCompiler:
         }
         selected_chunks = {
             row.chunk_id
-            for slot in snapshot.slots
+            for slot in facts.slots
             if slot.slot == "lexical"
             for batch in slot.batches
             if batch.extraction_id in extraction_ids
@@ -610,7 +611,7 @@ class EligibilityCompiler:
         }
         selected_vectors = {
             row.record_id
-            for slot in snapshot.slots
+            for slot in facts.slots
             if slot.slot in {"text", "image"}
             for batch in slot.batches
             if batch.extraction_id in extraction_ids
@@ -638,7 +639,7 @@ class EligibilityCompiler:
         batch_ids: list[str] = []
         graph_binding = None
         graph_assertion_ids: frozenset[str] = frozenset()
-        for slot in snapshot.slots:
+        for slot in facts.slots:
             for batch in slot.batches:
                 if slot.slot == "graph":
                     if not isinstance(batch.receipt, GraphBatchReceipt):

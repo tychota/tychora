@@ -198,9 +198,12 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
         snapshot = await owner.run_blocking(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
-        assert {slot.slot for slot in snapshot.slots} >= {"text", "image"}
+        slots = await owner.run_blocking(
+            lambda: owner.store.snapshot_slots(snapshot), ExecutionContext()
+        )
+        assert {slot.slot for slot in slots} >= {"text", "image"}
         assert (
-            next(slot for slot in snapshot.slots if slot.slot == "image")
+            next(slot for slot in slots if slot.slot == "image")
             .batches[0]
             .expected_count
             == 0
@@ -288,8 +291,8 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
             == 1.0
             for entry in runs
         )
-        old_text = next(slot for slot in snapshot.slots if slot.slot == "text")
-        old_image = next(slot for slot in snapshot.slots if slot.slot == "image")
+        old_text = next(slot for slot in slots if slot.slot == "text")
+        old_image = next(slot for slot in slots if slot.slot == "image")
         old_embed_calls = source_embedder.calls
         await sources.add(
             SourceInput.from_mapping(
@@ -314,8 +317,11 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
         )
         assert len(refreshed.members) == 2
         assert source_embedder.calls == old_embed_calls + 1
+        refreshed_slots = await owner.run_blocking(
+            lambda: owner.store.snapshot_slots(refreshed), ExecutionContext()
+        )
         for slot_name, earlier in (("text", old_text), ("image", old_image)):
-            current = next(slot for slot in refreshed.slots if slot.slot == slot_name)
+            current = next(slot for slot in refreshed_slots if slot.slot == slot_name)
             assert current.family == earlier.family
             assert len(current.batches) == 2
             assert earlier.batches[0] in current.batches

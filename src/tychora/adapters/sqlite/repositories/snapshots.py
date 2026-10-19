@@ -3,14 +3,29 @@
 import json
 import sqlite3
 from collections.abc import Mapping
+from datetime import UTC, datetime
 
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.snapshots import MembershipPage, PageBatch, PageMember
+from tychora.contracts.publication import PublicationPlan, SnapshotMember, SnapshotView
+from tychora.contracts.snapshots import (
+    MembershipPage,
+    PageBatch,
+    PageMember,
+    SlotFamily,
+    membership_sha,
+)
 
 from .artifacts import artifact_ref
 from .batches import BATCH_SELECT, batch_from_row
-from .workspace import require_write
+from .families import FAMILY_COLUMNS, family_from_row
+from .workspace import SqliteWorkspaceRepository, require_write
+
+_SNAPSHOT_ROW = (
+    "SELECT workspace_id,parent_snapshot_id,membership_sha,config_sha,member_count "
+    "FROM snapshots WHERE snapshot_id=?"
+)
+_FAMILY_COLUMNS = ",".join(f"f.{name}" for name in FAMILY_COLUMNS.split(","))
 
 
 def _ambiguous_workspace() -> TychoraError:
@@ -23,6 +38,13 @@ def _ambiguous_workspace() -> TychoraError:
 
 def _integrity(message: str) -> TychoraError:
     return TychoraError("INTEGRITY_ERROR", message, reason="canonical.binding_mismatch")
+
+
+def absent_snapshot() -> TychoraError:
+    """The refusal for a snapshot that was collected or never published."""
+    return TychoraError(
+        "NOT_FOUND", "Snapshot is unavailable", reason="snapshot.absent"
+    )
 
 
 class SqliteSnapshotRepository:
@@ -47,6 +69,119 @@ class SqliteSnapshotRepository:
         ).rowcount
         if updated != 1:
             raise _ambiguous_workspace()
+
+    def view(self, snapshot_id: str) -> SnapshotView:
+        """Read a published snapshot from its rows; no artifact is opened."""
+        row = self._db.execute(_SNAPSHOT_ROW, (snapshot_id,)).fetchone()
+        if row is None:
+            raise absent_snapshot()
+        page_ids = tuple(
+            r[0]
+            for r in self._db.execute(
+                "SELECT page_id FROM snapshot_pages WHERE snapshot_id=? ORDER BY bucket",
+                (snapshot_id,),
+            )
+        )
+        members = self._members(snapshot_id)
+        if membership_sha(page_ids) != row[2] or len(members) != row[4]:
+            raise _integrity("Snapshot rows differ from their membership digest")
+        return SnapshotView(
+            snapshot_id=snapshot_id,
+            workspace_id=row[0],
+            parent_snapshot_id=row[1],
+            config_sha=row[3],
+            membership_sha=row[2],
+            member_count=row[4],
+            page_ids=page_ids,
+            families=self._families(snapshot_id),
+            members=members,
+            lexical_statistics_epoch=SqliteWorkspaceRepository(
+                self._db, writable=False
+            ).lexical_epoch(),
+        )
+
+    def _families(self, snapshot_id: str) -> tuple[SlotFamily, ...]:
+        rows = self._db.execute(
+            f"SELECT si.slot,si.required,{_FAMILY_COLUMNS} FROM snapshot_indexes si "
+            "JOIN index_families f USING(family_id) WHERE si.snapshot_id=? "
+            "ORDER BY si.slot",
+            (snapshot_id,),
+        ).fetchall()
+        try:
+            return tuple(
+                SlotFamily(
+                    slot=r[0], required=bool(r[1]), family=family_from_row(r[2:])
+                )
+                for r in rows
+            )
+        except ValueError:
+            raise _integrity("Snapshot slot differs from its family") from None
+
+    def _members(self, snapshot_id: str) -> tuple[SnapshotMember, ...]:
+        return tuple(
+            SnapshotMember(
+                source_id=r[0],
+                revision_id=r[1],
+                extraction_id=r[2],
+                is_default=bool(r[3]),
+            )
+            for r in self._db.execute(
+                "SELECT source_id,revision_id,extraction_id,is_default "
+                "FROM snapshot_members WHERE snapshot_id=? "
+                "ORDER BY source_id,revision_id,extraction_id",
+                (snapshot_id,),
+            )
+        )
+
+    def insert_snapshot(self, plan: PublicationPlan) -> None:
+        """Store a snapshot over pages already stored, with its slots and root batches."""
+        require_write(self._db, self._writable)
+        buckets = dict(
+            self._db.execute(
+                "SELECT page_id,bucket FROM membership_pages "
+                "WHERE page_id IN (SELECT value FROM json_each(?))",
+                (json.dumps(list(plan.page_ids)),),
+            ).fetchall()
+        )
+        if set(buckets) != set(plan.page_ids) or len(set(buckets.values())) != len(
+            buckets
+        ):
+            raise _integrity("Snapshot pages are missing or share a bucket")
+        self._db.execute(
+            "INSERT INTO snapshots (snapshot_id,workspace_id,parent_snapshot_id,"
+            "membership_sha,config_sha,manifest_sha,published_at,job_id,member_count) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (
+                plan.snapshot_id,
+                plan.workspace_id,
+                plan.base_snapshot_id,
+                membership_sha(plan.page_ids),
+                plan.config_sha,
+                plan.manifest.sha256,
+                datetime.now(UTC).isoformat(),
+                plan.job_id,
+                plan.member_count,
+            ),
+        )
+        self._db.executemany(
+            "INSERT INTO snapshot_indexes (snapshot_id,slot,family_id,required) "
+            "VALUES (?,?,?,?)",
+            [
+                (plan.snapshot_id, f.slot, f.family.family_id, int(f.required))
+                for f in plan.families
+            ],
+        )
+        self._db.executemany(
+            "INSERT INTO snapshot_pages (snapshot_id,bucket,page_id) VALUES (?,?,?)",
+            [
+                (plan.snapshot_id, buckets[page_id], page_id)
+                for page_id in plan.page_ids
+            ],
+        )
+        self._db.executemany(
+            "INSERT INTO snapshot_root_batches (snapshot_id,slot,batch_id) VALUES (?,?,?)",
+            [(plan.snapshot_id, b.slot, b.batch_id) for b in plan.root_batches],
+        )
 
     def insert_page(self, page: MembershipPage, manifest: ArtifactRef) -> None:
         """Store a page and its rows once; an identical repeat is a no-op."""

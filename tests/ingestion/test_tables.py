@@ -889,8 +889,9 @@ def test_valid_legacy_document_backup_restores_exact_snapshot_and_rejects_tamper
         source.owner.db.execute("SAVEPOINT legacy_selection_probe")
         try:
             source.owner.db.execute(
-                "UPDATE snapshot_members SET extraction_id=? "
-                "WHERE snapshot_id=? AND revision_id=?",
+                "UPDATE page_members SET extraction_id=? WHERE page_id IN "
+                "(SELECT page_id FROM snapshot_pages WHERE snapshot_id=?) "
+                "AND revision_id=?",
                 (
                     old.bundle.extraction.extraction_id,
                     base,

@@ -20,16 +20,16 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.indexing import IndexRecordDigest
 from tychora.contracts.publication import (
-    IndexFamily,
     LexicalBatchReceipt,
     LexicalRecord,
-    PublicationBatch,
-    PublicationSlot,
+    RetainedBatch,
+    RetainedSlot,
     SnapshotMember,
     SnapshotView,
     VectorRecordBinding,
 )
 from tychora.contracts.requests import QueryRequest, RequestScope
+from tychora.contracts.snapshots import IndexFamily, SlotFamily
 from tychora.contracts.vectors import BatchReceipt
 from tychora.retrieval.eligibility import (
     AssetFact,
@@ -104,6 +104,12 @@ def _revision(**changes):
     return fact.__class__(**{**fact.__dict__, **changes})
 
 
+class _FixtureView(SnapshotView):
+    """A synthetic snapshot carrying the retained slots its reader returns."""
+
+    fixture_slots: tuple[RetainedSlot, ...] = ()
+
+
 def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images=()):
     artifact = ArtifactRef(
         sha256=digest("artifact"),
@@ -120,7 +126,7 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
         backend_namespace="fixture",
         created_at="2025-01-01",
     )
-    batch = PublicationBatch(
+    batch = RetainedBatch(
         batch_id="lexical-batch",
         family_id=family.family_id,
         extraction_id="extraction",
@@ -133,7 +139,7 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
         ),
         lexical_records=tuple(LexicalRecord(chunk_id=chunk) for chunk in chunks),
     )
-    slots = [PublicationSlot(slot="lexical", family=family, batches=(batch,))]
+    slots = [RetainedSlot(slot="lexical", family=family, batches=(batch,))]
     if vectors:
         text_family = IndexFamily(
             family_id=digest("text-family"),
@@ -171,7 +177,7 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
             digest=digest("receipt"),
             count=len(bindings),
         )
-        text_batch = PublicationBatch(
+        text_batch = RetainedBatch(
             batch_id="text-batch",
             family_id=text_family.family_id,
             extraction_id="extraction",
@@ -182,7 +188,7 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
             vectors=artifact,
         )
         slots.append(
-            PublicationSlot(slot="text", family=text_family, batches=(text_batch,))
+            RetainedSlot(slot="text", family=text_family, batches=(text_batch,))
         )
     if images:
         image_family = IndexFamily(
@@ -217,7 +223,7 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
             digest=digest("image-receipt"),
             count=len(bindings),
         )
-        image_batch = PublicationBatch(
+        image_batch = RetainedBatch(
             batch_id="image-batch",
             family_id=image_family.family_id,
             extraction_id="extraction",
@@ -228,9 +234,9 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
             vectors=artifact,
         )
         slots.append(
-            PublicationSlot(slot="image", family=image_family, batches=(image_batch,))
+            RetainedSlot(slot="image", family=image_family, batches=(image_batch,))
         )
-    return SnapshotView(
+    return _FixtureView(
         snapshot_id="snapshot",
         workspace_id="workspace",
         membership_sha=digest("membership"),
@@ -243,13 +249,18 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
                 }
             )
         ).hexdigest(),
-        manifest=artifact,
+        member_count=1,
+        page_ids=(),
+        families=tuple(
+            SlotFamily(slot=item.slot, family=item.family, required=item.required)
+            for item in slots
+        ),
         members=(
             SnapshotMember(
                 source_id="source", revision_id="revision", extraction_id="extraction"
             ),
         ),
-        slots=tuple(slots),
+        fixture_slots=tuple(slots),
     )
 
 
@@ -335,7 +346,8 @@ class _Reader:
         ) = None
 
     def read_eligibility_facts(self, snapshot: SnapshotView) -> EligibilityFacts:
-        return self.facts
+        slots = snapshot.fixture_slots if isinstance(snapshot, _FixtureView) else ()
+        return replace(self.facts, slots=slots)
 
     def retained_config(self, snapshot: SnapshotView) -> ResolvedConfig:
         raise TychoraError(
@@ -1371,19 +1383,20 @@ def test_new_decision_blocks_only_selected_graph_assertion(config, scope):
         evidence_count=0,
         assertion_count=1,
     )
-    batch = PublicationBatch(
+    batch = RetainedBatch(
         batch_id="graph-batch",
         family_id=family.family_id,
-        input_manifest=snapshot.manifest,
+        input_manifest=snapshot.fixture_slots[0].batches[0].input_manifest,
         expected_count=0,
         receipt=receipt,
         graph_manifest=manifest,
     )
     snapshot = snapshot.model_copy(
         update={
-            "slots": (
-                *snapshot.slots,
-                PublicationSlot(slot="graph", family=family, batches=(batch,)),
+            "families": (*snapshot.families, SlotFamily(slot="graph", family=family)),
+            "fixture_slots": (
+                *snapshot.fixture_slots,
+                RetainedSlot(slot="graph", family=family, batches=(batch,)),
             ),
         }
     )

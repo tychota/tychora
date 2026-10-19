@@ -22,7 +22,12 @@ from tychora.contracts.base import (
 )
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
-from tychora.contracts.publication import LexicalRecord, NewBatch
+from tychora.contracts.publication import (
+    LexicalRecord,
+    NewBatch,
+    PublicationPlan,
+    SnapshotView,
+)
 from tychora.contracts.snapshots import IndexFamily, MembershipPage, PageBatch
 
 MAX_CURSOR_CHARS = 1024
@@ -100,6 +105,10 @@ class ArtifactRepository(Protocol):
         """Register an artifact; return whether it was newly added."""
         ...
 
+    def revive(self, ref: ArtifactRef) -> bool:
+        """Mark a released artifact present again; return whether it was released."""
+        ...
+
 
 class FamilyRepository(Protocol):
     """Index families and the creation nonces bound into their identifiers."""
@@ -172,11 +181,11 @@ class BatchRepository(Protocol):
         ...
 
     def write_lexical(self, batch_id: str, records: tuple[LexicalRecord, ...]) -> None:
-        """Store a batch's lexical records; stored records never change."""
+        """Store a building batch's lexical records; stored records never change."""
         ...
 
     def write_vectors(self, batch_id: str, rows: tuple[VectorRecordRow, ...]) -> None:
-        """Store a batch's vector record rows; stored rows never change."""
+        """Store a building batch's vector record rows; stored rows never change."""
         ...
 
     def mark_ready(self, batch_id: str, actual_count: int) -> None:
@@ -221,6 +230,14 @@ class SnapshotRepository(Protocol):
 
     def insert_page(self, page: MembershipPage, manifest: ArtifactRef) -> None:
         """Store a page and its rows once; an identical repeat is a no-op."""
+        ...
+
+    def view(self, snapshot_id: str) -> SnapshotView:
+        """Read a published snapshot from its rows; no artifact is opened."""
+        ...
+
+    def insert_snapshot(self, plan: PublicationPlan) -> None:
+        """Store a snapshot over pages already stored, with its slots and root batches."""
         ...
 
 

@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from io import BytesIO
-from typing import NoReturn
+from typing import NamedTuple, NoReturn
 
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.adapters.sqlite.graph import read_graph_build
-from tychora.adapters.sqlite.publication import publication_manifest
+from tychora.adapters.sqlite.publication import (
+    check_publication_target,
+    register_fresh,
+)
 from tychora.application.collection_policy import (
     require_active_collection,
 )
@@ -44,14 +48,25 @@ from tychora.contracts.identity import family_id as derive_family_id
 from tychora.contracts.indexing import ContextGroup, FamilySpec, SearchWindow
 from tychora.contracts.operations import JobHandle
 from tychora.contracts.publication import (
-    IndexFamily,
     LexicalBatchReceipt,
     LexicalRecord,
-    PublicationBatch,
+    NewBatch,
     PublicationPlan,
-    PublicationSlot,
     SnapshotMember,
+    SnapshotView,
     VectorRecordBinding,
+    snapshot_root_document,
+)
+from tychora.contracts.snapshots import (
+    IndexFamily,
+    MembershipPage,
+    PageBatch,
+    PageMember,
+    SlotFamily,
+    SnapshotBinding,
+    bucket_of,
+    compute_page_id,
+    snapshot_id_v2,
 )
 from tychora.contracts.vector_batches import (
     VECTOR_BATCH_MEDIA_TYPE,
@@ -60,6 +75,7 @@ from tychora.contracts.vector_batches import (
 )
 from tychora.contracts.vectors import BatchReceipt, VectorBatch, VectorOwner
 from tychora.indexing.groups import build_groups
+from tychora.indexing.planning import member_count_after, next_page
 from tychora.indexing.receipts import receipt_digest
 from tychora.indexing.representations import prepare_extraction
 from tychora.indexing.windows import window_unit
@@ -67,13 +83,13 @@ from tychora.ports.artifacts import Artifacts
 from tychora.ports.embeddings import OwnerBoundVisualEmbedder, TextEmbedder
 from tychora.ports.execution import ExecutionContext
 from tychora.ports.graph import GraphStore
-from tychora.ports.repositories import WriteTransaction
+from tychora.ports.repositories import BatchRow, VectorRecordRow, WriteTransaction
 from tychora.ports.tokens import TokenCounter
 from tychora.ports.vectors import VectorIndex
 
 
-def _fail(message: str) -> NoReturn:
-    raise TychoraError("INTEGRITY_ERROR", message)
+def _fail(message: str, reason: str = "canonical.binding_mismatch") -> NoReturn:
+    raise TychoraError("INTEGRITY_ERROR", message, reason=reason)
 
 
 def _text_bindings(
@@ -81,7 +97,7 @@ def _text_bindings(
     owners: dict[str, tuple[str, ContextGroup]],
     positions: dict[str, int],
 ) -> list[VectorRecordBinding]:
-    """Bind each stored text record to its window, context group and artifact row."""
+    """Bind each stored text record, in record order, to its window, group and row."""
     return [
         VectorRecordBinding(
             record_id=row.record_id,
@@ -92,7 +108,7 @@ def _text_bindings(
             dependency_ids=owners[row.record_id][1].dependency_ids,
             row_index=positions[row.record_id],
         )
-        for row in stored
+        for row in sorted(stored, key=lambda row: row.record_id)
     ]
 
 
@@ -163,13 +179,16 @@ def _batch_id(family_id: str, extraction_id: str | None, ref: ArtifactRef) -> st
 
 @dataclass(frozen=True)
 class PreparedProjection:
+    """Everything an add resolved before its provider calls and batch writes."""
+
     bundle: ExtractionBundle
     base_snapshot_id: str | None
+    base: SnapshotView | None
+    base_page: MembershipPage | None
     job: JobHandle
     config_ref: ArtifactRef
     windows: tuple[SearchWindow, ...]
-    members: tuple[SnapshotMember, ...]
-    old_slots: dict[str, PublicationSlot]
+    old_families: dict[str, SlotFamily]
     lexical_family: IndexFamily
     text_family: IndexFamily | None
     text_spec: FamilySpec | None
@@ -177,6 +196,40 @@ class PreparedProjection:
     image_family: IndexFamily | None
     image_spec: FamilySpec | None
     visual_inputs: tuple[VisualInput, ...]
+    reused_batch_ids: tuple[str, ...] = ()
+
+
+class _VectorSlot(NamedTuple):
+    """One vector slot of an add: its family, specification and provider records."""
+
+    slot: str
+    family: IndexFamily
+    spec: FamilySpec
+    records: tuple[EmbeddingRecord, ...]
+
+
+class _VectorOutput(NamedTuple):
+    """A vector batch's native receipt, artifact and record bindings."""
+
+    receipt: BatchReceipt
+    vectors: ArtifactRef | None
+    bindings: Sequence[VectorRecordBinding]
+
+
+@dataclass(frozen=True)
+class _PlanInputs:
+    """The bindings a publication plan is built from."""
+
+    job: JobHandle
+    workspace_id: str
+    base: SnapshotView | None
+    base_page: MembershipPage | None
+    config_ref: ArtifactRef
+    families: tuple[SlotFamily, ...]
+    page: MembershipPage
+    written: tuple[NewBatch, ...]
+    root_batches: tuple[PageBatch, ...] = ()
+    watermark: int | None = None
 
 
 def create_family(
@@ -221,7 +274,7 @@ class ProjectionCoordinator:
             raise self._missing_family_proof()
 
     def _retained_vector_spec(
-        self, slot: PublicationSlot | None, channel: str
+        self, slot: SlotFamily | None, channel: str
     ) -> FamilySpec | None:
         if slot is None:
             return None
@@ -448,13 +501,12 @@ class ProjectionCoordinator:
         self._persist_family(family, nonce, config_sha)
         return family
 
-    def _lexical_batch(
-        self,
-        bundle: ExtractionBundle,
-        windows: tuple[SearchWindow, ...],
-        family: IndexFamily,
-    ) -> PublicationBatch:
-        records = tuple(
+    @staticmethod
+    def _lexical_records(
+        bundle: ExtractionBundle, windows: tuple[SearchWindow, ...]
+    ) -> tuple[LexicalRecord, ...]:
+        """Return the searchable fields of every window of one extraction."""
+        return tuple(
             LexicalRecord(
                 chunk_id=window.chunk_id,
                 identifiers=" ".join(
@@ -471,9 +523,49 @@ class ProjectionCoordinator:
             )
             for window in windows
         )
+
+    def _ready_batch(
+        self, family: IndexFamily, bundle: ExtractionBundle
+    ) -> BatchRow | None:
+        """Return the extraction's ready batch in ``family``, or ``None`` to build it.
+
+        A batch whose native records were pruned must be rebuilt natively first.
+        """
+        with self.store.uow.read() as tx:
+            row = tx.batches.find(family.family_id, bundle.extraction.extraction_id)
+        if row is not None and row.state == "pending":
+            raise TychoraError(
+                "INDEX_INCOMPLETE",
+                "The source's native batch was pruned; rebuild the native index",
+                reason="batch.missing",
+            )
+        return row if row is not None and row.state == "ready" else None
+
+    def _store_batch(
+        self, batch: NewBatch, rows: Callable[[WriteTransaction], None]
+    ) -> None:
+        """Write one batch, its rows and its ready state in one transaction."""
+        with self.store.uow.write() as tx:
+            for ref in (batch.input_manifest, batch.vectors):
+                if ref is not None:
+                    register_fresh(self.store, tx, ref)
+            tx.batches.begin(batch)
+            rows(tx)
+            tx.batches.mark_ready(batch.batch_id, batch.count)
+
+    def _lexical_page_batch(
+        self, prepared: PreparedProjection, written: list[NewBatch]
+    ) -> PageBatch:
+        """Reuse the extraction's ready lexical batch or write it once."""
+        family, bundle = prepared.lexical_family, prepared.bundle
+        existing = self._ready_batch(family, bundle)
+        if existing is not None:
+            return existing.page_batch()
+        records = self._lexical_records(bundle, prepared.windows)
         entries = tuple(row.chunk_id for row in records)
         manifest = _input_manifest(self.artifacts, entries)
-        return PublicationBatch(
+        batch = NewBatch(
+            slot="lexical",
             batch_id=_batch_id(
                 family.family_id, bundle.extraction.extraction_id, manifest
             ),
@@ -486,8 +578,47 @@ class ProjectionCoordinator:
                 count=len(records),
                 entry_ids_sha=digest("index-entries-v1", entries),
             ),
-            lexical_records=records,
         )
+        self._store_batch(
+            batch, lambda tx: tx.batches.write_lexical(batch.batch_id, records)
+        )
+        written.append(batch)
+        return batch.page_batch()
+
+    def _vector_batch(
+        self,
+        slot: str,
+        bundle: ExtractionBundle,
+        manifest: ArtifactRef,
+        out: _VectorOutput,
+    ) -> NewBatch:
+        """Store a vector batch's record rows and mark it ready in one transaction."""
+        batch = NewBatch(
+            slot=slot,
+            batch_id=_batch_id(
+                out.receipt.family_id, bundle.extraction.extraction_id, manifest
+            ),
+            family_id=out.receipt.family_id,
+            extraction_id=bundle.extraction.extraction_id,
+            input_manifest=manifest,
+            expected_count=len(out.bindings),
+            receipt=out.receipt,
+            vectors=out.vectors,
+        )
+        rows = tuple(
+            VectorRecordRow(
+                record_id=b.record_id,
+                chunk_id=b.chunk_id,
+                asset_id=b.asset_id,
+                input_sha=b.input_sha,
+                row_index=b.row_index,
+            )
+            for b in out.bindings
+        )
+        self._store_batch(
+            batch, lambda tx: tx.batches.write_vectors(batch.batch_id, rows)
+        )
+        return batch
 
     def _text_family(
         self, workspace_id: str, config_sha: str, created_at: str
@@ -565,7 +696,7 @@ class ProjectionCoordinator:
         groups: tuple[ContextGroup, ...],
         records: tuple[EmbeddingRecord, ...],
         ctx: ExecutionContext,
-    ) -> PublicationBatch:
+    ) -> NewBatch:
         assert self.text_embedder is not None and self.text_index is not None
         expected = {
             digest(
@@ -619,17 +750,8 @@ class ProjectionCoordinator:
                 for binding in bindings
             ),
         )
-        return PublicationBatch(
-            batch_id=_batch_id(
-                family.family_id, bundle.extraction.extraction_id, manifest
-            ),
-            family_id=family.family_id,
-            extraction_id=bundle.extraction.extraction_id,
-            input_manifest=manifest,
-            expected_count=len(bindings),
-            receipt=receipt,
-            vector_records=tuple(bindings),
-            vectors=vectors,
+        return self._vector_batch(
+            "text", bundle, manifest, _VectorOutput(receipt, vectors, bindings)
         )
 
     def _vector_artifact(
@@ -810,7 +932,7 @@ class ProjectionCoordinator:
         inputs: tuple[VisualInput, ...],
         records: tuple[EmbeddingRecord, ...],
         ctx: ExecutionContext,
-    ) -> PublicationBatch:
+    ) -> NewBatch:
         assert self.visual_embedder is not None and self.image_index is not None
         expected = {
             digest(
@@ -861,7 +983,7 @@ class ProjectionCoordinator:
                 value_sha=row.value_sha,
                 row_index=positions[row.record_id],
             )
-            for row in stored
+            for row in sorted(stored, key=lambda row: row.record_id)
         ]
         receipt = self._native_receipt(
             self.image_index, spec, stored, ctx, _asset_owners(bundle, assets)
@@ -869,17 +991,8 @@ class ProjectionCoordinator:
         manifest = _input_manifest(
             self.artifacts, tuple(row.record_id for row in bindings)
         )
-        return PublicationBatch(
-            batch_id=_batch_id(
-                family.family_id, bundle.extraction.extraction_id, manifest
-            ),
-            family_id=family.family_id,
-            extraction_id=bundle.extraction.extraction_id,
-            input_manifest=manifest,
-            expected_count=len(bindings),
-            receipt=receipt,
-            vector_records=tuple(bindings),
-            vectors=vectors,
+        return self._vector_batch(
+            "image", bundle, manifest, _VectorOutput(receipt, vectors, bindings)
         )
 
     def _graph_family(
@@ -910,21 +1023,10 @@ class ProjectionCoordinator:
         self._persist_family(family, nonce, graph_config)
         return family
 
-    def _graph_slot(
-        self,
-        members: tuple[SnapshotMember, ...],
-        workspace_id: str,
-        config_sha: str,
-        created_at: str,
-        ctx: ExecutionContext,
-    ) -> PublicationSlot:
-        if self.graph_factory is None:
-            raise TychoraError(
-                "CAPABILITY_MISSING",
-                "Configured graph projection lacks a native generation factory",
-            )
-        family = self._graph_family(workspace_id, config_sha, created_at)
-        family_id, graph_config = family.family_id, family.config_sha
+    def _graph_members(
+        self, members: tuple[SnapshotMember, ...]
+    ) -> list[GraphExtraction]:
+        """Bind every selected extraction to its assertion root and evidence units."""
         selected = []
         for member in members:
             row = self.store.db.execute(
@@ -940,7 +1042,7 @@ class ProjectionCoordinator:
                     (row[0],),
                 ).fetchone()
                 if artifact is None or artifact[4] != "present":
-                    _fail("Graph assertion root is unavailable")
+                    _fail("Graph assertion root is unavailable", "payload.missing")
                 root = ArtifactRef.from_row(artifact)
             unit_ids = tuple(
                 row[0]
@@ -957,18 +1059,41 @@ class ProjectionCoordinator:
                     unit_ids=unit_ids,
                 )
             )
+        return selected
+
+    def _graph_batch(
+        self,
+        members: tuple[SnapshotMember, ...],
+        workspace_id: str,
+        config_sha: str,
+        created_at: str,
+        ctx: ExecutionContext,
+    ) -> tuple[IndexFamily, NewBatch]:
+        """Seal the corpus-wide graph generation and store it as one root batch.
+
+        The batch input carries the generation manifest so read paths and
+        publication load it without the snapshot root.
+        """
+        if self.graph_factory is None:
+            raise TychoraError(
+                "CAPABILITY_MISSING",
+                "Configured graph projection lacks a native generation factory",
+                reason="native.unavailable",
+            )
+        family = self._graph_family(workspace_id, config_sha, created_at)
+        selected = self._graph_members(members)
         with self.store.uow.read() as tx:
             watermark = tx.workspace.decision_watermark()
         spec = GraphGenerationSpec(
             generation_id=digest(
                 "graph-generation-v2",
-                family_id,
-                graph_config,
+                family.family_id,
+                family.config_sha,
                 [item.model_dump(mode="json") for item in selected],
                 watermark,
             ),
-            family_id=family_id,
-            config_sha=graph_config,
+            family_id=family.family_id,
+            config_sha=family.config_sha,
             registry_digest=self.store.registry.registry_digest,
             workspace_id=workspace_id,
             decision_watermark=watermark,
@@ -988,18 +1113,41 @@ class ProjectionCoordinator:
             )
         receipt = graph.seal_generation(spec.generation_id, manifest, ctx)
         self.store.graph_indexes[spec.generation_id] = graph
-        input_ref = _input_manifest(
-            self.artifacts, tuple(sorted(manifest.evidence_ids))
+        return family, self._graph_root_batch(manifest, receipt)
+
+    def _graph_root_batch(
+        self, manifest: GraphManifest, receipt: GraphBatchReceipt
+    ) -> NewBatch:
+        """Store the generation's input manifest and its ready batch once."""
+        input_ref = self.artifacts.put_stream(
+            BytesIO(
+                canonical_bytes(
+                    {
+                        "type": "index_input",
+                        "schema_version": "1",
+                        "data": {
+                            "entries": sorted(manifest.evidence_ids),
+                            "graph_manifest": manifest.model_dump(mode="json"),
+                        },
+                    }
+                )
+            ),
+            "application/json",
         )
-        batch = PublicationBatch(
-            batch_id=_batch_id(family_id, None, input_ref),
-            family_id=family_id,
+        batch = NewBatch(
+            slot="graph",
+            batch_id=_batch_id(receipt.family_id, None, input_ref),
+            family_id=receipt.family_id,
+            extraction_id=None,
             input_manifest=input_ref,
             expected_count=receipt.evidence_count,
             receipt=receipt,
-            graph_manifest=manifest,
         )
-        return PublicationSlot(slot="graph", family=family, batches=(batch,))
+        with self.store.uow.read() as tx:
+            stored = tx.batches.get(batch.batch_id)
+        if stored is None or stored.state != "ready":
+            self._store_batch(batch, lambda tx: None)
+        return batch
 
     def _require_active_source(self, source_id: str) -> None:
         row = self.store.db.execute(
@@ -1019,141 +1167,198 @@ class ProjectionCoordinator:
         job: JobHandle,
         ctx: ExecutionContext,
     ) -> PreparedProjection:
+        """Commit the canonical extraction and resolve the families an add needs."""
         ctx.checkpoint()
-        row = self.store.db.execute(
-            "SELECT policy_json FROM collections WHERE collection_id=?",
-            (bundle.collection.collection_id,),
-        ).fetchone()
-        if row is not None:
-            require_active_collection(row[0])
+        self._require_collection_open(bundle.collection.collection_id)
         config_ref = self._config_ref(job)
         windows = self._windows(bundle)
         canonical = self._canonical_bundle(bundle, windows)
         self._commit_or_reuse(canonical)
-        current = (
+        base = (
             self.store.resolve_snapshot(base_snapshot_id) if base_snapshot_id else None
         )
-        members: list[SnapshotMember] = []
-        if current is not None:
-            for member in current.members:
-                if not self.store.db.execute(
-                    "SELECT 1 FROM sources WHERE source_id=? AND withdrawn_at IS NULL",
-                    (member.source_id,),
-                ).fetchone():
-                    continue
-                if member.source_id != bundle.source.source_id:
-                    members.append(member)
-                    continue
-                retained_edition = self.store.db.execute(
-                    "SELECT edition_key FROM revisions WHERE revision_id=?",
-                    (member.revision_id,),
-                ).fetchone()
-                if retained_edition is None:
-                    _fail("Retained edition is missing before publication")
-                if retained_edition[0] != bundle.revision.edition_key:
-                    members.append(member.model_copy(update={"is_default": False}))
-        members.append(
-            SnapshotMember(
-                source_id=bundle.source.source_id,
-                revision_id=bundle.revision.revision_id,
-                extraction_id=bundle.extraction.extraction_id,
-            )
-        )
-        selected = tuple(
-            sorted(
-                members,
-                key=lambda item: (item.source_id, item.revision_id, item.extraction_id),
-            )
-        )
-        old_slots = {slot.slot: slot for slot in current.slots} if current else {}
-        old_lexical = old_slots.get("lexical")
-        old_lexical_sha = (
-            old_lexical.family.config_json.get("effective_config_sha")
-            if old_lexical is not None
-            else None
-        )
-        lexical_family = (
-            old_lexical.family
-            if old_lexical is not None
-            and isinstance(old_lexical_sha, str)
-            and (
-                old_lexical_sha == config_ref.sha256
-                or pinned_runtime_compatible(
-                    self.store.retained_config_sha(old_lexical_sha), self.config
+        base_page = None
+        if base_snapshot_id is not None:
+            with self.store.uow.read() as tx:
+                base_page = tx.snapshots.page(
+                    base_snapshot_id, bucket_of(canonical.source.source_id)
                 )
-            )
-            else self._lexical_family(
-                bundle.workspace.workspace_id,
-                config_ref.sha256,
-                bundle.workspace.created_at,
-            )
-        )
-        text_family = None
-        text_spec = None
-        text_groups: tuple[ContextGroup, ...] = ()
-        if self.config.values.index.text.backend != "disabled":
-            old_text = old_slots.get("text")
-            text_spec = self._retained_vector_spec(old_text, "text")
-            if text_spec is not None:
-                assert old_text is not None
-                text_family = old_text.family
-            else:
-                text_family, text_spec = self._text_family(
-                    bundle.workspace.workspace_id,
-                    config_ref.sha256,
-                    bundle.workspace.created_at,
-                )
-            reusable = (
-                old_text is not None
-                and old_text.family == text_family
-                and any(
-                    batch.extraction_id == canonical.extraction.extraction_id
-                    for batch in old_text.batches
-                )
-            )
-            if not reusable:
-                text_groups = build_groups(windows, self.config, self.counter)
-        image_family = None
-        image_spec = None
-        visual_inputs: tuple[VisualInput, ...] = ()
-        if self.config.values.index.image.backend != "disabled":
-            old_image = old_slots.get("image")
-            image_spec = self._retained_vector_spec(old_image, "image")
-            if image_spec is not None:
-                assert old_image is not None
-                image_family = old_image.family
-            else:
-                image_family, image_spec = self._image_family(
-                    bundle.workspace.workspace_id,
-                    config_ref.sha256,
-                    bundle.workspace.created_at,
-                )
-            reusable_image = (
-                old_image is not None
-                and old_image.family == image_family
-                and any(
-                    batch.extraction_id == canonical.extraction.extraction_id
-                    for batch in old_image.batches
-                )
-            )
-            if not reusable_image:
-                visual_inputs = self._visual_inputs(canonical)
+        old = {item.slot: item for item in base.families} if base else {}
+        text = self._prepare_text(old.get("text"), canonical, windows, config_ref)
+        image = self._prepare_image(old.get("image"), canonical, config_ref)
         return PreparedProjection(
             bundle=canonical,
             base_snapshot_id=base_snapshot_id,
+            base=base,
+            base_page=base_page,
             job=job,
             config_ref=config_ref,
             windows=windows,
-            members=selected,
-            old_slots=old_slots,
-            lexical_family=lexical_family,
-            text_family=text_family,
-            text_spec=text_spec,
-            text_groups=text_groups,
-            image_family=image_family,
-            image_spec=image_spec,
-            visual_inputs=visual_inputs,
+            old_families=old,
+            lexical_family=self._select_lexical_family(
+                old.get("lexical"), canonical, config_ref
+            ),
+            text_family=text[0],
+            text_spec=text[1],
+            text_groups=text[2],
+            image_family=image[0],
+            image_spec=image[1],
+            visual_inputs=image[2],
+            reused_batch_ids=text[3] + image[3],
         )
+
+    def _require_collection_open(self, collection_id: str) -> None:
+        row = self.store.db.execute(
+            "SELECT policy_json FROM collections WHERE collection_id=?",
+            (collection_id,),
+        ).fetchone()
+        if row is not None:
+            require_active_collection(row[0])
+
+    def _select_lexical_family(
+        self,
+        old: SlotFamily | None,
+        bundle: ExtractionBundle,
+        config_ref: ArtifactRef,
+    ) -> IndexFamily:
+        """Keep the base lexical family while its configuration stays compatible."""
+        origin = old.family.config_json.get("effective_config_sha") if old else None
+        if (
+            old is not None
+            and isinstance(origin, str)
+            and (
+                origin == config_ref.sha256
+                or pinned_runtime_compatible(
+                    self.store.retained_config_sha(origin), self.config
+                )
+            )
+        ):
+            return old.family
+        return self._lexical_family(
+            bundle.workspace.workspace_id,
+            config_ref.sha256,
+            bundle.workspace.created_at,
+        )
+
+    def _prepare_text(
+        self,
+        old: SlotFamily | None,
+        canonical: ExtractionBundle,
+        windows: tuple[SearchWindow, ...],
+        config_ref: ArtifactRef,
+    ) -> tuple[
+        IndexFamily | None, FamilySpec | None, tuple[ContextGroup, ...], tuple[str, ...]
+    ]:
+        """Resolve the text family; groups are built only when no batch is ready."""
+        if self.config.values.index.text.backend == "disabled":
+            return None, None, (), ()
+        spec = self._retained_vector_spec(old, "text")
+        if spec is not None and old is not None:
+            family = old.family
+        else:
+            family, spec = self._text_family(
+                canonical.workspace.workspace_id,
+                config_ref.sha256,
+                canonical.workspace.created_at,
+            )
+        ready = self._ready_batch(family, canonical)
+        if ready is not None:
+            return family, spec, (), (ready.batch_id,)
+        return family, spec, build_groups(windows, self.config, self.counter), ()
+
+    def _prepare_image(
+        self,
+        old: SlotFamily | None,
+        canonical: ExtractionBundle,
+        config_ref: ArtifactRef,
+    ) -> tuple[
+        IndexFamily | None, FamilySpec | None, tuple[VisualInput, ...], tuple[str, ...]
+    ]:
+        """Resolve the image family; inputs are read only when no batch is ready."""
+        if self.config.values.index.image.backend == "disabled":
+            return None, None, (), ()
+        spec = self._retained_vector_spec(old, "image")
+        if spec is not None and old is not None:
+            family = old.family
+        else:
+            family, spec = self._image_family(
+                canonical.workspace.workspace_id,
+                config_ref.sha256,
+                canonical.workspace.created_at,
+            )
+        ready = self._ready_batch(family, canonical)
+        if ready is not None:
+            return family, spec, (), (ready.batch_id,)
+        return family, spec, self._visual_inputs(canonical), ()
+
+    def _vector_page_batch(
+        self,
+        prepared: PreparedProjection,
+        item: _VectorSlot,
+        written: list[NewBatch],
+        ctx: ExecutionContext,
+    ) -> PageBatch:
+        """Reuse the extraction's ready vector batch or embed and write it once."""
+        existing = self._ready_batch(item.family, prepared.bundle)
+        if existing is not None:
+            if item.records:
+                _fail(
+                    "Unrequested provider records cannot replace an immutable source batch"
+                )
+            return existing.page_batch()
+        batch = (
+            self._text_batch(
+                prepared.bundle,
+                prepared.windows,
+                item.family,
+                item.spec,
+                prepared.text_groups,
+                item.records,
+                ctx,
+            )
+            if item.slot == "text"
+            else self._image_batch(
+                prepared.bundle,
+                item.family,
+                item.spec,
+                prepared.visual_inputs,
+                item.records,
+                ctx,
+            )
+        )
+        written.append(batch)
+        return batch.page_batch()
+
+    def _source_batches(
+        self,
+        prepared: PreparedProjection,
+        records: dict[str, tuple[EmbeddingRecord, ...]],
+        written: list[NewBatch],
+        ctx: ExecutionContext,
+    ) -> tuple[list[SlotFamily], list[PageBatch]]:
+        """Return the add's source-local families and the page batches it binds."""
+        families = [SlotFamily(slot="lexical", family=prepared.lexical_family)]
+        batches = [self._lexical_page_batch(prepared, written)]
+        for slot, family, spec in (
+            ("text", prepared.text_family, prepared.text_spec),
+            ("image", prepared.image_family, prepared.image_spec),
+        ):
+            if family is None or spec is None:
+                if records[slot]:
+                    _fail(
+                        f"{slot.capitalize()} records were supplied to a disabled slot"
+                    )
+                continue
+            families.append(SlotFamily(slot=slot, family=family))
+            batches.append(
+                self._vector_page_batch(
+                    prepared,
+                    _VectorSlot(slot, family, spec, records[slot]),
+                    written,
+                    ctx,
+                )
+            )
+        return families, batches
 
     def finalize(
         self,
@@ -1162,175 +1367,185 @@ class ProjectionCoordinator:
         ctx: ExecutionContext,
         visual_records: tuple[EmbeddingRecord, ...] = (),
     ) -> PublicationPlan:
+        """Write the add's new batches and plan its one rewritten page."""
         ctx.checkpoint()
         if self._config_ref(prepared.job) != prepared.config_ref:
             _fail("Projection configuration changed before finalization")
-        canonical = prepared.bundle
-        self._require_active_source(canonical.source.source_id)
-        selected = prepared.members
-        windows = prepared.windows
-        old_slots = prepared.old_slots
-        lexical_family = prepared.lexical_family
-        old_lexical = (
-            {batch.extraction_id: batch for batch in old_slots["lexical"].batches}
-            if "lexical" in old_slots and old_slots["lexical"].family == lexical_family
-            else {}
+        self._require_active_source(prepared.bundle.source.source_id)
+        written: list[NewBatch] = []
+        families, batches = self._source_batches(
+            prepared, {"text": text_records, "image": visual_records}, written, ctx
         )
-        if any(
-            member.extraction_id != canonical.extraction.extraction_id
-            and member.extraction_id not in old_lexical
-            for member in selected
-        ):
-            raise TychoraError(
-                "INDEX_INCOMPLETE",
-                "Earlier lexical source batch is unavailable for rebase",
-            )
-        lexical_batches = tuple(
-            old_lexical.get(member.extraction_id)
-            or self._lexical_batch(canonical, windows, lexical_family)
-            for member in selected
+        page = self._next_page(prepared, tuple(batches))
+        for item in families:
+            self._require_rebase_free(prepared, item, page)
+        inputs = _PlanInputs(
+            job=prepared.job,
+            workspace_id=prepared.bundle.workspace.workspace_id,
+            base=prepared.base,
+            base_page=prepared.base_page,
+            config_ref=prepared.config_ref,
+            families=tuple(families),
+            page=page,
+            written=tuple(written),
         )
-        slots = [
-            PublicationSlot(
-                slot="lexical", family=lexical_family, batches=lexical_batches
-            )
-        ]
-        if prepared.text_family is not None and prepared.text_spec is not None:
-            family, spec = prepared.text_family, prepared.text_spec
-            old_text = (
-                {batch.extraction_id: batch for batch in old_slots["text"].batches}
-                if "text" in old_slots and old_slots["text"].family == family
-                else {}
-            )
-            if any(
-                member.extraction_id != canonical.extraction.extraction_id
-                and member.extraction_id not in old_text
-                for member in selected
-            ):
-                raise TychoraError(
-                    "INDEX_INCOMPLETE",
-                    "Earlier text source batch is unavailable for rebase",
-                )
-            needs_current = canonical.extraction.extraction_id not in old_text
-            if not needs_current and text_records:
-                _fail(
-                    "Unrequested provider records cannot replace an immutable source batch"
-                )
-            text_batches = tuple(
-                old_text.get(member.extraction_id)
-                or self._text_batch(
-                    canonical,
-                    windows,
-                    family,
-                    spec,
-                    prepared.text_groups,
-                    text_records,
-                    ctx,
-                )
-                for member in selected
-            )
-            slots.append(
-                PublicationSlot(slot="text", family=family, batches=text_batches)
-            )
-        elif text_records:
-            _fail("Text records were supplied to a disabled slot")
-        if prepared.image_family is not None and prepared.image_spec is not None:
-            family, spec = prepared.image_family, prepared.image_spec
-            old_image = (
-                {batch.extraction_id: batch for batch in old_slots["image"].batches}
-                if "image" in old_slots and old_slots["image"].family == family
-                else {}
-            )
-            if any(
-                member.extraction_id != canonical.extraction.extraction_id
-                and member.extraction_id not in old_image
-                for member in selected
-            ):
-                raise TychoraError(
-                    "INDEX_INCOMPLETE",
-                    "Earlier image source batch is unavailable for rebase",
-                )
-            if canonical.extraction.extraction_id in old_image and visual_records:
-                _fail(
-                    "Unrequested visual records cannot replace an immutable source batch"
-                )
-            image_batches = tuple(
-                old_image.get(member.extraction_id)
-                or self._image_batch(
-                    canonical,
-                    family,
-                    spec,
-                    prepared.visual_inputs,
-                    visual_records,
-                    ctx,
-                )
-                for member in selected
-            )
-            slots.append(
-                PublicationSlot(slot="image", family=family, batches=image_batches)
-            )
-        elif visual_records:
-            _fail("Visual records were supplied to a disabled slot")
-        if self.config.values.index.graph != "disabled":
-            slots.append(
-                self._graph_slot(
-                    selected,
-                    canonical.workspace.workspace_id,
-                    prepared.config_ref.sha256,
-                    canonical.workspace.created_at,
-                    ctx,
-                )
-            )
         return self._plan(
-            prepared.job,
-            canonical.workspace.workspace_id,
-            prepared.base_snapshot_id,
-            prepared.config_ref,
-            selected,
-            tuple(slots),
+            self._with_graph(inputs, prepared.bundle.workspace.created_at, ctx)
         )
 
-    def _plan(
-        self,
-        job: JobHandle,
-        workspace_id: str,
-        base_snapshot_id: str | None,
-        config_ref: ArtifactRef,
-        selected: tuple[SnapshotMember, ...],
-        slots_tuple: tuple[PublicationSlot, ...],
-    ) -> PublicationPlan:
-        snapshot_id = digest(
-            "snapshot-v1",
-            workspace_id,
-            base_snapshot_id,
-            job.id,
-            config_ref.sha256,
-            [member.model_dump(mode="json") for member in selected],
-            [
-                {
-                    "slot": slot.slot,
-                    "family_id": slot.family.family_id,
-                    "required": slot.required,
-                    "batch_ids": [batch.batch_id for batch in slot.batches],
-                }
-                for slot in slots_tuple
-            ],
+    def _with_graph(
+        self, inputs: _PlanInputs, created_at: str, ctx: ExecutionContext
+    ) -> _PlanInputs:
+        """Add the corpus-wide graph generation as the plan's root batch."""
+        if self.config.values.index.graph == "disabled":
+            return inputs
+        family, batch = self._graph_batch(
+            self._snapshot_members(inputs.base, inputs.page),
+            inputs.workspace_id,
+            inputs.config_ref.sha256,
+            created_at,
+            ctx,
         )
-        placeholder = _input_manifest(self.artifacts, ())
-        plan = PublicationPlan(
-            job_id=job.id,
-            snapshot_id=snapshot_id,
-            workspace_id=workspace_id,
-            base_snapshot_id=base_snapshot_id,
-            config_sha=config_ref.sha256,
-            manifest=placeholder,
-            members=selected,
-            slots=slots_tuple,
+        receipt = batch.receipt
+        if not isinstance(receipt, GraphBatchReceipt):
+            _fail("Graph batch receipt is malformed", "canonical.row_invalid")
+        return replace(
+            inputs,
+            families=(
+                *(item for item in inputs.families if item.slot != "graph"),
+                SlotFamily(slot="graph", family=family),
+            ),
+            written=(*inputs.written, batch),
+            root_batches=(batch.page_batch(),),
+            watermark=receipt.decision_watermark,
         )
-        manifest = self.artifacts.put_stream(
-            BytesIO(publication_manifest(plan)), "application/json"
+
+    def _kept_base_page(
+        self, base_page: MembershipPage | None
+    ) -> tuple[MembershipPage | None, dict[str, str | None]]:
+        """Drop withdrawn sources from the base page; return it and member editions."""
+        if base_page is None:
+            return None, {}
+        rows = self.store.db.execute(
+            "SELECT r.revision_id,r.edition_key,s.withdrawn_at IS NULL FROM revisions r "
+            "JOIN sources s USING(source_id) "
+            "WHERE r.revision_id IN (SELECT value FROM json_each(?))",
+            (json.dumps([m.revision_id for m in base_page.members]),),
+        ).fetchall()
+        active = {row[0] for row in rows if row[2]}
+        members = tuple(m for m in base_page.members if m.revision_id in active)
+        page = MembershipPage(
+            bucket=base_page.bucket,
+            members=members,
+            page_id=compute_page_id(base_page.bucket, members),
         )
-        return plan.model_copy(update={"manifest": manifest})
+        return page, {row[0]: row[1] for row in rows}
+
+    def _next_page(
+        self, prepared: PreparedProjection, batches: tuple[PageBatch, ...]
+    ) -> MembershipPage:
+        """Rewrite the add's bucket: keep its other sources, supersede or keep editions."""
+        bundle = prepared.bundle
+        member = PageMember(
+            source_id=bundle.source.source_id,
+            revision_id=bundle.revision.revision_id,
+            extraction_id=bundle.extraction.extraction_id,
+            batches=tuple(sorted(batches, key=lambda batch: batch.slot)),
+        )
+        kept, editions = self._kept_base_page(prepared.base_page)
+        return next_page(kept, member, editions, bundle.revision.edition_key)
+
+    def _require_rebase_free(
+        self, prepared: PreparedProjection, item: SlotFamily, page: MembershipPage
+    ) -> None:
+        """Earlier members must already have a batch in the family this add publishes."""
+        old = prepared.old_families.get(item.slot)
+        if old is not None and old.family.family_id == item.family.family_id:
+            return
+        survivors = (
+            member_count_after(
+                prepared.base.member_count if prepared.base else 0,
+                prepared.base_page,
+                page,
+            )
+            - 1
+        )
+        if survivors > 0:
+            raise TychoraError(
+                "INDEX_INCOMPLETE",
+                f"Earlier {item.slot} source batches are unavailable for rebase",
+                reason="batch.missing",
+            )
+
+    @staticmethod
+    def _snapshot_members(
+        base: SnapshotView | None, page: MembershipPage
+    ) -> tuple[SnapshotMember, ...]:
+        """The members of the planned snapshot: the base outside the page's bucket."""
+        kept = [
+            m
+            for m in (base.members if base else ())
+            if bucket_of(m.source_id) != page.bucket
+        ]
+        added = [
+            SnapshotMember(
+                source_id=m.source_id,
+                revision_id=m.revision_id,
+                extraction_id=m.extraction_id,
+                is_default=m.is_default,
+            )
+            for m in page.members
+        ]
+        return tuple(
+            sorted(
+                kept + added,
+                key=lambda m: (m.source_id, m.revision_id, m.extraction_id),
+            )
+        )
+
+    def _plan(self, inputs: _PlanInputs) -> PublicationPlan:
+        """Store the rewritten page and the snapshot root, then return the plan."""
+        base = inputs.base
+        replaced = inputs.base_page.page_id if inputs.base_page else None
+        reused = tuple(p for p in (base.page_ids if base else ()) if p != replaced)
+        manifests = {}
+        if reused:
+            with self.store.uow.read() as tx:
+                manifests = dict(tx.snapshots.page_manifests(reused))
+        manifests[inputs.page.page_id] = self.artifacts.put_stream(
+            BytesIO(inputs.page.manifest_bytes()), "application/json"
+        )
+        binding = SnapshotBinding(
+            workspace_id=inputs.workspace_id,
+            base_snapshot_id=base.snapshot_id if base else None,
+            job_id=inputs.job.id,
+            config_sha=inputs.config_ref.sha256,
+            families=inputs.families,
+            root_batch_ids=tuple(batch.batch_id for batch in inputs.root_batches),
+        )
+        draft = PublicationPlan(
+            job_id=inputs.job.id,
+            snapshot_id=snapshot_id_v2(binding, (*reused, inputs.page.page_id)),
+            workspace_id=inputs.workspace_id,
+            base_snapshot_id=binding.base_snapshot_id,
+            config_sha=inputs.config_ref.sha256,
+            families=inputs.families,
+            member_count=member_count_after(
+                base.member_count if base else 0, inputs.base_page, inputs.page
+            ),
+            new_pages=(inputs.page,),
+            reused_page_ids=reused,
+            new_batches=inputs.written,
+            root_batches=inputs.root_batches,
+            graph_watermark=inputs.watermark,
+            # The validator does not read the root; the stored root replaces it.
+            manifest=inputs.config_ref,
+        )
+        root = self.artifacts.put_stream(
+            BytesIO(canonical_bytes(snapshot_root_document(draft, manifests))),
+            "application/json",
+        )
+        return draft.model_copy(update={"manifest": root})
 
     def reuse_existing(
         self,
@@ -1340,101 +1555,110 @@ class ProjectionCoordinator:
         job: JobHandle,
         ctx: ExecutionContext,
     ) -> PublicationPlan:
-        """Fresh capture of an active immutable revision reuses retained artifacts."""
+        """A fresh capture of an active immutable revision republishes its retained batches."""
         ctx.checkpoint()
         self._require_active_source(source_id)
-        current = self.store.resolve_snapshot(base_snapshot_id)
-        selected = tuple(
-            member.model_copy(update={"is_default": member.revision_id == revision_id})
-            if member.source_id == source_id
-            else member
-            for member in current.members
-        )
-        if not any(
-            m.source_id == source_id and m.revision_id == revision_id for m in selected
+        base = self.store.resolve_snapshot(base_snapshot_id)
+        with self.store.uow.read() as tx:
+            base_page = tx.snapshots.page(base_snapshot_id, bucket_of(source_id))
+        if base_page is None or not any(
+            m.source_id == source_id and m.revision_id == revision_id
+            for m in base_page.members
         ):
             _fail("Captured revision is not the selected canonical source")
+        kept, _ = self._kept_base_page(base_page)
+        members = tuple(
+            m.model_copy(update={"is_default": m.revision_id == revision_id})
+            if m.source_id == source_id
+            else m
+            for m in (kept.members if kept else ())
+        )
+        page = MembershipPage(
+            bucket=base_page.bucket,
+            members=members,
+            page_id=compute_page_id(base_page.bucket, members),
+        )
         config_ref = self._config_ref(job)
-        if current.config_sha != config_ref.sha256 and not pinned_runtime_compatible(
-            self.store.retained_config(current), self.config
+        if base.config_sha != config_ref.sha256 and not pinned_runtime_compatible(
+            self.store.retained_config(base), self.config
         ):
             raise TychoraError(
-                "INDEX_INCOMPLETE", "Existing projection configuration differs"
+                "INDEX_INCOMPLETE",
+                "Existing projection configuration differs",
+                reason="batch.missing",
             )
-        slots = tuple(current.slots)
-        if self.config.values.index.graph != "disabled":
-            with self.store.uow.read() as tx:
-                watermark = tx.workspace.decision_watermark()
-            graph = next((slot for slot in slots if slot.slot == "graph"), None)
-            if (
-                graph is None
-                or not isinstance(graph.batches[0].receipt, GraphBatchReceipt)
-                or graph.batches[0].receipt.decision_watermark != watermark
-            ):
-                slots = tuple(slot for slot in slots if slot.slot != "graph") + (
-                    self._graph_slot(
-                        selected,
-                        current.workspace_id,
-                        config_ref.sha256,
-                        self.store.db.execute(
-                            "SELECT created_at FROM workspaces"
-                        ).fetchone()[0],
-                        ctx,
-                    ),
-                )
-        return self._plan(
-            job,
-            current.workspace_id,
-            base_snapshot_id,
-            config_ref,
-            selected,
-            slots,
+        inputs = _PlanInputs(
+            job=job,
+            workspace_id=base.workspace_id,
+            base=base,
+            base_page=base_page,
+            config_ref=config_ref,
+            families=tuple(item for item in base.families if item.slot != "graph"),
+            page=page,
+            written=(),
         )
+        created_at = self.store.db.execute(
+            "SELECT created_at FROM workspaces"
+        ).fetchone()[0]
+        return self._plan(self._with_graph(inputs, created_at, ctx))
 
     def attach(self, plan: PublicationPlan, ctx: ExecutionContext) -> None:
         """Reopen configured native ports for a retained plan before verification."""
-        from tychora.adapters.sqlite.publication import check_publication_target
-
         check_publication_target(self.store, plan)
-        for slot in plan.slots:
+        for item in plan.families:
             ctx.checkpoint()
-            if slot.slot in {"text", "image"}:
-                if slot.family.family_id in self.store.vector_indexes:
-                    continue
-                index = self.text_index if slot.slot == "text" else self.image_index
-                if index is None:
-                    raise TychoraError(
-                        "CAPABILITY_MISSING",
-                        "Required native vector index is unavailable",
-                    )
-                spec_data = slot.family.config_json.get("spec")
-                try:
-                    spec = FamilySpec.model_validate_json(canonical_bytes(spec_data))
-                except (TypeError, ValueError):
-                    _fail("Retained vector family specification is malformed")
-                if spec.family_id != slot.family.family_id:
-                    _fail("Retained vector family identity differs")
-                handle = index.create_family(spec)
-                if handle.config_sha != slot.family.config_sha:
-                    _fail("Retained native vector family configuration differs")
-                self.store.vector_indexes[slot.family.family_id] = index
-            elif slot.slot == "graph":
-                if self.graph_factory is None:
-                    raise TychoraError(
-                        "CAPABILITY_MISSING",
-                        "Required graph generation factory is unavailable",
-                    )
-                manifest = slot.batches[0].graph_manifest
-                if manifest is None:
-                    _fail("Retained graph manifest is unavailable")
-                if manifest.spec.generation_id in self.store.graph_indexes:
-                    continue
-                build = read_graph_build(self.store, manifest.spec, ctx)
-                if GraphManifest.from_build(build) != manifest:
-                    _fail("Retained graph canonical build differs")
-                self.store.graph_indexes[manifest.spec.generation_id] = (
-                    self.graph_factory(build)
-                )
+            if item.slot in {"text", "image"}:
+                self._attach_vector(item)
+        for batch in plan.root_batches:
+            self._attach_graph(batch, ctx)
+
+    def _attach_vector(self, item: SlotFamily) -> None:
+        """Open the configured native index of a retained vector family."""
+        if item.family.family_id in self.store.vector_indexes:
+            return
+        index = self.text_index if item.slot == "text" else self.image_index
+        if index is None:
+            raise TychoraError(
+                "CAPABILITY_MISSING",
+                "Required native vector index is unavailable",
+                reason="native.unavailable",
+            )
+        try:
+            spec = FamilySpec.model_validate_json(
+                canonical_bytes(item.family.config_json.get("spec"))
+            )
+        except (TypeError, ValueError):
+            _fail("Retained vector family specification is malformed")
+        if spec.family_id != item.family.family_id:
+            _fail("Retained vector family identity differs")
+        if index.create_family(spec).config_sha != item.family.config_sha:
+            _fail("Retained native vector family configuration differs")
+        self.store.vector_indexes[item.family.family_id] = index
+
+    def _attach_graph(self, batch: PageBatch, ctx: ExecutionContext) -> None:
+        """Rebuild the retained graph generation's native store from canonical rows."""
+        if self.graph_factory is None:
+            raise TychoraError(
+                "CAPABILITY_MISSING",
+                "Required graph generation factory is unavailable",
+                reason="native.unavailable",
+            )
+        with self.artifacts.open_verified(batch.input_manifest) as stream:
+            data = json.load(stream).get("data", {})
+        try:
+            manifest = GraphManifest.model_validate_json(
+                canonical_bytes(data["graph_manifest"])
+            )
+        except (KeyError, TypeError, ValueError):
+            _fail("Retained graph manifest is unavailable", "canonical.row_invalid")
+        if manifest.spec.generation_id in self.store.graph_indexes:
+            return
+        build = read_graph_build(self.store, manifest.spec, ctx)
+        if GraphManifest.from_build(build) != manifest:
+            _fail("Retained graph canonical build differs")
+        self.store.graph_indexes[manifest.spec.generation_id] = self.graph_factory(
+            build
+        )
 
     def build(
         self,

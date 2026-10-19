@@ -372,7 +372,7 @@ class QueryService:
                     "INTEGRITY_ERROR",
                     "Query provider binding differs from configuration.",
                 )
-            slot = next((slot for slot in snapshot.slots if slot.slot == channel), None)
+            slot = snapshot.family(channel)
             if slot is None:
                 if plan is not None and getattr(plan, channel):
                     raise TychoraError(

@@ -7,7 +7,11 @@ from datetime import UTC, datetime
 from io import BytesIO
 from typing import TYPE_CHECKING, Literal, cast
 
-from tychora.adapters.files.references import MAX_MANIFEST_BYTES, required_closure
+from tychora.adapters.files.references import (
+    MAX_MANIFEST_BYTES,
+    TYPED_MANIFEST_ROOTS,
+    required_closure,
+)
 from tychora.contracts.artifacts import ArtifactRef, ManifestRef, registered_manifest
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
@@ -427,6 +431,7 @@ class RemovalService:
             "UNION ALL SELECT 1 FROM asset_proxies WHERE derivation_sha=? "
             "UNION ALL SELECT 1 FROM index_batches WHERE vectors_sha=? "
             "UNION ALL SELECT 1 FROM snapshots WHERE manifest_sha=? "
+            "UNION ALL SELECT 1 FROM membership_pages WHERE manifest_sha=? "
             "UNION ALL SELECT 1 FROM index_batches WHERE input_manifest_sha=? "
             "UNION ALL SELECT 1 FROM jobs WHERE effective_config_sha=? OR request_artifact_sha=? "
             "UNION ALL SELECT 1 FROM query_runs WHERE retained_payload_sha=? "
@@ -438,7 +443,7 @@ class RemovalService:
             "UNION ALL SELECT 1 FROM assertion_decisions WHERE provenance_artifact_sha=? OR reason_artifact_sha=? "
             "LIMIT 1"
         )
-        if db.execute(direct, (sha,) * 18).fetchone():
+        if db.execute(direct, (sha,) * 19).fetchone():
             return True
         for (revision_id,) in db.execute(
             "SELECT e.revision_id FROM locators l JOIN evidence_units u USING(unit_id) "
@@ -459,18 +464,8 @@ class RemovalService:
                 (revision_id, sha),
             ).fetchone():
                 return True
-        typed_roots = (
-            ("SELECT manifest_sha FROM snapshots", "snapshot"),
-            ("SELECT input_manifest_sha FROM index_batches", "index_input"),
-            ("SELECT effective_config_sha FROM jobs", "registry"),
-            ("SELECT manifest_sha FROM evaluation_datasets", "evaluation"),
-            (
-                "SELECT retained_payload_sha FROM query_runs WHERE retained_payload_sha IS NOT NULL",
-                "retained_run",
-            ),
-        )
         seen: set[tuple[str, str]] = set()
-        for query, kind in typed_roots:
+        for query, kind in TYPED_MANIFEST_ROOTS:
             for (root_sha,) in db.execute(query):
                 if (root_sha, kind) in seen:
                     continue

@@ -10,12 +10,11 @@ from uuid import UUID, uuid5
 import pytest
 
 from tests.helpers.corpus import COLLECTION, reader, registry, seed_bundle
+from tests.helpers.publication import lexical_plan
 from tychora.adapters.chroma.index import ChromaVectorIndex
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.adapters.sqlite.jobs import JobRepository
-from tychora.adapters.sqlite.publication import publication_manifest
-from tychora.adapters.sqlite.repositories import SqliteUnitOfWork
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.corpus import ExtractionBundle
@@ -25,21 +24,11 @@ from tychora.contracts.identity import (
     canonical_bytes,
     digest,
     family_id,
-    new_family_nonce,
     space_id,
     vector_record_id,
 )
-from tychora.contracts.identity import family_id as derive_family_id
 from tychora.contracts.indexing import FamilySpec
-from tychora.contracts.publication import (
-    IndexFamily,
-    LexicalBatchReceipt,
-    LexicalRecord,
-    PublicationBatch,
-    PublicationPlan,
-    PublicationSlot,
-    SnapshotMember,
-)
+from tychora.contracts.publication import PublicationPlan
 from tychora.contracts.requests import RequestScope
 from tychora.contracts.vectors import BatchReceipt
 from tychora.evaluation.runner import ComparisonAdmission
@@ -163,8 +152,10 @@ class ProjectedCorpus:
     vector: RecordingVector
     embedder: RecordingEmbedder
 
-    def prepare_revision(self, text: str, *, source_key: str = "manual.md"):
-        bundle = seed_bundle(text, source_key=source_key).model_copy(
+    def prepare_revision(
+        self, text: str, *, source_key: str = "manual.md", edition: str = "1"
+    ):
+        bundle = seed_bundle(text, source_key=source_key, edition=edition).model_copy(
             update={"chunks": ()}
         )
         job = self.jobs.accept(
@@ -178,6 +169,11 @@ class ProjectedCorpus:
 
     def add_revision(self, text: str, *, source_key: str = "manual.md") -> str:
         _, _, plan = self.prepare_revision(text, source_key=source_key)
+        return self.store.publish_snapshot(plan)
+
+    def add_edition(self, text: str, *, source_key: str, edition: str) -> str:
+        """Publish another edition of a source; earlier editions stay members."""
+        _, _, plan = self.prepare_revision(text, source_key=source_key, edition=edition)
         return self.store.publish_snapshot(plan)
 
 
@@ -199,95 +195,7 @@ class PublishedCorpus:
             self.config,
         )
         self.jobs.start(job.id)
-        member = SnapshotMember(
-            source_id=bundle.source.source_id,
-            revision_id=bundle.revision.revision_id,
-            extraction_id=bundle.extraction.extraction_id,
-        )
-        uow = SqliteUnitOfWork(self.store.db)
-        with uow.read() as tx:
-            nonce = tx.families.nonce("lexical", self.config.sha256)
-        nonce = nonce or new_family_nonce()
-        family_id = derive_family_id(
-            bundle.workspace.workspace_id, self.config.sha256, nonce
-        )
-        family = IndexFamily(
-            family_id=family_id,
-            channel="lexical",
-            backend="sqlite-fts5",
-            config_sha=self.config.sha256,
-            config_json=FrozenJsonMap(
-                {"tokenizer": "unicode61", "effective_config_sha": self.config.sha256}
-            ),
-            backend_namespace="lexical",
-            created_at=bundle.workspace.created_at,
-        )
-        with uow.write() as tx:
-            tx.families.create(family, nonce, self.config.sha256)
-        entries = (bundle.chunks[0].chunk_id,)
-        input_manifest = reader().put_stream(
-            BytesIO(
-                canonical_bytes(
-                    {
-                        "type": "index_input",
-                        "schema_version": "1",
-                        "data": {"entries": entries},
-                    }
-                )
-            ),
-            "application/json",
-        )
-        batch = PublicationBatch(
-            batch_id=digest(
-                "index-batch-v1",
-                family_id,
-                bundle.extraction.extraction_id,
-                input_manifest.sha256,
-            ),
-            family_id=family_id,
-            extraction_id=bundle.extraction.extraction_id,
-            input_manifest=input_manifest,
-            expected_count=1,
-            receipt=LexicalBatchReceipt(
-                family_id=family_id,
-                count=1,
-                entry_ids_sha=digest("index-entries-v1", entries),
-            ),
-            lexical_records=(LexicalRecord(chunk_id=entries[0], body=text),),
-        )
-        slot = PublicationSlot(slot="lexical", family=family, batches=(batch,))
-        snapshot_id = digest(
-            "snapshot-v1",
-            bundle.workspace.workspace_id,
-            base,
-            job.id,
-            self.config.sha256,
-            [member.model_dump(mode="json")],
-            [
-                {
-                    "slot": "lexical",
-                    "family_id": family_id,
-                    "required": True,
-                    "batch_ids": [batch.batch_id],
-                }
-            ],
-        )
-        placeholder = reader().put_stream(BytesIO(b"placeholder"), "application/json")
-        plan = PublicationPlan(
-            job_id=job.id,
-            snapshot_id=snapshot_id,
-            workspace_id=bundle.workspace.workspace_id,
-            base_snapshot_id=base,
-            config_sha=self.config.sha256,
-            manifest=placeholder,
-            members=(member,),
-            slots=(slot,),
-        )
-        manifest = reader().put_stream(
-            BytesIO(publication_manifest(plan)),
-            "application/json",
-        )
-        return plan.model_copy(update={"manifest": manifest})
+        return lexical_plan(self.store, bundle, job.id, self.config.sha256, base)
 
 
 @pytest.fixture
@@ -321,29 +229,22 @@ def test_partial_new_projection_does_not_replace_active(
     f = published_corpus
     old = f.store.resolve_snapshot(None).snapshot_id
     plan = f.plan("new source text", base=old)
-    bad = plan.model_copy(
-        update={
-            "slots": (),
-            "snapshot_id": digest(
-                "snapshot-v1",
-                plan.workspace_id,
-                plan.base_snapshot_id,
-                plan.job_id,
-                plan.config_sha,
-                [member.model_dump(mode="json") for member in plan.members],
-                [],
-            ),
-        }
-    )
-    bad = bad.model_copy(
-        update={
-            "manifest": reader().put_stream(
-                BytesIO(publication_manifest(bad)), "application/json"
-            )
-        }
-    )
-    with pytest.raises(TychoraError, match="required"):
+    bad = plan.model_copy(update={"families": ()})
+    with pytest.raises(TychoraError) as error:
         f.store.publish_snapshot(bad)
+    assert error.value.code == "INTEGRITY_ERROR"
+    assert f.store.resolve_snapshot(None).snapshot_id == old
+
+
+def test_publication_omitting_a_required_slot_does_not_replace_active(
+    published_corpus: PublishedCorpus,
+) -> None:
+    f = published_corpus
+    old = f.store.resolve_snapshot(None).snapshot_id
+    plan = f.plan("new source text", base=old)
+    f.store.required_slots = frozenset({"lexical", "text"})
+    with pytest.raises(TychoraError, match="required"):
+        f.store.publish_snapshot(plan)
     assert f.store.resolve_snapshot(None).snapshot_id == old
 
 
@@ -464,7 +365,7 @@ def test_native_health_reads_ready_vector_bytes_and_rejects_deleted_entry(
 
     f = projected_corpus
     view = f.store.resolve_snapshot(None)
-    slot = next(slot for slot in view.slots if slot.slot == "text")
+    slot = next(slot for slot in f.store.snapshot_slots(view) if slot.slot == "text")
     assert isinstance(slot.batches[0].receipt, BatchReceipt)
     service = RecoveryService(SimpleNamespace(store=f.store, db=f.store.db))
     before = service._verify_native_on_owner(ExecutionContext())
@@ -480,7 +381,9 @@ def test_read_only_chroma_family_open_does_not_create_missing_collection(
 ):
     slot = next(
         slot
-        for slot in projected_corpus.store.resolve_snapshot(None).slots
+        for slot in projected_corpus.store.snapshot_slots(
+            projected_corpus.store.resolve_snapshot(None)
+        )
         if slot.slot == "text"
     )
     spec = FamilySpec.model_validate_json(
@@ -497,7 +400,8 @@ def test_preproof_text_family_rejects_new_publication_before_native_mutation(
     f = make_projected_corpus(tmp_path, config_factory, legacy=True)
     try:
         old = f.store.resolve_snapshot(None)
-        slot = next(slot for slot in old.slots if slot.slot == "text")
+        slot = old.family("text")
+        assert slot is not None
         assert "capabilities" not in slot.family.config_json
         before = (f.vector.creations, f.vector.upserts, f.embedder.calls)
         with pytest.raises(TychoraError) as reuse_error:
@@ -518,7 +422,9 @@ def test_semantic_recovery_uses_exact_retained_capability_order(projected_corpus
 
     f = projected_corpus
     view = f.store.resolve_snapshot(None)
-    family = next(slot.family for slot in view.slots if slot.slot == "text")
+    family = next(
+        slot.family for slot in f.store.snapshot_slots(view) if slot.slot == "text"
+    )
     config = f.store.retained_config_sha(f.config.sha256)
     origin_sha = family.config_json["effective_config_sha"]
     for modes in (["document", "query"], ["query", "document"]):
@@ -577,7 +483,7 @@ def test_identical_source_reuses_canonical_and_native_batches(
     new = f.store.resolve_snapshot(None)
     assert new_id != old.snapshot_id
     assert new.members == old.members
-    assert new.slots[1].batches == old.slots[1].batches
+    assert f.store.snapshot_slots(new) == f.store.snapshot_slots(old)
     assert (f.embedder.calls, f.vector.upserts) == before
 
 
@@ -590,7 +496,7 @@ def test_native_recovery_replays_retained_vector_bytes_and_preserves_seal(
 
     f = projected_corpus
     view = f.store.resolve_snapshot(None)
-    slot = next(slot for slot in view.slots if slot.slot == "text")
+    slot = next(slot for slot in f.store.snapshot_slots(view) if slot.slot == "text")
     batch = slot.batches[0]
     before_seal = f.store.db.execute(
         "SELECT receipt_json FROM index_batches WHERE batch_id=?", (batch.batch_id,)
@@ -663,7 +569,9 @@ def test_native_recovery_rejects_independent_family_identity_corruption(
 
     f = projected_corpus
     slot = next(
-        slot for slot in f.store.resolve_snapshot(None).slots if slot.slot == "text"
+        slot
+        for slot in f.store.snapshot_slots(f.store.resolve_snapshot(None))
+        if slot.slot == "text"
     )
     family, batch = slot.family, slot.batches[0]
     config_json = dict(family.config_json)
@@ -692,7 +600,9 @@ def test_native_recovery_rejects_backend_handle_namespace_corruption(
 
     f = projected_corpus
     slot = next(
-        slot for slot in f.store.resolve_snapshot(None).slots if slot.slot == "text"
+        slot
+        for slot in f.store.snapshot_slots(f.store.resolve_snapshot(None))
+        if slot.slot == "text"
     )
 
     class MisboundVector(RecordingVector):
@@ -717,7 +627,9 @@ def test_native_recovery_requires_retained_semantic_capabilities(projected_corpu
 
     f = projected_corpus
     snapshot = f.store.resolve_snapshot(None)
-    family = next(slot.family for slot in snapshot.slots if slot.slot == "text")
+    family = next(
+        slot.family for slot in f.store.snapshot_slots(snapshot) if slot.slot == "text"
+    )
     origin = f.store.retained_config_sha(family.config_json["effective_config_sha"])
     missing = family.model_copy(
         update={
@@ -751,7 +663,9 @@ def test_native_recovery_rejects_sql_drift_before_native_write(
 
     f = projected_corpus
     snapshot = f.store.resolve_snapshot(None)
-    slot = next(slot for slot in snapshot.slots if slot.slot == "text")
+    slot = next(
+        slot for slot in f.store.snapshot_slots(snapshot) if slot.slot == "text"
+    )
     batch = slot.batches[0]
     db = f.store.db
     db.execute(
@@ -797,7 +711,9 @@ def test_native_recovery_rejects_sql_drift_before_native_write(
         ):
             return RecoveryReport(snapshot.workspace_id, 0, 1, 0, False)
 
-    with pytest.raises(TychoraError, match="SQL differs"):
+    # Family rows are read from SQL now, so family drift surfaces in the
+    # family-to-receipt check; every drift is refused before a native write.
+    with pytest.raises(TychoraError, match="SQL differs|family or receipt differs"):
         IsolatedRecovery(owner)._rebuild_native_on_owner(
             grant, ExecutionContext(), ("text",)
         )
@@ -821,7 +737,11 @@ def test_native_gc_prunes_only_unprotected_vector_batch_then_rebuilds(
 
     f = projected_corpus
     oldest = f.store.resolve_snapshot(None)
-    old_batch = next(slot.batches[0] for slot in oldest.slots if slot.slot == "text")
+    old_batch = next(
+        slot.batches[0]
+        for slot in f.store.snapshot_slots(oldest)
+        if slot.slot == "text"
+    )
     f.add_revision("second version")
     previous = f.store.resolve_snapshot(None)
     f.add_revision("third version")
@@ -859,7 +779,11 @@ def test_native_gc_prunes_only_unprotected_vector_batch_then_rebuilds(
     pruned = recovery._prune_native_on_owner(grant, ExecutionContext())
     assert old_batch.batch_id in pruned.pruned_batches
     for protected in (previous, active):
-        batch = next(slot.batches[0] for slot in protected.slots if slot.slot == "text")
+        batch = next(
+            slot.batches[0]
+            for slot in f.store.snapshot_slots(protected)
+            if slot.slot == "text"
+        )
         assert batch.batch_id not in pruned.pruned_batches
         assert f.vector.verify_batch(batch.receipt).ready
     assert not f.vector.verify_batch(old_batch.receipt).ready
@@ -922,10 +846,8 @@ def test_old_reader_pin_survives_new_publication(
     old = f.store.active_snapshot_id()
     assert old is not None
     with f.store.pin_snapshot(old) as reading:
-        old_batch = reading.slots[1].batches[0]
+        assert reading.snapshot_id == old
         assert f.store.leases.is_pinned(old)
-        assert f.store.leases.is_pinned(old_batch.batch_id)
-        assert f.store.artifacts.payload_is_pinned(reading.manifest.sha256)
         new = f.add_revision("new source while reading", source_key="new.md")
         assert new != old
         assert f.store.resolve_snapshot(old).snapshot_id == old
@@ -1020,7 +942,7 @@ def test_missing_vector_batch_artifact_reports_cache_absent(projected_corpus):
 
     f = projected_corpus
     view = f.store.resolve_snapshot(None)
-    slot = next(slot for slot in view.slots if slot.slot == "text")
+    slot = next(slot for slot in f.store.snapshot_slots(view) if slot.slot == "text")
     batch = slot.batches[0]
     missing = batch.model_copy(
         update={
@@ -1038,10 +960,16 @@ def test_missing_vector_batch_artifact_reports_cache_absent(projected_corpus):
 @pytest.mark.parametrize("state", ["delete_pending", "deleted"])
 def test_readding_content_revives_a_released_vector_batch(projected_corpus, state):
     f = projected_corpus
-    (sha,) = f.store.db.execute(
-        "SELECT vectors_sha FROM index_batches WHERE vectors_sha IS NOT NULL"
+    (batch_id, sha) = f.store.db.execute(
+        "SELECT batch_id,vectors_sha FROM index_batches WHERE vectors_sha IS NOT NULL"
     ).fetchone()
     stamp = "2026-01-01T00:00:00+00:00" if state == "deleted" else None
+    # A newer revision replaces the source; collection then removes the old
+    # batch and releases its artifact.
+    f.add_revision("newer source text")
+    f.store.db.execute(
+        "UPDATE index_batches SET state='removed' WHERE batch_id=?", (batch_id,)
+    )
     f.store.db.execute(
         "UPDATE artifacts SET payload_state=?,payload_deleted_at=? WHERE artifact_sha=?",
         (state, stamp, sha),
@@ -1049,13 +977,20 @@ def test_readding_content_revives_a_released_vector_batch(projected_corpus, stat
     f.store.db.commit()
     f.add_revision("old source text")
     assert f.store.db.execute(
+        "SELECT state FROM index_batches WHERE batch_id=?", (batch_id,)
+    ).fetchone() == ("ready",)
+    assert f.store.db.execute(
         "SELECT payload_state,payload_deleted_at FROM artifacts WHERE artifact_sha=?",
         (sha,),
     ).fetchone() == ("present", None)
 
 
 def _text_slot_batch(f):
-    slot = next(s for s in f.store.resolve_snapshot(None).slots if s.slot == "text")
+    slot = next(
+        s
+        for s in f.store.snapshot_slots(f.store.resolve_snapshot(None))
+        if s.slot == "text"
+    )
     return slot, slot.batches[0]
 
 
@@ -1095,20 +1030,12 @@ def test_publication_rejects_a_valid_vector_artifact_with_altered_rows(
 ):
     f = projected_corpus
     _, _, plan = f.prepare_revision("a second source text", source_key="b.md")
-    slot = next(s for s in plan.slots if s.slot == "text")
-    batch = slot.batches[-1]
+    batch = next(b for b in plan.new_batches if b.slot == "text")
     altered = batch.model_copy(update={"vectors": _altered_vectors(f, batch)})
-    slots = tuple(
-        s.model_copy(update={"batches": (*s.batches[:-1], altered)})
-        if s.slot == "text"
-        else s
-        for s in plan.slots
-    )
-    forged = plan.model_copy(update={"slots": slots})
-    forged = forged.model_copy(
+    forged = plan.model_copy(
         update={
-            "manifest": f.store.artifacts.put_stream(
-                BytesIO(publication_manifest(forged)), "application/json"
+            "new_batches": tuple(
+                altered if b.batch_id == batch.batch_id else b for b in plan.new_batches
             )
         }
     )
@@ -1160,7 +1087,7 @@ def test_receipt_mismatch_is_reported_before_an_absent_vector_batch(projected_co
 
 @pytest.mark.parametrize("damage", ["missing", "corrupt"])
 def test_revival_is_refused_without_verified_fresh_bytes(projected_corpus, damage):
-    from tychora.adapters.sqlite.publication import _register_artifact
+    from tychora.adapters.sqlite.publication import register_fresh
 
     f = projected_corpus
     _, batch = _text_slot_batch(f)
@@ -1175,8 +1102,8 @@ def test_revival_is_refused_without_verified_fresh_bytes(projected_corpus, damag
         path.unlink()
     else:
         path.write_bytes(b"corrupt")
-    with pytest.raises(TychoraError) as error:
-        _register_artifact(f.store, ref, revive=True)
+    with pytest.raises(TychoraError) as error, f.store.uow.write() as tx:
+        register_fresh(f.store, tx, ref)
     assert error.value.code == "INTEGRITY_ERROR"
     assert error.value.reason in {"payload.missing", "payload.hash_mismatch"}
     assert f.store.db.execute(
@@ -1192,7 +1119,9 @@ def _chroma_metadata(vector: RecordingVector, record_ids: list[str]) -> list[dic
 def test_text_batches_record_revision_extraction_and_unit_in_chroma(projected_corpus):
     f = projected_corpus
     slot = next(
-        slot for slot in f.store.resolve_snapshot(None).slots if slot.slot == "text"
+        slot
+        for slot in f.store.snapshot_slots(f.store.resolve_snapshot(None))
+        if slot.slot == "text"
     )
     batch = slot.batches[0]
     units = dict(
@@ -1223,7 +1152,9 @@ def test_native_rebuild_restores_owner_metadata(projected_corpus, tmp_path):
 
     f = projected_corpus
     slot = next(
-        slot for slot in f.store.resolve_snapshot(None).slots if slot.slot == "text"
+        slot
+        for slot in f.store.snapshot_slots(f.store.resolve_snapshot(None))
+        if slot.slot == "text"
     )
     batch = slot.batches[0]
     ids = [row.record_id for row in batch.vector_records]
@@ -1256,7 +1187,9 @@ def test_native_rebuild_rejects_owner_rows_that_differ_from_the_batch(
 
     f = projected_corpus
     slot = next(
-        slot for slot in f.store.resolve_snapshot(None).slots if slot.slot == "text"
+        slot
+        for slot in f.store.snapshot_slots(f.store.resolve_snapshot(None))
+        if slot.slot == "text"
     )
     batch = slot.batches[0]
     rows = vector_owner_rows(f.store.db, batch.batch_id)

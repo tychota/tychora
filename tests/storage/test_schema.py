@@ -22,11 +22,15 @@ def test_canonical_schema_integrity(tmp_path):
         r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
     assert {
-        "snapshot_batches",
+        "snapshot_pages",
         "asset_proxy_dependencies",
         "original_payload_tombstones",
     } <= names
-    assert len({n for n in names if not n.startswith("lexical_fts")}) == 44
+    views = {
+        r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='view'")
+    }
+    assert views == {"snapshot_members", "snapshot_batches"}
+    assert len({n for n in names if not n.startswith("lexical_fts")}) == 42
     assert "lexical_fts" in names
     assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
@@ -137,16 +141,28 @@ def populated(tmp_path):
         config_sha=sha,
         manifest_sha=sha,
         published_at="now",
+        job_id="job",
+        member_count=1,
     )
     insert(
         db,
-        "snapshot_members",
-        snapshot_id="snapshot",
+        "membership_pages",
+        page_id="page",
+        bucket=0,
+        manifest_sha=sha,
+        member_count=1,
+    )
+    insert(
+        db,
+        "page_members",
+        page_id="page",
         source_id=a.source.source_id,
         revision_id=a.revision.revision_id,
         extraction_id=a.extraction.extraction_id,
         is_default=1,
     )
+    insert(db, "page_batches", page_id="page", slot="lexical", batch_id="batch-a")
+    insert(db, "snapshot_pages", snapshot_id="snapshot", bucket=0, page_id="page")
     insert(
         db,
         "snapshot_indexes",
@@ -154,14 +170,6 @@ def populated(tmp_path):
         slot="lexical",
         family_id="family-a",
         required=1,
-    )
-    insert(
-        db,
-        "snapshot_batches",
-        snapshot_id="snapshot",
-        slot="lexical",
-        family_id="family-a",
-        batch_id="batch-a",
     )
     insert(
         db,
@@ -253,8 +261,7 @@ SQL_NEGATIVES = [
     "tombstone_duplicate",
     "tombstone_job",
     "family_extraction",
-    "snapshot_wrong_family",
-    "snapshot_default_source",
+    "page_unknown_batch",
     "revision_interval",
     "strict_type",
     "lexical_update",
@@ -277,10 +284,10 @@ def test_canonical_sql_negative_constraints(populated, case):
                 "UPDATE index_batches SET family_id='missing' WHERE batch_id='batch-a'"
             )
         elif case == "member_source":
-            db.execute("UPDATE snapshot_members SET source_id=?", (b.source.source_id,))
+            db.execute("UPDATE page_members SET source_id=?", (b.source.source_id,))
         elif case == "member_extraction":
             db.execute(
-                "UPDATE snapshot_members SET extraction_id=?",
+                "UPDATE page_members SET extraction_id=?",
                 (b.extraction.extraction_id,),
             )
         elif case == "parent_cross_extraction":
@@ -403,29 +410,9 @@ def test_canonical_sql_negative_constraints(populated, case):
                 expected_count=1,
                 state="pending",
             )
-        elif case == "snapshot_wrong_family":
+        elif case == "page_unknown_batch":
             insert(
-                db,
-                "snapshot_batches",
-                snapshot_id="snapshot",
-                slot="lexical",
-                family_id="family-a",
-                batch_id="batch-c",
-            )
-        elif case == "snapshot_default_source":
-            # A second valid revision of the same source is allowed, but not two defaults.
-            db.execute(
-                "UPDATE revisions SET source_id=? WHERE revision_id=?",
-                (a.source.source_id, b.revision.revision_id),
-            )
-            insert(
-                db,
-                "snapshot_members",
-                snapshot_id="snapshot",
-                source_id=a.source.source_id,
-                revision_id=b.revision.revision_id,
-                extraction_id=b.extraction.extraction_id,
-                is_default=1,
+                db, "page_batches", page_id="page", slot="lexical", batch_id="missing"
             )
         elif case == "revision_interval":
             db.execute(

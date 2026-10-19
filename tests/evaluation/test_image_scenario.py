@@ -252,7 +252,10 @@ async def test_declared_png_proxy_enters_visual_query_and_evaluation(tmp_path):
         snapshot = await owner.run_blocking(
             lambda: owner.store.resolve_snapshot(None), ctx
         )
-        image_slot = next(slot for slot in snapshot.slots if slot.slot == "image")
+        slots = await owner.run_blocking(
+            lambda: owner.store.snapshot_slots(snapshot), ctx
+        )
+        image_slot = next(slot for slot in slots if slot.slot == "image")
         assert image_slot.batches[0].expected_count == 1
         image_receipt = image_slot.batches[0].receipt
         assert isinstance(image_receipt, BatchReceipt)

@@ -387,7 +387,13 @@ def test_canonical_graph_seal_death_preserves_prior_snapshot_then_retries(tmp_pa
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
         assert snapshot.snapshot_id != before
-        graph_slot = next(slot for slot in snapshot.slots if slot.slot == "graph")
+        graph_slot = next(
+            slot
+            for slot in owner.run_blocking_sync(
+                lambda: owner.store.snapshot_slots(snapshot), ExecutionContext()
+            )
+            if slot.slot == "graph"
+        )
         graph_batch = graph_slot.batches[0]
         assert isinstance(graph_batch.receipt, GraphBatchReceipt)
         assert graph_batch.receipt.generation_id in staged

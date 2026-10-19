@@ -75,8 +75,8 @@ def backup_case(tmp_path):
                     ),
                 )
             owner.db.execute(
-                "INSERT INTO snapshots (snapshot_id,workspace_id,membership_sha,config_sha,manifest_sha,published_at) "
-                "VALUES (?,?,?,?,?,?)",
+                "INSERT INTO snapshots (snapshot_id,workspace_id,membership_sha,config_sha,"
+                "manifest_sha,published_at,job_id,member_count) VALUES (?,?,?,?,?,?,'job',0)",
                 (
                     "snapshot-one",
                     owner.workspace_id,

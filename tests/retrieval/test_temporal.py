@@ -103,7 +103,6 @@ def test_explicit_revision_still_obeys_date_constraints():
 def test_compiled_attempt_exposes_overlap_warning(tmp_path):
     from tychora.configuration.registry import Registry
     from tychora.configuration.resolve import resolve_config
-    from tychora.contracts.artifacts import ArtifactRef
     from tychora.contracts.identity import digest
     from tychora.contracts.publication import SnapshotMember, SnapshotView
     from tychora.contracts.requests import QueryRequest, RequestScope
@@ -124,12 +123,6 @@ def test_compiled_attempt_exposes_overlap_warning(tmp_path):
         chunks=(),
         assets=(),
     )
-    artifact = ArtifactRef(
-        sha256=digest("artifact"),
-        size_bytes=1,
-        media_type="application/json",
-        storage_key="fixture",
-    )
     snapshot = SnapshotView(
         snapshot_id="snapshot",
         workspace_id="workspace",
@@ -143,7 +136,9 @@ def test_compiled_attempt_exposes_overlap_warning(tmp_path):
                 }
             )
         ).hexdigest(),
-        manifest=artifact,
+        member_count=2,
+        page_ids=(),
+        families=(),
         members=(
             SnapshotMember(
                 source_id="source", revision_id="one", extraction_id="one-extraction"
@@ -152,7 +147,6 @@ def test_compiled_attempt_exposes_overlap_warning(tmp_path):
                 source_id="source", revision_id="two", extraction_id="two-extraction"
             ),
         ),
-        slots=(),
     )
 
     snapshot_view = snapshot

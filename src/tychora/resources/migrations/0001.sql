@@ -337,22 +337,9 @@ CREATE TABLE snapshots (
   config_sha TEXT NOT NULL,
   manifest_sha TEXT NOT NULL REFERENCES artifacts(artifact_sha),
   published_at TEXT NOT NULL,
-  job_id TEXT,
-  member_count INTEGER CHECK(member_count IS NULL OR member_count>=0)
+  job_id TEXT NOT NULL,
+  member_count INTEGER NOT NULL CHECK(member_count>=0)
 ) STRICT;
-
-CREATE TABLE snapshot_members (
-  snapshot_id TEXT NOT NULL REFERENCES snapshots(snapshot_id),
-  source_id TEXT NOT NULL,
-  revision_id TEXT NOT NULL,
-  extraction_id TEXT NOT NULL,
-  is_default INTEGER NOT NULL CHECK(is_default IN (0,1)),
-  PRIMARY KEY(snapshot_id,revision_id),
-  FOREIGN KEY(revision_id,source_id) REFERENCES revisions(revision_id,source_id),
-  FOREIGN KEY(extraction_id,revision_id) REFERENCES extractions(extraction_id,revision_id)
-) STRICT;
-CREATE UNIQUE INDEX snapshot_default_source ON snapshot_members(snapshot_id,source_id)
-  WHERE is_default=1;
 
 CREATE TABLE snapshot_indexes (
   snapshot_id TEXT NOT NULL REFERENCES snapshots(snapshot_id),
@@ -361,16 +348,6 @@ CREATE TABLE snapshot_indexes (
   required INTEGER NOT NULL CHECK(required IN (0,1)),
   PRIMARY KEY(snapshot_id,slot),
   UNIQUE(snapshot_id,slot,family_id)
-) STRICT;
-
-CREATE TABLE snapshot_batches (
-  snapshot_id TEXT NOT NULL,
-  slot TEXT NOT NULL,
-  family_id TEXT NOT NULL,
-  batch_id TEXT NOT NULL,
-  PRIMARY KEY(snapshot_id,slot,batch_id),
-  FOREIGN KEY(snapshot_id,slot,family_id) REFERENCES snapshot_indexes(snapshot_id,slot,family_id),
-  FOREIGN KEY(batch_id,family_id) REFERENCES index_batches(batch_id,family_id)
 ) STRICT;
 
 CREATE TABLE membership_pages (
@@ -522,5 +499,16 @@ CREATE INDEX chunks_extraction_group ON chunks(extraction_id,context_group_key);
 CREATE INDEX batches_family_extraction ON index_batches(family_id,extraction_id,state);
 CREATE INDEX vector_chunk ON vector_records(chunk_id,batch_id);
 CREATE INDEX vector_asset ON vector_records(asset_id,batch_id);
-CREATE INDEX members_extraction ON snapshot_members(extraction_id,snapshot_id);
 CREATE INDEX queries_expiration ON query_runs(expires_at);
+
+CREATE VIEW snapshot_members AS
+  SELECT sp.snapshot_id, m.source_id, m.revision_id, m.extraction_id, m.is_default
+  FROM snapshot_pages sp JOIN page_members m ON m.page_id=sp.page_id;
+CREATE VIEW snapshot_batches AS
+  SELECT sp.snapshot_id, pb.slot, ib.family_id, pb.batch_id
+  FROM snapshot_pages sp
+  JOIN page_batches pb ON pb.page_id=sp.page_id
+  JOIN index_batches ib ON ib.batch_id=pb.batch_id
+  UNION ALL
+  SELECT rb.snapshot_id, rb.slot, ib.family_id, rb.batch_id
+  FROM snapshot_root_batches rb JOIN index_batches ib ON ib.batch_id=rb.batch_id;

@@ -239,9 +239,9 @@ def compose_default_bindings(
             if config.values.index.graph == "ladybug" and "graph" not in unavailable
             else None
         )
-        if owner.store.active_snapshot_id() is not None:
-            view = owner.store.resolve_snapshot(None)
-            for slot in view.slots:
+        if (active_id := owner.store.active_snapshot_id()) is not None:
+            slots = owner.store.snapshot_slots(owner.store.resolve_snapshot(active_id))
+            for slot in slots:
                 if slot.slot not in unavailable:
                     continue
                 if slot.slot in {"text", "image"}:
@@ -252,7 +252,7 @@ def compose_default_bindings(
                             owner.store.graph_indexes.pop(
                                 batch.graph_manifest.spec.generation_id, None
                             )
-            for slot in view.slots:
+            for slot in slots:
                 index = (
                     text_index
                     if slot.slot == "text"
@@ -268,7 +268,7 @@ def compose_default_bindings(
                         "SELECT 1 FROM snapshot_batches s JOIN index_batches b "
                         "ON b.batch_id=s.batch_id WHERE s.snapshot_id=? "
                         "AND s.slot=? AND b.state='ready' LIMIT 1",
-                        (view.snapshot_id, slot.slot),
+                        (active_id, slot.slot),
                     ).fetchone()
                     if ready is not None:
                         try:

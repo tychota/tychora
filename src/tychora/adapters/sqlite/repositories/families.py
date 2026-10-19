@@ -12,14 +12,14 @@ from tychora.contracts.snapshots import IndexFamily
 
 from .workspace import require_write
 
-_COLUMNS = (
+FAMILY_COLUMNS = (
     "family_id,channel,backend,provider,model,dimension,config_sha,config_json,"
     "backend_namespace,created_at"
 )
 
 
 def family_from_row(row: Sequence[Any]) -> IndexFamily:
-    """Build a family from a row selected in ``_COLUMNS`` order."""
+    """Build a family from a row selected in ``FAMILY_COLUMNS`` order."""
     try:
         return IndexFamily(
             family_id=row[0],
@@ -66,7 +66,8 @@ class SqliteFamilyRepository:
     def get(self, family_id: str) -> IndexFamily | None:
         """Return the stored family, or ``None`` when absent."""
         row = self._db.execute(
-            f"SELECT {_COLUMNS} FROM index_families WHERE family_id=?", (family_id,)
+            f"SELECT {FAMILY_COLUMNS} FROM index_families WHERE family_id=?",
+            (family_id,),
         ).fetchone()
         return None if row is None else family_from_row(row)
 
@@ -87,12 +88,12 @@ class SqliteFamilyRepository:
         require_write(self._db, self._writable)
         values = (*_family_values(family), identity_sha, nonce)
         self._db.execute(
-            f"INSERT INTO index_families ({_COLUMNS},identity_sha,creation_nonce) "
+            f"INSERT INTO index_families ({FAMILY_COLUMNS},identity_sha,creation_nonce) "
             "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
             values,
         )
         stored = self._db.execute(
-            f"SELECT {_COLUMNS},identity_sha,creation_nonce FROM index_families "
+            f"SELECT {FAMILY_COLUMNS},identity_sha,creation_nonce FROM index_families "
             "WHERE family_id=?",
             (family.family_id,),
         ).fetchone()

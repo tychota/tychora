@@ -1,4 +1,4 @@
-"""Verified immutable batch bindings and one SQLite activation switch."""
+"""Verify the batches an add wrote, then switch the active snapshot in one transaction."""
 
 from __future__ import annotations
 
@@ -6,307 +6,170 @@ import json
 import sqlite3
 from contextlib import ExitStack
 from datetime import UTC, datetime
+from hashlib import sha256
 from typing import TYPE_CHECKING, NoReturn
 from uuid import UUID
 
-from tychora.adapters.files.references import MAX_MANIFEST_BYTES, required_closure
-from tychora.adapters.sqlite.repositories import (
-    SqliteBatchRepository,
-    SqliteFamilyRepository,
-    SqliteWorkspaceRepository,
-    artifact_ref,
-)
+from tychora.adapters.files.references import MAX_MANIFEST_BYTES
+from tychora.adapters.sqlite.repositories import artifact_ref
 from tychora.application.collection_policy import (
     collection_is_active,
     require_active_collection,
 )
 from tychora.configuration.indexed_representation import pinned_runtime_compatible
-from tychora.contracts.artifacts import ArtifactRef, ManifestRef
+from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.graph import GraphBatchReceipt, graph_manifest_digest
+from tychora.contracts.graph import (
+    GraphBatchReceipt,
+    GraphManifest,
+    graph_manifest_digest,
+)
 from tychora.contracts.identity import canonical_bytes, digest, source_id
 from tychora.contracts.jobs import JobAuthorization, PublicationReceipt
 from tychora.contracts.publication import (
-    IndexFamily,
     LexicalBatchReceipt,
-    PublicationBatch,
+    NewBatch,
     PublicationPlan,
     SnapshotView,
-    VectorRecordBinding,
+    snapshot_root_document,
 )
-from tychora.contracts.vector_batches import (
-    VECTOR_BATCH_MEDIA_TYPE,
-    decode_vector_batch,
-    row_value_sha,
-)
+from tychora.contracts.snapshots import MembershipPage
+from tychora.contracts.vector_batches import decode_vector_batch, row_value_sha
 from tychora.contracts.vectors import BatchReceipt
 from tychora.indexing.receipts import receipt_digest
 from tychora.ports.execution import ExecutionContext
-from tychora.ports.repositories import VectorRecordRow
+from tychora.ports.repositories import ReadTransaction, WriteTransaction
 
 if TYPE_CHECKING:
     from tychora.adapters.sqlite.corpus import CorpusStore
 
 
-def _fail(message: str) -> NoReturn:
-    raise TychoraError("INTEGRITY_ERROR", message)
+def _fail(message: str, reason: str = "canonical.binding_mismatch") -> NoReturn:
+    raise TychoraError("INTEGRITY_ERROR", message, reason=reason)
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
+def _rebase(message: str) -> TychoraError:
+    return TychoraError(
+        "WORKSPACE_BUSY", message, retryable=True, reason="publication.rebase"
+    )
 
 
 def _read_json(store: CorpusStore, ref: ArtifactRef) -> dict:
     with store.artifacts.open_verified(ref) as stream:
         raw = stream.read(ref.size_bytes + 1)
     if len(raw) != ref.size_bytes:
-        _fail("Publication artifact size differs")
+        _fail("Publication artifact size differs", "payload.hash_mismatch")
     try:
         value = json.loads(raw)
     except (ValueError, UnicodeDecodeError):
-        _fail("Publication manifest is malformed")
+        _fail("Publication manifest is malformed", "canonical.row_invalid")
     if not isinstance(value, dict) or canonical_bytes(value) != raw:
-        _fail("Publication manifest is not canonical JSON")
+        _fail("Publication manifest is not canonical JSON", "canonical.row_invalid")
     return value
 
 
-def _manifest_document(plan: PublicationPlan) -> dict:
-    inputs = {
-        batch.input_manifest.sha256: batch.input_manifest
-        for slot in plan.slots
-        for batch in slot.batches
-    }
-    caches = {
-        batch.vectors.sha256: batch.vectors
-        for slot in plan.slots
-        for batch in slot.batches
-        if batch.vectors is not None
-    }
-    return {
-        "type": "snapshot",
-        "schema_version": "2",
-        "required_artifacts": [
-            ref.model_dump(mode="json")
-            for ref in sorted(caches.values(), key=lambda ref: ref.sha256)
-        ],
-        "required_manifests": [
-            ManifestRef(
-                artifact=ref, type="index_input", schema_version="1"
-            ).model_dump(mode="json")
-            for ref in sorted(inputs.values(), key=lambda ref: ref.sha256)
-        ],
-        "data": plan.model_dump(mode="json", exclude={"manifest"}),
-    }
-
-
-def publication_manifest(plan: PublicationPlan) -> bytes:
-    """Canonical bytes of the snapshot manifest, the typed retention header of a complete plan."""
-    return canonical_bytes(_manifest_document(plan))
-
-
-def _verify_artifacts(store: CorpusStore, plan: PublicationPlan) -> None:
-    if _read_json(store, plan.manifest) != _manifest_document(plan):
-        _fail("Snapshot manifest differs from complete publication plan")
-
-    def load(ref: ManifestRef):
-        return _read_json(store, ref.artifact)
-
-    closure = required_closure(
-        (ManifestRef(artifact=plan.manifest, type="snapshot", schema_version="2"),),
-        load=load,
+def page_ref(page: MembershipPage) -> ArtifactRef:
+    """Return the content-addressed reference of a page's manifest bytes."""
+    raw = page.manifest_bytes()
+    sha = sha256(raw).hexdigest()
+    return ArtifactRef(
+        sha256=sha, size_bytes=len(raw), media_type="application/json", storage_key=sha
     )
-    required = {
-        plan.manifest.sha256,
-        *(batch.input_manifest.sha256 for slot in plan.slots for batch in slot.batches),
-        *(
-            batch.vectors.sha256
-            for slot in plan.slots
-            for batch in slot.batches
-            if batch.vectors is not None
-        ),
-    }
-    if closure != required:
-        _fail("Publication retention closure differs from required inputs")
-    for slot in plan.slots:
-        for batch in slot.batches:
-            value = _read_json(store, batch.input_manifest)
-            if value.get("type") != "index_input" or value.get("schema_version") != "1":
-                _fail("Index batch input manifest has the wrong type")
-            entries = value.get("data", {}).get("entries")
-            if not isinstance(entries, list):
-                _fail("Index input has no exact entry list")
-            expected = (
-                [row.chunk_id for row in batch.lexical_records]
-                if slot.family.channel == "lexical"
-                else [row.record_id for row in batch.vector_records]
-                if slot.family.channel in {"text", "image"}
-                else sorted(batch.graph_manifest.evidence_ids)
-                if batch.graph_manifest is not None
-                else None
-            )
-            if entries != expected:
-                _fail("Index input entries differ from the immutable batch")
-            if slot.slot == "text":
-                represented = [
-                    {
-                        "record_id": binding.record_id,
-                        "group_id": binding.group_id,
-                        "dependency_ids": sorted(binding.dependency_ids),
-                    }
-                    for binding in batch.vector_records
-                ]
-                if value.get("data", {}).get("representations") != represented or any(
-                    binding.group_id is None or not binding.dependency_ids
-                    for binding in batch.vector_records
-                ):
-                    _fail("Text batch input omits complete group ownership")
 
 
-def _verify_batches(
-    store: CorpusStore, plan: PublicationPlan, ctx: ExecutionContext
+def _bound_batch_ids(plan: PublicationPlan) -> tuple[str, ...]:
+    """Every batch the new pages and the root bind, reused or new."""
+    return tuple(
+        sorted(
+            {
+                batch.batch_id
+                for page in plan.new_pages
+                for member in page.members
+                for batch in member.batches
+            }
+            | {batch.batch_id for batch in plan.root_batches}
+        )
+    )
+
+
+def _require_base(store: CorpusStore, plan: PublicationPlan) -> SnapshotView | None:
+    """Refuse a plan whose base is no longer active before anything reads it."""
+    with store.uow.read() as tx:
+        if tx.snapshots.active_id() != plan.base_snapshot_id:
+            raise _rebase("Publication base changed; rebase required.")
+    if plan.base_snapshot_id is None:
+        return None
+    return store.resolve_snapshot(plan.base_snapshot_id)
+
+
+def _verify_documents(store: CorpusStore, plan: PublicationPlan) -> None:
+    """Check the new pages exist and the root binds exactly the plan's pages."""
+    with store.uow.read() as tx:
+        manifests = dict(tx.snapshots.page_manifests(plan.reused_page_ids))
+    for page in plan.new_pages:
+        ref = page_ref(page)
+        if not store.artifacts.stat(ref).available:
+            _fail("Membership page bytes are missing", "payload.missing")
+        manifests[page.page_id] = ref
+    if _read_json(store, plan.manifest) != snapshot_root_document(plan, manifests):
+        _fail("Snapshot root differs from its publication plan")
+
+
+def _verify_families(
+    store: CorpusStore, plan: PublicationPlan, base: SnapshotView | None
 ) -> None:
-    selected = {member.extraction_id for member in plan.members}
-    slots = {slot.slot: slot for slot in plan.slots}
+    """Require the configured slots; a pinned family must come from the base."""
+    slots = {item.slot: item for item in plan.families}
     if not store.required_slots <= slots.keys() or any(
         not slots[key].required for key in store.required_slots
     ):
         _fail("Publication omits a required index slot")
-    for slot in plan.slots:
-        ctx.checkpoint()
-        channel = slot.family.channel
-        origin_sha = slot.family.config_json.get("effective_config_sha")
-        if slot.slot != channel or not isinstance(origin_sha, str):
-            _fail("Snapshot slot family or configuration differs")
-        if origin_sha != plan.config_sha:
-            if plan.base_snapshot_id is None:
-                _fail("Snapshot slot family or configuration differs")
-            previous = store.resolve_snapshot(plan.base_snapshot_id)
-            pinned_slot = next(
-                (item for item in previous.slots if item.slot == slot.slot), None
+    for item in plan.families:
+        origin = item.family.config_json.get("effective_config_sha")
+        if not isinstance(origin, str):
+            _fail("Snapshot slot family has no configuration binding", "config.drift")
+        if origin == plan.config_sha:
+            continue
+        pinned = base.family(item.slot) if base is not None else None
+        if (
+            pinned is None
+            or pinned.family != item.family
+            or not pinned_runtime_compatible(
+                store.retained_config_sha(origin),
+                store.retained_config_sha(plan.config_sha),
             )
-            if (
-                pinned_slot is None
-                or pinned_slot.family != slot.family
-                or not pinned_runtime_compatible(
-                    store.retained_config_sha(origin_sha),
-                    store.retained_config_sha(plan.config_sha),
-                )
-            ):
-                _fail("Snapshot slot family or configuration differs")
-        if channel == "graph":
-            if len(slot.batches) != 1 or slot.batches[0].extraction_id is not None:
-                _fail("Graph slot requires one complete membership generation")
-        elif {batch.extraction_id for batch in slot.batches} != selected or len(
-            slot.batches
-        ) != len(selected):
-            _fail("Source-local batch membership is incomplete")
-        for batch in slot.batches:
-            if batch.batch_id != digest(
-                "index-batch-v1",
-                batch.family_id,
-                batch.extraction_id,
-                batch.input_manifest.sha256,
-            ):
-                _fail("Index batch identity differs from exact input")
-            receipt = batch.receipt
-            if isinstance(receipt, LexicalBatchReceipt):
-                ids = tuple(row.chunk_id for row in batch.lexical_records)
-                if (
-                    channel != "lexical"
-                    or batch.vector_records
-                    or receipt.family_id != batch.family_id
-                    or receipt.count != batch.expected_count
-                    or len(ids) != receipt.count
-                    or len(set(ids)) != len(ids)
-                    or receipt.entry_ids_sha != digest("index-entries-v1", ids)
-                ):
-                    _fail("Lexical batch receipt differs from records")
-            elif isinstance(receipt, BatchReceipt):
-                records = tuple(
-                    sorted(receipt.records, key=lambda item: item.record_id)
-                )
-                bindings = tuple(
-                    sorted(batch.vector_records, key=lambda item: item.record_id)
-                )
-                if (
-                    channel not in {"text", "image"}
-                    or batch.lexical_records
-                    or receipt.family_id != batch.family_id
-                    or receipt.config_sha != slot.family.config_sha
-                    or receipt.count != batch.expected_count
-                    or len(records) != receipt.count
-                    or receipt.digest != receipt_digest(records)
-                    or tuple(
-                        (row.record_id, row.input_sha, row.value_sha) for row in records
-                    )
-                    != tuple(
-                        (row.record_id, row.input_sha, row.value_sha)
-                        for row in bindings
-                    )
-                ):
-                    _fail("Vector batch receipt differs from records")
-                if slot.family.dimension is None:
-                    _fail("Vector family has no dimension")
-                if bindings:
-                    _verify_vector_artifact(
-                        store, batch, slot.family.dimension, bindings
-                    )
-                index = store.vector_indexes.get(batch.family_id)
-                if index is None:
-                    raise TychoraError(
-                        "CAPABILITY_MISSING", "Required vector index is unavailable"
-                    )
-                verification = index.verify_batch(receipt)
-                if (
-                    not verification.ready
-                    or not verification.config_matches
-                    or verification.missing_record_ids
-                    or verification.mismatched_record_ids
-                ):
-                    _fail("Native vector batch is incomplete")
-            elif isinstance(receipt, GraphBatchReceipt):
-                manifest = batch.graph_manifest
-                if (
-                    channel != "graph"
-                    or manifest is None
-                    or batch.expected_count != receipt.evidence_count
-                    or receipt.family_id != batch.family_id
-                    or receipt.config_sha != slot.family.config_sha
-                    or receipt.manifest_digest != graph_manifest_digest(manifest)
-                    or manifest.spec.workspace_id != plan.workspace_id
-                    or {item.extraction_id for item in manifest.spec.memberships}
-                    != selected
-                    or manifest.spec.generation_id != receipt.generation_id
-                    or manifest.spec.decision_watermark != receipt.decision_watermark
-                ):
-                    _fail("Graph receipt differs from complete canonical membership")
-                graph = store.graph_indexes.get(receipt.generation_id)
-                if graph is None:
-                    raise TychoraError(
-                        "CAPABILITY_MISSING", "Required graph generation is unavailable"
-                    )
-                if (
-                    graph.seal_generation(receipt.generation_id, manifest, ctx)
-                    != receipt
-                ):
-                    _fail("Native graph generation receipt differs")
-            else:
-                _fail("Unknown publication receipt")
+        ):
+            _fail("Snapshot slot family or configuration differs", "config.drift")
+
+
+def _verify_lexical(
+    store: CorpusStore, batch: NewBatch, receipt: LexicalBatchReceipt
+) -> None:
+    entries = _read_json(store, batch.input_manifest).get("data", {}).get("entries")
+    if not isinstance(entries, list):
+        _fail("Lexical batch input has no exact entry list", "canonical.row_invalid")
+    staged = {
+        row[0]
+        for row in store.db.execute(
+            "SELECT chunk_id FROM lexical_records WHERE batch_id=?", (batch.batch_id,)
+        )
+    }
+    if (
+        receipt.family_id != batch.family_id
+        or receipt.count != batch.expected_count
+        or len(entries) != receipt.count
+        or staged != set(entries)
+        or receipt.entry_ids_sha != digest("index-entries-v1", tuple(entries))
+    ):
+        _fail("Lexical batch rows differ from their receipt")
 
 
 def _verify_vector_artifact(
-    store: CorpusStore,
-    batch: PublicationBatch,
-    dimension: int,
-    bindings: tuple[VectorRecordBinding, ...],
+    store: CorpusStore, batch: NewBatch, receipt: BatchReceipt, dimension: int | None
 ) -> None:
-    """Check the batch artifact's rows against the receipt bindings."""
+    """Check the batch artifact's rows against the receipt records."""
     if batch.vectors is None:
-        raise TychoraError(
-            "INTEGRITY_ERROR",
-            "Vector batch has no artifact",
-            reason="canonical.binding_mismatch",
-        )
+        _fail("Vector batch artifact is missing", "payload.missing")
     with store.artifacts.open_verified(batch.vectors) as stream:
         decoded = decode_vector_batch(stream.read(batch.vectors.size_bytes + 1))
     rows = tuple(
@@ -316,193 +179,316 @@ def _verify_vector_artifact(
     if (
         decoded.family_id != batch.family_id
         or decoded.dimension != dimension
-        or rows != tuple((b.record_id, b.input_sha, b.value_sha) for b in bindings)
+        or rows
+        != tuple((r.record_id, r.input_sha, r.value_sha) for r in receipt.records)
     ):
-        raise TychoraError(
-            "INTEGRITY_ERROR",
-            "Vector batch artifact differs from its receipt",
-            reason="payload.hash_mismatch",
-        )
+        _fail("Vector batch artifact differs from its receipt", "payload.hash_mismatch")
 
 
-def _register_artifact(
-    store: CorpusStore, ref: ArtifactRef, *, revive: bool = False
+def _verify_vector(
+    store: CorpusStore, plan: PublicationPlan, batch: NewBatch, receipt: BatchReceipt
 ) -> None:
-    """Register an artifact; a released row comes back once its bytes verify."""
-    row = store.db.execute(
-        "SELECT size_bytes,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
-        (ref.sha256,),
-    ).fetchone()
-    if row is not None:
-        if row[:2] != (ref.size_bytes, ref.storage_key) or not (
-            row[2] == "present" or revive
-        ):
-            _fail("Required publication artifact is unavailable")
-        if row[2] != "present":
-            with store.artifacts.open_verified(ref):
-                pass
-            store.db.execute(
-                "UPDATE artifacts SET payload_state='present',payload_deleted_at=NULL "
-                "WHERE artifact_sha=?",
-                (ref.sha256,),
-            )
-        return
-    store.db.execute(
-        "INSERT INTO artifacts (artifact_sha,size_bytes,media_type,storage_key,created_at) VALUES (?,?,?,?,?)",
-        (ref.sha256, ref.size_bytes, ref.media_type, ref.storage_key, _now()),
+    family = next(
+        item.family
+        for item in plan.families
+        if item.family.family_id == batch.family_id
     )
-
-
-def _require_created_family(db: sqlite3.Connection, family: IndexFamily) -> None:
-    """Refuse a plan whose family was not created, or differs from its stored row."""
-    if SqliteFamilyRepository(db, writable=False).get(family.family_id) != family:
+    if (
+        receipt.family_id != batch.family_id
+        or receipt.config_sha != family.config_sha
+        or receipt.count != batch.expected_count
+        or len(receipt.records) != receipt.count
+        or receipt.digest != receipt_digest(receipt.records)
+    ):
+        _fail("Vector batch receipt differs from its records")
+    if receipt.records:
+        _verify_vector_artifact(store, batch, receipt, family.dimension)
+    index = store.vector_indexes.get(batch.family_id)
+    if index is None:
         raise TychoraError(
-            "INTEGRITY_ERROR",
-            "Publication family was not created before its batches.",
-            reason="canonical.binding_mismatch",
+            "CAPABILITY_MISSING",
+            "Required vector index is unavailable",
+            reason="native.unavailable",
+        )
+    verification = index.verify_batch(receipt)
+    if (
+        not verification.ready
+        or not verification.config_matches
+        or verification.missing_record_ids
+        or verification.mismatched_record_ids
+    ):
+        _fail("Native vector batch is incomplete")
+
+
+def _member_extractions(store: CorpusStore, plan: PublicationPlan) -> set[str]:
+    """Every extraction the planned snapshot selects, from SQL and the new pages."""
+    reused = {
+        row[0]
+        for row in store.db.execute(
+            "SELECT extraction_id FROM page_members "
+            "WHERE page_id IN (SELECT value FROM json_each(?))",
+            (json.dumps(list(plan.reused_page_ids)),),
+        )
+    }
+    return reused | {m.extraction_id for p in plan.new_pages for m in p.members}
+
+
+def _verify_graph(
+    store: CorpusStore,
+    plan: PublicationPlan,
+    batch: NewBatch,
+    receipt: GraphBatchReceipt,
+    ctx: ExecutionContext,
+) -> None:
+    data = _read_json(store, batch.input_manifest).get("data", {})
+    try:
+        manifest = GraphManifest.model_validate_json(
+            canonical_bytes(data["graph_manifest"])
+        )
+    except (KeyError, TypeError, ValueError):
+        _fail("Graph batch input has no generation manifest", "canonical.row_invalid")
+    spec = manifest.spec
+    if (
+        receipt.family_id != batch.family_id
+        or receipt.evidence_count != batch.expected_count
+        or receipt.manifest_digest != graph_manifest_digest(manifest)
+        or data.get("entries") != sorted(manifest.evidence_ids)
+        or (spec.workspace_id, spec.generation_id, spec.decision_watermark)
+        != (plan.workspace_id, receipt.generation_id, receipt.decision_watermark)
+        or {item.extraction_id for item in spec.memberships}
+        != _member_extractions(store, plan)
+    ):
+        _fail("Graph receipt differs from complete canonical membership")
+    graph = store.graph_indexes.get(receipt.generation_id)
+    if graph is None:
+        raise TychoraError(
+            "CAPABILITY_MISSING",
+            "Required graph generation is unavailable",
+            reason="native.unavailable",
+        )
+    if graph.seal_generation(receipt.generation_id, manifest, ctx) != receipt:
+        _fail("Native graph generation receipt differs")
+
+
+def _require_ready(tx: ReadTransaction, plan: PublicationPlan) -> None:
+    """Every bound batch, reused or new, must be ready; one statement."""
+    bound = _bound_batch_ids(plan)
+    if tx.batches.count_ready(bound) != len(bound):
+        raise TychoraError(
+            "INDEX_INCOMPLETE", "A bound batch is not ready", reason="batch.missing"
         )
 
 
-def _batch_row(family: IndexFamily, batch: PublicationBatch) -> dict:
-    """The immutable ``index_batches`` row of a ready batch."""
-    receipt = batch.receipt
-    count = (
-        receipt.count
-        if isinstance(receipt, (LexicalBatchReceipt, BatchReceipt))
-        else receipt.evidence_count
-    )
-    entry_ids = (
-        tuple(row.chunk_id for row in batch.lexical_records)
-        if family.channel == "lexical"
-        else tuple(row.record_id for row in batch.vector_records)
-        if family.channel in {"text", "image"}
-        else tuple(batch.graph_manifest.evidence_ids)
-        if batch.graph_manifest
-        else ()
-    )
+def _verify_new_batches(
+    store: CorpusStore, plan: PublicationPlan, ctx: ExecutionContext
+) -> None:
+    """Verify only what this publication wrote; reused batches are counted, not opened."""
+    with store.uow.read() as tx:
+        _require_ready(tx, plan)
+    for batch in plan.new_batches:
+        ctx.checkpoint()
+        receipt = batch.receipt
+        if isinstance(receipt, LexicalBatchReceipt):
+            _verify_lexical(store, batch, receipt)
+        elif isinstance(receipt, BatchReceipt):
+            _verify_vector(store, plan, batch, receipt)
+        else:
+            _verify_graph(store, plan, batch, receipt, ctx)
+
+
+def _check_base_and_job(
+    store: CorpusStore, plan: PublicationPlan, tx: WriteTransaction
+) -> None:
+    """Inside the activation: same base, same decisions, a running job, one workspace."""
+    if tx.snapshots.active_id() != plan.base_snapshot_id:
+        raise _rebase("Publication base changed; rebase required.")
+    if (
+        plan.graph_watermark is not None
+        and tx.workspace.decision_watermark() != plan.graph_watermark
+    ):
+        raise _rebase("Graph decisions changed; rebase required.")
+    job = store.db.execute(
+        "SELECT state,effective_config_sha,result_snapshot_id FROM jobs WHERE job_id=?",
+        (plan.job_id,),
+    ).fetchone()
+    if (
+        job is None
+        or job[0] != "running"
+        or job[1] != plan.config_sha
+        or job[2] not in (None, plan.snapshot_id)
+    ):
+        _fail("Publication job is absent, cancelled, or has conflicting bindings")
+    if tx.workspace.workspace_id() != plan.workspace_id:
+        _fail("Publication workspace identity differs")
+
+
+def _prior_extractions(store: CorpusStore, plan: PublicationPlan) -> set[str]:
+    """Extractions the base selected in the buckets the new pages replace."""
+    if plan.base_snapshot_id is None:
+        return set()
     return {
-        "batch_id": batch.batch_id,
-        "family_id": batch.family_id,
-        "extraction_id": batch.extraction_id,
-        "input_manifest_sha": batch.input_manifest.sha256,
-        "expected_count": batch.expected_count,
-        "actual_count": count,
-        "entry_ids_sha": digest("index-entries-v1", entry_ids),
-        "state": "ready",
-        "receipt_json": canonical_bytes(receipt.model_dump(mode="json")).decode(),
-        "vectors_sha": batch.vectors.sha256 if batch.vectors else None,
-    }
-
-
-def _register_plan_artifacts(store: CorpusStore, plan: PublicationPlan) -> None:
-    """Register the manifest, input manifests and vector batches of a plan."""
-    refs = {
-        ref.sha256: ref
-        for ref in (
-            plan.manifest,
-            *(batch.input_manifest for slot in plan.slots for batch in slot.batches),
-            *(
-                batch.vectors
-                for slot in plan.slots
-                for batch in slot.batches
-                if batch.vectors is not None
+        row[0]
+        for row in store.db.execute(
+            "SELECT m.extraction_id FROM snapshot_pages sp "
+            "JOIN page_members m USING(page_id) WHERE sp.snapshot_id=? "
+            "AND sp.bucket IN (SELECT value FROM json_each(?))",
+            (
+                plan.base_snapshot_id,
+                json.dumps([page.bucket for page in plan.new_pages]),
             ),
         )
     }
-    for ref in refs.values():
-        _register_artifact(store, ref, revive=ref.media_type == VECTOR_BATCH_MEDIA_TYPE)
 
 
-def _insert_batch_records(db: sqlite3.Connection, batch: PublicationBatch) -> None:
-    """Store a batch's lexical and vector rows; new lexical rows bump the epoch once."""
-    batches = SqliteBatchRepository(db)
-    fresh = (
-        bool(batch.lexical_records)
-        and not db.execute(
-            "SELECT EXISTS(SELECT 1 FROM lexical_records WHERE batch_id=?)",
-            (batch.batch_id,),
-        ).fetchone()[0]
+def _check_members(
+    store: CorpusStore, plan: PublicationPlan, target: str | None
+) -> None:
+    """New pages' members are registered, not withdrawn and in an active collection.
+
+    An archived collection keeps a member the base already selected, unless the
+    member is this publication's own source.
+    """
+    members = {m.extraction_id: m for page in plan.new_pages for m in page.members}
+    rows = {
+        row[0]: row[1:]
+        for row in store.db.execute(
+            "SELECT e.extraction_id,r.source_id,e.revision_id,c.workspace_id,"
+            "c.policy_json FROM extractions e JOIN revisions r USING(revision_id) "
+            "JOIN sources s USING(source_id) JOIN collections c USING(collection_id) "
+            "WHERE e.extraction_id IN (SELECT value FROM json_each(?)) "
+            "AND s.withdrawn_at IS NULL",
+            (json.dumps(sorted(members)),),
+        )
+    }
+    prior: set[str] | None = None
+    for extraction_id, member in members.items():
+        row = rows.get(extraction_id)
+        if row is None or row[:3] != (
+            member.source_id,
+            member.revision_id,
+            plan.workspace_id,
+        ):
+            _fail("Snapshot member is not a registered extraction")
+        if collection_is_active(row[3]):
+            continue
+        prior = _prior_extractions(store, plan) if prior is None else prior
+        if target is None or member.source_id == target or extraction_id not in prior:
+            require_active_collection(row[3])
+
+
+def _check_ownership(store: CorpusStore, plan: PublicationPlan) -> None:
+    """New batch rows must belong to their batch's extraction (one query per kind)."""
+    expected = {
+        b.batch_id: b.extraction_id
+        for b in plan.new_batches
+        if b.extraction_id is not None
+    }
+    ids = json.dumps(sorted(expected))
+    found = list(
+        store.db.execute(
+            "SELECT l.batch_id,c.extraction_id FROM lexical_records l "
+            "LEFT JOIN chunks c USING(chunk_id) "
+            "WHERE l.batch_id IN (SELECT value FROM json_each(?)) GROUP BY 1,2",
+            (ids,),
+        )
+    ) + list(
+        store.db.execute(
+            "SELECT v.batch_id,COALESCE(c.extraction_id,a.extraction_id) "
+            "FROM vector_records v LEFT JOIN chunks c USING(chunk_id) "
+            "LEFT JOIN assets a USING(asset_id) "
+            "WHERE v.batch_id IN (SELECT value FROM json_each(?)) GROUP BY 1,2",
+            (ids,),
+        )
     )
-    batches.write_lexical(batch.batch_id, batch.lexical_records)
-    batches.write_vectors(
-        batch.batch_id,
-        tuple(
-            VectorRecordRow(
-                record_id=row.record_id,
-                chunk_id=row.chunk_id,
-                asset_id=row.asset_id,
-                input_sha=row.input_sha,
-                row_index=row.row_index,
+    if any(expected.get(batch_id) != owner for batch_id, owner in found):
+        _fail("Index record is not owned by its batch's extraction")
+
+
+def register_fresh(store: CorpusStore, tx: WriteTransaction, ref: ArtifactRef) -> None:
+    """Register a publication-owned artifact; a released one returns once verified."""
+    if tx.artifacts.revive(ref):
+        with store.artifacts.open_verified(ref):
+            pass
+    tx.artifacts.register(ref)
+
+
+def _activate(store: CorpusStore, plan: PublicationPlan, ctx: ExecutionContext) -> None:
+    """Write pages, the snapshot and the active pointer in one write transaction."""
+    try:
+        with store.uow.write() as tx:
+            ctx.checkpoint()
+            _check_base_and_job(store, plan, tx)
+            _require_ready(tx, plan)
+            _check_members(store, plan, check_publication_target(store, plan))
+            _check_ownership(store, plan)
+            for page in plan.new_pages:
+                ref = page_ref(page)
+                register_fresh(store, tx, ref)
+                tx.snapshots.insert_page(page, ref)
+            register_fresh(store, tx, plan.manifest)
+            tx.snapshots.insert_snapshot(plan)
+            store.db.execute(
+                "UPDATE jobs SET base_snapshot_id=?,result_snapshot_id=?,updated_at=? "
+                "WHERE job_id=?",
+                (
+                    plan.base_snapshot_id,
+                    plan.snapshot_id,
+                    datetime.now(UTC).isoformat(),
+                    plan.job_id,
+                ),
             )
-            for row in batch.vector_records
-        ),
-    )
-    if fresh:
-        SqliteWorkspaceRepository(db).bump_lexical_epoch()
+            ctx.checkpoint()
+            tx.snapshots.set_active(plan.snapshot_id)
+    except sqlite3.IntegrityError:
+        _fail("Publication foreign-key or uniqueness constraint failed")
 
 
-def insert_snapshot_bindings(store: CorpusStore, plan: PublicationPlan) -> None:
-    """Insert all immutable bindings inside the caller's immediate transaction."""
-    if not store.db.in_transaction:
-        _fail("Snapshot binding insert requires an immediate transaction")
-    db = store.db
-    _register_plan_artifacts(store, plan)
-    for slot in plan.slots:
-        family = slot.family
-        _require_created_family(db, family)
-        for batch in slot.batches:
-            store._insert("index_batches", _batch_row(family, batch), ("batch_id",))
-            _insert_batch_records(store.db, batch)
-    store._insert(
-        "snapshots",
+def _canonical_plan(plan: PublicationPlan) -> PublicationPlan:
+    """Revalidate a plan from its canonical JSON so no unchecked value survives."""
+    try:
+        return PublicationPlan.model_validate_json(
+            canonical_bytes(plan.model_dump(mode="json"))
+        )
+    except ValueError:
+        _fail("Publication plan is invalid", "canonical.row_invalid")
+
+
+def _new_payloads(plan: PublicationPlan) -> frozenset[str]:
+    """The payloads this publication registers or verifies."""
+    return frozenset(
         {
-            "snapshot_id": plan.snapshot_id,
-            "workspace_id": plan.workspace_id,
-            "parent_snapshot_id": plan.base_snapshot_id,
-            "membership_sha": digest(
-                "snapshot-membership-v1",
-                [member.model_dump(mode="json") for member in plan.members],
-            ),
-            "config_sha": plan.config_sha,
-            "manifest_sha": plan.manifest.sha256,
-            "published_at": _now(),
-        },
-        ("snapshot_id",),
+            plan.manifest.sha256,
+            *(page_ref(page).sha256 for page in plan.new_pages),
+            *(batch.input_manifest.sha256 for batch in plan.new_batches),
+            *(b.vectors.sha256 for b in plan.new_batches if b.vectors is not None),
+        }
     )
-    for member in plan.members:
-        store._insert(
-            "snapshot_members",
-            {
-                "snapshot_id": plan.snapshot_id,
-                "source_id": member.source_id,
-                "revision_id": member.revision_id,
-                "extraction_id": member.extraction_id,
-                "is_default": int(member.is_default),
-            },
-            ("snapshot_id", "revision_id"),
-        )
-    for slot in plan.slots:
-        store._insert(
-            "snapshot_indexes",
-            {
-                "snapshot_id": plan.snapshot_id,
-                "slot": slot.slot,
-                "family_id": slot.family.family_id,
-                "required": int(slot.required),
-            },
-            ("snapshot_id", "slot"),
-        )
-        for batch in slot.batches:
-            store._insert(
-                "snapshot_batches",
-                {
-                    "snapshot_id": plan.snapshot_id,
-                    "slot": slot.slot,
-                    "family_id": slot.family.family_id,
-                    "batch_id": batch.batch_id,
-                },
-                ("snapshot_id", "slot", "batch_id"),
-            )
+
+
+def publish_snapshot(store: CorpusStore, plan: PublicationPlan) -> str:
+    """Verify a plan's new pages and batches, then activate its snapshot atomically.
+
+    A failure at any point, the activation transaction included, leaves the
+    previous active snapshot and every row it binds untouched.
+    """
+    plan = _canonical_plan(plan)
+    if store.db.in_transaction:
+        _fail("Publication requires its own transaction", "invariant.unexpected")
+    ctx = store.publication_context or ExecutionContext()
+    base = _require_base(store, plan)
+    leases = frozenset(
+        {plan.snapshot_id, *_bound_batch_ids(plan)}
+        | ({plan.base_snapshot_id} if plan.base_snapshot_id else set())
+    )
+    with ExitStack() as pins:
+        pins.enter_context(store.leases.pin(leases))
+        pins.enter_context(store.artifacts.pin_payloads(_new_payloads(plan)))
+        _verify_families(store, plan, base)
+        _verify_documents(store, plan)
+        _verify_new_batches(store, plan, ctx)
+        ctx.checkpoint()
+        _activate(store, plan, ctx)
+    return plan.snapshot_id
 
 
 def check_publication_target(store: CorpusStore, plan: PublicationPlan) -> str | None:
@@ -569,249 +555,6 @@ def check_publication_target(store: CorpusStore, plan: PublicationPlan) -> str |
     return sid
 
 
-def publish_snapshot(store: CorpusStore, plan: PublicationPlan) -> str:
-    try:
-        plan = PublicationPlan.model_validate_json(
-            canonical_bytes(plan.model_dump(mode="json"))
-        )
-    except ValueError:
-        _fail("Publication plan is invalid")
-    if store.db.in_transaction:
-        _fail("Publication requires its own transaction")
-    ctx = store.publication_context or ExecutionContext()
-    keys = frozenset(
-        {
-            plan.snapshot_id,
-            *(batch.batch_id for slot in plan.slots for batch in slot.batches),
-            *(
-                batch.receipt.generation_id
-                for slot in plan.slots
-                for batch in slot.batches
-                if isinstance(batch.receipt, GraphBatchReceipt)
-            ),
-        }
-    )
-    payloads = frozenset(
-        {
-            plan.manifest.sha256,
-            *(
-                batch.input_manifest.sha256
-                for slot in plan.slots
-                for batch in slot.batches
-            ),
-            *(
-                batch.vectors.sha256
-                for slot in plan.slots
-                for batch in slot.batches
-                if batch.vectors is not None
-            ),
-        }
-    )
-    with ExitStack() as pins:
-        pins.enter_context(store.leases.pin(keys))
-        pins.enter_context(store.artifacts.pin_payloads(payloads))
-        _verify_artifacts(store, plan)
-        _verify_batches(store, plan, ctx)
-        ctx.checkpoint()
-        try:
-            with store.immediate_transaction():
-                ctx.checkpoint()
-                if store.active_snapshot_id() != plan.base_snapshot_id:
-                    raise TychoraError(
-                        "WORKSPACE_BUSY",
-                        "Publication base changed; rebase required.",
-                        retryable=True,
-                    )
-                graph = next(
-                    (slot for slot in plan.slots if slot.slot == "graph"), None
-                )
-                if graph is not None:
-                    receipt = graph.batches[0].receipt
-                    if not isinstance(receipt, GraphBatchReceipt):
-                        _fail("Graph publication receipt is invalid")
-                    watermark = SqliteWorkspaceRepository(store.db).decision_watermark()
-                    if receipt.decision_watermark != watermark:
-                        raise TychoraError(
-                            "WORKSPACE_BUSY",
-                            "Graph decisions changed; rebase required.",
-                            retryable=True,
-                        )
-                job = store.db.execute(
-                    "SELECT state,effective_config_sha,result_snapshot_id FROM jobs WHERE job_id=?",
-                    (plan.job_id,),
-                ).fetchone()
-                if (
-                    job is None
-                    or job[0] != "running"
-                    or job[1] != plan.config_sha
-                    or job[2] not in (None, plan.snapshot_id)
-                ):
-                    _fail(
-                        "Publication job is absent, cancelled, or has conflicting bindings"
-                    )
-                if store.db.execute(
-                    "SELECT workspace_id FROM workspaces"
-                ).fetchall() != [(plan.workspace_id,)]:
-                    _fail("Publication workspace identity differs")
-                target = check_publication_target(store, plan)
-                for member in plan.members:
-                    row = store.db.execute(
-                        "SELECT r.source_id,e.revision_id,c.workspace_id,c.policy_json FROM extractions e JOIN revisions r USING(revision_id) JOIN sources s USING(source_id) JOIN collections c USING(collection_id) WHERE e.extraction_id=? AND s.withdrawn_at IS NULL",
-                        (member.extraction_id,),
-                    ).fetchone()
-                    if row is None or row[:3] != (
-                        member.source_id,
-                        member.revision_id,
-                        plan.workspace_id,
-                    ):
-                        _fail("Snapshot member is not a registered extraction")
-                    if not collection_is_active(row[3]):
-                        prior = store.db.execute(
-                            "SELECT source_id,revision_id,extraction_id,is_default FROM snapshot_members WHERE snapshot_id=? AND revision_id=?",
-                            (plan.base_snapshot_id, member.revision_id),
-                        ).fetchone()
-                        if (
-                            target is None
-                            or member.source_id == target
-                            or prior
-                            != (
-                                member.source_id,
-                                member.revision_id,
-                                member.extraction_id,
-                                int(member.is_default),
-                            )
-                        ):
-                            require_active_collection(row[3])
-                for slot in plan.slots:
-                    for batch in slot.batches:
-                        for row in batch.lexical_records:
-                            owner = store.db.execute(
-                                "SELECT extraction_id FROM chunks WHERE chunk_id=?",
-                                (row.chunk_id,),
-                            ).fetchone()
-                            if owner != (batch.extraction_id,):
-                                _fail(
-                                    "Lexical record is not owned by selected extraction"
-                                )
-                        for row in batch.vector_records:
-                            owner = (
-                                store.db.execute(
-                                    "SELECT extraction_id FROM chunks WHERE chunk_id=?",
-                                    (row.chunk_id,),
-                                ).fetchone()
-                                if row.chunk_id
-                                else store.db.execute(
-                                    "SELECT extraction_id FROM assets WHERE asset_id=?",
-                                    (row.asset_id,),
-                                ).fetchone()
-                            )
-                            if owner != (batch.extraction_id,):
-                                _fail(
-                                    "Vector record is not owned by selected extraction"
-                                )
-                store.insert_snapshot_bindings(plan)
-                store.db.execute(
-                    "UPDATE jobs SET base_snapshot_id=?,result_snapshot_id=?,updated_at=? WHERE job_id=?",
-                    (plan.base_snapshot_id, plan.snapshot_id, _now(), plan.job_id),
-                )
-                ctx.checkpoint()
-                store.set_active_snapshot(plan.snapshot_id)
-        except sqlite3.IntegrityError:
-            _fail("Publication foreign-key or uniqueness constraint failed")
-    return plan.snapshot_id
-
-
-def resolve_snapshot(store: CorpusStore, selector: str | None) -> SnapshotView:
-    snapshot_id = selector or store.active_snapshot_id()
-    if snapshot_id is None:
-        raise TychoraError("NOT_FOUND", "No published snapshot is available")
-    row = store.db.execute(
-        "SELECT workspace_id,parent_snapshot_id,membership_sha,config_sha,manifest_sha FROM snapshots WHERE snapshot_id=?",
-        (snapshot_id,),
-    ).fetchone()
-    if row is None:
-        raise TychoraError("NOT_FOUND", "Snapshot is unavailable")
-    artifact = store.db.execute(
-        "SELECT artifact_sha,size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
-        (row[4],),
-    ).fetchone()
-    if artifact is None or artifact[4] != "present":
-        _fail("Snapshot manifest is unavailable")
-    ref = artifact_ref(artifact)
-    document = _read_json(store, ref)
-    if document.get("type") != "snapshot" or document.get("schema_version") != "2":
-        _fail("Snapshot manifest type differs")
-    try:
-        plan = PublicationPlan.model_validate_json(
-            canonical_bytes(
-                {**document["data"], "manifest": ref.model_dump(mode="json")}
-            )
-        )
-    except (ValueError, KeyError, TypeError):
-        _fail("Snapshot manifest plan is malformed")
-    if (
-        plan.snapshot_id != snapshot_id
-        or plan.workspace_id != row[0]
-        or plan.base_snapshot_id != row[1]
-        or plan.config_sha != row[3]
-        or digest(
-            "snapshot-membership-v1",
-            [member.model_dump(mode="json") for member in plan.members],
-        )
-        != row[2]
-        or document != _manifest_document(plan)
-    ):
-        _fail("Snapshot manifest differs from canonical binding")
-    selected_members = set(
-        store.db.execute(
-            "SELECT source_id,revision_id,extraction_id,is_default FROM snapshot_members WHERE snapshot_id=?",
-            (snapshot_id,),
-        )
-    )
-    if selected_members != {
-        (m.source_id, m.revision_id, m.extraction_id, int(m.is_default))
-        for m in plan.members
-    }:
-        _fail("Snapshot canonical membership differs")
-    selected_slots = set(
-        store.db.execute(
-            "SELECT slot,family_id,required FROM snapshot_indexes WHERE snapshot_id=?",
-            (snapshot_id,),
-        )
-    )
-    if selected_slots != {
-        (slot.slot, slot.family.family_id, int(slot.required)) for slot in plan.slots
-    }:
-        _fail("Snapshot canonical slots differ")
-    selected_batches = set(
-        store.db.execute(
-            "SELECT slot,family_id,batch_id FROM snapshot_batches WHERE snapshot_id=?",
-            (snapshot_id,),
-        )
-    )
-    if selected_batches != {
-        (slot.slot, slot.family.family_id, batch.batch_id)
-        for slot in plan.slots
-        for batch in slot.batches
-    }:
-        _fail("Snapshot canonical batches differ")
-    epoch = store.db.execute(
-        "SELECT lexical_statistics_epoch FROM workspaces WHERE workspace_id=?",
-        (plan.workspace_id,),
-    ).fetchone()[0]
-    return SnapshotView(
-        snapshot_id=snapshot_id,
-        workspace_id=plan.workspace_id,
-        parent_snapshot_id=plan.base_snapshot_id,
-        membership_sha=row[2],
-        config_sha=plan.config_sha,
-        manifest=ref,
-        members=plan.members,
-        slots=plan.slots,
-        lexical_statistics_epoch=epoch,
-    )
-
-
 class PublicationReceipts:
     """Trusted canonical job lookup, including publication before completion event."""
 
@@ -819,13 +562,15 @@ class PublicationReceipts:
         self.store = store
 
     def lookup(self, job_id: str) -> PublicationReceipt | None:
+        """Return the job's published snapshot, from SQL rows only."""
         row = self.store.db.execute(
-            "SELECT result_snapshot_id FROM jobs WHERE job_id=?", (job_id,)
+            "SELECT j.result_snapshot_id,s.job_id FROM jobs j "
+            "LEFT JOIN snapshots s ON s.snapshot_id=j.result_snapshot_id "
+            "WHERE j.job_id=?",
+            (job_id,),
         ).fetchone()
         if row is None or row[0] is None:
             return None
-        view = self.store.resolve_snapshot(row[0])
-        document = _read_json(self.store, view.manifest)
-        if document["data"]["job_id"] != job_id:
+        if row[1] != job_id:
             _fail("Publication receipt job binding differs")
-        return PublicationReceipt(job_id=job_id, result_snapshot_id=view.snapshot_id)
+        return PublicationReceipt(job_id=job_id, result_snapshot_id=row[0])
