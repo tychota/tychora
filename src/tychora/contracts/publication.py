@@ -1,5 +1,6 @@
 """Complete, immutable inputs to one canonical snapshot activation."""
 
+from hashlib import sha256
 from typing import Self
 
 from pydantic import field_serializer, model_validator
@@ -13,8 +14,8 @@ from .base import (
     Sha256,
 )
 from .graph import GraphBatchReceipt, GraphManifest
-from .identity import digest
-from .snapshots import IndexFamily
+from .identity import canonical_bytes, digest
+from .snapshots import IndexFamily, PageBatch
 from .vectors import BatchReceipt
 
 
@@ -84,6 +85,59 @@ class PublicationBatch(Contract):
         if [row.row_index for row in ordered] != list(range(len(ordered))):
             raise ValueError("Vector row indexes must follow record order")
         return self
+
+
+def receipt_document_digest(
+    receipt: LexicalBatchReceipt | BatchReceipt | GraphBatchReceipt,
+) -> str:
+    """SHA-256 of a batch receipt's canonical JSON, as pages bind it."""
+    return sha256(canonical_bytes(receipt.model_dump(mode="json"))).hexdigest()
+
+
+class NewBatch(Contract):
+    """An index batch about to be built, bound to its exact input manifest."""
+
+    slot: NonEmptyStr
+    batch_id: Identifier
+    family_id: Sha256
+    extraction_id: Identifier | None
+    input_manifest: ArtifactRef
+    expected_count: NonNegativeInt
+    receipt: LexicalBatchReceipt | BatchReceipt | GraphBatchReceipt
+    vectors: ArtifactRef | None = None
+
+    @model_validator(mode="after")
+    def bound_identity(self) -> Self:
+        """Require the batch ID to bind the family, extraction and input manifest."""
+        expected = digest(
+            "index-batch-v1",
+            self.family_id,
+            self.extraction_id,
+            self.input_manifest.sha256,
+        )
+        if self.batch_id != expected:
+            raise ValueError("Index batch identity differs from exact input")
+        return self
+
+    @property
+    def count(self) -> int:
+        """Return the receipt's record count (evidence count for graph batches)."""
+        receipt = self.receipt
+        if isinstance(receipt, GraphBatchReceipt):
+            return receipt.evidence_count
+        return receipt.count
+
+    def page_batch(self) -> PageBatch:
+        """Return the binding a membership page records for this batch."""
+        return PageBatch(
+            slot=self.slot,
+            batch_id=self.batch_id,
+            family_id=self.family_id,
+            count=self.count,
+            receipt_digest=receipt_document_digest(self.receipt),
+            input_manifest=self.input_manifest,
+            vectors=self.vectors,
+        )
 
 
 class PublicationSlot(Contract):

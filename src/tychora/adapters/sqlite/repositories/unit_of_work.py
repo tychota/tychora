@@ -7,12 +7,18 @@ from contextlib import contextmanager
 from tychora.contracts.errors import TychoraError
 from tychora.ports.repositories import (
     ArtifactRepository,
+    BatchRepository,
     FamilyRepository,
+    ReadTransaction,
+    SnapshotRepository,
     WorkspaceRepository,
+    WriteTransaction,
 )
 
 from .artifacts import SqliteArtifactRepository
+from .batches import SqliteBatchRepository
 from .families import SqliteFamilyRepository
+from .snapshots import SqliteSnapshotRepository
 from .workspace import SqliteWorkspaceRepository
 
 
@@ -22,11 +28,15 @@ class SqliteTransaction:
     workspace: WorkspaceRepository
     artifacts: ArtifactRepository
     families: FamilyRepository
+    batches: BatchRepository
+    snapshots: SnapshotRepository
 
     def __init__(self, db: sqlite3.Connection, *, writable: bool) -> None:
-        self.workspace = SqliteWorkspaceRepository(db)
+        self.workspace = SqliteWorkspaceRepository(db, writable=writable)
         self.artifacts = SqliteArtifactRepository(db, writable=writable)
         self.families = SqliteFamilyRepository(db, writable=writable)
+        self.batches = SqliteBatchRepository(db, writable=writable)
+        self.snapshots = SqliteSnapshotRepository(db, writable=writable)
 
 
 class SqliteUnitOfWork:
@@ -36,7 +46,7 @@ class SqliteUnitOfWork:
         self._db = db
 
     @contextmanager
-    def read(self) -> Iterator[SqliteTransaction]:
+    def read(self) -> Iterator[ReadTransaction]:
         """Join the open transaction, or read inside a deferred one and roll back."""
         if self._db.in_transaction:
             yield SqliteTransaction(self._db, writable=False)
@@ -48,7 +58,7 @@ class SqliteUnitOfWork:
             self._db.rollback()
 
     @contextmanager
-    def write(self) -> Iterator[SqliteTransaction]:
+    def write(self) -> Iterator[WriteTransaction]:
         """Run one immediate transaction; commit on success, roll back otherwise."""
         if self._db.in_transaction:
             raise TychoraError(

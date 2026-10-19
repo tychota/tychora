@@ -10,6 +10,7 @@ from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import family_id, new_family_nonce
 from tychora.contracts.snapshots import IndexFamily
+from tychora.indexing.coordinator import create_family
 
 
 def _family(workspace_id: str, identity: str, nonce: str) -> IndexFamily:
@@ -72,3 +73,30 @@ def test_two_nonces_give_two_families_for_one_configuration():
     first = _family("w", "c" * 64, new_family_nonce())
     second = _family("w", "c" * 64, new_family_nonce())
     assert first.family_id != second.family_id
+
+
+def test_create_refuses_a_second_family_under_one_identity_and_nonce(seeded):
+    uow, workspace = seeded
+    nonce = new_family_nonce()
+    with uow.write() as tx:
+        tx.families.create(_family(workspace, "c" * 64, nonce), nonce, "c" * 64)
+    other = _family("other-workspace", "c" * 64, nonce)
+    with pytest.raises(TychoraError) as error, uow.write() as tx:
+        tx.families.create(other, nonce, "c" * 64)
+    assert error.value.code == "INTEGRITY_ERROR"
+    assert error.value.reason == "canonical.binding_mismatch"
+
+
+def test_family_creation_rechecks_the_nonce_in_its_write_transaction(seeded):
+    uow, workspace = seeded
+    first = new_family_nonce()
+    with uow.write() as tx:
+        create_family(tx, _family(workspace, "c" * 64, first), first, "c" * 64)
+        create_family(tx, _family(workspace, "c" * 64, first), first, "c" * 64)
+    late = new_family_nonce()
+    with pytest.raises(TychoraError) as error, uow.write() as tx:
+        create_family(tx, _family(workspace, "c" * 64, late), late, "c" * 64)
+    assert error.value.code == "WORKSPACE_BUSY"
+    assert error.value.reason == "publication.rebase"
+    with uow.read() as tx:
+        assert tx.families.nonce("lexical", "c" * 64) == first

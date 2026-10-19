@@ -67,6 +67,7 @@ from tychora.ports.artifacts import Artifacts
 from tychora.ports.embeddings import OwnerBoundVisualEmbedder, TextEmbedder
 from tychora.ports.execution import ExecutionContext
 from tychora.ports.graph import GraphStore
+from tychora.ports.repositories import WriteTransaction
 from tychora.ports.tokens import TokenCounter
 from tychora.ports.vectors import VectorIndex
 
@@ -176,6 +177,24 @@ class PreparedProjection:
     image_family: IndexFamily | None
     image_spec: FamilySpec | None
     visual_inputs: tuple[VisualInput, ...]
+
+
+def create_family(
+    tx: WriteTransaction, family: IndexFamily, nonce: str, identity_sha: str
+) -> None:
+    """Create a family unless another nonce already claimed its identity.
+
+    The nonce lookup repeats inside the write transaction, so two writers that
+    picked different nonces cannot both create a family for one identity.
+    """
+    claimed = tx.families.nonce(family.channel, identity_sha)
+    if claimed not in (None, nonce):
+        raise TychoraError(
+            "WORKSPACE_BUSY",
+            "Another writer created this index family first.",
+            reason="publication.rebase",
+        )
+    tx.families.create(family, nonce, identity_sha)
 
 
 class ProjectionCoordinator:
@@ -408,7 +427,7 @@ class ProjectionCoordinator:
     ) -> None:
         """Store the family row before any batch references it."""
         with self.store.uow.write() as tx:
-            tx.families.create(family, nonce, identity_sha)
+            create_family(tx, family, nonce, identity_sha)
 
     def _lexical_family(
         self, workspace_id: str, config_sha: str, created_at: str

@@ -9,13 +9,21 @@ from __future__ import annotations
 
 import base64
 import json
-from typing import Protocol
+from collections.abc import Mapping
+from typing import Literal, Protocol
 
 from tychora.contracts.artifacts import ArtifactRef
-from tychora.contracts.base import Contract, NonEmptyStr
+from tychora.contracts.base import (
+    Contract,
+    Identifier,
+    NonEmptyStr,
+    NonNegativeInt,
+    Sha256,
+)
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
-from tychora.contracts.snapshots import IndexFamily
+from tychora.contracts.publication import LexicalRecord, NewBatch
+from tychora.contracts.snapshots import IndexFamily, MembershipPage, PageBatch
 
 MAX_CURSOR_CHARS = 1024
 
@@ -58,7 +66,7 @@ class Cursor(Contract):
 
 
 class WorkspaceRepository(Protocol):
-    """The single workspace row: identity, epochs and decision watermark (read side)."""
+    """The single workspace row: identity, epochs and decision watermark."""
 
     def workspace_id(self) -> str:
         """Return the workspace identifier."""
@@ -74,6 +82,10 @@ class WorkspaceRepository(Protocol):
 
     def decision_watermark(self) -> int:
         """Return the highest recorded decision sequence number."""
+        ...
+
+    def bump_lexical_epoch(self) -> int:
+        """Advance the lexical statistics epoch once and return the new value."""
         ...
 
 
@@ -97,9 +109,130 @@ class FamilyRepository(Protocol):
         ...
 
     def nonce(self, channel: str, identity_sha: str) -> str | None:
-        """Return the nonce of the earliest family created for this identity."""
+        """Return the nonce of the earliest family for this identity (deterministic pick)."""
         ...
 
     def create(self, family: IndexFamily, nonce: str, identity_sha: str) -> None:
         """Store a family once; an identical repeat is a no-op, a different row fails."""
         ...
+
+
+class BatchRow(Contract):
+    """One stored index batch and the state of its build."""
+
+    batch_id: Identifier
+    family_id: Sha256
+    slot: NonEmptyStr
+    extraction_id: Identifier | None
+    state: Literal["pending", "building", "ready", "failed", "removed"]
+    expected_count: NonNegativeInt
+    actual_count: NonNegativeInt | None
+    receipt_digest: Sha256 | None
+    input_manifest: ArtifactRef
+    vectors: ArtifactRef | None
+
+    def page_batch(self) -> PageBatch:
+        """Return the page binding of a ready batch; any other state is refused."""
+        if (
+            self.state != "ready"
+            or self.receipt_digest is None
+            or self.actual_count is None
+        ):
+            raise TychoraError(
+                "INDEX_INCOMPLETE",
+                "Batch is not ready for publication",
+                reason="batch.missing",
+            )
+        return PageBatch(
+            slot=self.slot,
+            batch_id=self.batch_id,
+            family_id=self.family_id,
+            count=self.actual_count,
+            receipt_digest=self.receipt_digest,
+            input_manifest=self.input_manifest,
+            vectors=self.vectors,
+        )
+
+
+class VectorRecordRow(Contract):
+    """One vector record of a batch and its row in the batch artifact."""
+
+    record_id: Identifier
+    chunk_id: Identifier | None
+    asset_id: Identifier | None
+    input_sha: Sha256
+    row_index: NonNegativeInt
+
+
+class BatchRepository(Protocol):
+    """Index batches, their lexical and vector rows, and their build state."""
+
+    def begin(self, batch: NewBatch) -> None:
+        """Store a building batch once; an identical repeat is a no-op."""
+        ...
+
+    def write_lexical(self, batch_id: str, records: tuple[LexicalRecord, ...]) -> None:
+        """Store a batch's lexical records; stored records never change."""
+        ...
+
+    def write_vectors(self, batch_id: str, rows: tuple[VectorRecordRow, ...]) -> None:
+        """Store a batch's vector record rows; stored rows never change."""
+        ...
+
+    def mark_ready(self, batch_id: str, actual_count: int) -> None:
+        """Mark a building batch ready with its final count."""
+        ...
+
+    def count_ready(self, batch_ids: tuple[str, ...]) -> int:
+        """Return how many of these batches are ready."""
+        ...
+
+    def get(self, batch_id: str) -> BatchRow | None:
+        """Return the stored batch, or ``None`` when absent."""
+        ...
+
+    def find(self, family_id: str, extraction_id: str) -> BatchRow | None:
+        """Return the batch of one family for one extraction, or ``None``."""
+        ...
+
+    def for_snapshot(self, snapshot_id: str, slot: str) -> tuple[BatchRow, ...]:
+        """Return the batches a snapshot serves for one slot, by batch ID."""
+        ...
+
+
+class SnapshotRepository(Protocol):
+    """Snapshots, the active pointer and content-addressed membership pages."""
+
+    def active_id(self) -> str | None:
+        """Return the active snapshot ID, or ``None`` before the first publication."""
+        ...
+
+    def set_active(self, snapshot_id: str) -> None:
+        """Point the workspace at a published snapshot."""
+        ...
+
+    def page(self, snapshot_id: str, bucket: int) -> MembershipPage | None:
+        """Return a snapshot's page for one bucket, or ``None`` when it has none."""
+        ...
+
+    def page_manifests(self, page_ids: tuple[str, ...]) -> Mapping[str, ArtifactRef]:
+        """Return the manifest artifact of each page; an unknown page is refused."""
+        ...
+
+    def insert_page(self, page: MembershipPage, manifest: ArtifactRef) -> None:
+        """Store a page and its rows once; an identical repeat is a no-op."""
+        ...
+
+
+class ReadTransaction(Protocol):
+    """Repositories bound to one read transaction; writes through them are refused."""
+
+    workspace: WorkspaceRepository
+    artifacts: ArtifactRepository
+    families: FamilyRepository
+    batches: BatchRepository
+    snapshots: SnapshotRepository
+
+
+class WriteTransaction(ReadTransaction, Protocol):
+    """Repositories bound to one write transaction that commits or rolls back whole."""
