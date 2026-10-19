@@ -10,6 +10,7 @@ import re
 import secrets
 import stat
 import time
+import weakref
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
@@ -31,6 +32,9 @@ class BoundedWorker:
         self._pool = ThreadPoolExecutor(
             max_workers=workers, thread_name_prefix="tychora"
         )
+        # The garbage collector clears this reference before it finalizes an
+        # abandoned owner; by then the pool's threads exit without new work.
+        self._pool_alive = weakref.ref(self._pool)
         self._bound = workers + queued
         self._pending = 0
         self._closed = False
@@ -65,6 +69,12 @@ class BoundedWorker:
         # Internal cleanup goes behind all accepted work, bypassing admission.
         with self._lock:
             self._closed = True
+            if self._pool_alive() is None:
+                # Collected pool: no thread runs submissions, so clean up inline.
+                self._pool.shutdown(wait=False)
+                if cleanup is not None:
+                    cleanup()
+                return
             final = self._pool.submit(cleanup) if cleanup is not None else None
         try:
             if final is not None:
