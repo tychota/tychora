@@ -4,6 +4,7 @@ import json
 import struct
 from collections.abc import Sequence
 from hashlib import sha256
+from itertools import pairwise
 from typing import Any
 
 from tychora.contracts.base import Contract, Identifier, PositiveInt, Sha256
@@ -88,9 +89,10 @@ def _header(raw: bytes) -> tuple[dict[str, Any], int]:
     encoded = raw[_PREFIX_BYTES:end]
     try:
         header = json.loads(encoded)
-    except ValueError:
+        canonical = canonical_bytes(header) == encoded
+    except (ValueError, TypeError, RecursionError):
         raise _invalid("Vector batch header is malformed") from None
-    if not isinstance(header, dict) or canonical_bytes(header) != encoded:
+    if not isinstance(header, dict) or not canonical:
         raise _invalid("Vector batch header is not canonical")
     return header, end
 
@@ -117,12 +119,17 @@ def _row(record: Any, chunk: bytes, dimension: int) -> VectorBatchRow:
 def decode_vector_batch(raw: bytes) -> DecodedVectorBatch:
     """Decode and verify every row against its recorded value digest."""
     header, offset = _header(raw)
-    try:
-        dimension = int(header["dimension"])
-        records = list(header["records"])
-        family_id = str(header["family_id"])
-    except (KeyError, TypeError, ValueError):
-        raise _invalid("Vector batch header fields are missing") from None
+    dimension, records, family_id = (
+        header.get("dimension"),
+        header.get("records"),
+        header.get("family_id"),
+    )
+    if (
+        type(dimension) is not int
+        or not isinstance(records, list)
+        or not isinstance(family_id, str)
+    ):
+        raise _invalid("Vector batch header fields are invalid")
     width = 4 * dimension
     if dimension < 1 or len(raw) - offset != width * len(records):
         raise _invalid("Vector batch body length differs from its header")
@@ -134,8 +141,9 @@ def decode_vector_batch(raw: bytes) -> DecodedVectorBatch:
         )
         for index, record in enumerate(records)
     )
-    if [row.record_id for row in rows] != sorted(row.record_id for row in rows):
-        raise _invalid("Vector batch records are not sorted")
+    ids = [row.record_id for row in rows]
+    if any(left >= right for left, right in pairwise(ids)):
+        raise _invalid("Vector batch records are not strictly sorted")
     try:
         return DecodedVectorBatch(family_id=family_id, dimension=dimension, rows=rows)
     except ValueError:
