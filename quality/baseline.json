@@ -17,7 +17,7 @@
     },
     "cognitive_complexity": {
       "direction": "lower",
-      "measured_at": "c5d40f7c2bb4",
+      "measured_at": "0711a22f7964",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::search": 58,
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::upsert_batch": 16,
@@ -108,7 +108,7 @@
         "src/tychora/application/query.py::QueryService::_validate_provider_families": 64,
         "src/tychora/application/recovery.py::RecoveryService::_prune_native_on_owner": 34,
         "src/tychora/application/recovery.py::RecoveryService::_rebuild_native_on_owner": 78,
-        "src/tychora/application/recovery.py::RecoveryService::_verify_native_on_owner": 68,
+        "src/tychora/application/recovery.py::RecoveryService::_verify_native_on_owner": 64,
         "src/tychora/application/recovery.py::verify_canonical_native_batch": 20,
         "src/tychora/application/removal.py::RemovalService::_live_root": 18,
         "src/tychora/application/removal.py::RemovalService::_manifest_closure": 18,
