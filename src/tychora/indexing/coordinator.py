@@ -7,7 +7,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from io import BytesIO
-from typing import NamedTuple, NoReturn
+from typing import Literal, NamedTuple, NoReturn
 
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.adapters.sqlite.graph import read_graph_build
@@ -207,6 +207,15 @@ class PreparedProjection:
     image_spec: FamilySpec | None
     visual_inputs: tuple[VisualInput, ...]
     reused_batch_ids: tuple[str, ...] = ()
+
+
+class _FamilyRequest(NamedTuple):
+    channel: Literal["text", "image"]
+    workspace_id: str
+    config_sha: str
+    family_config: str
+    creation_uuid: str
+    created_at: str
 
 
 class _VectorSlot(NamedTuple):
@@ -652,26 +661,51 @@ class ProjectionCoordinator:
             stable_capability_json(capabilities),
         )
         creation_uuid = self._family_nonce("text", family_config)
+        return self._register_vector_family(
+            _FamilyRequest(
+                "text",
+                workspace_id,
+                config_sha,
+                family_config,
+                creation_uuid,
+                created_at,
+            ),
+            capabilities,
+            index,
+        )
+
+    def _register_vector_family(
+        self, request: _FamilyRequest, capabilities, index
+    ) -> tuple[IndexFamily, FamilySpec]:
+        """Create one vector family natively, persist it and register its index."""
+        channel, workspace_id, config_sha = (
+            request.channel,
+            request.workspace_id,
+            request.config_sha,
+        )
+        family_config, creation_uuid = request.family_config, request.creation_uuid
+        created_at = request.created_at
+        modality = "text" if channel == "text" else "visual"
         spec = FamilySpec(
             family_id=derive_family_id(workspace_id, family_config, creation_uuid),
             workspace_id=workspace_id,
             config_sha=family_config,
             creation_uuid=creation_uuid,
-            modality="text",
+            modality=modality,
             provider=capabilities.provider,
             model=capabilities.model,
             dimensions=capabilities.dimensions,
             metric="cosine",
             normalization="unit-l2",
             representation_fingerprint=capabilities.representation_fingerprint,
-            backend_namespace="text",
+            backend_namespace=channel,
             backend_space="ip",
         )
-        self._require_family_proof(spec.family_id, "text", config_sha)
+        self._require_family_proof(spec.family_id, channel, config_sha)
         handle = index.create_family(spec)
         family = IndexFamily(
             family_id=spec.family_id,
-            channel="text",
+            channel=channel,
             backend="chroma",
             provider=spec.provider,
             model=spec.model,
@@ -833,45 +867,18 @@ class ProjectionCoordinator:
             stable_capability_json(capabilities),
         )
         creation_uuid = self._family_nonce("image", family_config)
-        spec = FamilySpec(
-            family_id=derive_family_id(workspace_id, family_config, creation_uuid),
-            workspace_id=workspace_id,
-            config_sha=family_config,
-            creation_uuid=creation_uuid,
-            modality="visual",
-            provider=capabilities.provider,
-            model=capabilities.model,
-            dimensions=capabilities.dimensions,
-            metric="cosine",
-            normalization="unit-l2",
-            representation_fingerprint=capabilities.representation_fingerprint,
-            backend_namespace="image",
-            backend_space="ip",
-        )
-        self._require_family_proof(spec.family_id, "image", config_sha)
-        handle = index.create_family(spec)
-        family = IndexFamily(
-            family_id=spec.family_id,
-            channel="image",
-            backend="chroma",
-            provider=spec.provider,
-            model=spec.model,
-            dimension=spec.dimensions,
-            config_sha=handle.config_sha,
-            config_json=FrozenJsonMap(
-                {
-                    "effective_config_sha": config_sha,
-                    "spec": spec.model_dump(mode="json"),
-                    "capabilities": stable_capability_json(capabilities),
-                    "namespace_hash": handle.namespace_hash,
-                }
+        return self._register_vector_family(
+            _FamilyRequest(
+                "image",
+                workspace_id,
+                config_sha,
+                family_config,
+                creation_uuid,
+                created_at,
             ),
-            backend_namespace=spec.backend_namespace,
-            created_at=created_at,
+            capabilities,
+            index,
         )
-        self._persist_family(family, creation_uuid, family_config)
-        self.store.vector_indexes[spec.family_id] = index
-        return family, spec
 
     def _visual_inputs(self, bundle: ExtractionBundle) -> tuple[VisualInput, ...]:
         inputs = []
@@ -1246,6 +1253,18 @@ class ProjectionCoordinator:
             bundle.workspace.created_at,
         )
 
+    def _prepare_vector(self, old, channel, canonical, make_family, inputs):
+        """Reuse or create the family; ``inputs`` runs only when no batch is ready."""
+        spec = self._retained_vector_spec(old, channel)
+        if spec is not None and old is not None:
+            family = old.family
+        else:
+            family, spec = make_family()
+        ready = self._ready_batch(family, canonical)
+        if ready is not None:
+            return family, spec, (), (ready.batch_id,)
+        return family, spec, inputs(), ()
+
     def _prepare_text(
         self,
         old: SlotFamily | None,
@@ -1258,19 +1277,17 @@ class ProjectionCoordinator:
         """Resolve the text family; groups are built only when no batch is ready."""
         if self.config.values.index.text.backend == "disabled":
             return None, None, (), ()
-        spec = self._retained_vector_spec(old, "text")
-        if spec is not None and old is not None:
-            family = old.family
-        else:
-            family, spec = self._text_family(
+        return self._prepare_vector(
+            old,
+            "text",
+            canonical,
+            lambda: self._text_family(
                 canonical.workspace.workspace_id,
                 config_ref.sha256,
                 canonical.workspace.created_at,
-            )
-        ready = self._ready_batch(family, canonical)
-        if ready is not None:
-            return family, spec, (), (ready.batch_id,)
-        return family, spec, build_groups(windows, self.config, self.counter), ()
+            ),
+            lambda: build_groups(windows, self.config, self.counter),
+        )
 
     def _prepare_image(
         self,
@@ -1283,19 +1300,17 @@ class ProjectionCoordinator:
         """Resolve the image family; inputs are read only when no batch is ready."""
         if self.config.values.index.image.backend == "disabled":
             return None, None, (), ()
-        spec = self._retained_vector_spec(old, "image")
-        if spec is not None and old is not None:
-            family = old.family
-        else:
-            family, spec = self._image_family(
+        return self._prepare_vector(
+            old,
+            "image",
+            canonical,
+            lambda: self._image_family(
                 canonical.workspace.workspace_id,
                 config_ref.sha256,
                 canonical.workspace.created_at,
-            )
-        ready = self._ready_batch(family, canonical)
-        if ready is not None:
-            return family, spec, (), (ready.batch_id,)
-        return family, spec, self._visual_inputs(canonical), ()
+            ),
+            lambda: self._visual_inputs(canonical),
+        )
 
     def _vector_page_batch(
         self,
