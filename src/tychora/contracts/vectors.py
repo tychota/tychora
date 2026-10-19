@@ -1,7 +1,7 @@
 """Backend-independent vector batch, receipt, and candidate contracts."""
 
 import math
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import Field, model_validator
 
@@ -17,14 +17,29 @@ class FamilyHandle(Contract):
     config_sha: Sha256
 
 
+class VectorOwner(Contract):
+    """The revision, extraction and owning unit or asset one vector record belongs to."""
+
+    record_id: Identifier
+    revision_id: Identifier
+    extraction_id: Identifier
+    owner_kind: Literal["unit", "asset"]
+    owner_id: Identifier
+
+
 class VectorBatch(Contract):
     family_id: Sha256
     records: tuple[EmbeddingRecord, ...] = Field(min_length=1)
+    owners: tuple[VectorOwner, ...] = ()
 
     @model_validator(mode="after")
     def distinct(self) -> Self:
         if len({item.record_id for item in self.records}) != len(self.records):
             raise ValueError("Duplicate vector record ID")
+        if self.owners and sorted(o.record_id for o in self.owners) != sorted(
+            r.record_id for r in self.records
+        ):
+            raise ValueError("Vector owners must cover each record once")
         return self
 
 

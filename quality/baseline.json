@@ -17,7 +17,7 @@
     },
     "cognitive_complexity": {
       "direction": "lower",
-      "measured_at": "74d9e162399e",
+      "measured_at": "e7a5eac8b09e",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::search": 58,
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::upsert_batch": 16,
@@ -112,7 +112,7 @@
         "src/tychora/application/query.py::QueryService::_replay_ready": 18,
         "src/tychora/application/query.py::QueryService::_validate_provider_families": 67,
         "src/tychora/application/recovery.py::RecoveryService::_prune_native_on_owner": 36,
-        "src/tychora/application/recovery.py::RecoveryService::_rebuild_native_on_owner": 91,
+        "src/tychora/application/recovery.py::RecoveryService::_rebuild_native_on_owner": 78,
         "src/tychora/application/recovery.py::RecoveryService::_verify_native_on_owner": 68,
         "src/tychora/application/recovery.py::verify_canonical_native_batch": 20,
         "src/tychora/application/removal.py::RemovalService::_live_root": 29,
@@ -391,7 +391,7 @@
     },
     "function_length": {
       "direction": "lower",
-      "measured_at": "74d9e162399e",
+      "measured_at": "e7a5eac8b09e",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex.search": 143,
         "src/tychora/adapters/code/capture.py::RepositoryCapture._run": 89,
@@ -461,7 +461,7 @@
         "src/tychora/application/query.py::QueryService._validate_provider_families": 164,
         "src/tychora/application/query.py::QueryService.search": 120,
         "src/tychora/application/recovery.py::RecoveryService._prune_native_on_owner": 108,
-        "src/tychora/application/recovery.py::RecoveryService._rebuild_native_on_owner": 189,
+        "src/tychora/application/recovery.py::RecoveryService._rebuild_native_on_owner": 166,
         "src/tychora/application/recovery.py::RecoveryService._verify_native_on_owner": 106,
         "src/tychora/application/recovery.py::verify_canonical_native_batch": 109,
         "src/tychora/application/removal.py::RemovalService._live_root": 92,
