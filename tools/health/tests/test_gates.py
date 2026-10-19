@@ -21,9 +21,10 @@ def test_fast_selection_is_the_local_subset():
     ]
 
 
-def test_nightly_group_holds_branch_coverage_mutation_and_gold():
+def test_nightly_group_holds_branch_coverage_runtime_mutation_and_gold():
     assert [(gate.id, gate.title) for gate in select("nightly")] == [
         ("G16", "Coverage, branches"),
+        ("G18", "Test runtime"),
         ("G21", "Mutation score"),
         ("G22", "Code gold set"),
     ]
@@ -44,7 +45,6 @@ def test_report_gates_split_from_the_gates_that_start_immediately():
     assert [(gate.id, gate.title) for gate in reading] == [
         ("G16", "Coverage, lines"),
         ("G17", "Clean-machine suite"),
-        ("G18", "Test runtime"),
     ]
     static = select("pr", test_reports="without")
     assert {gate.title for gate in static}.isdisjoint(gate.title for gate in reading)

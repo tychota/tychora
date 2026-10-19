@@ -223,3 +223,9 @@ jobs:
           retention-days: 7
       - name: Code-health gates that read the test reports
         run: uv run --locked python -m tools.health check --test-reports only
+      # G18 is a nightly ratchet (runner noise reached 40% on one commit); here it is
+      # printed for information only and never fails the pull request.
+      - name: Test runtime and slowest tests (information only)
+        if: always()
+        continue-on-error: true
+        run: uv run --locked python -m tools.health report --group nightly --gates G18

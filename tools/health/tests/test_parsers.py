@@ -172,7 +172,7 @@ def test_merged_shard_reports_sum_session_times_and_keep_every_outcome():
     merged = testruns.merge_junit(
         [_shard_report(100.5, "a", "b"), _shard_report(120.0, "c")]
     )
-    # G18 reads the sum of the shard sessions, not the longest shard.
+    # The runtime printed on pull requests is the sum of the shard sessions.
     assert testruns.suite_seconds(merged) == 220.5
     assert set(testruns.outcomes(merged)) == {
         "tests.a::test_a",
