@@ -1,0 +1,24 @@
+tests/contracts/test_identity.py
+  s_ab847b2c6c265a::t_16b1dcc8aba1d1 83-86,127-130,140-151,157-159
+  s_ab847b2c6c265a::t_718fd25029ad7e 80-82,87-126,131-139,152-156
+quality/equivalent-mutants.toml
+  s_ab847b2c6c265a::t_4b10f037723246 1-14
+pyproject.toml
+  s_ab847b2c6c265a::t_2e4e3e21c6fe24 94,309-324
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "01f5cd830b178854c32b7de2c292b487386513e5",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}

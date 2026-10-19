@@ -1,0 +1,23 @@
+quality/baseline-provenance.md
+  s_ab847b2c6c265a::t_a56d4d177cfb50 3-4,6-9
+quality/baseline.json
+  s_ab847b2c6c265a::t_70ebae5f623893 5,240,247,251,255,260,265,270-271,275,280,285,365,529,606,617,908,913,919,954,1074-1075
+quality/jscpd/tests.json
+  s_ab847b2c6c265a::t_0f0fcf4d25db63 184
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dbd32db562510518e1af9076a6367e60ac8dfd89",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}

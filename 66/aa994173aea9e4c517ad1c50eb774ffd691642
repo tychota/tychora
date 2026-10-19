@@ -1,0 +1,28 @@
+tests/code/test_structure.py
+  s_ab847b2c6c265a::t_9006f0d9c0fa73 37,46,51,213-235
+  s_ab847b2c6c265a::t_7cdd48055e6990 236-237
+src/tychora/profiles/manifest.json
+  s_ab847b2c6c265a::t_fbe75d9954250c 4
+tests/storage/test_graph_generation.py
+  s_ab847b2c6c265a::t_4f00c4a86f1e9b 150-209
+src/tychora/profiles/documents/relations/calls.toml
+  s_ab847b2c6c265a::t_9d9b9ade7ea2e7 13
+tests/configuration/test_additive_registry.py
+  s_ab847b2c6c265a::t_fbe75d9954250c 28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "66aa994173aea9e4c517ad1c50eb774ffd691642",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}

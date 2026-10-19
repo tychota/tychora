@@ -1,0 +1,38 @@
+docs/contributing.md
+  s_ab847b2c6c265a::t_7d19c645e7e45f 16
+docs/quality/README.md
+  s_ab847b2c6c265a::t_7d19c645e7e45f 25-28
+docs/quality/2026-10-15-baseline.md
+  s_ab847b2c6c265a::t_7d19c645e7e45f 3,7-8,87
+  s_ab847b2c6c265a::t_b4622ecd145886 88
+HANDOFF.md
+  s_ab847b2c6c265a::t_d543c9324cc6d1 70-73
+  s_ab847b2c6c265a::t_3069d14511101b 11,66
+  s_ab847b2c6c265a::t_d02a3277531742 67
+tests/docs/test_examples.py
+  s_ab847b2c6c265a::t_3069d14511101b 6,406-408,418-457,461-463
+  s_ab847b2c6c265a::t_2a916cddc19fac 409-417,458-460,464-466
+docs/architecture.md
+  s_ab847b2c6c265a::t_7d19c645e7e45f 5,242
+docs/documentation.md
+  s_ab847b2c6c265a::t_7d19c645e7e45f 43-52
+tools/health/architecture.py
+  s_ab847b2c6c265a::t_7d19c645e7e45f 296-297,327-332
+  s_ab847b2c6c265a::t_1ef908cdca8ae1 333
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1eb8e8ecd2496077e59efa6aafe822f1017267be",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
