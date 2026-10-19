@@ -1,0 +1,77 @@
+tests/storage/conftest.py
+  s_ab847b2c6c265a::t_6918f73396e5e4 1,5,9,11-14,16-22,24-25,95-149
+tests/storage/test_repositories.py
+  s_ab847b2c6c265a::t_e3b8faa49037a0 134-148
+src/tychora/resources/migrations/0001.sql
+  s_ab847b2c6c265a::t_c63a464b3fb634 339-341,376-412
+  s_ab847b2c6c265a::t_540c13eff3dc93 413
+src/tychora/adapters/sqlite/repositories/workspace.py
+  s_ab847b2c6c265a::t_c71fc446136b88 21,23,25,54-61
+  s_ab847b2c6c265a::t_6874062d68659b 62
+src/tychora/adapters/sqlite/corpus.py
+  s_ab847b2c6c265a::t_f2dfc6e4aea188 89-90
+  s_ab847b2c6c265a::t_68dd65477c83cf 98
+  s_ab847b2c6c265a::t_1182bdb7588d48 8-12
+tests/storage/test_batch_repository.py
+  s_ab847b2c6c265a::t_f3bd245d71159e 1-169
+src/tychora/adapters/sqlite/publication.py
+  s_ab847b2c6c265a::t_a51c48a86086e3 14,45
+  s_ab847b2c6c265a::t_d1cb943bf02269 419-425
+  s_ab847b2c6c265a::t_74c1bffad294d5 416-418,426-443,455
+quality/baseline.json
+  s_ab847b2c6c265a::t_ea2ce765b2da57 20,249,378,533
+src/tychora/ports/repositories.py
+  s_ab847b2c6c265a::t_05a338db5791c8 12-13,16-22,25-26,69,87-90,118-238
+  s_ab847b2c6c265a::t_a169d5963d9cf3 112
+tests/jobs/test_idempotency.py
+  s_ab847b2c6c265a::t_162672b358dbc5 244
+tests/storage/test_schema.py
+  s_ab847b2c6c265a::t_3405408c13afcc 444,477,489
+  s_ab847b2c6c265a::t_9bd47434e275c8 29
+src/tychora/indexing/coordinator.py
+  s_ab847b2c6c265a::t_a169d5963d9cf3 182-199,430
+  s_ab847b2c6c265a::t_98321a69289229 70
+tests/storage/test_snapshot_repository.py
+  s_ab847b2c6c265a::t_f1cf675ec2bd4c 1-145
+tests/jobs/test_recovery.py
+  s_ab847b2c6c265a::t_162672b358dbc5 48,101,124,143
+src/tychora/adapters/sqlite/repositories/unit_of_work.py
+  s_ab847b2c6c265a::t_3838f47bbcfa82 10,12-13,15,19,21,31-32,35,38-39,49,61
+src/tychora/adapters/sqlite/migrations.py
+  s_ab847b2c6c265a::t_c63a464b3fb634 12
+src/tychora/adapters/sqlite/repositories/snapshots.py
+  s_ab847b2c6c265a::t_e640b01114e8da 1-61,69-74,80-138
+  s_ab847b2c6c265a::t_d1cb943bf02269 62-68,75-79
+src/tychora/adapters/sqlite/repositories/__init__.py
+  s_ab847b2c6c265a::t_3838f47bbcfa82 4,6,12,14
+src/tychora/adapters/sqlite/repositories/families.py
+  s_ab847b2c6c265a::t_a169d5963d9cf3 74-77,91
+tests/indexing/test_publication.py
+  s_ab847b2c6c265a::t_241178456ca283 350-364
+src/tychora/contracts/publication.py
+  s_ab847b2c6c265a::t_8976f626388504 3,17-18,90-140
+  s_ab847b2c6c265a::t_388e11733d8ce0 141-142
+src/tychora/adapters/sqlite/repositories/batches.py
+  s_ab847b2c6c265a::t_d1cb943bf02269 61-63,147,195-197
+  s_ab847b2c6c265a::t_e62f2ec2ba515b 99,101-102,108,110,161
+  s_ab847b2c6c265a::t_4b7373d9cb1ef6 1-60,64-98,100,103-107,109,111-146,148-160,162-194,198-215
+tests/storage/test_families.py
+  s_ab847b2c6c265a::t_da629645800b6b 13,88-102
+  s_ab847b2c6c265a::t_e3b8faa49037a0 76-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e57e38184de583882f14d7a6e279141fa2878ddc",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
