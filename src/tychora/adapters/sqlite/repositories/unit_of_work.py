@@ -21,13 +21,34 @@ from .families import SqliteFamilyRepository
 from .snapshots import SqliteSnapshotRepository
 from .workspace import SqliteWorkspaceRepository
 
+_BUSY_CODES = frozenset({sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED})
+
+
+def _busy(error: sqlite3.Error) -> bool:
+    """Whether SQLite refused for a lock another connection holds."""
+    code = getattr(error, "sqlite_errorcode", None)
+    if code is not None:
+        return code & 0xFF in _BUSY_CODES
+    message = str(error)
+    return isinstance(error, sqlite3.OperationalError) and (
+        "locked" in message or "busy" in message
+    )
+
 
 @contextmanager
 def typed_storage_errors() -> Iterator[None]:
-    """Report a SQLite failure, a busy database included, as a typed error."""
+    """Report a SQLite failure as a typed error.
+
+    A busy or locked database is a retryable ``WORKSPACE_BUSY``; any other
+    failure is an unexpected ``INTEGRITY_ERROR``.
+    """
     try:
         yield
     except sqlite3.Error as error:
+        if _busy(error):
+            raise TychoraError(
+                "WORKSPACE_BUSY", "Workspace database is busy", reason="storage.busy"
+            ) from error
         raise TychoraError(
             "INTEGRITY_ERROR",
             f"Storage operation failed: {type(error).__name__}",

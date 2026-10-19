@@ -58,7 +58,7 @@ CLASSIFIED_REASONS = {
     "NOT_FOUND": {"workspace.absent", "snapshot.absent"},
     "FORBIDDEN_SCOPE": {"scope.whole_workspace"},
     "JOB_INTERRUPTED": {"job.orphaned"},
-    "WORKSPACE_BUSY": {"owner.absent", "family.claimed"},
+    "WORKSPACE_BUSY": {"owner.absent", "family.claimed", "storage.busy"},
     "PROFILE_INCOMPATIBLE": {"workspace.schema_mismatch"},
     "INTEGRITY_ERROR": {
         "workspace.database_invalid",
@@ -79,6 +79,7 @@ def test_spec_reasons_are_registered_under_their_codes():
 
 RETRYABLE = {
     "job.orphaned",
+    "storage.busy",
     "owner.live",
     "queue.full",
     "publication.rebase",

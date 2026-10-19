@@ -211,6 +211,12 @@ _ENTRIES = (
         "The snapshot was collected or never published; query the active snapshot.",
     ),
     Reason(
+        "WORKSPACE_BUSY",
+        "storage.busy",
+        True,
+        "Retry later; another connection holds the workspace database lock.",
+    ),
+    Reason(
         "JOB_INTERRUPTED",
         "job.orphaned",
         True,
