@@ -7,8 +7,10 @@ from pathlib import Path
 import pytest
 
 from tests.typed_json import json_object
-from tychora.configuration.resolve import merge_values
+from tychora.configuration.models import retained_registry_document
+from tychora.configuration.resolve import merge_values, resolve_config
 from tychora.contracts.errors import TychoraError
+from tychora.contracts.identity import canonical_bytes
 
 
 def test_explicit_false_zero_and_empty_list_survive():
@@ -879,3 +881,29 @@ def test_same_immutable_schema_cannot_bind_different_reference_targets_across_pa
     file.write_text(file.read_text().replace(previous, sha))
     with pytest.raises(TychoraError, match="immutable.*reference"):
         resolve_config(workspace, "child", {})
+
+
+def _retained_config(tmp_path):
+    path = tmp_path / "workspace.toml"
+    path.write_text('schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n')
+    return resolve_config(path, "test", {})
+
+
+def test_retained_sha_is_the_registry_artifact_digest(tmp_path):
+    config = _retained_config(tmp_path)
+    expected = hashlib.sha256(
+        canonical_bytes(retained_registry_document(config))
+    ).hexdigest()
+    assert config.retained_sha == expected
+    assert "retained_sha" not in config.model_dump(mode="json")
+
+
+def test_retained_sha_follows_model_copy_updates(tmp_path):
+    config = _retained_config(tmp_path)
+    original = config.retained_sha
+    changed = config.model_copy(update={"profile": "other"})
+    expected = hashlib.sha256(
+        canonical_bytes(retained_registry_document(changed))
+    ).hexdigest()
+    assert changed.retained_sha == expected != original
+    assert config.retained_sha == original

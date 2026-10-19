@@ -45,7 +45,7 @@ from tychora.configuration.global_facets import (
     normalized_metadata,
 )
 from tychora.configuration.indexed_representation import pinned_runtime_compatible
-from tychora.configuration.models import ResolvedConfig
+from tychora.configuration.models import ResolvedConfig, retained_registry_document
 from tychora.configuration.registry import Registry
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.code import CapturedSyntax, CodeRegistration
@@ -210,21 +210,26 @@ class SourceService:
         return await self.owner.run_blocking(initialize, ctx)
 
     async def _config_ref(self, ctx: ExecutionContext):
-        return await self.owner.run_blocking(
-            lambda: self.owner.artifacts.put_stream(
-                BytesIO(
-                    canonical_bytes(
-                        {
-                            "type": "registry",
-                            "schema_version": "1",
-                            "data": self.owner.config.model_dump(mode="json"),
-                        }
-                    )
-                ),
-                "application/json",
-            ),
-            ctx,
+        return await self.owner.run_blocking(self._ensure_registry_artifact, ctx)
+
+    def _ensure_registry_artifact(self) -> ArtifactRef:
+        """Return the retained registry artifact, writing it only when absent."""
+        config = self.owner.config
+        with self.owner.store.uow.read() as tx:
+            existing = tx.artifacts.get(config.retained_sha)
+        if existing is not None:
+            return existing
+        ref = self.owner.artifacts.put_stream(
+            BytesIO(canonical_bytes(retained_registry_document(config))),
+            "application/json",
         )
+        if ref.sha256 != config.retained_sha:
+            raise TychoraError(
+                "INTEGRITY_ERROR",
+                "Retained registry digest differs from its document",
+                reason="config.drift",
+            )
+        return ref
 
     def _committed_capture(
         self, ref: ArtifactRef, *, historical: bool = False

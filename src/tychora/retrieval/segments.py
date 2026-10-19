@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 from tychora.configuration.models import ResolvedConfig
 from tychora.contracts.base import FrozenJsonMap
@@ -54,20 +55,24 @@ class Selection:
 
 
 def _lane(config: ResolvedConfig, kind: str) -> str:
-    registry = config.model_dump(mode="json")["registry"]
-    for name, lane in registry["lanes"].items():
-        if kind in lane["kinds"]:
+    registry = config.registry
+    lanes = cast(Mapping[str, Mapping[str, object]], registry["lanes"])
+    for name, lane in lanes.items():
+        if kind in cast(tuple[str, ...], lane["kinds"]):
             return str(name)
-    compatibility = registry["compatibility"].get("kind_lanes", {})
-    if kind in compatibility:
-        return str(compatibility[kind])
-    raise TychoraError("INTEGRITY_ERROR", "Selected kind has no lane.")
+    compatibility = cast(Mapping[str, object], registry["compatibility"])
+    kind_lanes = cast(Mapping[str, object], compatibility.get("kind_lanes", {}))
+    if kind in kind_lanes:
+        return str(kind_lanes[kind])
+    raise TychoraError(
+        "INTEGRITY_ERROR", "Selected kind has no lane.", reason="config.drift"
+    )
 
 
 def _role(
     config: ResolvedConfig, kind: str, historical_kind_roles: Mapping[str, str]
 ) -> str:
-    kinds = config.model_dump(mode="json")["registry"]["kinds"]
+    kinds = cast(Mapping[str, Mapping[str, object]], config.registry["kinds"])
     if kind in kinds:
         return str(kinds[kind]["role"])
     if kind in historical_kind_roles and _lane(config, kind):

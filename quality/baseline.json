@@ -553,7 +553,7 @@
     },
     "integrity_raises_without_reason": {
       "direction": "lower",
-      "measured_at": "8a90f8731716",
+      "measured_at": "e269a5939042",
       "per_key": {
         "src/tychora/adapters/code/capture.py": 3,
         "src/tychora/adapters/code/normalize.py": 3,
@@ -621,10 +621,10 @@
         "src/tychora/retrieval/eligibility.py": 3,
         "src/tychora/retrieval/rerank.py": 9,
         "src/tychora/retrieval/response.py": 10,
-        "src/tychora/retrieval/segments.py": 9,
+        "src/tychora/retrieval/segments.py": 8,
         "src/tychora/retrieval/visuals.py": 4
       },
-      "value": 368
+      "value": 367
     },
     "layering_exceptions": {
       "direction": "lower",

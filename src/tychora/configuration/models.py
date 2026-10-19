@@ -2,6 +2,8 @@
 
 import ipaddress
 import re
+from functools import cached_property
+from hashlib import sha256
 from pathlib import Path
 from typing import Annotated, Literal, Self
 
@@ -14,6 +16,7 @@ from tychora.contracts.base import (
     PositiveInt,
     Sha256,
 )
+from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.requests import FilterExpr, QueryInput
 
 
@@ -287,6 +290,23 @@ class ResolvedConfig(Contract):
     query_fingerprint: Sha256
     output_fingerprint: Sha256
 
+    @cached_property
+    def retained_sha(self) -> str:
+        """SHA-256 of the retained registry document stored for this configuration."""
+        return sha256(canonical_bytes(retained_registry_document(self))).hexdigest()
+
+    def __copy__(self) -> Self:
+        """Copy without the cached digest so an updated copy recomputes it."""
+        duplicate = super().__copy__()
+        duplicate.__dict__.pop("retained_sha", None)
+        return duplicate
+
+    def __deepcopy__(self, memo: dict[int, object] | None = None) -> Self:
+        """Deep-copy without the cached digest so an updated copy recomputes it."""
+        duplicate = super().__deepcopy__(memo)
+        duplicate.__dict__.pop("retained_sha", None)
+        return duplicate
+
     def inspect(self, *, owner_authorized: bool = False) -> FrozenJsonMap:
         """Expose effective configuration, redacting private origins and credentials."""
         result = self.model_dump(mode="json")
@@ -301,3 +321,12 @@ class ResolvedConfig(Contract):
                 if provider["credential_ref"] is not None:
                     provider["credential_ref"] = "[redacted]"
         return FrozenJsonMap(result)
+
+
+def retained_registry_document(config: ResolvedConfig) -> dict:
+    """The canonical registry artifact that jobs and snapshots bind by digest."""
+    return {
+        "type": "registry",
+        "schema_version": "1",
+        "data": config.model_dump(mode="json"),
+    }
