@@ -1,4 +1,4 @@
-# Each file runs alone in CI (python -m tools.health isolate) to prove that no
+# Each file runs alone in the nightly CI (python -m tools.health isolate) to prove that no
 # fixture is inherited by accident from another module.
 tests/ingestion/test_docling_mapping.py
 tests/ingestion/test_document_records.py
