@@ -436,13 +436,29 @@ def test_busy_database_after_publication_keeps_the_job_succeeded(
         monkeypatch.setattr(snapshot_rows.SqliteSnapshotRepository, "collect", busy)
         with pytest.raises(TychoraError) as error:
             _collect(owner)
-        assert error.value.code == "INTEGRITY_ERROR"
-        assert error.value.reason == "invariant.unexpected"
+        assert error.value.code == "WORKSPACE_BUSY"
+        assert error.value.reason == "storage.busy"
+        assert error.value.retryable
         with caplog.at_level(logging.WARNING, logger="tychora.application.sources"):
             status = _add(kb, "a.md", "After the busy collection.")
         assert status.state == "succeeded"
         assert _active(owner) is not None
-        assert "invariant.unexpected" in caplog.text
+        assert "storage.busy" in caplog.text
+
+
+def test_other_storage_failures_are_integrity_errors(tmp_path, monkeypatch):
+    with Tychora.open(tmp_path / "kb", token_counter=CharacterCounter()) as kb:
+        owner = kb._workspace.owner
+        _add(kb, "a.md", "Before the damaged collection.")
+
+        def damaged(self, *args, **kwargs):
+            raise sqlite3.DatabaseError("database disk image is malformed")
+
+        monkeypatch.setattr(snapshot_rows.SqliteSnapshotRepository, "collect", damaged)
+        with pytest.raises(TychoraError) as error:
+            _collect(owner)
+        assert error.value.code == "INTEGRITY_ERROR"
+        assert error.value.reason == "invariant.unexpected"
 
 
 def test_receipt_of_a_collected_snapshot_still_resolves(tmp_path, monkeypatch):
@@ -465,6 +481,9 @@ def test_receipt_of_a_collected_snapshot_still_resolves(tmp_path, monkeypatch):
             ExecutionContext(),
         )
         assert receipt is not None and receipt.result_snapshot_id == first
+        repository = kb._workspace.services.jobs.repository
+        status = _on_owner(owner, lambda: repository.recover(job_id))
+        assert status.state == "succeeded" and status.result_snapshot_id == first
         with pytest.raises(TychoraError) as error:
             _on_owner(owner, lambda: owner.store.resolve_snapshot(first))
         assert error.value.reason == "snapshot.absent"

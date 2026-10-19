@@ -698,4 +698,7 @@ def test_manage_gc_reports_collection(tmp_path):
         app, ["--workspace", str(tmp_path / "workspace"), "manage", "gc", "--json"]
     )
     assert result.exit_code == 0, result.stderr
-    assert '"gc"' in result.stdout
+    payload = json.loads(result.stdout)
+    assert payload["plan"]["operation"] == "gc"
+    assert payload["gc"]["snapshots"] == 0
+    assert payload["gc"]["unpublished_skipped"] is False

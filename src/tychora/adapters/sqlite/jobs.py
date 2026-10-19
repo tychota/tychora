@@ -764,6 +764,18 @@ class JobRepository:
                     "FORBIDDEN_SCOPE", "Job is not available in this scope"
                 )
 
+    def _require_snapshot_binding(self, snapshot_id: str, config_sha: str) -> None:
+        """Refuse a receipt snapshot of another workspace or configuration.
+
+        A collected snapshot has no row; the job's result stays authoritative.
+        """
+        snapshot = self.db.execute(
+            "SELECT workspace_id,config_sha FROM snapshots WHERE snapshot_id=?",
+            (snapshot_id,),
+        ).fetchone()
+        if snapshot is not None and snapshot != (self.workspace_id, config_sha):
+            _fail("Publication receipt snapshot binding differs")
+
     def _reconcile(self, job_id: str) -> JobStatus | None:
         if self.db.in_transaction:
             _fail("Receipt lookup requires an independent canonical read")
@@ -779,12 +791,9 @@ class JobRepository:
             return None
         if receipt.job_id != job_id:
             _fail("Publication receipt belongs to a different job")
-        snapshot = self.db.execute(
-            "SELECT workspace_id,config_sha FROM snapshots WHERE snapshot_id=?",
-            (receipt.result_snapshot_id,),
-        ).fetchone()
-        if snapshot != (self.workspace_id, status.effective_config.sha256):
-            _fail("Publication receipt snapshot binding differs")
+        self._require_snapshot_binding(
+            receipt.result_snapshot_id, status.effective_config.sha256
+        )
         if (
             status.result_snapshot_id is not None
             and status.result_snapshot_id != receipt.result_snapshot_id
