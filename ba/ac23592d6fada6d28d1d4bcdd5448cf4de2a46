@@ -1,0 +1,19 @@
+docs/superpowers/plans/2026-10-16-engine-core-v2-index.md
+  s_ab847b2c6c265a::t_6616be71ecf1dc 138,232-236,275
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "baac23592d6fada6d28d1d4bcdd5448cf4de2a46",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
