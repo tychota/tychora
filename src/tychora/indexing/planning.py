@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 
+from tychora.contracts.errors import TychoraError
 from tychora.contracts.snapshots import (
     MembershipPage,
     PageMember,
@@ -21,7 +22,13 @@ def _kept(
         return member
     if member.revision_id == incoming.revision_id:
         return None
-    if retained_editions.get(member.revision_id) != incoming_edition:
+    if member.revision_id not in retained_editions:
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Retained edition is missing before publication",
+            reason="canonical.binding_mismatch",
+        )
+    if retained_editions[member.revision_id] != incoming_edition:
         return member.model_copy(update={"is_default": False})
     return None
 
