@@ -737,3 +737,34 @@ def test_graph_generations_of_collected_snapshots_drop_after_a_restart(
         for batch_id, generation in before.items():
             assert graph._state_path(generation).exists() is (batch_id in after)
         assert kb.search({"question": "graph outcome", "modalities": ["lexical"]})
+
+
+def test_queued_jobs_of_a_stopped_process_are_interrupted_at_open(
+    tmp_path, monkeypatch
+):
+    with Tychora.open(tmp_path / "kb", token_counter=CharacterCounter()) as kb:
+        owner = kb._workspace.owner
+        _add(kb, "a.md", "Published verification outcome.")
+
+        def crash(plan):
+            raise RuntimeError("simulated crash before activation")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(owner.store, "publish_snapshot", crash)
+            stopped = _add(kb, "b.md", "Unpublished verification outcome.")
+        # The accepting process stops before it runs the job: the row stays queued.
+        _db(owner).execute(
+            "UPDATE jobs SET state='queued',error_code=NULL WHERE job_id=?",
+            (stopped.id,),
+        )
+        _db(owner).commit()
+    with Tychora.open(tmp_path / "kb", token_counter=CharacterCounter()) as kb:
+        owner = kb._workspace.owner
+        assert _db(owner).execute(
+            "SELECT state,error_code FROM jobs WHERE job_id=?", (stopped.id,)
+        ).fetchone() == ("failed", "JOB_INTERRUPTED")
+        assert kb.jobs.get(stopped.id).state == "interrupted"
+        result = kb.management.run({"operation": "gc"})
+        assert result.gc is not None and result.gc.unpublished_skipped is False
+        assert result.gc.batches > 0
+        assert _count(_db(owner), ORPHAN_BATCHES) == 0
