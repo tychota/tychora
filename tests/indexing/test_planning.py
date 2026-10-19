@@ -3,7 +3,10 @@
 import random
 from hashlib import sha256
 
+import pytest
+
 from tychora.contracts.artifacts import ArtifactRef
+from tychora.contracts.errors import TychoraError
 from tychora.contracts.snapshots import (
     MembershipPage,
     PageBatch,
@@ -105,14 +108,14 @@ def test_incoming_replaces_itself_when_revision_is_already_present():
     assert [(m.revision_id, m.is_default) for m in page.members] == [("r1", True)]
 
 
-def test_unknown_retained_edition_is_kept_when_incoming_edition_is_set():
+@pytest.mark.parametrize("incoming_edition", ["1", None])
+def test_a_retained_revision_without_its_edition_is_refused(incoming_edition):
     (source,) = _sources(4, 1)
     base = _page(_member(source, "r1"))
-    page = next_page(base, _member(source, "r2"), {}, "1")
-    assert {(m.revision_id, m.is_default) for m in page.members} == {
-        ("r1", False),
-        ("r2", True),
-    }
+    with pytest.raises(TychoraError) as raised:
+        next_page(base, _member(source, "r2"), {}, incoming_edition)
+    assert raised.value.code == "INTEGRITY_ERROR"
+    assert raised.value.reason == "canonical.binding_mismatch"
 
 
 def test_random_sequences_keep_pages_ordered_bounded_and_counted():
