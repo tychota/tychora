@@ -11,7 +11,6 @@ from tests.helpers.legacy import OutputCounter as Counter
 from tests.helpers.legacy import make_format_one
 from tychora import Tychora
 from tychora.api import rebuild_workspace_from
-from tychora.configuration.resolve import resolve_config
 from tychora.contracts.corpus import ReviewTarget
 from tychora.ports.execution import ExecutionContext
 
@@ -43,16 +42,16 @@ def test_rebuild_keeps_asset_ids_and_a_rejected_asset(tmp_path, monkeypatch):
     )
     pdf = tmp_path / "rich.pdf"
     shutil.copy2(Path(__file__).parents[1] / "fixtures/documents/rich.pdf", pdf)
-    settings = tmp_path / "settings.toml"
-    settings.write_text(
-        'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
+    old = tmp_path / "old"
+    old.mkdir()
+    # The rebuild copies the workspace's own settings, so they live in workspace.toml.
+    (old / "workspace.toml").write_text(
+        'schema_version=1\n[defaults]\nprofile="test"\n'
+        '[profiles.test]\nbuiltin="documents@1"\n'
         '[configuration.extraction]\nparser="docling"\n'
         "[configuration.acquisition]\nroots=" + json.dumps([str(tmp_path)]) + "\n"
     )
-    old = tmp_path / "old"
-    with Tychora.open(
-        old, config=resolve_config(settings, "test", {}), token_counter=Counter()
-    ) as kb:
+    with Tychora.open(old, token_counter=Counter()) as kb:
         handle = kb.sources.add(
             {
                 "type": "file",
@@ -84,8 +83,8 @@ def test_rebuild_keeps_asset_ids_and_a_rejected_asset(tmp_path, monkeypatch):
         )
     make_format_one(old)
     report = rebuild_workspace_from(old, tmp_path / "new", token_counter=Counter())
+    assert report.skipped == (), report.skipped
     assert [item.source_key for item in report.sources] == ["rich.pdf"]
-    assert report.skipped == ()
     with Tychora.open(tmp_path / "new", token_counter=Counter()) as kb:
         rebuilt = sorted(row[0] for row in _query(kb, "SELECT asset_id FROM assets"))
         assert rebuilt == asset_ids
