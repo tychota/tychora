@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from collections import OrderedDict
 from contextlib import contextmanager
 from typing import NoReturn, cast
 
@@ -42,6 +43,10 @@ def _row(value: Contract) -> dict:
     }
 
 
+# Published snapshots whose retained slots stay in memory for repeated queries.
+SLOT_CACHE_SNAPSHOTS = 4
+
+
 def _fail(message: str) -> NoReturn:
     raise TychoraError("INTEGRITY_ERROR", message)
 
@@ -70,6 +75,7 @@ class CorpusStore(PolicyRepository):
         self.leases = leases if leases is not None else LeaseSet()
         self.publication_context = publication_context
         self.uow = SqliteUnitOfWork(db)
+        self._slot_cache: OrderedDict[str, tuple[RetainedSlot, ...]] = OrderedDict()
 
     @contextmanager
     def immediate_transaction(self):
@@ -179,8 +185,28 @@ class CorpusStore(PolicyRepository):
             yield view
 
     def snapshot_slots(self, view: SnapshotView) -> tuple[RetainedSlot, ...]:
-        """Return each slot of a snapshot with the contents of its batches."""
-        return load_retained_slots(self.db, self.artifacts, view)
+        """Return each slot of a snapshot with the contents of its batches.
+
+        Published snapshots are immutable, so the last few stay cached by ID; an
+        entry is dropped once its snapshot is no longer published.
+        """
+        published = (
+            self.db.execute(
+                "SELECT 1 FROM snapshots WHERE snapshot_id=?", (view.snapshot_id,)
+            ).fetchone()
+            is not None
+        )
+        cached = self._slot_cache.pop(view.snapshot_id, None)
+        slots = (
+            cached
+            if cached is not None and published
+            else load_retained_slots(self.db, self.artifacts, view)
+        )
+        if published:
+            self._slot_cache[view.snapshot_id] = slots
+            while len(self._slot_cache) > SLOT_CACHE_SNAPSHOTS:
+                self._slot_cache.popitem(last=False)
+        return slots
 
     def _insert(self, table: str, row: dict, keys: tuple[str, ...]):
         # Identifiers originate only in the closed repository mappings below.

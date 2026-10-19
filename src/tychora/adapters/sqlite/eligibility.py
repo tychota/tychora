@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, NamedTuple
 
 from tychora.adapters.sqlite.repositories import SqliteWorkspaceRepository, artifact_ref
 from tychora.adapters.sqlite.retained_bindings import BindingScope
-from tychora.adapters.sqlite.retained_slots import load_retained_slots
 from tychora.application.collection_policy import collection_is_active
 from tychora.configuration.global_facets import (
     ROLE as GLOBAL_FACET_ROLE,
@@ -273,30 +272,16 @@ class _Owners(NamedTuple):
     assets: dict[str, AssetFact]
 
 
-def _require_text_ownership(
-    store: CorpusStore, batch: RetainedBatch, owners: _Owners
-) -> dict[str, list]:
-    """Check the text batch input records its groups; return bindings by group."""
-    with store.artifacts.open_verified(batch.input_manifest) as stream:
-        manifest = json.load(stream)
-    data = manifest.get("data", {})
-    expected = [
-        {
-            "record_id": binding.record_id,
-            "group_id": binding.group_id,
-            "dependency_ids": sorted(binding.dependency_ids),
-        }
+def _require_text_ownership(batch: RetainedBatch, owners: _Owners) -> dict[str, list]:
+    """Check every text record is grouped over a selected chunk; return groups.
+
+    The retained slot loader already checked the groups against the batch input.
+    """
+    if any(
+        binding.group_id is None
+        or not binding.dependency_ids
+        or binding.chunk_id not in owners.chunks
         for binding in batch.vector_records
-    ]
-    if (
-        data.get("entries") != [binding.record_id for binding in batch.vector_records]
-        or data.get("representations") != expected
-        or any(
-            binding.group_id is None
-            or not binding.dependency_ids
-            or binding.chunk_id not in owners.chunks
-            for binding in batch.vector_records
-        )
     ):
         raise TychoraError(
             "INDEX_INCOMPLETE",
@@ -341,11 +326,9 @@ def _group_vector_facts(
     ]
 
 
-def _text_vector_facts(
-    store: CorpusStore, batch: RetainedBatch, owners: _Owners
-) -> list[VectorFact]:
+def _text_vector_facts(batch: RetainedBatch, owners: _Owners) -> list[VectorFact]:
     """Check a text batch's group ownership and return its vector facts."""
-    groups = _require_text_ownership(store, batch, owners)
+    groups = _require_text_ownership(batch, owners)
     return [
         fact
         for group_id, bindings in groups.items()
@@ -371,7 +354,6 @@ def _image_vector_facts(batch: RetainedBatch, owners: _Owners) -> list[VectorFac
 
 
 def _vector_facts(
-    store: CorpusStore,
     slots: tuple[RetainedSlot, ...],
     selected: set[str],
     owners: _Owners,
@@ -383,7 +365,7 @@ def _vector_facts(
             if batch.extraction_id not in selected:
                 continue
             if slot.slot == "text":
-                facts.extend(_text_vector_facts(store, batch, owners))
+                facts.extend(_text_vector_facts(batch, owners))
             elif slot.slot == "image":
                 facts.extend(_image_vector_facts(batch, owners))
     return tuple(facts)
@@ -653,9 +635,9 @@ def read_eligibility_facts(
                 )
         chunks_by_id = {item.chunk_id: item for item in chunk_facts}
         assets_by_id = {item.asset_id: item for item in asset_facts}
-        slots = load_retained_slots(db, store.artifacts, snapshot)
+        slots = store.snapshot_slots(snapshot)
         owners = _Owners(chunks_by_id, chunk_order, assets_by_id)
-        vectors = _vector_facts(store, slots, selected_extractions, owners)
+        vectors = _vector_facts(slots, selected_extractions, owners)
         decisions = tuple(
             (assertion, decision)
             for assertion, decision in db.execute(
