@@ -79,6 +79,9 @@ qualified choices. Guided settings cover provider/model/reference configuration,
 qualified embedding limits, parser selection, existing retrieval options,
 bounded graph/query inspection limits, the strict `offline` boolean and the
 `index.text.backend` / `index.image.backend` choices (`disabled` or `chroma`).
+Disabling a channel after sources were indexed stops new adds from publishing
+it; re-enabling it later requires `tychora manage rebuild native <channel>`
+before the next add, because earlier sources have no batch in the channel.
 Reranking uses `providers.rerank`; there is no `retrieval.rerank` setting. Fresh
 workspaces can preview/apply online Voyage text/rerank settings and a Chroma text
 index together before ingestion. Setting `offline=false` permits
