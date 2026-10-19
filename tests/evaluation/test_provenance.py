@@ -409,8 +409,15 @@ def _code_workspace(tmp_path):
     kb = Tychora.open(
         tmp_path / "workspace", config=config, token_counter=SyntheticCounter()
     )
-    handle = add_repository(kb, repo, "synthetic-repo", "Synthetic repository")
-    assert kb.jobs.wait(handle.id, timeout=scaled(120)).state == "succeeded"
+    try:
+        handle = add_repository(kb, repo, "synthetic-repo", "Synthetic repository")
+        # jobs.wait caps its timeout at 300 s; CI scales by 3.
+        status = kb.jobs.wait(handle.id, timeout=min(scaled(120), 300))
+        assert status.state == "succeeded"
+    except BaseException:
+        # An unclosed workspace hangs the worker when the garbage collector finalizes it.
+        kb.close()
+        raise
     return kb
 
 
