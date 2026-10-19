@@ -211,6 +211,12 @@ _ENTRIES = (
         "The snapshot was collected or never published; query the active snapshot.",
     ),
     Reason(
+        "JOB_INTERRUPTED",
+        "job.orphaned",
+        True,
+        "Retry the job; the process that ran it stopped before it finished.",
+    ),
+    Reason(
         "FORBIDDEN_SCOPE",
         "scope.whole_workspace",
         False,

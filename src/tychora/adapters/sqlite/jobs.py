@@ -549,6 +549,27 @@ class JobRepository:
                 )
         return len(ids)
 
+    def interrupt_orphaned_jobs(self) -> tuple[str, ...]:
+        """Settle unfinished jobs of a process that stopped; return their IDs.
+
+        The owner lock is exclusive, so when an owner opens no other process
+        runs a job and none of its leases survive. A job whose publication
+        committed is reconciled as succeeded, a cancelling one is cancelled and
+        any other fails retryably with ``JOB_INTERRUPTED``. Removal jobs are
+        closed first by ``interrupt_removal_jobs``.
+        """
+        self.interrupt_removal_jobs()
+        ids = tuple(
+            job_id
+            for (job_id,) in self.db.execute(
+                "SELECT job_id FROM jobs WHERE state IN ('running','cancelling') "
+                "AND operation NOT IN ('remove','purge-originals') ORDER BY job_id"
+            ).fetchall()
+        )
+        for job_id in ids:
+            self.recover(job_id)
+        return ids
+
     def retry(self, job_id: str) -> JobStatus:
         reconciled = self._reconcile(job_id)
         if reconciled is not None:
@@ -824,7 +845,7 @@ class JobRepository:
                 self.fail(
                     job_id,
                     TychoraError(
-                        "JOB_INTERRUPTED", "Job was interrupted", retryable=True
+                        "JOB_INTERRUPTED", "Job was interrupted", reason="job.orphaned"
                     ),
                 )
         return self.get(job_id)

@@ -213,7 +213,7 @@ class LocalWorkspace:
                 RemovalService(
                     self.owner, self.services.jobs.repository
                 ).reconcile_pending_deletions()
-                self.services.jobs.repository.interrupt_removal_jobs()
+                self.services.jobs.repository.interrupt_orphaned_jobs()
 
             self.bridge.call(
                 self.owner.run_blocking(
