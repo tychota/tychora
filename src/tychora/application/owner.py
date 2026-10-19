@@ -270,7 +270,9 @@ class WorkspaceOwner:
         try:
             self._handles.close()
         finally:
-            if hasattr(self, "db"):
+            # A collected owner runs this off its dead thread; its connection
+            # is thread-bound and closes itself when the collector frees it.
+            if hasattr(self, "db") and get_ident() == self._thread_id:
                 self.db.close()
 
     def register_close(self, close: Callable[[], None]) -> None:

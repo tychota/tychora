@@ -468,6 +468,66 @@ asyncio.run(main())
     assert result.stdout.strip() == "cancelled"
 
 
+def test_collected_worker_runs_its_close_cleanup_inline():
+    import subprocess
+    import sys
+
+    # The owner generator and its worker share a cycle, as an unclosed owner does.
+    code = """
+import gc
+from contextlib import contextmanager
+from tychora.application.runtime import BoundedWorker
+@contextmanager
+def owned():
+    worker = BoundedWorker()
+    worker.submit(lambda: None).result()
+    try:
+        yield worker
+    finally:
+        worker.close(lambda: print('cleaned'))
+manager = owned()
+manager.__enter__().cycle = manager
+del manager
+gc.collect()
+print('collected')
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=scaled(10),
+        check=True,
+    )
+    assert result.stdout.split() == ["cleaned", "collected"]
+
+
+def test_collected_unclosed_workspace_releases_its_lock(tmp_path):
+    import subprocess
+    import sys
+
+    code = """
+import gc, sys
+from tychora import Tychora
+failures = []
+sys.unraisablehook = failures.append
+kb = Tychora.open(sys.argv[1])
+del kb
+gc.collect()
+assert not failures, [str(failure.exc_value) for failure in failures]
+with Tychora.open(sys.argv[1]):
+    print('reopened')
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", code, str(tmp_path / "workspace")],
+        capture_output=True,
+        text=True,
+        timeout=scaled(30),
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "reopened"
+
+
 def test_existing_corpus_without_identity_is_not_assigned_a_new_workspace(
     tmp_path, settings, scope
 ):
