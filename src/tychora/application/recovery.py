@@ -7,7 +7,7 @@ import os
 import struct
 from dataclasses import dataclass
 from hashlib import sha256
-from uuid import UUID, uuid4, uuid5
+from uuid import uuid4
 
 from tychora.adapters.files.references import from_backup
 from tychora.adapters.sqlite.graph import read_graph_build
@@ -87,12 +87,11 @@ def verify_semantic_vector_family(
         settings.model_dump(mode="json"),
         raw,
     )
-    creation = str(uuid5(UUID(workspace_id), f"{channel}:{expected}"))
     if (
         not isinstance(origin_sha, str)
         or spec.workspace_id != workspace_id
         or spec.config_sha != expected
-        or spec.creation_uuid != creation
+        or spec.family_id != family_id(workspace_id, expected, spec.creation_uuid)
         or spec.family_id != family.family_id
         or spec.modality != ("text" if channel == "text" else "visual")
         or spec.provider != capabilities.provider

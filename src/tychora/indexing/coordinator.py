@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from hashlib import sha256
 from io import BytesIO
 from typing import NoReturn
-from uuid import UUID, uuid5
 
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.adapters.sqlite.graph import read_graph_build
@@ -36,7 +35,12 @@ from tychora.contracts.graph import (
     GraphGenerationSpec,
     GraphManifest,
 )
-from tychora.contracts.identity import canonical_bytes, digest
+from tychora.contracts.identity import (
+    canonical_bytes,
+    digest,
+    new_family_nonce,
+    vector_record_id,
+)
 from tychora.contracts.identity import family_id as derive_family_id
 from tychora.contracts.indexing import ContextGroup, FamilySpec, SearchWindow
 from tychora.contracts.operations import JobHandle
@@ -334,12 +338,26 @@ class ProjectionCoordinator:
             )
         self.store.commit_extraction(bundle)
 
-    @staticmethod
+    def _family_nonce(self, channel: str, identity_sha: str) -> str:
+        """Return the nonce of the family already created for this identity, or a new one."""
+        with self.store.uow.read() as tx:
+            existing = tx.families.nonce(channel, identity_sha)
+        return existing or new_family_nonce()
+
+    def _persist_family(
+        self, family: IndexFamily, nonce: str, identity_sha: str
+    ) -> None:
+        """Store the family row before any batch references it."""
+        with self.store.uow.write() as tx:
+            tx.families.create(family, nonce, identity_sha)
+
     def _lexical_family(
-        workspace_id: str, config_sha: str, created_at: str
+        self, workspace_id: str, config_sha: str, created_at: str
     ) -> IndexFamily:
-        return IndexFamily(
-            family_id=digest("lexical-family-v1", workspace_id, config_sha),
+        """Return the lexical family of this configuration, creating it once."""
+        nonce = self._family_nonce("lexical", config_sha)
+        family = IndexFamily(
+            family_id=derive_family_id(workspace_id, config_sha, nonce),
             channel="lexical",
             backend="sqlite-fts5",
             config_sha=config_sha,
@@ -349,6 +367,8 @@ class ProjectionCoordinator:
             backend_namespace="lexical",
             created_at=created_at,
         )
+        self._persist_family(family, nonce, config_sha)
+        return family
 
     def _lexical_batch(
         self,
@@ -417,7 +437,7 @@ class ProjectionCoordinator:
             settings.model_dump(mode="json"),
             stable_capability_json(capabilities),
         )
-        creation_uuid = str(uuid5(UUID(workspace_id), "text:" + family_config))
+        creation_uuid = self._family_nonce("text", family_config)
         spec = FamilySpec(
             family_id=derive_family_id(workspace_id, family_config, creation_uuid),
             workspace_id=workspace_id,
@@ -454,6 +474,7 @@ class ProjectionCoordinator:
             backend_namespace=spec.backend_namespace,
             created_at=created_at,
         )
+        self._persist_family(family, creation_uuid, family_config)
         self.store.vector_indexes[spec.family_id] = index
         return family, spec
 
@@ -484,6 +505,7 @@ class ProjectionCoordinator:
         ):
             _fail("Text provider returned incomplete or foreign window vectors")
         bindings = []
+        stored = []
         for item in records:
             window_id, group = expected[item.record_id]
             if (
@@ -498,9 +520,11 @@ class ProjectionCoordinator:
             )
             if cache.sha256 != item.value_sha:
                 _fail("Text provider value digest differs from retained bytes")
+            record_id = vector_record_id(family.family_id, window_id, item.input_sha)
+            stored.append(item.model_copy(update={"record_id": record_id}))
             bindings.append(
                 VectorRecordBinding(
-                    record_id=item.record_id,
+                    record_id=record_id,
                     chunk_id=window_id,
                     input_sha=item.input_sha,
                     value_sha=item.value_sha,
@@ -509,21 +533,7 @@ class ProjectionCoordinator:
                     embedding_cache=cache,
                 )
             )
-        ordered = tuple(sorted(records, key=lambda item: item.record_id))
-        if ordered:
-            receipt = self.text_index.upsert_batch(
-                VectorBatch(family_id=family.family_id, records=ordered), ctx
-            )
-        else:
-            handle = self.text_index.create_family(spec)
-            receipt = BatchReceipt(
-                family_id=family.family_id,
-                namespace_hash=handle.namespace_hash,
-                config_sha=handle.config_sha,
-                records=(),
-                digest=receipt_digest(()),
-                count=0,
-            )
+        receipt = self._native_receipt(self.text_index, spec, stored, ctx)
         entries = tuple(row.record_id for row in bindings)
         manifest = _input_manifest(
             self.artifacts,
@@ -547,6 +557,29 @@ class ProjectionCoordinator:
             expected_count=len(bindings),
             receipt=receipt,
             vector_records=tuple(bindings),
+        )
+
+    @staticmethod
+    def _native_receipt(
+        index: VectorIndex,
+        spec: FamilySpec,
+        records: list[EmbeddingRecord],
+        ctx: ExecutionContext,
+    ) -> BatchReceipt:
+        """Upsert family-keyed records in ID order; an empty batch proves the family."""
+        if records:
+            ordered = tuple(sorted(records, key=lambda item: item.record_id))
+            return index.upsert_batch(
+                VectorBatch(family_id=spec.family_id, records=ordered), ctx
+            )
+        handle = index.create_family(spec)
+        return BatchReceipt(
+            family_id=spec.family_id,
+            namespace_hash=handle.namespace_hash,
+            config_sha=handle.config_sha,
+            records=(),
+            digest=receipt_digest(()),
+            count=0,
         )
 
     def _image_family(
@@ -574,7 +607,7 @@ class ProjectionCoordinator:
             settings.model_dump(mode="json"),
             stable_capability_json(capabilities),
         )
-        creation_uuid = str(uuid5(UUID(workspace_id), "image:" + family_config))
+        creation_uuid = self._family_nonce("image", family_config)
         spec = FamilySpec(
             family_id=derive_family_id(workspace_id, family_config, creation_uuid),
             workspace_id=workspace_id,
@@ -611,6 +644,7 @@ class ProjectionCoordinator:
             backend_namespace=spec.backend_namespace,
             created_at=created_at,
         )
+        self._persist_family(family, creation_uuid, family_config)
         self.store.vector_indexes[spec.family_id] = index
         return family, spec
 
@@ -699,6 +733,7 @@ class ProjectionCoordinator:
         } != set(expected):
             _fail("Visual provider returned incomplete or foreign asset vectors")
         bindings = []
+        stored = []
         for record in records:
             item = expected[record.record_id]
             input_sha = digest(
@@ -720,30 +755,20 @@ class ProjectionCoordinator:
             )
             if cache.sha256 != record.value_sha:
                 _fail("Visual provider value digest differs from retained bytes")
+            record_id = vector_record_id(
+                family.family_id, item.asset.asset_id, record.input_sha
+            )
+            stored.append(record.model_copy(update={"record_id": record_id}))
             bindings.append(
                 VectorRecordBinding(
-                    record_id=record.record_id,
+                    record_id=record_id,
                     asset_id=item.asset.asset_id,
                     input_sha=record.input_sha,
                     value_sha=record.value_sha,
                     embedding_cache=cache,
                 )
             )
-        ordered = tuple(sorted(records, key=lambda record: record.record_id))
-        if ordered:
-            receipt = self.image_index.upsert_batch(
-                VectorBatch(family_id=family.family_id, records=ordered), ctx
-            )
-        else:
-            handle = self.image_index.create_family(spec)
-            receipt = BatchReceipt(
-                family_id=family.family_id,
-                namespace_hash=handle.namespace_hash,
-                config_sha=handle.config_sha,
-                records=(),
-                digest=receipt_digest(()),
-                count=0,
-            )
+        receipt = self._native_receipt(self.image_index, spec, stored, ctx)
         manifest = _input_manifest(
             self.artifacts, tuple(row.record_id for row in bindings)
         )
@@ -759,6 +784,34 @@ class ProjectionCoordinator:
             vector_records=tuple(bindings),
         )
 
+    def _graph_family(
+        self, workspace_id: str, config_sha: str, created_at: str
+    ) -> IndexFamily:
+        """Return the graph family of this configuration and registry, creating it once."""
+        graph_config = digest(
+            "graph-family-config-v2",
+            config_sha,
+            self.store.registry.registry_digest,
+            self.config.values.retrieval.graph.model_dump(mode="json"),
+        )
+        nonce = self._family_nonce("graph", graph_config)
+        family = IndexFamily(
+            family_id=derive_family_id(workspace_id, graph_config, nonce),
+            channel="graph",
+            backend="ladybug",
+            config_sha=graph_config,
+            config_json=FrozenJsonMap(
+                {
+                    "effective_config_sha": config_sha,
+                    "registry_digest": self.store.registry.registry_digest,
+                }
+            ),
+            backend_namespace="graph",
+            created_at=created_at,
+        )
+        self._persist_family(family, nonce, graph_config)
+        return family
+
     def _graph_slot(
         self,
         members: tuple[SnapshotMember, ...],
@@ -772,27 +825,8 @@ class ProjectionCoordinator:
                 "CAPABILITY_MISSING",
                 "Configured graph projection lacks a native generation factory",
             )
-        graph_config = digest(
-            "graph-family-config-v2",
-            config_sha,
-            self.store.registry.registry_digest,
-            self.config.values.retrieval.graph.model_dump(mode="json"),
-        )
-        family_id = digest("graph-family-v2", workspace_id, graph_config)
-        family = IndexFamily(
-            family_id=family_id,
-            channel="graph",
-            backend="ladybug",
-            config_sha=graph_config,
-            config_json=FrozenJsonMap(
-                {
-                    "effective_config_sha": config_sha,
-                    "registry_digest": self.store.registry.registry_digest,
-                }
-            ),
-            backend_namespace="graph",
-            created_at=created_at,
-        )
+        family = self._graph_family(workspace_id, config_sha, created_at)
+        family_id, graph_config = family.family_id, family.config_sha
         selected = []
         for member in members:
             row = self.store.db.execute(

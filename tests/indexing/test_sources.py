@@ -230,6 +230,11 @@ async def test_image_slot_publishes_required_empty_batch(tmp_path, monkeypatch, 
                     for key, value in family.config_json.items()
                     if key != "capabilities"
                 }
+                # A pre-proof family row was stored without its capability proof.
+                owner.store.db.execute(
+                    "UPDATE index_families SET config_json=? WHERE family_id=?",
+                    (canonical_bytes(old_json).decode(), family.family_id),
+                )
                 return family.model_copy(
                     update={"config_json": FrozenJsonMap(old_json)}
                 ), spec

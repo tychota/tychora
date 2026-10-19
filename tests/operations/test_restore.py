@@ -157,7 +157,7 @@ def test_restore_preserves_identity_and_marks_native_pending(tmp_path):
                     ),
                 )
             owner.db.execute(
-                "INSERT INTO index_families VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO index_families VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     "text-family",
                     "text",
@@ -168,6 +168,8 @@ def test_restore_preserves_identity_and_marks_native_pending(tmp_path):
                     "config",
                     "{}",
                     "namespace",
+                    "c" * 64,
+                    "00000000-0000-4000-8000-000000000001",
                     "2026-01-01T00:00:00+00:00",
                 ),
             )

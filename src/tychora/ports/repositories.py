@@ -15,6 +15,7 @@ from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import Contract, NonEmptyStr
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
+from tychora.contracts.snapshots import IndexFamily
 
 MAX_CURSOR_CHARS = 1024
 
@@ -85,4 +86,20 @@ class ArtifactRepository(Protocol):
 
     def register(self, ref: ArtifactRef) -> bool:
         """Register an artifact; return whether it was newly added."""
+        ...
+
+
+class FamilyRepository(Protocol):
+    """Index families and the creation nonces bound into their identifiers."""
+
+    def get(self, family_id: str) -> IndexFamily | None:
+        """Return the stored family, or ``None`` when absent."""
+        ...
+
+    def nonce(self, channel: str, identity_sha: str) -> str | None:
+        """Return the nonce of the earliest family created for this identity."""
+        ...
+
+    def create(self, family: IndexFamily, nonce: str, identity_sha: str) -> None:
+        """Store a family once; an identical repeat is a no-op, a different row fails."""
         ...

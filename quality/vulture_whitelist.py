@@ -24,8 +24,6 @@ _.discover_kinds  # registry query exercised by tests; kind ontology (sub-projec
 _.hint_contributions  # registry query exercised by tests; kind ontology (sub-project 5) owns it
 import_inclusive_end  # date bound helper exercised by tests; kind ontology facets (sub-project 5) own it
 DateInterval  # contract type exercised by tests; kind ontology facets (sub-project 5) own it
-vector_record_id  # callers added by engine core v2 §4.4
-new_family_nonce  # callers added by engine core v2 §4.4
 repository_manifest  # code repository manifest exercised by tests; chunking v2 code ingestion owns it
 process_memory  # benchmark helper exercised by tests; engine core v2 benchmark harness owns it
 recall  # evaluation metric exercised by tests; kept beside the runner's typed metrics

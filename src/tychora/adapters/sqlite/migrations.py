@@ -9,7 +9,11 @@ from pathlib import Path
 from tychora.contracts.errors import TychoraError
 
 SCHEMA_VERSION = 2
-SCHEMA_CHECKSUM = "5899bf5b00ec52d686602369801491bdc6e50d6e9dd803e790bb1cd32d15cabe"
+SCHEMA_CHECKSUM = "0a328df5a0dc5ecc1648af4514d367452e76376d26e3413d59a62698696c0100"
+# Receipts of earlier format-2 schemas: a rebuild, not a foreign database.
+EARLIER_FORMAT_TWO_CHECKSUMS = (
+    "5899bf5b00ec52d686602369801491bdc6e50d6e9dd803e790bb1cd32d15cabe",
+)
 FORMAT_ONE_CHECKSUM = "b98d888098fa0ea790484f37ab8cf746afc2299576411767012c9e3a3c5642a9"
 
 
@@ -24,8 +28,17 @@ def format_old_error() -> TychoraError:
 
 
 def receipt_is_older(rows: list[tuple[int, str]]) -> bool:
-    """True when a migration receipt names a format older than the packaged one."""
-    return len(rows) == 1 and rows[0][0] < SCHEMA_VERSION
+    """True when a migration receipt names a format older than the packaged one.
+
+    An earlier format-2 schema counts as older: its receipt carries the current
+    version with a checksum this package replaced.
+    """
+    if len(rows) != 1:
+        return False
+    version, checksum = rows[0]
+    return version < SCHEMA_VERSION or (
+        version == SCHEMA_VERSION and checksum in EARLIER_FORMAT_TWO_CHECKSUMS
+    )
 
 
 def _disable_extension_loading(db: sqlite3.Connection) -> None:
