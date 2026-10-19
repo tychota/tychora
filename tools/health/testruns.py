@@ -167,7 +167,11 @@ def clean_suite(root: Path) -> list[Metric]:
 
 
 def runtime(root: Path) -> list[Metric]:
-    """G18: pull-request suite time (sum of the shard sessions); at most 15% above the baseline."""
+    """G18: session time of reports/junit.xml; nightly, at most 15% above the baseline.
+
+    Nightly copies its seed-2 run (no coverage) to reports/junit.xml; pull requests
+    print the merged shard report (sum of the shard sessions) for information only.
+    """
     junit = read_report(root / "reports/junit.xml")
     for seconds, test in slowest(junit):
         print(f"[slowest] {seconds:7.1f}s {test}")

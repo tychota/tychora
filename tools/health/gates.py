@@ -46,7 +46,9 @@ GATES: tuple[Gate, ...] = (
     Gate("G16", "Coverage, dashboard", "pr", testruns.dashboard_coverage),
     Gate("G16", "Coverage, branches", "nightly", testruns.branch_coverage),
     Gate("G17", "Clean-machine suite", "pr", testruns.clean_suite, test_reports=True),
-    Gate("G18", "Test runtime", "pr", testruns.runtime, test_reports=True),
+    # Runner noise on one commit reached 40% (689.6 s vs 973.1 s), so the runtime is
+    # a nightly ratchet; pull requests print it without comparing.
+    Gate("G18", "Test runtime", "nightly", testruns.runtime, test_reports=True),
     Gate("G19", "Advisories", "pr", advisories.advisories),
     Gate("G20", "Lock freshness", "pr", advisories.lock_freshness),
     Gate("G21", "Mutation score", "nightly", testruns.mutation),

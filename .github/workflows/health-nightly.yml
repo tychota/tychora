@@ -140,6 +140,11 @@ jobs:
         with:
           name: nightly-mutation-reports
           path: reports
+      # G18 measures the session time of reports/junit.xml: seed 2, the run without
+      # coverage, over the nightly selection.
+      - name: Runtime report for G18
+        if: always()
+        run: cp reports/seed-2.xml reports/junit.xml
       - name: Architecture report
         run: uv run --locked python -m tools.health report --architecture reports/architecture.md --previous docs/quality/2026-10-15-baseline.md
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -154,7 +159,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.baseline
         # --initial adds only the metrics missing from quality/baseline.json and keeps existing entries.
         # G22 is left out for the same reason as in the check below.
-        run: uv run --locked python -m tools.health update --initial --group nightly --gates G16,G21
+        run: uv run --locked python -m tools.health update --initial --group nightly --gates G16,G18,G21
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: github.event_name == 'workflow_dispatch' && inputs.baseline
         with:
@@ -166,4 +171,4 @@ jobs:
       # tests/fixtures/evaluation/code-gold/README.md. Add G22 here when that test passes.
       - name: Nightly gates
         if: always()
-        run: uv run --locked python -m tools.health check --group nightly --gates G16,G21
+        run: uv run --locked python -m tools.health check --group nightly --gates G16,G18,G21
