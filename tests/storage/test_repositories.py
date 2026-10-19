@@ -131,3 +131,18 @@ def test_write_rolls_back_when_commit_raises(tmp_path):
         assert connection.execute("SELECT COUNT(*) FROM artifacts").fetchone()[0] == 0
     finally:
         connection.close()
+
+
+def test_lexical_epoch_bumps_only_in_a_write_transaction(db):
+    uow = SqliteUnitOfWork(db)
+    with uow.write() as tx:
+        assert tx.workspace.bump_lexical_epoch() == 1
+        assert tx.workspace.lexical_epoch() == 1
+    with pytest.raises(TychoraError) as error, uow.read() as tx:
+        tx.workspace.bump_lexical_epoch()
+    assert error.value.reason == "invariant.unexpected"
+    with pytest.raises(RuntimeError), uow.write() as tx:
+        tx.workspace.bump_lexical_epoch()
+        raise RuntimeError("boom")
+    with uow.read() as tx:
+        assert tx.workspace.lexical_epoch() == 1

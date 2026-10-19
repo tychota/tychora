@@ -241,7 +241,7 @@ def test_published_capture_no_longer_requires_original_payload_on_replay(jobs):
     jobs.repo.capture(job.id, capture)
     jobs.repo.start(job.id)
     jobs.db.execute(
-        "INSERT INTO snapshots VALUES ('published','workspace',NULL,?,?,?,?)",
+        "INSERT INTO snapshots VALUES ('published','workspace',NULL,?,?,?,?,NULL,NULL)",
         ("a" * 64, jobs.config.sha256, jobs.config.sha256, "2026-01-01T00:00:00Z"),
     )
     jobs.repo.complete(job.id, result_snapshot_id="published")

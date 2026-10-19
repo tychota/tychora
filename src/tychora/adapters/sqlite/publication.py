@@ -11,6 +11,7 @@ from uuid import UUID
 
 from tychora.adapters.files.references import MAX_MANIFEST_BYTES, required_closure
 from tychora.adapters.sqlite.repositories import (
+    SqliteBatchRepository,
     SqliteFamilyRepository,
     SqliteWorkspaceRepository,
     artifact_ref,
@@ -41,6 +42,7 @@ from tychora.contracts.vector_batches import (
 from tychora.contracts.vectors import BatchReceipt
 from tychora.indexing.receipts import receipt_digest
 from tychora.ports.execution import ExecutionContext
+from tychora.ports.repositories import VectorRecordRow
 
 if TYPE_CHECKING:
     from tychora.adapters.sqlite.corpus import CorpusStore
@@ -411,6 +413,34 @@ def _register_plan_artifacts(store: CorpusStore, plan: PublicationPlan) -> None:
         _register_artifact(store, ref, revive=ref.media_type == VECTOR_BATCH_MEDIA_TYPE)
 
 
+def _insert_batch_records(db: sqlite3.Connection, batch: PublicationBatch) -> None:
+    """Store a batch's lexical and vector rows; new lexical rows bump the epoch once."""
+    batches = SqliteBatchRepository(db)
+    fresh = (
+        bool(batch.lexical_records)
+        and not db.execute(
+            "SELECT EXISTS(SELECT 1 FROM lexical_records WHERE batch_id=?)",
+            (batch.batch_id,),
+        ).fetchone()[0]
+    )
+    batches.write_lexical(batch.batch_id, batch.lexical_records)
+    batches.write_vectors(
+        batch.batch_id,
+        tuple(
+            VectorRecordRow(
+                record_id=row.record_id,
+                chunk_id=row.chunk_id,
+                asset_id=row.asset_id,
+                input_sha=row.input_sha,
+                row_index=row.row_index,
+            )
+            for row in batch.vector_records
+        ),
+    )
+    if fresh:
+        SqliteWorkspaceRepository(db).bump_lexical_epoch()
+
+
 def insert_snapshot_bindings(store: CorpusStore, plan: PublicationPlan) -> None:
     """Insert all immutable bindings inside the caller's immediate transaction."""
     if not store.db.in_transaction:
@@ -422,41 +452,7 @@ def insert_snapshot_bindings(store: CorpusStore, plan: PublicationPlan) -> None:
         _require_created_family(db, family)
         for batch in slot.batches:
             store._insert("index_batches", _batch_row(family, batch), ("batch_id",))
-            for row in batch.lexical_records:
-                existing = db.execute(
-                    "SELECT batch_id,chunk_id,identifiers,title,headings,body,context FROM lexical_records WHERE batch_id=? AND chunk_id=?",
-                    (batch.batch_id, row.chunk_id),
-                ).fetchone()
-                values = (
-                    batch.batch_id,
-                    row.chunk_id,
-                    row.identifiers,
-                    row.title,
-                    row.headings,
-                    row.body,
-                    row.context,
-                )
-                if existing is not None:
-                    if existing != values:
-                        _fail("Immutable lexical record differs")
-                else:
-                    db.execute(
-                        "INSERT INTO lexical_records (batch_id,chunk_id,identifiers,title,headings,body,context) VALUES (?,?,?,?,?,?,?)",
-                        values,
-                    )
-            for row in batch.vector_records:
-                store._insert(
-                    "vector_records",
-                    {
-                        "record_id": row.record_id,
-                        "batch_id": batch.batch_id,
-                        "chunk_id": row.chunk_id,
-                        "asset_id": row.asset_id,
-                        "input_sha": row.input_sha,
-                        "row_index": row.row_index,
-                    },
-                    ("record_id",),
-                )
+            _insert_batch_records(store.db, batch)
     store._insert(
         "snapshots",
         {

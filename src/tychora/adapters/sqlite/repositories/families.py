@@ -71,7 +71,10 @@ class SqliteFamilyRepository:
         return None if row is None else family_from_row(row)
 
     def nonce(self, channel: str, identity_sha: str) -> str | None:
-        """Return the nonce of the earliest family created for this identity."""
+        """Return the nonce of the earliest family created for this identity.
+
+        Ties on ``created_at`` fall back to the family ID: a deterministic pick.
+        """
         row = self._db.execute(
             "SELECT creation_nonce FROM index_families WHERE channel=? AND "
             "identity_sha=? ORDER BY created_at,family_id LIMIT 1",
@@ -85,7 +88,7 @@ class SqliteFamilyRepository:
         values = (*_family_values(family), identity_sha, nonce)
         self._db.execute(
             f"INSERT INTO index_families ({_COLUMNS},identity_sha,creation_nonce) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(family_id) DO NOTHING",
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
             values,
         )
         stored = self._db.execute(

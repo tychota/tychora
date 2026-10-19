@@ -5,7 +5,11 @@ import sqlite3
 from contextlib import contextmanager
 from typing import NoReturn, cast
 
-from tychora.adapters.sqlite.repositories import SqliteUnitOfWork, artifact_ref
+from tychora.adapters.sqlite.repositories import (
+    SqliteSnapshotRepository,
+    SqliteUnitOfWork,
+    artifact_ref,
+)
 from tychora.application.collection_policy import require_active_collection
 from tychora.application.leases import LeaseSet
 from tychora.configuration.models import ResolvedConfig
@@ -82,10 +86,8 @@ class CorpusStore(PolicyRepository):
             raise
 
     def active_snapshot_id(self) -> str | None:
-        rows = self.db.execute("SELECT active_snapshot_id FROM workspaces").fetchall()
-        if len(rows) != 1:
-            _fail("Canonical workspace identity is ambiguous")
-        return rows[0][0]
+        with self.uow.read() as tx:
+            return tx.snapshots.active_id()
 
     def insert_snapshot_bindings(self, plan: PublicationPlan) -> None:
         from .publication import insert_snapshot_bindings
@@ -93,15 +95,7 @@ class CorpusStore(PolicyRepository):
         insert_snapshot_bindings(self, plan)
 
     def set_active_snapshot(self, snapshot_id: str) -> None:
-        if not self.db.in_transaction:
-            _fail("Active snapshot switch requires an immediate transaction")
-        if (
-            self.db.execute(
-                "UPDATE workspaces SET active_snapshot_id=?", (snapshot_id,)
-            ).rowcount
-            != 1
-        ):
-            _fail("Canonical workspace identity is ambiguous")
+        SqliteSnapshotRepository(self.db).set_active(snapshot_id)
 
     def publish_snapshot(self, plan: PublicationPlan) -> str:
         from .publication import publish_snapshot

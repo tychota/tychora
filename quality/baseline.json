@@ -17,7 +17,7 @@
     },
     "cognitive_complexity": {
       "direction": "lower",
-      "measured_at": "e7a5eac8b09e",
+      "measured_at": "b0eb5415a35e",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::search": 58,
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::upsert_batch": 16,
@@ -77,7 +77,6 @@
         "src/tychora/adapters/sqlite/lexical.py::LexicalIndex::search": 16,
         "src/tychora/adapters/sqlite/publication.py::_verify_artifacts": 48,
         "src/tychora/adapters/sqlite/publication.py::_verify_batches": 84,
-        "src/tychora/adapters/sqlite/publication.py::insert_snapshot_bindings": 25,
         "src/tychora/adapters/sqlite/publication.py::publish_snapshot": 46,
         "src/tychora/adapters/sqlite/publication.py::resolve_snapshot": 17,
         "src/tychora/adapters/sqlite/validation.py::validate_bundle": 240,
@@ -247,7 +246,7 @@
         "src/tychora/retrieval/visuals.py::prepare_visual_candidates": 25,
         "src/tychora/retrieval/visuals.py::select_visuals": 61
       },
-      "value": 227
+      "value": 226
     },
     "coverage_branch": {
       "direction": "higher",
@@ -391,7 +390,7 @@
     },
     "function_length": {
       "direction": "lower",
-      "measured_at": "e7a5eac8b09e",
+      "measured_at": "b0eb5415a35e",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex.search": 143,
         "src/tychora/adapters/code/capture.py::RepositoryCapture._run": 89,
@@ -427,7 +426,6 @@
         "src/tychora/adapters/sqlite/graph.py::read_graph_build": 155,
         "src/tychora/adapters/sqlite/lexical.py::LexicalIndex.search": 103,
         "src/tychora/adapters/sqlite/publication.py::_verify_batches": 130,
-        "src/tychora/adapters/sqlite/publication.py::insert_snapshot_bindings": 96,
         "src/tychora/adapters/sqlite/publication.py::publish_snapshot": 150,
         "src/tychora/adapters/sqlite/publication.py::resolve_snapshot": 89,
         "src/tychora/adapters/sqlite/validation.py::validate_bundle": 427,
@@ -547,7 +545,7 @@
         "src/tychora/retrieval/visuals.py::_visual": 92,
         "src/tychora/retrieval/visuals.py::select_visuals": 109
       },
-      "value": 153
+      "value": 152
     },
     "integrity_raises_without_reason": {
       "direction": "lower",

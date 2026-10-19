@@ -18,10 +18,11 @@ def require_write(db: sqlite3.Connection, writable: bool) -> None:
 
 
 class SqliteWorkspaceRepository:
-    """Reads the one row of ``workspaces`` and the decision watermark."""
+    """The one row of ``workspaces``, its epochs and the decision watermark."""
 
-    def __init__(self, db: sqlite3.Connection) -> None:
+    def __init__(self, db: sqlite3.Connection, *, writable: bool = True) -> None:
         self._db = db
+        self._writable = writable
 
     def _row(self) -> tuple[str, int, int]:
         rows = self._db.execute(_ROW).fetchall()
@@ -49,4 +50,13 @@ class SqliteWorkspaceRepository:
         """Return the highest recorded decision sequence number."""
         return self._db.execute(
             "SELECT COALESCE(MAX(decision_id),0) FROM assertion_decisions"
+        ).fetchone()[0]
+
+    def bump_lexical_epoch(self) -> int:
+        """Advance the lexical statistics epoch once and return the new value."""
+        require_write(self._db, self._writable)
+        self._row()
+        return self._db.execute(
+            "UPDATE workspaces SET lexical_statistics_epoch=lexical_statistics_epoch+1 "
+            "RETURNING lexical_statistics_epoch"
         ).fetchone()[0]

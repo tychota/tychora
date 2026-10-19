@@ -26,7 +26,7 @@ def test_canonical_schema_integrity(tmp_path):
         "asset_proxy_dependencies",
         "original_payload_tombstones",
     } <= names
-    assert len({n for n in names if not n.startswith("lexical_fts")}) == 39
+    assert len({n for n in names if not n.startswith("lexical_fts")}) == 44
     assert "lexical_fts" in names
     assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
@@ -441,7 +441,7 @@ def test_canonical_sql_negative_constraints(populated, case):
     assert not db.in_transaction
 
 
-def test_fts_membership_grouping_and_transactional_statistics(populated):
+def test_fts_membership_grouping_and_row_writes_leave_the_epoch(populated):
     db, a, b = populated
     uid = a.units[0].unit_id
     insert(
@@ -474,7 +474,7 @@ def test_fts_membership_grouping_and_transactional_statistics(populated):
             context="",
         )
     assert (
-        db.execute("SELECT lexical_statistics_epoch FROM workspaces").fetchone()[0] == 3
+        db.execute("SELECT lexical_statistics_epoch FROM workspaces").fetchone()[0] == 0
     )
     found = db.execute(
         "SELECT DISTINCT c.unit_id FROM lexical_fts f JOIN lexical_records l ON l.rowid=f.rowid "
@@ -486,12 +486,9 @@ def test_fts_membership_grouping_and_transactional_statistics(populated):
     db.execute("BEGIN IMMEDIATE")
     db.execute("DELETE FROM lexical_records WHERE rowid=1")
     assert (
-        db.execute("SELECT lexical_statistics_epoch FROM workspaces").fetchone()[0] == 4
+        db.execute("SELECT lexical_statistics_epoch FROM workspaces").fetchone()[0] == 0
     )
     db.rollback()
-    assert (
-        db.execute("SELECT lexical_statistics_epoch FROM workspaces").fetchone()[0] == 3
-    )
     assert (
         db.execute(
             "SELECT COUNT(*) FROM lexical_fts WHERE lexical_fts MATCH 'record'"
@@ -499,9 +496,6 @@ def test_fts_membership_grouping_and_transactional_statistics(populated):
         == 3
     )
     db.execute("DELETE FROM lexical_records WHERE rowid=1")
-    assert (
-        db.execute("SELECT lexical_statistics_epoch FROM workspaces").fetchone()[0] == 4
-    )
     assert (
         db.execute(
             "SELECT COUNT(*) FROM lexical_fts WHERE lexical_fts MATCH 'record'"

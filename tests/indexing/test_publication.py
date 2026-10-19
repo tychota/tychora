@@ -347,6 +347,21 @@ def test_partial_new_projection_does_not_replace_active(
     assert f.store.resolve_snapshot(None).snapshot_id == old
 
 
+def test_publication_bumps_the_lexical_epoch_once_per_new_lexical_batch(
+    published_corpus: PublishedCorpus,
+) -> None:
+    f = published_corpus
+
+    def epoch() -> int:
+        with f.store.uow.read() as tx:
+            return tx.workspace.lexical_epoch()
+
+    assert epoch() == 1
+    old = f.store.resolve_snapshot(None).snapshot_id
+    f.store.publish_snapshot(f.plan("new source text", base=old))
+    assert epoch() == 2
+
+
 def make_projected_corpus(tmp_path, config_factory, *, legacy=False) -> ProjectedCorpus:
     config = config_factory(dimensions=2)
     counter = RecordingCounter()

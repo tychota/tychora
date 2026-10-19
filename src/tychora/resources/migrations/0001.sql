@@ -320,12 +320,10 @@ CREATE VIRTUAL TABLE lexical_fts USING fts5(
 CREATE TRIGGER lexical_insert AFTER INSERT ON lexical_records BEGIN
   INSERT INTO lexical_fts(rowid,identifiers,title,headings,body,context)
   VALUES(new.rowid,new.identifiers,new.title,new.headings,new.body,new.context);
-  UPDATE workspaces SET lexical_statistics_epoch=lexical_statistics_epoch+1;
 END;
 CREATE TRIGGER lexical_delete AFTER DELETE ON lexical_records BEGIN
   INSERT INTO lexical_fts(lexical_fts,rowid,identifiers,title,headings,body,context)
   VALUES('delete',old.rowid,old.identifiers,old.title,old.headings,old.body,old.context);
-  UPDATE workspaces SET lexical_statistics_epoch=lexical_statistics_epoch+1;
 END;
 CREATE TRIGGER lexical_no_update BEFORE UPDATE ON lexical_records BEGIN
   SELECT RAISE(ABORT,'lexical records are immutable; replace the batch');
@@ -338,7 +336,9 @@ CREATE TABLE snapshots (
   membership_sha TEXT NOT NULL,
   config_sha TEXT NOT NULL,
   manifest_sha TEXT NOT NULL REFERENCES artifacts(artifact_sha),
-  published_at TEXT NOT NULL
+  published_at TEXT NOT NULL,
+  job_id TEXT,
+  member_count INTEGER CHECK(member_count IS NULL OR member_count>=0)
 ) STRICT;
 
 CREATE TABLE snapshot_members (
@@ -371,6 +371,44 @@ CREATE TABLE snapshot_batches (
   PRIMARY KEY(snapshot_id,slot,batch_id),
   FOREIGN KEY(snapshot_id,slot,family_id) REFERENCES snapshot_indexes(snapshot_id,slot,family_id),
   FOREIGN KEY(batch_id,family_id) REFERENCES index_batches(batch_id,family_id)
+) STRICT;
+
+CREATE TABLE membership_pages (
+  page_id TEXT PRIMARY KEY,
+  bucket INTEGER NOT NULL CHECK(bucket BETWEEN 0 AND 255),
+  manifest_sha TEXT NOT NULL REFERENCES artifacts(artifact_sha),
+  member_count INTEGER NOT NULL CHECK(member_count>=0)
+) STRICT;
+CREATE TABLE page_members (
+  page_id TEXT NOT NULL REFERENCES membership_pages(page_id),
+  source_id TEXT NOT NULL,
+  revision_id TEXT NOT NULL,
+  extraction_id TEXT NOT NULL,
+  is_default INTEGER NOT NULL CHECK(is_default IN (0,1)),
+  PRIMARY KEY(page_id,revision_id),
+  FOREIGN KEY(revision_id,source_id) REFERENCES revisions(revision_id,source_id),
+  FOREIGN KEY(extraction_id,revision_id) REFERENCES extractions(extraction_id,revision_id)
+) STRICT;
+CREATE INDEX page_members_extraction ON page_members(extraction_id,page_id);
+CREATE TABLE page_batches (
+  page_id TEXT NOT NULL REFERENCES membership_pages(page_id),
+  slot TEXT NOT NULL,
+  batch_id TEXT NOT NULL REFERENCES index_batches(batch_id),
+  PRIMARY KEY(page_id,slot,batch_id)
+) STRICT;
+CREATE INDEX page_batches_batch ON page_batches(batch_id);
+CREATE TABLE snapshot_pages (
+  snapshot_id TEXT NOT NULL REFERENCES snapshots(snapshot_id),
+  bucket INTEGER NOT NULL CHECK(bucket BETWEEN 0 AND 255),
+  page_id TEXT NOT NULL REFERENCES membership_pages(page_id),
+  PRIMARY KEY(snapshot_id,bucket)
+) STRICT;
+CREATE INDEX snapshot_pages_page ON snapshot_pages(page_id);
+CREATE TABLE snapshot_root_batches (
+  snapshot_id TEXT NOT NULL REFERENCES snapshots(snapshot_id),
+  slot TEXT NOT NULL,
+  batch_id TEXT NOT NULL REFERENCES index_batches(batch_id),
+  PRIMARY KEY(snapshot_id,slot,batch_id)
 ) STRICT;
 
 CREATE TABLE jobs (
