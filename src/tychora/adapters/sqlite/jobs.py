@@ -25,6 +25,11 @@ def _fail(message: str) -> NoReturn:
     raise TychoraError("INTEGRITY_ERROR", message)
 
 
+def _orphaned() -> TychoraError:
+    """The retryable failure of a job whose process stopped."""
+    return TychoraError("JOB_INTERRUPTED", "Job was interrupted", reason="job.orphaned")
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -555,19 +560,21 @@ class JobRepository:
         The owner lock is exclusive, so when an owner opens no other process
         runs a job and none of its leases survive. A job whose publication
         committed is reconciled as succeeded, a cancelling one is cancelled and
-        any other fails retryably with ``JOB_INTERRUPTED``. Removal jobs are
+        any other fails retryably with ``JOB_INTERRUPTED``. A queued job is
+        orphaned too: only the accepting process ever runs it. Removal jobs are
         closed first by ``interrupt_removal_jobs``.
         """
         self.interrupt_removal_jobs()
         ids = tuple(
             job_id
             for (job_id,) in self.db.execute(
-                "SELECT job_id FROM jobs WHERE state IN ('running','cancelling') "
+                "SELECT job_id FROM jobs WHERE state IN ('queued','running','cancelling') "
                 "AND operation NOT IN ('remove','purge-originals') ORDER BY job_id"
             ).fetchall()
         )
         for job_id in ids:
-            self.recover(job_id)
+            if self.recover(job_id).state == "queued":
+                self.fail(job_id, _orphaned())
         return ids
 
     def retry(self, job_id: str) -> JobStatus:
@@ -851,10 +858,5 @@ class JobRepository:
                 with self._write():
                     self._state(job_id, "cancelled", "recovery")
             else:
-                self.fail(
-                    job_id,
-                    TychoraError(
-                        "JOB_INTERRUPTED", "Job was interrupted", reason="job.orphaned"
-                    ),
-                )
+                self.fail(job_id, _orphaned())
         return self.get(job_id)
