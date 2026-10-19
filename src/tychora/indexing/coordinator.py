@@ -58,7 +58,7 @@ from tychora.contracts.vector_batches import (
     VectorBatchRow,
     encode_vector_batch,
 )
-from tychora.contracts.vectors import BatchReceipt, VectorBatch
+from tychora.contracts.vectors import BatchReceipt, VectorBatch, VectorOwner
 from tychora.indexing.groups import build_groups
 from tychora.indexing.receipts import receipt_digest
 from tychora.indexing.representations import prepare_extraction
@@ -73,6 +73,61 @@ from tychora.ports.vectors import VectorIndex
 
 def _fail(message: str) -> NoReturn:
     raise TychoraError("INTEGRITY_ERROR", message)
+
+
+def _text_bindings(
+    stored: list[EmbeddingRecord],
+    owners: dict[str, tuple[str, ContextGroup]],
+    positions: dict[str, int],
+) -> list[VectorRecordBinding]:
+    """Bind each stored text record to its window, context group and artifact row."""
+    return [
+        VectorRecordBinding(
+            record_id=row.record_id,
+            chunk_id=owners[row.record_id][0],
+            input_sha=row.input_sha,
+            value_sha=row.value_sha,
+            group_id=owners[row.record_id][1].group_id,
+            dependency_ids=owners[row.record_id][1].dependency_ids,
+            row_index=positions[row.record_id],
+        )
+        for row in stored
+    ]
+
+
+def _text_owners(
+    bundle: ExtractionBundle,
+    windows: tuple[SearchWindow, ...],
+    chunk_ids: dict[str, str],
+) -> tuple[VectorOwner, ...]:
+    """Own each text vector record, keyed by ID, by the unit of its window."""
+    units = {window.chunk_id: window.unit_id for window in windows}
+    return tuple(
+        VectorOwner(
+            record_id=record_id,
+            revision_id=bundle.revision.revision_id,
+            extraction_id=bundle.extraction.extraction_id,
+            owner_kind="unit",
+            owner_id=units[chunk_id],
+        )
+        for record_id, chunk_id in sorted(chunk_ids.items())
+    )
+
+
+def _asset_owners(
+    bundle: ExtractionBundle, asset_ids: dict[str, str]
+) -> tuple[VectorOwner, ...]:
+    """Own each image vector record, keyed by ID, by its asset."""
+    return tuple(
+        VectorOwner(
+            record_id=record_id,
+            revision_id=bundle.revision.revision_id,
+            extraction_id=bundle.extraction.extraction_id,
+            owner_kind="asset",
+            owner_id=asset_id,
+        )
+        for record_id, asset_id in sorted(asset_ids.items())
+    )
 
 
 def _input_manifest(
@@ -522,19 +577,16 @@ class ProjectionCoordinator:
             stored.append(item.model_copy(update={"record_id": record_id}))
             owners[record_id] = (window_id, group)
         vectors, positions = self._vector_artifact(family, spec.dimensions, stored)
-        bindings = [
-            VectorRecordBinding(
-                record_id=row.record_id,
-                chunk_id=owners[row.record_id][0],
-                input_sha=row.input_sha,
-                value_sha=row.value_sha,
-                group_id=owners[row.record_id][1].group_id,
-                dependency_ids=owners[row.record_id][1].dependency_ids,
-                row_index=positions[row.record_id],
-            )
-            for row in stored
-        ]
-        receipt = self._native_receipt(self.text_index, spec, stored, ctx)
+        bindings = _text_bindings(stored, owners, positions)
+        receipt = self._native_receipt(
+            self.text_index,
+            spec,
+            stored,
+            ctx,
+            _text_owners(
+                bundle, windows, {key: value[0] for key, value in owners.items()}
+            ),
+        )
         entries = tuple(row.record_id for row in bindings)
         manifest = _input_manifest(
             self.artifacts,
@@ -590,12 +642,14 @@ class ProjectionCoordinator:
         spec: FamilySpec,
         records: list[EmbeddingRecord],
         ctx: ExecutionContext,
+        owners: tuple[VectorOwner, ...] = (),
     ) -> BatchReceipt:
         """Upsert family-keyed records in ID order; an empty batch proves the family."""
         if records:
             ordered = tuple(sorted(records, key=lambda item: item.record_id))
             return index.upsert_batch(
-                VectorBatch(family_id=spec.family_id, records=ordered), ctx
+                VectorBatch(family_id=spec.family_id, records=ordered, owners=owners),
+                ctx,
             )
         handle = index.create_family(spec)
         return BatchReceipt(
@@ -790,7 +844,9 @@ class ProjectionCoordinator:
             )
             for row in stored
         ]
-        receipt = self._native_receipt(self.image_index, spec, stored, ctx)
+        receipt = self._native_receipt(
+            self.image_index, spec, stored, ctx, _asset_owners(bundle, assets)
+        )
         manifest = _input_manifest(
             self.artifacts, tuple(row.record_id for row in bindings)
         )

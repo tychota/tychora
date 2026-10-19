@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import struct
+from collections.abc import Callable
 from dataclasses import dataclass
 from hashlib import sha256
 from uuid import uuid4
@@ -12,6 +13,7 @@ from uuid import uuid4
 from tychora.adapters.files.references import from_backup
 from tychora.adapters.sqlite.graph import read_graph_build
 from tychora.adapters.sqlite.jobs import JobRepository
+from tychora.adapters.sqlite.vector_owners import vector_owner_rows
 from tychora.application.removal import RemovalService
 from tychora.application.restore import RESTORE_SUSPENSION, deletion_suspended
 from tychora.configuration.indexed_representation import pinned_runtime_compatible
@@ -25,7 +27,7 @@ from tychora.contracts.indexing import FamilySpec, IndexRecordDigest
 from tychora.contracts.publication import IndexFamily, PublicationBatch
 from tychora.contracts.requests import RequestScope
 from tychora.contracts.vector_batches import decode_vector_batch, row_value_sha
-from tychora.contracts.vectors import BatchReceipt, VectorBatch
+from tychora.contracts.vectors import BatchReceipt, VectorBatch, VectorOwner
 from tychora.indexing.receipts import receipt_digest
 from tychora.ports.execution import ExecutionContext
 
@@ -327,10 +329,32 @@ def _bindings_match_receipt(batch: PublicationBatch) -> bool:
     )
 
 
+def _vector_owners(owner_rows: tuple[tuple, ...]) -> tuple[VectorOwner, ...]:
+    """Owners of the records described by (record, revision, extraction, unit, asset) rows."""
+    return tuple(
+        VectorOwner(
+            record_id=record_id,
+            revision_id=revision_id,
+            extraction_id=extraction_id,
+            owner_kind="unit" if unit_id else "asset",
+            owner_id=unit_id or asset_id,
+        )
+        for record_id, revision_id, extraction_id, unit_id, asset_id in owner_rows
+    )
+
+
 def vector_batch_records(
-    family: IndexFamily, batch: PublicationBatch, artifacts
+    family: IndexFamily,
+    batch: PublicationBatch,
+    artifacts,
+    *,
+    owner_rows: tuple[tuple, ...] = (),
 ) -> VectorBatch:
-    """Rebuild only the exact retained float32 rows bound to the sealed receipt."""
+    """Rebuild the exact retained float32 rows bound to the sealed receipt.
+
+    ``owner_rows`` restores the owner metadata that native backends keep next to
+    each vector; without it the batch carries no owners.
+    """
     spec = _vector_family_spec(family, batch)
     vectors = batch.vectors
     if not _bindings_match_receipt(batch):
@@ -381,17 +405,19 @@ def vector_batch_records(
             "Retained vector is not normalized float32",
             reason="canonical.row_invalid",
         ) from None
-    return VectorBatch(family_id=family.family_id, records=records)
+    return VectorBatch(
+        family_id=family.family_id, records=records, owners=_vector_owners(owner_rows)
+    )
 
 
 def verify_native_vector(
     family: IndexFamily,
     batch: PublicationBatch,
-    artifacts,
+    records: Callable[[], VectorBatch],
     index,
     ctx: ExecutionContext,
 ) -> BatchReceipt:
-    """Write exact retained bytes and require backend proof against the old seal."""
+    """Write the rows ``records`` loads and require backend proof against the old seal."""
     receipt = batch.receipt
     if not isinstance(receipt, BatchReceipt):
         raise TychoraError("INTEGRITY_ERROR", "Vector receipt type differs")
@@ -413,8 +439,7 @@ def verify_native_vector(
     ):
         raise TychoraError("INTEGRITY_ERROR", "Native vector family identity differs")
     if batch.vector_records:
-        records = vector_batch_records(family, batch, artifacts)
-        if index.upsert_batch(records, ctx) != receipt:
+        if index.upsert_batch(records(), ctx) != receipt:
             raise TychoraError("INTEGRITY_ERROR", "Native vector seal differs")
     elif (
         receipt.count != 0
@@ -575,6 +600,42 @@ class RecoveryService:
             ctx,
         )
 
+    def _reverify_vector(
+        self, family: IndexFamily, batch: PublicationBatch, ctx: ExecutionContext
+    ) -> tuple[BatchReceipt, dict]:
+        """Rewrite one pending vector batch natively; return its receipt and proof."""
+        index = self.owner.store.vector_indexes.get(family.family_id)
+        if index is None:
+            raise TychoraError(
+                "CAPABILITY_MISSING", "Native vector index is unavailable"
+            )
+        receipt = verify_native_vector(
+            family,
+            batch,
+            lambda: vector_batch_records(
+                family,
+                batch,
+                self.owner.artifacts,
+                owner_rows=vector_owner_rows(self.owner.db, batch.batch_id),
+            ),
+            index,
+            ctx,
+        )
+        verified = index.verify_batch(receipt)
+        if (
+            not verified.ready
+            or not verified.config_matches
+            or verified.missing_record_ids
+            or verified.mismatched_record_ids
+        ):
+            raise TychoraError("INTEGRITY_ERROR", "Native vector proof differs")
+        physical = {
+            "backend": "chroma-ip",
+            "entries_digest": receipt.digest,
+            "value_digests": [item.value_sha for item in receipt.records],
+        }
+        return receipt, physical
+
     def _rebuild_native_on_owner(
         self,
         scope: RequestScope,
@@ -655,32 +716,9 @@ class RecoveryService:
                     if row[0] == "ready":
                         continue
                     if slot.slot in {"text", "image"}:
-                        index = store.vector_indexes.get(slot.family.family_id)
-                        if index is None:
-                            raise TychoraError(
-                                "CAPABILITY_MISSING",
-                                "Native vector index is unavailable",
-                            )
-                        receipt = verify_native_vector(
-                            slot.family, batch, self.owner.artifacts, index, ctx
+                        receipt, physical = self._reverify_vector(
+                            slot.family, batch, ctx
                         )
-                        verified = index.verify_batch(receipt)
-                        if (
-                            not verified.ready
-                            or not verified.config_matches
-                            or verified.missing_record_ids
-                            or verified.mismatched_record_ids
-                        ):
-                            raise TychoraError(
-                                "INTEGRITY_ERROR", "Native vector proof differs"
-                            )
-                        physical = {
-                            "backend": "chroma-ip",
-                            "entries_digest": receipt.digest,
-                            "value_digests": [
-                                item.value_sha for item in receipt.records
-                            ],
-                        }
                     else:
                         receipt = batch.receipt
                         manifest = batch.graph_manifest

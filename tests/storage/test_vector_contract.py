@@ -14,7 +14,7 @@ from tychora.adapters.chroma import index as chroma_index
 from tychora.adapters.chroma.index import ChromaVectorIndex
 from tychora.contracts.embeddings import EmbeddingRecord
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.vectors import VectorBatch, WorkLimits
+from tychora.contracts.vectors import VectorBatch, VectorOwner, WorkLimits
 
 
 def record(
@@ -372,3 +372,61 @@ def test_text_pools_have_independent_admission_with_shared_work(
     )
     assert limited.returned_records <= 81
     assert limited.truncated
+
+
+def _owner(record_id: str) -> VectorOwner:
+    return VectorOwner(
+        record_id=record_id,
+        revision_id="r" * 64,
+        extraction_id="x" * 64,
+        owner_kind="unit",
+        owner_id="u" * 64,
+    )
+
+
+def test_upsert_writes_owner_metadata(vector_index, vector_family, execution):
+    index = vector_index
+    batch = vector_family.batch([("record", "u0", (1.0, 0.0))])
+    owner = _owner(batch.records[0].record_id)
+    index.upsert_batch(batch.model_copy(update={"owners": (owner,)}), execution.ctx)
+    collection, _ = index._require()
+    stored = collection.get(ids=[owner.record_id], include=["metadatas"])["metadatas"][
+        0
+    ]
+    assert stored["revision_id"] == "r" * 64
+    assert stored["extraction_id"] == "x" * 64
+    assert stored["owner_kind"] == "unit"
+    assert stored["owner_id"] == "u" * 64
+
+
+def test_upsert_without_owners_keeps_the_digest_only_metadata(
+    vector_index, vector_family, execution
+):
+    batch = vector_family.batch([("record", "u0", (1.0, 0.0))])
+    vector_index.upsert_batch(batch, execution.ctx)
+    collection, _ = vector_index._require()
+    stored = collection.get(ids=["record"], include=["metadatas"])["metadatas"][0]
+    assert set(stored) == {"input_sha", "value_sha"}
+
+
+def test_owner_metadata_does_not_change_the_receipt(
+    vector_index, vector_family, execution
+):
+    batch = vector_family.batch([("record", "u0", (1.0, 0.0))])
+    owned = batch.model_copy(update={"owners": (_owner("record"),)})
+    assert vector_index.upsert_batch(owned, execution.ctx).digest == (
+        vector_index.upsert_batch(batch, execution.ctx).digest
+    )
+
+
+@pytest.mark.parametrize(
+    "owner_ids", [["other"], ["record", "record"], ["record", "extra"]]
+)
+def test_owners_must_cover_each_record_once(vector_family, owner_ids):
+    batch = vector_family.batch([("record", "u0", (1.0, 0.0))])
+    with pytest.raises(ValueError, match="Vector owners must cover each record once"):
+        VectorBatch(
+            family_id=batch.family_id,
+            records=batch.records,
+            owners=tuple(_owner(i) for i in owner_ids),
+        )

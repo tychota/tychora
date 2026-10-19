@@ -669,7 +669,10 @@ def test_native_recovery_rejects_independent_family_identity_corruption(
 def test_native_recovery_rejects_backend_handle_namespace_corruption(
     projected_corpus, tmp_path
 ):
-    from tychora.application.recovery import verify_native_vector
+    from tychora.application.recovery import (
+        vector_batch_records,
+        verify_native_vector,
+    )
 
     f = projected_corpus
     slot = next(
@@ -685,7 +688,9 @@ def test_native_recovery_rejects_backend_handle_namespace_corruption(
         verify_native_vector(
             slot.family,
             slot.batches[0],
-            f.store.artifacts,
+            lambda: vector_batch_records(
+                slot.family, slot.batches[0], f.store.artifacts
+            ),
             MisboundVector(tmp_path / "misbound"),
             ExecutionContext(),
         )
@@ -1161,3 +1166,63 @@ def test_revival_is_refused_without_verified_fresh_bytes(projected_corpus, damag
     assert f.store.db.execute(
         "SELECT payload_state FROM artifacts WHERE artifact_sha=?", (ref.sha256,)
     ).fetchone() == ("delete_pending",)
+
+
+def _chroma_metadata(vector: RecordingVector, record_ids: list[str]) -> list[dict]:
+    collection, _ = vector.inner._require()
+    return collection.get(ids=record_ids, include=["metadatas"])["metadatas"]
+
+
+def test_text_batches_record_revision_extraction_and_unit_in_chroma(projected_corpus):
+    f = projected_corpus
+    slot = next(
+        slot for slot in f.store.resolve_snapshot(None).slots if slot.slot == "text"
+    )
+    batch = slot.batches[0]
+    units = dict(
+        f.store.db.execute(
+            "SELECT chunk_id, unit_id FROM chunks WHERE extraction_id=?",
+            (batch.extraction_id,),
+        ).fetchall()
+    )
+    revision_id = f.store.db.execute(
+        "SELECT revision_id FROM extractions WHERE extraction_id=?",
+        (batch.extraction_id,),
+    ).fetchone()[0]
+    stored = _chroma_metadata(f.vector, [row.record_id for row in batch.vector_records])
+    assert len(stored) == len(batch.vector_records) > 0
+    for binding, metadata in zip(batch.vector_records, stored, strict=True):
+        assert metadata["owner_kind"] == "unit"
+        assert metadata["owner_id"] == units[binding.chunk_id]
+        assert metadata["extraction_id"] == batch.extraction_id
+        assert metadata["revision_id"] == revision_id
+
+
+def test_native_rebuild_restores_owner_metadata(projected_corpus, tmp_path):
+    from tychora.adapters.sqlite.vector_owners import vector_owner_rows
+    from tychora.application.recovery import (
+        vector_batch_records,
+        verify_native_vector,
+    )
+
+    f = projected_corpus
+    slot = next(
+        slot for slot in f.store.resolve_snapshot(None).slots if slot.slot == "text"
+    )
+    batch = slot.batches[0]
+    ids = [row.record_id for row in batch.vector_records]
+    original = _chroma_metadata(f.vector, ids)
+    fresh = RecordingVector(tmp_path / "rebuilt")
+    verify_native_vector(
+        slot.family,
+        batch,
+        lambda: vector_batch_records(
+            slot.family,
+            batch,
+            f.store.artifacts,
+            owner_rows=vector_owner_rows(f.store.db, batch.batch_id),
+        ),
+        fresh,
+        ExecutionContext(),
+    )
+    assert _chroma_metadata(fresh, ids) == original

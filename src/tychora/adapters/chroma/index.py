@@ -16,6 +16,7 @@ from chromadb.api.collection_configuration import CreateHNSWConfiguration
 from chromadb.config import Settings
 from chromadb.errors import NotFoundError
 
+from tychora.contracts.embeddings import EmbeddingRecord
 from tychora.contracts.identity import digest, space_id
 from tychora.contracts.indexing import FamilySpec, IndexRecordDigest
 from tychora.contracts.vector_batches import vector_value_sha
@@ -26,6 +27,7 @@ from tychora.contracts.vectors import (
     DenseCandidate,
     FamilyHandle,
     VectorBatch,
+    VectorOwner,
     Verification,
     WorkLimits,
 )
@@ -67,6 +69,26 @@ def _float32(raw: bytes, dimensions: int) -> tuple[float, ...]:
 
 def _bytes(values: Sequence[float]) -> bytes:
     return struct.pack("<" + "f" * len(values), *values)
+
+
+def _metadatas(
+    records: Sequence[EmbeddingRecord], owners: Sequence[VectorOwner]
+) -> list[dict[str, str]]:
+    """Chroma metadata per record: its digests and, when known, its owner."""
+    by_record = {owner.record_id: owner for owner in owners}
+    result = []
+    for item in records:
+        values = {"input_sha": item.input_sha, "value_sha": item.value_sha}
+        owner = by_record.get(item.record_id)
+        if owner is not None:
+            values |= {
+                "revision_id": owner.revision_id,
+                "extraction_id": owner.extraction_id,
+                "owner_kind": owner.owner_kind,
+                "owner_id": owner.owner_id,
+            }
+        result.append(values)
+    return result
 
 
 class ChromaVectorIndex:
@@ -237,10 +259,7 @@ class ChromaVectorIndex:
             collection.add(
                 ids=[item.record_id for item in chunk],
                 embeddings=[list(item.values) for item in chunk],
-                metadatas=[
-                    {"input_sha": item.input_sha, "value_sha": item.value_sha}
-                    for item in chunk
-                ],
+                metadatas=_metadatas(chunk, batch.owners),
             )
         records = tuple(
             sorted(

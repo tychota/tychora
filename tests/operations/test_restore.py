@@ -735,7 +735,13 @@ def test_vector_rebuild_rejects_missing_or_altered_float32_cache(tmp_path):
             return Verification(ready=False, mismatched_record_ids=("record",))
 
     with pytest.raises(TychoraError) as altered_native:
-        verify_native_vector(family, batch, store, AlteredNative(), ExecutionContext())
+        verify_native_vector(
+            family,
+            batch,
+            lambda: vector_batch_records(family, batch, store),
+            AlteredNative(),
+            ExecutionContext(),
+        )
     assert altered_native.value.code == "INTEGRITY_ERROR"
 
 
