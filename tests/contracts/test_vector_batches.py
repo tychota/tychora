@@ -94,3 +94,57 @@ def test_empty_batch_encodes_header_only():
 def test_vector_value_sha_rejects_partial_floats():
     with pytest.raises(ValueError, match="float32"):
         vector_value_sha(b"abc")
+
+
+def _with_header(header: bytes) -> bytes:
+    return VECTOR_BATCH_MAGIC + struct.pack("<I", len(header)) + header
+
+
+def _canonical(**override):
+    header = {"dimension": 2, "family_id": "f" * 64, "records": []}
+    header.update(override)
+    return _with_header(
+        json.dumps(header, sort_keys=True, separators=(",", ":")).encode()
+    )
+
+
+def _record(record_id, value_sha=None):
+    return {
+        "input_sha": "1" * 64,
+        "record_id": record_id,
+        "value_sha": value_sha or row_value_sha((0.0, 1.0)),
+    }
+
+
+_ROW = struct.pack("<2f", 0.0, 1.0)
+
+
+def _crafted():
+    bad_length = VECTOR_BATCH_MAGIC + struct.pack("<I", 10_000) + b"{}"
+    dup = _canonical(records=[_record("a"), _record("a")]) + _ROW * 2
+    return {
+        "deep": _with_header(b"[" * 100_000),
+        "nan": _with_header(b'{"dimension":NaN,"family_id":"x","records":[]}'),
+        "infinity": _with_header(
+            b'{"dimension":Infinity,"family_id":"x","records":[]}'
+        ),
+        "length_beyond_file": bad_length,
+        "malformed": _with_header(b"{not json"),
+        "non_canonical": _with_header(
+            b'{ "dimension": 2, "family_id": "x", "records": [] }'
+        ),
+        "duplicate_ids": dup,
+        "bool_dimension": _canonical(dimension=True),
+        "float_dimension": _canonical(dimension=2.0),
+        "str_dimension": _canonical(dimension="2"),
+        "int_family": _canonical(family_id=7),
+        "dict_records": _canonical(records={}),
+    }
+
+
+@pytest.mark.parametrize("name", sorted(_crafted()))
+def test_crafted_header_is_a_typed_integrity_error(name):
+    with pytest.raises(TychoraError) as error:
+        decode_vector_batch(_crafted()[name])
+    assert error.value.code == "INTEGRITY_ERROR"
+    assert error.value.reason == "canonical.row_invalid"
