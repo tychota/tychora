@@ -761,3 +761,66 @@ def test_backup_rejects_manifest_payload_size_disagreeing_with_registry(
         f.export()
     assert error.value.code == "INTEGRITY_ERROR"
     assert not f.destination.exists()
+
+
+def test_backup_inventory_includes_pages_roots_and_vector_batches(tmp_path):
+    from tests.api.test_public_sync import CharacterCounter
+    from tychora import SourceInput, Tychora
+    from tychora.adapters.files.references import from_backup
+    from tychora.ports.execution import ExecutionContext
+
+    with Tychora.open(tmp_path / "kb", token_counter=CharacterCounter()) as kb:
+        for index in range(3):
+            job = kb.sources.add(
+                SourceInput(
+                    type="text",
+                    source_key=f"m{index}.md",
+                    collection_id=kb.default_collection_id,
+                    kind="manual@1",
+                    format="text",
+                    metadata={"title": "T", "publisher": "P", "edition": "1"},
+                    text=f"Backup verification outcome {index}.",
+                )
+            )
+            assert kb.jobs.wait(job.id).state == "succeeded"
+        owner = kb._workspace.owner
+
+        def check():
+            inventory = from_backup(owner.db, artifacts=owner.artifacts)
+            pages = {
+                r[0]
+                for r in owner.db.execute("SELECT manifest_sha FROM membership_pages")
+            }
+            roots = {
+                r[0] for r in owner.db.execute("SELECT manifest_sha FROM snapshots")
+            }
+            assert pages and roots
+            assert pages | roots <= inventory.required_shas
+            active = owner.db.execute(
+                "SELECT active_snapshot_id FROM workspaces"
+            ).fetchone()[0]
+            batch_ids = {
+                r[0]
+                for r in owner.db.execute(
+                    "SELECT batch_id FROM snapshot_root_batches WHERE snapshot_id=? "
+                    "UNION SELECT pb.batch_id FROM snapshot_pages sp "
+                    "JOIN page_batches pb USING(page_id) WHERE sp.snapshot_id=?",
+                    (active, active),
+                )
+            }
+            assert batch_ids
+            marks = ",".join("?" * len(batch_ids))
+            artifacts = {
+                sha
+                for row in owner.db.execute(
+                    "SELECT input_manifest_sha,vectors_sha FROM index_batches "
+                    f"WHERE batch_id IN ({marks})",
+                    tuple(batch_ids),
+                )
+                for sha in row
+                if sha
+            }
+            assert artifacts
+            assert artifacts <= inventory.required_shas
+
+        owner.run_blocking_sync(check, ExecutionContext())

@@ -834,3 +834,63 @@ def test_archived_v2_collection_and_active_v1_survive_backup_restore(tmp_path):
             {"operation": "migrate", "target_version": "2"}
         )
         assert result
+
+
+def _count_pages(kb):
+    owner = kb._workspace.owner
+    return owner.run_blocking_sync(
+        lambda: owner.db.execute("SELECT COUNT(*) FROM snapshot_pages").fetchone()[0],
+        ExecutionContext(),
+    )
+
+
+def test_export_import_round_trip_keeps_pages_and_search(tmp_path):
+    from tests.api.test_public_sync import CharacterCounter
+    from tychora import SourceInput, Tychora
+
+    source = tmp_path / "source"
+    with Tychora.open(source, token_counter=CharacterCounter()) as kb:
+        job = kb.sources.add(
+            SourceInput(
+                type="text",
+                source_key="m.md",
+                collection_id=kb.default_collection_id,
+                kind="manual@1",
+                format="text",
+                metadata={"title": "T", "publisher": "P", "edition": "1"},
+                text="Restored verification outcome.",
+            )
+        )
+        assert kb.jobs.wait(job.id).state == "succeeded"
+        kb.management.run(
+            {"operation": "export", "destination": str(tmp_path / "archive")}
+        )
+        pages = _count_pages(kb)
+        assert pages
+    receipt = RestoreService().import_backup(
+        tmp_path / "archive", tmp_path / "restored", None, ExecutionContext()
+    )
+    with Tychora.open(
+        tmp_path / "restored",
+        scope=receipt.opening_scope,
+        token_counter=CharacterCounter(),
+    ) as restored:
+        assert _count_pages(restored) == pages
+        rebuilt = restored.management.run(
+            {"operation": "rebuild", "channels": ["text"]}
+        )
+        assert rebuilt.recovery is not None
+        assert rebuilt.recovery.native_pending_batches == 0
+        health = restored.management.run(
+            {
+                "operation": "health",
+                "verify_payloads": True,
+                "verify_native": True,
+                "resume_pending_deletions": True,
+            }
+        )
+        assert health.recovery is not None
+        assert health.recovery.deletion_suspended is False
+        assert restored.search(
+            {"question": "restored", "modalities": ["lexical"]}
+        ).segments
