@@ -181,6 +181,7 @@ def _graph_store(owner: WorkspaceOwner, config: ResolvedConfig):
     else:
         policy = resolve_graph_traversal_policy(config, Registry.from_config(config))
         graph.set_traversal_policy(policy)
+    owner.store.graph_store = graph
     return graph
 
 
