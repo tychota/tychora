@@ -412,6 +412,14 @@ class MigrateMaintenance(Contract):
     target_version: NonEmptyStr
 
 
+class GcMaintenance(Contract):
+    """Collect snapshots outside the retention rule and reclaim their payloads."""
+
+    operation: Literal["gc"] = "gc"
+    limit: Annotated[int, Field(ge=1, le=100_000)] = 1024
+    include_unpublished: bool = True
+
+
 type MaintenanceVariant = Annotated[
     SetupMaintenance
     | SyncMaintenance
@@ -425,7 +433,8 @@ type MaintenanceVariant = Annotated[
     | CachePurgeMaintenance
     | PurgeOriginalsMaintenance
     | ProviderUploadConsentMaintenance
-    | MigrateMaintenance,
+    | MigrateMaintenance
+    | GcMaintenance,
     Field(discriminator="operation"),
 ]
 
@@ -495,6 +504,17 @@ class RecoveryStatus(Contract):
     native_skipped_pending_batches: NonNegativeInt = 0
 
 
+class GcStatus(Contract):
+    """What one collection deleted, deferred and released."""
+
+    snapshots: NonNegativeInt
+    pages: NonNegativeInt
+    batches: NonNegativeInt
+    deferred_batches: NonNegativeInt
+    released_artifacts: NonNegativeInt
+    unpublished_skipped: bool
+
+
 class MaintenanceResult(Contract):
     plan: MaintenancePlan
     job: JobHandle | None = None
@@ -504,6 +524,7 @@ class MaintenanceResult(Contract):
     pending_payloads: NonNegativeInt = 0
     upload_consent: ProviderUploadConsentState | None = None
     recovery: RecoveryStatus | None = None
+    gc: GcStatus | None = None
 
 
 class SettingsActivation(Contract):

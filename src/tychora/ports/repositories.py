@@ -23,6 +23,7 @@ from tychora.contracts.base import (
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.publication import (
+    BatchReceiptVariant,
     LexicalRecord,
     NewBatch,
     PublicationPlan,
@@ -91,6 +92,10 @@ class WorkspaceRepository(Protocol):
 
     def bump_lexical_epoch(self) -> int:
         """Advance the lexical statistics epoch once and return the new value."""
+        ...
+
+    def collection_ids(self) -> frozenset[str]:
+        """Return every collection of the workspace."""
         ...
 
 
@@ -208,6 +213,28 @@ class BatchRepository(Protocol):
         """Return the batches a snapshot serves for one slot, by batch ID."""
         ...
 
+    def receipt(self, batch_id: str) -> BatchReceiptVariant | None:
+        """Return the stored receipt of a batch, or ``None`` when absent."""
+        ...
+
+    def record_ids(self, batch_id: str) -> tuple[str, ...]:
+        """Return the batch's vector record IDs in ID order."""
+        ...
+
+    def purge(self, batch_ids: tuple[str, ...]) -> tuple[str, ...]:
+        """Delete removed batches and their rows; return artifacts released for deletion."""
+        ...
+
+
+class GcReport(Contract):
+    """What one collection pass deleted, marked removed and released."""
+
+    snapshots: tuple[Identifier, ...]
+    pages: tuple[Identifier, ...]
+    orphan_batches: tuple[BatchRow, ...]
+    released_artifacts: tuple[Sha256, ...]
+    unpublished_skipped: bool = False
+
 
 class SnapshotRepository(Protocol):
     """Snapshots, the active pointer and content-addressed membership pages."""
@@ -238,6 +265,20 @@ class SnapshotRepository(Protocol):
 
     def insert_snapshot(self, plan: PublicationPlan) -> None:
         """Store a snapshot over pages already stored, with its slots and root batches."""
+        ...
+
+    def retained_ids(self, keep_last: int = 16) -> frozenset[str]:
+        """Return the snapshots the retention rule keeps."""
+        ...
+
+    def collect(
+        self,
+        limit: int = 64,
+        *,
+        leased: frozenset[str] = frozenset(),
+        include_unpublished: bool = False,
+    ) -> GcReport:
+        """Delete unretained snapshots and orphan pages; mark orphan batches removed."""
         ...
 
 

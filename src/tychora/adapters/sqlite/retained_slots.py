@@ -244,6 +244,13 @@ class RetainedBatchCache:
             self._batches.move_to_end(batch_id)
         return batch
 
+    def discard(self, batch_ids: tuple[str, ...]) -> None:
+        """Drop batches that left the ready state; absent IDs are ignored."""
+        for batch_id in batch_ids:
+            previous = self._batches.pop(batch_id, None)
+            if previous is not None:
+                self._records -= _records(previous)
+
     def put(self, batch: RetainedBatch) -> None:
         """Cache a loaded batch, evicting the least recently used over the cap."""
         previous = self._batches.pop(batch.batch_id, None)

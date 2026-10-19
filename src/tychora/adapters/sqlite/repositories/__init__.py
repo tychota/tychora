@@ -4,7 +4,7 @@ from .artifacts import SqliteArtifactRepository, artifact_ref
 from .batches import SqliteBatchRepository
 from .families import SqliteFamilyRepository, family_from_row
 from .snapshots import SqliteSnapshotRepository
-from .unit_of_work import SqliteTransaction, SqliteUnitOfWork
+from .unit_of_work import SqliteTransaction, SqliteUnitOfWork, typed_storage_errors
 from .workspace import SqliteWorkspaceRepository
 
 __all__ = [
@@ -17,4 +17,5 @@ __all__ = [
     "SqliteWorkspaceRepository",
     "artifact_ref",
     "family_from_row",
+    "typed_storage_errors",
 ]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import asdict
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
@@ -14,12 +15,16 @@ from tychora.adapters.sqlite.migrations import (
 from tychora.application.backup import BackupService
 from tychora.application.recovery import RecoveryService
 from tychora.application.restore import RestoreService
+from tychora.application.snapshot_gc import GcSummary, SnapshotGc
+from tychora.application.workspace_authority import require_all_collections
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.operations import (
     ConfigurationVariant,
     EvaluateMaintenance,
     EvaluationRequest,
+    GcMaintenance,
+    GcStatus,
     HealthMaintenance,
     ImportMaintenance,
     JobHandle,
@@ -94,35 +99,9 @@ class MaintenanceService:
                 lambda: authorize_workspace(self.owner, grant), ctx
             )
         if isinstance(operation, EvaluateMaintenance):
-            if self.evaluations is None:
-                raise TychoraError(
-                    "CAPABILITY_MISSING", "Evaluation service is unavailable"
-                )
-            snapshot_id = await self.owner.run_blocking(
-                self.owner.store.active_snapshot_id, ctx
-            )
-            if snapshot_id is None:
-                raise TychoraError("NOT_FOUND", "No active snapshot is available")
-            evaluation = EvaluationRequest(
-                dataset_id=operation.dataset_id,
-                split=operation.split,
-                snapshot_id=snapshot_id,
-                variants=(
-                    ConfigurationVariant(
-                        name="configured", profile=self.owner.config.profile
-                    ),
-                ),
-                offline=self.owner.config.values.offline,
-            )
-            handle = await self.evaluations.run(evaluation, grant, ctx)
-            return MaintenanceResult(
-                plan=MaintenancePlan(
-                    operation="evaluate",
-                    target_ids=(operation.dataset_id,),
-                    actions=("score the active snapshot with configured retrieval",),
-                ),
-                job=handle,
-            )
+            return await self._evaluate(operation, grant, ctx)
+        if isinstance(operation, GcMaintenance):
+            return await self._gc(operation, grant, ctx)
         if isinstance(operation, HealthMaintenance):
             recovery = RecoveryService(self.owner)
             report = await self.owner.run_blocking(
@@ -256,6 +235,73 @@ class MaintenanceService:
                 job=handle,
             )
         raise TychoraError("CAPABILITY_MISSING", "Maintenance operation is unavailable")
+
+    async def _evaluate(
+        self,
+        operation: EvaluateMaintenance,
+        grant: RequestScope,
+        ctx: ExecutionContext,
+    ) -> MaintenanceResult:
+        """Score the active snapshot with the configured retrieval."""
+        if self.evaluations is None:
+            raise TychoraError(
+                "CAPABILITY_MISSING", "Evaluation service is unavailable"
+            )
+        snapshot_id = await self.owner.run_blocking(
+            self.owner.store.active_snapshot_id, ctx
+        )
+        if snapshot_id is None:
+            raise TychoraError("NOT_FOUND", "No active snapshot is available")
+        evaluation = EvaluationRequest(
+            dataset_id=operation.dataset_id,
+            split=operation.split,
+            snapshot_id=snapshot_id,
+            variants=(
+                ConfigurationVariant(
+                    name="configured", profile=self.owner.config.profile
+                ),
+            ),
+            offline=self.owner.config.values.offline,
+        )
+        handle = await self.evaluations.run(evaluation, grant, ctx)
+        return MaintenanceResult(
+            plan=MaintenancePlan(
+                operation="evaluate",
+                target_ids=(operation.dataset_id,),
+                actions=("score the active snapshot with configured retrieval",),
+            ),
+            job=handle,
+        )
+
+    async def _gc(
+        self, operation: GcMaintenance, grant: RequestScope, ctx: ExecutionContext
+    ) -> MaintenanceResult:
+        """Collect unretained snapshots, then unlink the payloads only they used."""
+        collector = SnapshotGc(self.owner)
+
+        def collect() -> tuple[GcSummary, dict[str, int]]:
+            require_all_collections(self.owner, grant, "Garbage collection")
+            summary = collector.collect(
+                ctx,
+                limit=operation.limit,
+                include_unpublished=operation.include_unpublished,
+            )
+            return summary, collector.reclaim()
+
+        async with self.owner.comparison_admission.mutation(ctx):
+            summary, counts = await self.owner.run_blocking(collect, ctx)
+        return MaintenanceResult(
+            plan=MaintenancePlan(
+                operation="gc",
+                target_ids=(self.owner.workspace_id,),
+                actions=(
+                    "delete unretained snapshots, orphan pages and orphan batches",
+                    "unlink payloads no retained root binds",
+                ),
+            ),
+            gc=GcStatus(**asdict(summary)),
+            **counts,
+        )
 
     def migrate(self, target_version: int, scope: RequestScope, ctx: ExecutionContext):
         return self.owner.run_blocking_sync(

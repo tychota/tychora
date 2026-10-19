@@ -691,3 +691,11 @@ def test_init_reports_effective_configured_provider_when_config_is_supplied(tmp_
     assert result.exit_code == 0, result.stderr
     assert json.loads(result.stdout)["provider"] == "configured"
     assert (workspace / "workspace.toml").read_bytes() == settings.read_bytes()
+
+
+def test_manage_gc_reports_collection(tmp_path):
+    result = CliRunner().invoke(
+        app, ["--workspace", str(tmp_path / "workspace"), "manage", "gc", "--json"]
+    )
+    assert result.exit_code == 0, result.stderr
+    assert '"gc"' in result.stdout

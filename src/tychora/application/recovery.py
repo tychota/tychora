@@ -16,6 +16,7 @@ from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.adapters.sqlite.vector_owners import OwnerRow, vector_owner_rows
 from tychora.application.removal import RemovalService
 from tychora.application.restore import RESTORE_SUSPENSION, deletion_suspended
+from tychora.application.workspace_authority import require_all_collections
 from tychora.configuration.indexed_representation import pinned_runtime_compatible
 from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.resolve import validate_retained_config
@@ -506,13 +507,7 @@ class RecoveryService:
         if "manage" not in grant.capabilities:
             raise TychoraError("FORBIDDEN_SCOPE", "Native GC requires management grant")
         db = self.owner.db
-        collections = {
-            row[0] for row in db.execute("SELECT collection_id FROM collections")
-        }
-        if not collections.issubset(grant.collection_ids):
-            raise TychoraError(
-                "FORBIDDEN_SCOPE", "Native GC requires all collection grants"
-            )
+        require_all_collections(self.owner, grant, "Native GC")
         with (
             self.owner.maintenance_barrier(),
             self.owner.leases.exclusive_if_idle() as no_leases,
@@ -592,6 +587,7 @@ class RecoveryService:
                         "WHERE batch_id=? AND state='ready'",
                         (batch_id,),
                     )
+                self.owner.store.batch_cache.discard((batch_id,))
                 if channel == "graph":
                     index.drop_generation(receipt.generation_id, ctx)
                 elif record_ids:

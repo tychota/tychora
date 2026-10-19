@@ -1,8 +1,21 @@
 """Explicit managed-owner future-call authority; accepted scopes stay immutable."""
 
+from tychora.contracts.errors import TychoraError
 from tychora.contracts.requests import RequestScope
 
 from .collection_policy import parse_collection_policy
+
+
+def require_all_collections(owner, grant: RequestScope, operation: str) -> None:
+    """Refuse a whole-workspace operation unless the grant covers every collection."""
+    with owner.store.uow.read() as tx:
+        collections = tx.workspace.collection_ids()
+    if not collections <= grant.collection_ids:
+        raise TychoraError(
+            "FORBIDDEN_SCOPE",
+            f"{operation} requires all collection grants",
+            reason="scope.whole_workspace",
+        )
 
 
 def refresh_managed_owner(owner) -> RequestScope:
@@ -41,8 +54,6 @@ def authorize_workspace(
 ) -> RequestScope:
     """Prove canonical complete collection, access and use authority."""
     import json
-
-    from tychora.contracts.errors import TychoraError
 
     grant = owner.scope.narrow(scope)
     if capability not in grant.capabilities:

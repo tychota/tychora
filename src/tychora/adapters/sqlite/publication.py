@@ -580,6 +580,7 @@ class PublicationReceipts:
         ).fetchone()
         if row is None or row[0] is None:
             return None
-        if row[1] != job_id:
+        # A collected snapshot has no row; the job's result stays authoritative.
+        if row[1] is not None and row[1] != job_id:
             _fail("Publication receipt job binding differs")
         return PublicationReceipt(job_id=job_id, result_snapshot_id=row[0])

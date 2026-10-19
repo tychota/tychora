@@ -60,3 +60,9 @@ class SqliteWorkspaceRepository:
             "UPDATE workspaces SET lexical_statistics_epoch=lexical_statistics_epoch+1 "
             "RETURNING lexical_statistics_epoch"
         ).fetchone()[0]
+
+    def collection_ids(self) -> frozenset[str]:
+        """Return every collection of the workspace."""
+        return frozenset(
+            row[0] for row in self._db.execute("SELECT collection_id FROM collections")
+        )
