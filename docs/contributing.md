@@ -34,6 +34,24 @@ The script accepts `--bundle PATH` for an already provisioned local bundle. Live
 
 Use focused regression tests while editing. Before proposing a runtime change, run the relevant integration and contract suites and report the precise scope, model assets, skipped cases and failures. Installed-wheel and native-executable qualification have their own instructions in [distribution](distribution.md).
 
+## Continuous integration
+
+Every check runs somewhere; the expensive ones run where they give the most signal per minute. A pull request gets its full required feedback in about 11 minutes, with all jobs in parallel.
+
+| Check | Pull request | Push to `main` | Nightly / tags |
+| --- | --- | --- | --- |
+| Tests, Ubuntu and macOS (`check.yml`) | 3 shards per OS | 3 shards per OS | — |
+| Clean-machine default suite (`check.yml`) | 2 shards | 2 shards | — |
+| Code-health gates without test reports | yes, from the start | yes | — |
+| Code-health gates on test reports (G16 lines, G17, G18) | after the shards | after the shards | — |
+| Each listed test file alone (`tools.health isolate`) | — | — | nightly (`health-nightly.yml`) |
+| Native qualification, distribution, dashboard, documentation | yes | yes | — |
+| Onedir executable and frozen smoke tests (`binary.yml`) | yes | yes | nightly, `v*` tags |
+| Onefile executable, acceptance and measurement (`binary.yml`) | only when the diff touches `packaging/`, `pyproject.toml`, `uv.lock`, `binary.yml` or the console entry point | yes | nightly, `v*` tags |
+| Branch coverage, three seeds, mutation, architecture report | — | — | nightly |
+
+Shards are deterministic: `-p tools.health.shard --shard K/N` keeps the tests whose node-id SHA-256 falls in shard K, so the N shards hold each selected test exactly once. The report-gates job rebuilds `reports/junit.xml` and `reports/clean-junit.xml` with `python -m tools.health merge-junit` (one testsuite per shard; a test in two shards is an error) and `reports/coverage.json` with `coverage combine`, which also enforces the line-coverage threshold. G18 reads the sum of the shard session times, not the wall-clock of the parallel run. Locally, `python -m tools.health check --test-reports without` runs the gates that need no CI report. A new push to a pull request cancels its previous run.
+
 ## Comments and docstrings
 
 Comments and docstrings say what the code does and why, in present tense, for a reader who has not seen any plan or review. They state intent, units, invariants or reasons that the code cannot show. They never cite plan tasks, plan file names or review identifiers; `python -m tools.health check` fails on a reference such as "Task 7".
