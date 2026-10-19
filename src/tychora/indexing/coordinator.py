@@ -1421,9 +1421,13 @@ class ProjectionCoordinator:
         )
 
     def _kept_base_page(
-        self, base_page: MembershipPage | None
+        self, base_page: MembershipPage | None, slots: frozenset[str]
     ) -> tuple[MembershipPage | None, dict[str, str | None]]:
-        """Drop withdrawn sources from the base page; return it and member editions."""
+        """Keep the base page's active sources with the batches of ``slots`` only.
+
+        Withdrawn sources leave the page, and a slot the configuration no longer
+        serves leaves every kept member. Return the page and member editions.
+        """
         if base_page is None:
             return None, {}
         rows = self.store.db.execute(
@@ -1433,7 +1437,13 @@ class ProjectionCoordinator:
             (json.dumps([m.revision_id for m in base_page.members]),),
         ).fetchall()
         active = {row[0] for row in rows if row[2]}
-        members = tuple(m for m in base_page.members if m.revision_id in active)
+        members = tuple(
+            m.model_copy(
+                update={"batches": tuple(b for b in m.batches if b.slot in slots)}
+            )
+            for m in base_page.members
+            if m.revision_id in active
+        )
         page = MembershipPage(
             bucket=base_page.bucket,
             members=members,
@@ -1452,7 +1462,9 @@ class ProjectionCoordinator:
             extraction_id=bundle.extraction.extraction_id,
             batches=tuple(sorted(batches, key=lambda batch: batch.slot)),
         )
-        kept, editions = self._kept_base_page(prepared.base_page)
+        kept, editions = self._kept_base_page(
+            prepared.base_page, frozenset(batch.slot for batch in batches)
+        )
         return next_page(kept, member, editions, bundle.revision.edition_key)
 
     def _require_rebase_free(
@@ -1523,24 +1535,30 @@ class ProjectionCoordinator:
             families=inputs.families,
             root_batch_ids=tuple(batch.batch_id for batch in inputs.root_batches),
         )
-        draft = PublicationPlan(
-            job_id=inputs.job.id,
-            snapshot_id=snapshot_id_v2(binding, (*reused, inputs.page.page_id)),
-            workspace_id=inputs.workspace_id,
-            base_snapshot_id=binding.base_snapshot_id,
-            config_sha=inputs.config_ref.sha256,
-            families=inputs.families,
-            member_count=member_count_after(
-                base.member_count if base else 0, inputs.base_page, inputs.page
-            ),
-            new_pages=(inputs.page,),
-            reused_page_ids=reused,
-            new_batches=inputs.written,
-            root_batches=inputs.root_batches,
-            graph_watermark=inputs.watermark,
-            # The validator does not read the root; the stored root replaces it.
-            manifest=inputs.config_ref,
-        )
+        try:
+            draft = PublicationPlan(
+                job_id=inputs.job.id,
+                snapshot_id=snapshot_id_v2(binding, (*reused, inputs.page.page_id)),
+                workspace_id=inputs.workspace_id,
+                base_snapshot_id=binding.base_snapshot_id,
+                config_sha=inputs.config_ref.sha256,
+                families=inputs.families,
+                member_count=member_count_after(
+                    base.member_count if base else 0, inputs.base_page, inputs.page
+                ),
+                new_pages=(inputs.page,),
+                reused_page_ids=reused,
+                new_batches=inputs.written,
+                root_batches=inputs.root_batches,
+                graph_watermark=inputs.watermark,
+                # The validator does not read the root; the stored root replaces it.
+                manifest=inputs.config_ref,
+            )
+        except ValueError:
+            _fail(
+                "Planned pages and snapshot bindings are inconsistent",
+                "invariant.unexpected",
+            )
         root = self.artifacts.put_stream(
             BytesIO(canonical_bytes(snapshot_root_document(draft, manifests))),
             "application/json",
@@ -1566,7 +1584,10 @@ class ProjectionCoordinator:
             for m in base_page.members
         ):
             _fail("Captured revision is not the selected canonical source")
-        kept, _ = self._kept_base_page(base_page)
+        kept, _ = self._kept_base_page(
+            base_page,
+            frozenset(item.slot for item in base.families if item.slot != "graph"),
+        )
         members = tuple(
             m.model_copy(update={"is_default": m.revision_id == revision_id})
             if m.source_id == source_id
