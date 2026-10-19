@@ -188,6 +188,12 @@ _ENTRIES = (
     ),
     Reason(
         "CAPABILITY_MISSING",
+        "native.unavailable",
+        False,
+        f"{_HEALTH}; reopen the workspace so its configured native index attaches.",
+    ),
+    Reason(
+        "CAPABILITY_MISSING",
         "graph.disabled",
         False,
         "Select a preset that defines relations to enable the graph.",
@@ -197,6 +203,12 @@ _ENTRIES = (
         "workspace.absent",
         False,
         "Check the workspace path; the database file is missing.",
+    ),
+    Reason(
+        "NOT_FOUND",
+        "snapshot.absent",
+        False,
+        "The snapshot was collected or never published; query the active snapshot.",
     ),
     Reason(
         "INVALID_REQUEST",
