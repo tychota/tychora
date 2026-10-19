@@ -1,13 +1,12 @@
 """Complete, immutable inputs to one canonical snapshot activation."""
 
-from typing import Literal, Self
+from typing import Self
 
 from pydantic import field_serializer, model_validator
 
 from .artifacts import ArtifactRef
 from .base import (
     Contract,
-    FrozenJsonMap,
     Identifier,
     NonEmptyStr,
     NonNegativeInt,
@@ -15,6 +14,7 @@ from .base import (
 )
 from .graph import GraphBatchReceipt, GraphManifest
 from .identity import digest
+from .snapshots import IndexFamily
 from .vectors import BatchReceipt
 
 
@@ -23,19 +23,6 @@ class SnapshotMember(Contract):
     revision_id: Identifier
     extraction_id: Identifier
     is_default: bool = True
-
-
-class IndexFamily(Contract):
-    family_id: Sha256
-    channel: Literal["lexical", "text", "image", "graph"]
-    backend: NonEmptyStr
-    provider: str | None = None
-    model: str | None = None
-    dimension: int | None = None
-    config_sha: Sha256
-    config_json: FrozenJsonMap
-    backend_namespace: NonEmptyStr
-    created_at: NonEmptyStr
 
 
 class LexicalRecord(Contract):

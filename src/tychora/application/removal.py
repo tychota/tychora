@@ -8,7 +8,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING, Literal, cast
 
 from tychora.adapters.files.references import MAX_MANIFEST_BYTES, required_closure
-from tychora.contracts.artifacts import ArtifactRef, ManifestRef
+from tychora.contracts.artifacts import ArtifactRef, ManifestRef, registered_manifest
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.operations import (
@@ -352,11 +352,7 @@ class RemovalService:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Required manifest descriptor is missing."
             )
-        return ManifestRef(
-            artifact=ArtifactRef.from_row((sha, *row[:3])),
-            type=kind,
-            schema_version="1",
-        )
+        return registered_manifest(ArtifactRef.from_row((sha, *row[:3])), kind)
 
     def _manifest_closure(
         self, root: ManifestRef, *, published: bool = False

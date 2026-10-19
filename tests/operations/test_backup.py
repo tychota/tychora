@@ -46,7 +46,7 @@ def backup_case(tmp_path):
                     canonical_bytes(
                         {
                             "type": "snapshot",
-                            "schema_version": "1",
+                            "schema_version": "2",
                             "required_manifests": [
                                 {
                                     "artifact": nested.model_dump(),
@@ -216,7 +216,7 @@ def test_backup_rejects_unknown_typed_schema(backup_case):
 
     def bad_manifest():
         ref = f.owner.artifacts.put_stream(
-            BytesIO(canonical_bytes({"type": "snapshot", "schema_version": "2"})),
+            BytesIO(canonical_bytes({"type": "snapshot", "schema_version": "3"})),
             "application/json",
         )
         f.owner.db.execute(
