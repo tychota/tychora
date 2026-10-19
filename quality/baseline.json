@@ -639,7 +639,7 @@
     },
     "missing_docstrings": {
       "direction": "lower",
-      "measured_at": "8a90f8731716",
+      "measured_at": "0bc7df34d850",
       "per_key": {
         "src/tychora/__main__.py::D100": 1,
         "src/tychora/adapters/chroma/index.py::D102": 5,
@@ -769,7 +769,6 @@
         "src/tychora/contracts/administration.py::D101": 14,
         "src/tychora/contracts/administration.py::D102": 3,
         "src/tychora/contracts/artifacts.py::D102": 2,
-        "src/tychora/contracts/artifacts.py::D103": 1,
         "src/tychora/contracts/assets.py::D101": 1,
         "src/tychora/contracts/assets.py::D102": 1,
         "src/tychora/contracts/base.py::D101": 2,
@@ -811,7 +810,7 @@
         "src/tychora/contracts/pdf_intake.py::D102": 2,
         "src/tychora/contracts/pdf_policy.py::D101": 1,
         "src/tychora/contracts/pdf_policy.py::D102": 2,
-        "src/tychora/contracts/publication.py::D101": 9,
+        "src/tychora/contracts/publication.py::D101": 8,
         "src/tychora/contracts/publication.py::D102": 4,
         "src/tychora/contracts/relationships.py::D101": 4,
         "src/tychora/contracts/relationships.py::D102": 3,
@@ -923,7 +922,7 @@
         "src/tychora/retrieval/segments.py::D101": 1,
         "src/tychora/retrieval/segments.py::D102": 1
       },
-      "value": 1026
+      "value": 1024
     },
     "modules_in_import_cycles": {
       "direction": "lower",
