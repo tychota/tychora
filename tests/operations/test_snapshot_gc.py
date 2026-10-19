@@ -1,5 +1,6 @@
 """Unretained snapshots, orphan pages and orphan batches are collected."""
 
+import json
 import logging
 import sqlite3
 from contextlib import contextmanager
@@ -15,6 +16,7 @@ from tychora.adapters.sqlite.repositories import batches as batch_rows
 from tychora.adapters.sqlite.repositories import snapshots as snapshot_rows
 from tychora.application.removal import RemovalService
 from tychora.application.snapshot_gc import SnapshotGc
+from tychora.configuration.resolve import resolve_config
 from tychora.contracts.errors import TychoraError
 from tychora.ports.execution import ExecutionContext
 
@@ -676,3 +678,43 @@ def test_jobs_orphaned_by_a_crash_are_interrupted_at_open(tmp_path, monkeypatch)
         assert result.gc.batches > 0
         assert _count(_db(owner), ORPHAN_BATCHES) == 0
         assert kb.jobs.get(stopped.id).state == "interrupted"
+
+
+def _graph_generations(owner) -> dict[str, str]:
+    """Generation of every graph batch, by batch ID."""
+    return {
+        batch_id: json.loads(receipt)["generation_id"]
+        for batch_id, receipt in _db(owner).execute(
+            "SELECT b.batch_id,b.receipt_json FROM index_batches b "
+            "JOIN index_families f USING(family_id) WHERE f.channel='graph'"
+        )
+    }
+
+
+def test_graph_generations_of_collected_snapshots_drop_after_a_restart(
+    tmp_path, monkeypatch
+):
+    settings = tmp_path / "workspace.toml"
+    settings.write_text(
+        'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
+        '[configuration.index]\ngraph="ladybug"\n'
+    )
+    config = resolve_config(settings, "test", {})
+    path = tmp_path / "kb"
+    with Tychora.open(path, config=config, token_counter=CharacterCounter()) as kb:
+        for index in range(4):
+            assert _add(kb, "a.md", f"Graph outcome {index}.").state == "succeeded"
+        before = _graph_generations(kb._workspace.owner)
+    assert len(set(before.values())) == 4
+    monkeypatch.setattr(snapshot_rows, "RETAINED_SNAPSHOTS", 1)
+    with Tychora.open(path, config=config, token_counter=CharacterCounter()) as kb:
+        owner = kb._workspace.owner
+        result = kb.management.run({"operation": "gc"})
+        assert result.gc is not None
+        assert result.gc.deferred_batches == 0
+        after = _graph_generations(owner)
+        assert len(after) == 2
+        graph = owner._configured_graph_store
+        for batch_id, generation in before.items():
+            assert graph._state_path(generation).exists() is (batch_id in after)
+        assert kb.search({"question": "graph outcome", "modalities": ["lexical"]})

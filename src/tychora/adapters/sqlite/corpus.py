@@ -67,6 +67,9 @@ class CorpusStore(PolicyRepository):
         self.required_slots = required_slots
         self.vector_indexes = vector_indexes if vector_indexes is not None else {}
         self.graph_indexes = graph_indexes if graph_indexes is not None else {}
+        # The attached graph store serves every generation, including those of
+        # unmounted snapshots that ``graph_indexes`` does not list.
+        self.graph_store: GraphStore | None = None
         self.leases = leases if leases is not None else LeaseSet()
         self.publication_context = publication_context
         self.uow = SqliteUnitOfWork(db)

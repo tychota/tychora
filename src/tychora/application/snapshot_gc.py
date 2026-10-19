@@ -122,7 +122,8 @@ class SnapshotGc:
         """Drop one batch's native records; ``False`` when its store is not open.
 
         A pruned (``pending``) batch already lost its native records, so it
-        never waits for its store.
+        never waits for its store. A graph generation of an unmounted snapshot
+        drops through the attached graph store, which serves every generation.
         """
         store = self.owner.store
         pruned = drop.row.state == "pending"
@@ -135,7 +136,7 @@ class SnapshotGc:
             return True
         if drop.row.slot == "graph" and isinstance(drop.receipt, GraphBatchReceipt):
             generation = drop.receipt.generation_id
-            graph = store.graph_indexes.get(generation)
+            graph = store.graph_indexes.get(generation) or store.graph_store
             if graph is None:
                 return pruned
             graph.drop_generation(generation, ctx)
