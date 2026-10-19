@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   qualify:
     name: Python 3.12 / ${{ matrix.target }}
@@ -41,6 +45,11 @@ jobs:
           fi
       - name: Install locked full environment
         run: uv sync --locked --all-extras --group test-fixtures
+      - name: Restore pinned public models
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ${{ runner.temp }}/tychora-public-models
+          key: public-models-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/tychora/resources/model-assets.json') }}
       - name: Provision pinned public test assets
         run: python packaging/provision_ci_assets.py --cache "$RUNNER_TEMP/tychora-public-models" --workspace "$RUNNER_TEMP/tychora-asset-setup" --github-env "$GITHUB_ENV"
       - name: Record Python, SQLite, package versions, and installed wheel tags
