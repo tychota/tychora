@@ -55,7 +55,7 @@ SPEC_REASONS = {
 
 # Reasons that classify existing storage, owner and endpoint failures.
 CLASSIFIED_REASONS = {
-    "NOT_FOUND": {"workspace.absent"},
+    "NOT_FOUND": {"workspace.absent", "snapshot.absent"},
     "WORKSPACE_BUSY": {"owner.absent", "family.claimed"},
     "PROFILE_INCOMPATIBLE": {"workspace.schema_mismatch"},
     "INTEGRITY_ERROR": {
@@ -63,7 +63,7 @@ CLASSIFIED_REASONS = {
         "runtime.endpoint_unsafe",
         "runtime.path_unsafe",
     },
-    "CAPABILITY_MISSING": {"storage.version_unsupported"},
+    "CAPABILITY_MISSING": {"storage.version_unsupported", "native.unavailable"},
     "LIMIT_EXCEEDED": {"evaluation.binding_budget"},
     "INVALID_REQUEST": {"bench.incomparable", "review.time_naive"},
 }
