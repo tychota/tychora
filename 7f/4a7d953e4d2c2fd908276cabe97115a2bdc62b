@@ -6,6 +6,10 @@ tests/fixtures/evaluation/code-gold/README.md
   s_ab847b2c6c265a::t_fad644e785536e 10,17,19,26-40
 tests/fixtures/evaluation/code-gold/baseline.json
   s_ab847b2c6c265a::t_bec19f636d855e 1-17
+docs/quality/README.md
+  s_ab847b2c6c265a::t_9e0bd952b5d4aa 28
+.github/workflows/health-nightly.yml
+  s_ab847b2c6c265a::t_9e0bd952b5d4aa 161,170
 ---
 {
   "schema_version": "authorship/3.0.0",
