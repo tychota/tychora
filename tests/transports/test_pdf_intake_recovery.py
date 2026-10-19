@@ -5,6 +5,7 @@ import time
 
 import pytest
 
+from tests.helpers.timing import scaled
 from tests.jobs.test_acquired_sources import synthetic_policy_resolver
 from tests.transports.test_http import Counter
 from tests.transports.test_pdf_intake import app_for, client_for, descriptor, make_pdf
@@ -87,7 +88,8 @@ async def test_receive_absolute_lifetime_bounds_waits_and_trickle(tmp_path, stre
                 service.receive(
                     receipt.intake_id, chunks(), kb.scope, ExecutionContext()
                 ),
-                timeout=1,
+                # Only guards against a hang; the 0.2 s lifetime is what is under test.
+                timeout=scaled(5),
             )
         assert failure.value.code == "SCOPE_CHANGED"
         assert (
