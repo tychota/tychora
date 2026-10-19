@@ -356,8 +356,13 @@ class RemovalService:
         return registered_manifest(ArtifactRef.from_row((sha, *row[:3])), kind)
 
     def _manifest_closure(
-        self, root: ManifestRef, *, published: bool = False
+        self,
+        root: ManifestRef,
+        *,
+        walked: set[str],
+        published: bool = False,
     ) -> frozenset[str]:
+        """Return what ``root`` requires; ``walked`` collects every manifest loaded."""
         captures: set[str] = (
             {root.artifact.sha256}
             if root.type in {"job_capture", "repository_capture"}
@@ -375,6 +380,7 @@ class RemovalService:
         def load(link: ManifestRef, capture_set=captures):
             if link.type in {"job_capture", "repository_capture"}:
                 capture_set.add(link.artifact.sha256)
+            walked.add(link.artifact.sha256)
             with self.owner.artifacts.open_verified(link.artifact) as stream:
                 raw = stream.read(MAX_MANIFEST_BYTES + 1)
             if len(raw) > MAX_MANIFEST_BYTES:
@@ -400,9 +406,50 @@ class RemovalService:
             )
         return closure
 
+    def _rooted(self, *, walk: bool = True) -> frozenset[str]:
+        """Return every artifact a typed root manifest or a job capture reaches.
+
+        One call walks each manifest once, instead of one walk of every root
+        per candidate. A root that an earlier walk loaded adds nothing, since a
+        walk loads every manifest it reaches. A published capture is walked on
+        its own unless an unpublished walk reached it, which already counts all
+        of its references. Without ``walk`` nothing is read and the set is empty.
+        """
+        if not walk:
+            return frozenset()
+        db = self.owner.db
+        roots = {
+            (sha, kind)
+            for query, kind in TYPED_MANIFEST_ROOTS
+            for (sha,) in db.execute(query).fetchall()
+        }
+        captures = db.execute(
+            "SELECT captured_inputs_sha,state='complete' AND result_snapshot_id IS NOT NULL "
+            "FROM jobs WHERE captured_inputs_sha IS NOT NULL"
+        ).fetchall()
+        roots |= {(sha, "job_capture") for sha, published in captures if not published}
+        walked: set[str] = set()
+        rooted: set[str] = set()
+        for sha, kind in sorted(roots):
+            if sha not in walked:
+                ref = self._manifest_ref(sha, kind)
+                rooted |= self._manifest_closure(ref, walked=walked)
+        for sha in sorted({sha for sha, published in captures if published} - walked):
+            ref = self._manifest_ref(sha, "job_capture")
+            rooted |= self._manifest_closure(ref, walked=set(), published=True)
+        return frozenset(rooted)
+
     def _live_root(
-        self, sha: str, proposed: frozenset[tuple[str, str]] = frozenset()
+        self,
+        sha: str,
+        proposed: frozenset[tuple[str, str]] = frozenset(),
+        rooted: frozenset[str] | None = None,
     ) -> bool:
+        """Return whether a row or a root manifest still binds ``sha``.
+
+        ``rooted`` is a result of ``_rooted`` taken since the last change to the
+        root rows; without it the roots are walked now.
+        """
         db = self.owner.db
         for (revision_id,) in db.execute(
             "SELECT revision_id FROM revisions WHERE original_sha=?", (sha,)
@@ -464,25 +511,7 @@ class RemovalService:
                 (revision_id, sha),
             ).fetchone():
                 return True
-        seen: set[tuple[str, str]] = set()
-        for query, kind in TYPED_MANIFEST_ROOTS:
-            for (root_sha,) in db.execute(query):
-                if (root_sha, kind) in seen:
-                    continue
-                seen.add((root_sha, kind))
-                if sha in self._manifest_closure(self._manifest_ref(root_sha, kind)):
-                    return True
-        # Capture originals are live until trusted successful publication; payload
-        # metadata and provenance fields alone cannot classify a capture.
-        for capture_sha, state, result_snapshot in db.execute(
-            "SELECT captured_inputs_sha,state,result_snapshot_id FROM jobs WHERE captured_inputs_sha IS NOT NULL"
-        ):
-            if sha in self._manifest_closure(
-                self._manifest_ref(capture_sha, "job_capture"),
-                published=state == "complete" and result_snapshot is not None,
-            ):
-                return True
-        return False
+        return sha in (self._rooted() if rooted is None else rooted)
 
     def reconcile_pending_deletions(
         self, candidates: frozenset[str] | None = None
@@ -497,6 +526,10 @@ class RemovalService:
             )
         )
         counts = {"deleted_payloads": 0, "shared_payloads": 0, "pending_payloads": 0}
+        # The whole pass is one owner-thread call on the owner's only connection,
+        # so no root row changes while it runs: one walk of the roots serves
+        # every candidate and the recheck after each unlink.
+        rooted = self._rooted(walk=bool(selected))
         for sha in sorted(selected):
             with self.owner.artifacts.payload_guard(sha):
                 row = self.owner.db.execute(
@@ -507,7 +540,7 @@ class RemovalService:
                     raise TychoraError(
                         "INTEGRITY_ERROR", "Original artifact registration is missing."
                     )
-                if self._live_root(sha):
+                if self._live_root(sha, rooted=rooted):
                     if row[3] == "delete_pending":
                         ref = ArtifactRef.from_row((sha, *row[:3]))
                         if not self.owner.artifacts.stat(ref).available:
@@ -533,7 +566,7 @@ class RemovalService:
                 ref = ArtifactRef.from_row((sha, *row[:3]))
                 self.owner.artifacts.unlink_registered(ref)
                 with self.owner.store.immediate_transaction():
-                    if self._live_root(sha):
+                    if self._live_root(sha, rooted=rooted):
                         raise TychoraError(
                             "INTEGRITY_ERROR", "Original root appeared after unlink."
                         )
