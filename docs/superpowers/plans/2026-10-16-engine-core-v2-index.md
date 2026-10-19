@@ -290,7 +290,7 @@ class FamilyRepository(Protocol):
 # identity_sha: the configuration digest bound into family_id (retained config_sha for lexical;
 # the text/image/graph family-config digest otherwise)
 
-# src/tychora/indexing/vector_batches.py
+# src/tychora/contracts/vector_batches.py (pure; also defines vector_value_sha, moved from indexing/receipts.py; importers updated)
 VECTOR_BATCH_MAGIC = b"TYVB0001"
 VECTOR_BATCH_MEDIA_TYPE = "application/vnd.tychora.vector-batch.v1"
 class VectorBatchRow(Contract): record_id: Identifier; input_sha: Sha256; values: tuple[float, ...]

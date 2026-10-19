@@ -4,11 +4,8 @@ import pytest
 from pydantic import ValidationError
 
 from tychora.contracts.indexing import FamilySpec, IndexRecordDigest
-from tychora.indexing.receipts import (
-    graph_value_sha,
-    receipt_digest,
-    vector_value_sha,
-)
+from tychora.contracts.vector_batches import vector_value_sha
+from tychora.indexing.receipts import graph_value_sha, receipt_digest
 
 
 def test_receipt_digest_sorts_complete_record_triples() -> None:

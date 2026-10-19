@@ -18,6 +18,7 @@ from chromadb.errors import NotFoundError
 
 from tychora.contracts.identity import digest, space_id
 from tychora.contracts.indexing import FamilySpec, IndexRecordDigest
+from tychora.contracts.vector_batches import vector_value_sha
 from tychora.contracts.vectors import (
     BatchReceipt,
     CandidateKey,
@@ -28,7 +29,7 @@ from tychora.contracts.vectors import (
     Verification,
     WorkLimits,
 )
-from tychora.indexing.receipts import receipt_digest, vector_value_sha
+from tychora.indexing.receipts import receipt_digest
 from tychora.ports.execution import ExecutionContext
 
 _PARTITION_SIZE = 5_000
