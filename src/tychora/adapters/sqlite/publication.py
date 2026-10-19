@@ -300,7 +300,11 @@ def _verify_vector_artifact(
 ) -> None:
     """Check the batch artifact's rows against the receipt bindings."""
     if batch.vectors is None:
-        _fail("Vector batch has no artifact")
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Vector batch has no artifact",
+            reason="canonical.binding_mismatch",
+        )
     with store.artifacts.open_verified(batch.vectors) as stream:
         decoded = decode_vector_batch(stream.read(batch.vectors.size_bytes + 1))
     rows = tuple(

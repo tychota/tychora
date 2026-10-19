@@ -1031,3 +1031,133 @@ def test_readding_content_revives_a_released_vector_batch(projected_corpus, stat
         "SELECT payload_state,payload_deleted_at FROM artifacts WHERE artifact_sha=?",
         (sha,),
     ).fetchone() == ("present", None)
+
+
+def _text_slot_batch(f):
+    slot = next(s for s in f.store.resolve_snapshot(None).slots if s.slot == "text")
+    return slot, slot.batches[0]
+
+
+def _altered_vectors(f, batch, *, swap_ids=False):
+    """A valid vector batch artifact whose rows differ from the sealed receipt."""
+    from tychora.contracts.vector_batches import (
+        VECTOR_BATCH_MEDIA_TYPE,
+        VectorBatchRow,
+        decode_vector_batch,
+        encode_vector_batch,
+    )
+
+    with f.store.artifacts.open_verified(batch.vectors) as stream:
+        decoded = decode_vector_batch(stream.read())
+    rows = list(decoded.rows)
+    if swap_ids:
+        rows[0], rows[-1] = (
+            rows[0].model_copy(update={"values": rows[-1].values}),
+            rows[-1].model_copy(update={"values": rows[0].values}),
+        )
+        if rows[0].values == rows[-1].values:
+            rows[0] = rows[0].model_copy(update={"values": (0.0, 1.0)})
+    else:
+        rows[0] = VectorBatchRow(
+            record_id=rows[0].record_id, input_sha=rows[0].input_sha, values=(0.0, 1.0)
+        )
+        if rows[0].values == decoded.rows[0].values:
+            rows[0] = rows[0].model_copy(update={"values": (1.0, 0.0)})
+    return f.store.artifacts.put_stream(
+        BytesIO(encode_vector_batch(decoded.family_id, decoded.dimension, rows)),
+        VECTOR_BATCH_MEDIA_TYPE,
+    )
+
+
+def test_publication_rejects_a_valid_vector_artifact_with_altered_rows(
+    projected_corpus,
+):
+    f = projected_corpus
+    _, _, plan = f.prepare_revision("a second source text", source_key="b.md")
+    slot = next(s for s in plan.slots if s.slot == "text")
+    batch = slot.batches[-1]
+    altered = batch.model_copy(update={"vectors": _altered_vectors(f, batch)})
+    slots = tuple(
+        s.model_copy(update={"batches": (*s.batches[:-1], altered)})
+        if s.slot == "text"
+        else s
+        for s in plan.slots
+    )
+    forged = plan.model_copy(update={"slots": slots})
+    forged = forged.model_copy(
+        update={
+            "manifest": f.store.artifacts.put_stream(
+                BytesIO(publication_manifest(forged)), "application/json"
+            )
+        }
+    )
+    with pytest.raises(TychoraError) as error:
+        f.store.publish_snapshot(forged)
+    assert (error.value.code, error.value.reason) == (
+        "INTEGRITY_ERROR",
+        "payload.hash_mismatch",
+    )
+
+
+def test_vector_batch_records_reject_an_artifact_that_differs_from_the_receipt(
+    projected_corpus,
+):
+    from tychora.application.recovery import vector_batch_records
+
+    f = projected_corpus
+    slot, batch = _text_slot_batch(f)
+    forged = batch.model_copy(update={"vectors": _altered_vectors(f, batch)})
+    with pytest.raises(TychoraError) as error:
+        vector_batch_records(slot.family, forged, f.store.artifacts)
+    assert (error.value.code, error.value.reason) == (
+        "INTEGRITY_ERROR",
+        "canonical.binding_mismatch",
+    )
+
+
+def test_receipt_mismatch_is_reported_before_an_absent_vector_batch(projected_corpus):
+    from tychora.application.recovery import vector_batch_records
+
+    f = projected_corpus
+    slot, batch = _text_slot_batch(f)
+    tampered = (
+        batch.vector_records[0].model_copy(update={"value_sha": "1" * 64}),
+        *batch.vector_records[1:],
+    )
+    broken = batch.model_copy(
+        update={
+            "vector_records": tampered,
+            "vectors": batch.vectors.model_copy(
+                update={"sha256": "0" * 64, "storage_key": "0" * 64}
+            ),
+        }
+    )
+    with pytest.raises(TychoraError) as error:
+        vector_batch_records(slot.family, broken, f.store.artifacts)
+    assert error.value.code == "INTEGRITY_ERROR"
+
+
+@pytest.mark.parametrize("damage", ["missing", "corrupt"])
+def test_revival_is_refused_without_verified_fresh_bytes(projected_corpus, damage):
+    from tychora.adapters.sqlite.publication import _register_artifact
+
+    f = projected_corpus
+    _, batch = _text_slot_batch(f)
+    ref = batch.vectors
+    f.store.db.execute(
+        "UPDATE artifacts SET payload_state='delete_pending' WHERE artifact_sha=?",
+        (ref.sha256,),
+    )
+    path = f.store.artifacts.root / ref.storage_key
+    assert path.exists()
+    if damage == "missing":
+        path.unlink()
+    else:
+        path.write_bytes(b"corrupt")
+    with pytest.raises(TychoraError) as error:
+        _register_artifact(f.store, ref, revive=True)
+    assert error.value.code == "INTEGRITY_ERROR"
+    assert error.value.reason in {"payload.missing", "payload.hash_mismatch"}
+    assert f.store.db.execute(
+        "SELECT payload_state FROM artifacts WHERE artifact_sha=?", (ref.sha256,)
+    ).fetchone() == ("delete_pending",)

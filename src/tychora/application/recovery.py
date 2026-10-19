@@ -293,34 +293,64 @@ def _vector_family_spec(family: IndexFamily, batch: PublicationBatch) -> FamilyS
     return spec
 
 
-def vector_batch_records(
-    family: IndexFamily, batch: PublicationBatch, artifacts
-) -> VectorBatch:
-    """Rebuild only the exact retained float32 rows bound to the sealed receipt."""
-    spec = _vector_family_spec(family, batch)
+def _receipt_records(batch: PublicationBatch) -> tuple[IndexRecordDigest, ...]:
+    """The receipt's record digests; empty unless the receipt is a vector receipt."""
     receipt = batch.receipt
-    assert isinstance(receipt, BatchReceipt)
-    if batch.vectors is None or not artifacts.stat(batch.vectors).available:
-        raise TychoraError(
-            "CAPABILITY_MISSING",
-            "Retained vector batch is absent; rebuild the index to recompute it",
-            reason="vectors.cache_absent",
-        )
-    with artifacts.open_verified(batch.vectors) as stream:
-        decoded = decode_vector_batch(stream.read(batch.vectors.size_bytes + 1))
-    descriptors = tuple(
+    return receipt.records if isinstance(receipt, BatchReceipt) else ()
+
+
+def _row_digests(rows) -> tuple[IndexRecordDigest, ...]:
+    """Digest each decoded row as a receipt entry."""
+    return tuple(
         IndexRecordDigest(
             record_id=row.record_id,
             input_sha=row.input_sha,
             value_sha=row_value_sha(row.values),
         )
-        for row in decoded.rows
+        for row in rows
     )
+
+
+def _bindings_match_receipt(batch: PublicationBatch) -> bool:
+    """True when the sealed receipt describes exactly the batch's vector bindings."""
+    receipt = batch.receipt
+    descriptors = tuple(
+        IndexRecordDigest(
+            record_id=row.record_id, input_sha=row.input_sha, value_sha=row.value_sha
+        )
+        for row in sorted(batch.vector_records, key=lambda item: item.record_id)
+    )
+    return (
+        isinstance(receipt, BatchReceipt)
+        and receipt.records == descriptors
+        and receipt.digest == receipt_digest(descriptors)
+    )
+
+
+def vector_batch_records(
+    family: IndexFamily, batch: PublicationBatch, artifacts
+) -> VectorBatch:
+    """Rebuild only the exact retained float32 rows bound to the sealed receipt."""
+    spec = _vector_family_spec(family, batch)
+    vectors = batch.vectors
+    if not _bindings_match_receipt(batch):
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Vector record binding differs",
+            reason="canonical.binding_mismatch",
+        )
+    if vectors is None or not artifacts.stat(vectors).available:
+        raise TychoraError(
+            "CAPABILITY_MISSING",
+            "Retained vector batch is absent; rebuild the index to recompute it",
+            reason="vectors.cache_absent",
+        )
+    with artifacts.open_verified(vectors) as stream:
+        decoded = decode_vector_batch(stream.read(vectors.size_bytes + 1))
     if (
         decoded.family_id != family.family_id
         or decoded.dimension != spec.dimensions
-        or receipt.records != descriptors
-        or receipt.digest != receipt_digest(descriptors)
+        or _row_digests(decoded.rows) != _receipt_records(batch)
     ):
         raise TychoraError(
             "INTEGRITY_ERROR",
