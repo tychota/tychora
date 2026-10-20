@@ -763,64 +763,59 @@ def test_backup_rejects_manifest_payload_size_disagreeing_with_registry(
     assert not f.destination.exists()
 
 
-def test_backup_inventory_includes_pages_roots_and_vector_batches(tmp_path):
-    from tests.api.test_public_sync import CharacterCounter
-    from tychora import SourceInput, Tychora
+def _inventory_shas(kb):
     from tychora.adapters.files.references import from_backup
     from tychora.ports.execution import ExecutionContext
 
+    owner = kb._workspace.owner
+    return owner.run_blocking_sync(
+        lambda: from_backup(owner.db, artifacts=owner.artifacts).required_shas,
+        ExecutionContext(),
+    )
+
+
+def _column(kb, sql):
+    from tests.operations.export_support import owner_rows
+
+    return {row[0] for row in owner_rows(kb, sql) if row[0] is not None}
+
+
+def test_backup_inventory_includes_pages_and_roots(tmp_path):
+    from tests.api.test_public_sync import CharacterCounter
+    from tests.operations.export_support import add_texts
+    from tychora import Tychora
+
     with Tychora.open(tmp_path / "kb", token_counter=CharacterCounter()) as kb:
-        for index in range(3):
-            job = kb.sources.add(
-                SourceInput(
-                    type="text",
-                    source_key=f"m{index}.md",
-                    collection_id=kb.default_collection_id,
-                    kind="manual@1",
-                    format="text",
-                    metadata={"title": "T", "publisher": "P", "edition": "1"},
-                    text=f"Backup verification outcome {index}.",
-                )
-            )
-            assert kb.jobs.wait(job.id).state == "succeeded"
-        owner = kb._workspace.owner
+        add_texts(kb, 3, "Backup")
+        required = _inventory_shas(kb)
+        pages = _column(kb, "SELECT manifest_sha FROM membership_pages")
+        roots = _column(kb, "SELECT manifest_sha FROM snapshots")
+        inputs = _column(kb, "SELECT input_manifest_sha FROM index_batches")
+        assert pages and roots and inputs
+        assert pages | roots | inputs <= required
 
-        def check():
-            inventory = from_backup(owner.db, artifacts=owner.artifacts)
-            pages = {
-                r[0]
-                for r in owner.db.execute("SELECT manifest_sha FROM membership_pages")
-            }
-            roots = {
-                r[0] for r in owner.db.execute("SELECT manifest_sha FROM snapshots")
-            }
-            assert pages and roots
-            assert pages | roots <= inventory.required_shas
-            active = owner.db.execute(
-                "SELECT active_snapshot_id FROM workspaces"
-            ).fetchone()[0]
-            batch_ids = {
-                r[0]
-                for r in owner.db.execute(
-                    "SELECT batch_id FROM snapshot_root_batches WHERE snapshot_id=? "
-                    "UNION SELECT pb.batch_id FROM snapshot_pages sp "
-                    "JOIN page_batches pb USING(page_id) WHERE sp.snapshot_id=?",
-                    (active, active),
-                )
-            }
-            assert batch_ids
-            marks = ",".join("?" * len(batch_ids))
-            artifacts = {
-                sha
-                for row in owner.db.execute(
-                    "SELECT input_manifest_sha,vectors_sha FROM index_batches "
-                    f"WHERE batch_id IN ({marks})",
-                    tuple(batch_ids),
-                )
-                for sha in row
-                if sha
-            }
-            assert artifacts
-            assert artifacts <= inventory.required_shas
 
-        owner.run_blocking_sync(check, ExecutionContext())
+def test_backup_inventory_includes_real_vector_batches(tmp_path, monkeypatch):
+    from tests.api.test_public_sync import CharacterCounter
+    from tests.operations.export_support import (
+        add_texts,
+        grant_upload,
+        upload_scope,
+        vector_config,
+    )
+    from tychora import Tychora
+
+    config = vector_config(tmp_path, monkeypatch)
+    with Tychora.open(
+        tmp_path / "kb",
+        config=config,
+        scope=upload_scope(),
+        token_counter=CharacterCounter(),
+    ) as kb:
+        grant_upload(kb)
+        add_texts(kb, 3, "Vector")
+        vectors = _column(
+            kb, "SELECT vectors_sha FROM index_batches WHERE vectors_sha IS NOT NULL"
+        )
+        assert vectors
+        assert vectors <= _inventory_shas(kb)

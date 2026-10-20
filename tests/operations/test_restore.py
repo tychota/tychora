@@ -836,61 +836,85 @@ def test_archived_v2_collection_and_active_v1_survive_backup_restore(tmp_path):
         assert result
 
 
-def _count_pages(kb):
-    owner = kb._workspace.owner
-    return owner.run_blocking_sync(
-        lambda: owner.db.execute("SELECT COUNT(*) FROM snapshot_pages").fetchone()[0],
-        ExecutionContext(),
+def _export(kb, archive):
+    kb.management.run({"operation": "export", "destination": str(archive)})
+
+
+def _restore_open(tmp_path, **kwargs):
+    from tychora import Tychora
+
+    receipt = RestoreService().import_backup(
+        tmp_path / "archive", tmp_path / "restored", None, ExecutionContext()
     )
+    return Tychora.open(tmp_path / "restored", scope=receipt.opening_scope, **kwargs)
+
+
+def _recover(restored):
+    restored.management.run({"operation": "rebuild", "channels": ["text"]})
+    return restored.management.run(
+        {
+            "operation": "health",
+            "verify_payloads": True,
+            "verify_native": True,
+            "resume_pending_deletions": True,
+        }
+    ).recovery
 
 
 def test_export_import_round_trip_keeps_pages_and_search(tmp_path):
     from tests.api.test_public_sync import CharacterCounter
-    from tychora import SourceInput, Tychora
+    from tests.operations.export_support import add_texts, owner_rows
+    from tychora import Tychora
 
-    source = tmp_path / "source"
-    with Tychora.open(source, token_counter=CharacterCounter()) as kb:
-        job = kb.sources.add(
-            SourceInput(
-                type="text",
-                source_key="m.md",
-                collection_id=kb.default_collection_id,
-                kind="manual@1",
-                format="text",
-                metadata={"title": "T", "publisher": "P", "edition": "1"},
-                text="Restored verification outcome.",
-            )
-        )
-        assert kb.jobs.wait(job.id).state == "succeeded"
-        kb.management.run(
-            {"operation": "export", "destination": str(tmp_path / "archive")}
-        )
-        pages = _count_pages(kb)
-        assert pages
-    receipt = RestoreService().import_backup(
-        tmp_path / "archive", tmp_path / "restored", None, ExecutionContext()
-    )
-    with Tychora.open(
-        tmp_path / "restored",
-        scope=receipt.opening_scope,
-        token_counter=CharacterCounter(),
-    ) as restored:
-        assert _count_pages(restored) == pages
-        rebuilt = restored.management.run(
-            {"operation": "rebuild", "channels": ["text"]}
-        )
-        assert rebuilt.recovery is not None
-        assert rebuilt.recovery.native_pending_batches == 0
-        health = restored.management.run(
-            {
-                "operation": "health",
-                "verify_payloads": True,
-                "verify_native": True,
-                "resume_pending_deletions": True,
-            }
-        )
-        assert health.recovery is not None
-        assert health.recovery.deletion_suspended is False
+    count = "SELECT COUNT(*) FROM snapshot_pages"
+    with Tychora.open(tmp_path / "source", token_counter=CharacterCounter()) as kb:
+        add_texts(kb, 1, "Restored")
+        _export(kb, tmp_path / "archive")
+        pages = owner_rows(kb, count)
+        assert pages[0][0]
+    with _restore_open(tmp_path, token_counter=CharacterCounter()) as restored:
+        assert owner_rows(restored, count) == pages
+        assert not _recover(restored).deletion_suspended
         assert restored.search(
             {"question": "restored", "modalities": ["lexical"]}
         ).segments
+
+
+def test_export_import_round_trip_verifies_real_vector_batches(tmp_path, monkeypatch):
+    from tests.api.test_public_sync import CharacterCounter
+    from tests.operations.export_support import (
+        add_texts,
+        grant_upload,
+        owner_rows,
+        upload_scope,
+        vector_config,
+    )
+    from tychora import Tychora
+
+    config = vector_config(tmp_path, monkeypatch)
+    ready = "SELECT COUNT(*) FROM index_batches WHERE vectors_sha IS NOT NULL"
+    with Tychora.open(
+        tmp_path / "source",
+        config=config,
+        scope=upload_scope(),
+        token_counter=CharacterCounter(),
+    ) as kb:
+        grant_upload(kb)
+        add_texts(kb, 3, "Vector")
+        batches = owner_rows(kb, ready)[0][0]
+        assert batches
+    with Tychora.open(
+        tmp_path / "source", config=config, token_counter=CharacterCounter()
+    ) as kb:
+        _export(kb, tmp_path / "archive")
+    with _restore_open(
+        tmp_path, config=config, token_counter=CharacterCounter()
+    ) as restored:
+        assert owner_rows(restored, ready)[0][0] == batches
+        pending = restored.management.run(
+            {"operation": "health", "verify_native": True}
+        ).recovery
+        assert pending.native_pending_batches == batches
+        recovered = _recover(restored)
+        assert recovered.native_verified_records >= 1
+        assert not recovered.deletion_suspended
