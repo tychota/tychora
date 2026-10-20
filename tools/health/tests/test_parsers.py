@@ -214,6 +214,18 @@ def test_mutation_scores_exclude_documented_equivalents():
     }
 
 
+def test_mutation_scores_of_concatenated_shards_are_per_module():
+    shard_a = "    tychora.contracts.identity.x_digest__mutmut_1: killed\n"
+    shard_b = (
+        "    tychora.retrieval.fusion.x_fuse__mutmut_1: survived\n"
+        "    tychora.retrieval.fusion.x_fuse__mutmut_2: not checked\n"
+    )
+    assert testruns.mutation_scores(shard_a + "" + shard_b, set()) == {
+        "tychora.contracts.identity": 100.0,
+        "tychora.retrieval.fusion": 0.0,
+    }
+
+
 def test_missing_report_names_the_file(tmp_path):
     with pytest.raises(external.MissingReport, match="reports/junit.xml"):
         testruns.runtime(tmp_path)
