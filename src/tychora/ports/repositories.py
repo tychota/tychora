@@ -236,6 +236,16 @@ class GcReport(Contract):
     unpublished_skipped: bool = False
 
 
+class PublicationFootprint(Contract):
+    """Bytes one publication wrote: its root document and the pages new to it."""
+
+    snapshot_id: Identifier
+    root_bytes: NonNegativeInt
+    new_page_bytes: NonNegativeInt
+    new_pages: NonNegativeInt
+    largest_artifact_bytes: NonNegativeInt
+
+
 class SnapshotRepository(Protocol):
     """Snapshots, the active pointer and content-addressed membership pages."""
 
@@ -265,6 +275,10 @@ class SnapshotRepository(Protocol):
 
     def insert_snapshot(self, plan: PublicationPlan) -> None:
         """Store a snapshot over pages already stored, with its slots and root batches."""
+        ...
+
+    def footprint(self, snapshot_id: str) -> PublicationFootprint:
+        """Return the root bytes and the bytes of pages new relative to the parent."""
         ...
 
     def retained_ids(self, keep_last: int = 16) -> frozenset[str]:
