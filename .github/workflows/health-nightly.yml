@@ -81,9 +81,24 @@ jobs:
         run: env -i PATH="$PATH" HOME="$HOME" uv run --locked python -m tools.health isolate
 
   mutation:
-    name: Mutation testing of the core modules
+    name: Mutation testing of ${{ matrix.module }}
     runs-on: ubuntu-22.04
-    timeout-minutes: 300
+    timeout-minutes: 150
+    # One shard per `only_mutate` module of pyproject.toml: a single runner could not
+    # finish all ~4100 mutants in 300 minutes. A shard that runs out of time keeps its
+    # unchecked mutants as "not checked", which the G21 score excludes.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {shard: contracts-identity, module: tychora.contracts.identity}
+          - {shard: contracts-publication, module: tychora.contracts.publication}
+          - {shard: sqlite-publication, module: tychora.adapters.sqlite.publication}
+          - {shard: retrieval-eligibility, module: tychora.retrieval.eligibility}
+          - {shard: sqlite-eligibility, module: tychora.adapters.sqlite.eligibility}
+          - {shard: retrieval-lexical-query, module: tychora.retrieval.lexical_query}
+          - {shard: sqlite-lexical, module: tychora.adapters.sqlite.lexical}
+          - {shard: retrieval-fusion, module: tychora.retrieval.fusion}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -104,15 +119,25 @@ jobs:
       - name: Reinstall without the project so mutants are imported
         run: uv sync --locked --no-install-project --all-extras --group dev --group mutation --group test-fixtures
       - name: Run mutmut
-        run: uv run --no-sync mutmut run --max-children 4
-      - name: Export results
+        # Stops before the job timeout so the export and upload steps still run.
+        timeout-minutes: 130
+        env:
+          MUTANT_PATTERN: ${{ matrix.module }}.*
+        run: uv run --no-sync mutmut run "$MUTANT_PATTERN" --max-children 4
+      - name: Export this shard's results
         if: always()
-        run: mkdir -p reports && uv run --no-sync mutmut results --all true > reports/mutmut-results.txt
+        env:
+          MODULE: ${{ matrix.module }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          mkdir -p reports
+          # `results` lists every mutant of every module; keep only this shard's own.
+          uv run --no-sync mutmut results --all true | { grep -F -- "    ${MODULE}." || true; } > "reports/mutmut-results-${SHARD}.txt"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: nightly-mutation-reports
-          path: reports/
+          name: nightly-mutation-reports-${{ matrix.shard }}
+          path: reports/mutmut-results-${{ matrix.shard }}.txt
           retention-days: 14
 
   report:
@@ -138,8 +163,17 @@ jobs:
           path: reports
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: nightly-mutation-reports
+          pattern: nightly-mutation-reports-*
           path: reports
+          merge-multiple: true
+      # Mutant names are unique per module, so the shards never overlap; sort -u
+      # keeps a repeated line from being counted twice anyway.
+      - name: Merge the mutation shards
+        if: always()
+        run: |
+          mkdir -p reports
+          shopt -s nullglob
+          cat /dev/null reports/mutmut-results-*.txt | sort -u > reports/mutmut-results.txt
       # G18 measures the session time of reports/junit.xml: seed 2, the run without
       # coverage, over the nightly selection.
       - name: Runtime report for G18
