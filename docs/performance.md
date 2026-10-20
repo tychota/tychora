@@ -49,6 +49,13 @@ on the runner class named in `benchmarks/reference-machine.toml` (set
 `bench-results` branch; it needs the repository secret `VOYAGE_API_KEY` for the
 online job and the repository owner's approval of that secret and branch.
 
+The `scale` suite also records, per checkpoint, the bytes one publication wrote
+(its root plus the pages new to it), the largest snapshot artifact and the
+`publish` stage p90, and asserts the E3 gate: `E3.bytes_ratio` (bytes per add at
+10,000 documents at most twice those at 1,000), `E3.artifact_ceiling` (no
+snapshot artifact above 1 MiB) and `E3.publication_p90` (at most 500 ms at
+10,000 documents). A failed E3 assertion fails the run on any machine.
+
 ### Curating `bench-v1`
 
 `benchmarks/bench-v1.toml` and its query file are generated once, by hand, and

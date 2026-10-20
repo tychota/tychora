@@ -22,6 +22,7 @@ from tychora.evaluation.bench.corpus import (
     fetch_corpus,
     load_corpus,
 )
+from tychora.evaluation.bench.footprint import publication_footprint
 from tychora.evaluation.bench.harness import (
     BenchSource,
     BenchUnavailable,
@@ -42,6 +43,8 @@ from tychora.evaluation.bench.results import (
     write_result,
 )
 from tychora.evaluation.bench.stages import WallClockStageSource
+from tychora.ports.execution import ExecutionContext
+from tychora.ports.repositories import PublicationFootprint
 
 EVENT_PAGE = 100
 WAIT_SECONDS = 3600.0
@@ -139,6 +142,20 @@ class TychoraBenchClient:
                 if path.parent.name == "artifacts":
                     largest = max(largest, size)
         return Footprint(total_bytes=total, largest_artifact_bytes=largest)
+
+    def publication(self) -> PublicationFootprint:
+        """Read the active snapshot's publication footprint on the owner thread."""
+        owner = self._kb._workspace.owner
+
+        def read() -> PublicationFootprint:
+            snapshot_id = owner.store.active_snapshot_id()
+            if snapshot_id is None:
+                raise TychoraError(
+                    "NOT_FOUND", "No snapshot is published", reason="snapshot.absent"
+                )
+            return publication_footprint(owner.db, snapshot_id)
+
+        return owner.run_blocking_sync(read, ExecutionContext())
 
 
 def _commit() -> str:

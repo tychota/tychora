@@ -11,6 +11,7 @@ from typing import Protocol
 
 from tychora.contracts.base import Contract, NonEmptyStr, NonNegativeInt
 from tychora.contracts.operations import JobEvent
+from tychora.ports.repositories import PublicationFootprint
 
 from .budgets import INGEST_STAGE_BUDGETS_S, QUERY_STAGE_BUDGETS_MS
 from .corpus import BenchCorpus, BenchQuery, Category, all_queries, document_bytes
@@ -82,6 +83,10 @@ class BenchClient(Protocol):
 
     def footprint(self) -> Footprint:
         """Measure the workspace's bytes on disk."""
+        ...
+
+    def publication(self) -> PublicationFootprint:
+        """Measure what the latest publication wrote."""
         ...
 
 
@@ -232,10 +237,12 @@ class _Growth:
         self.started = context.clock()
         self.aborted = False
         self.failures: list[str] = []
+        self.jobs: list[str] = []
 
     def grow(self, span: tuple[int, int]) -> list[float]:
         """Add the documents of ``span`` and return each add's latency in milliseconds."""
         latencies = []
+        self.jobs = []
         limit = self.context.max_wall_seconds
         for index in range(*span):
             if limit is not None and self.context.clock() - self.started > limit:
@@ -244,6 +251,7 @@ class _Growth:
             began = time.perf_counter()
             job_id = self.client.add(_synthetic(document_at(self.spec, index)))
             state = self.client.wait(job_id)
+            self.jobs.append(job_id)
             latencies.append((time.perf_counter() - began) * 1000)
             if state != "succeeded":
                 self.failures.append(f"synthetic/{index:06d}: job {state}")
@@ -262,6 +270,19 @@ def _search_latencies(
         else:
             latencies.append(outcome.duration_ms)
     return latencies
+
+
+def _publication_p90_ms(stage_source: StageSource, jobs: list[str]) -> float:
+    """Nearest-rank p90 of the ``publish`` stage over the jobs of one window."""
+    durations = [
+        sum(
+            sample.duration_ms
+            for sample in stage_source.ingest_stages(job_id)
+            if sample.stage == "publish"
+        )
+        for job_id in jobs
+    ]
+    return nearest_rank(durations, 0.90) if durations else 0.0
 
 
 def _checkpoint(
@@ -284,7 +305,72 @@ def _checkpoint(
     )
 
 
-def run_scale(client: BenchClient, spec: SynthSpec, context: RunContext) -> Samples:
+def _with_publication(
+    point: ScalePoint,
+    client: BenchClient,
+    stage_source: StageSource,
+    jobs: list[str],
+) -> ScalePoint:
+    """Add what the checkpoint's last publication wrote and how long publishing took."""
+    footprint = client.publication()
+    return point.model_copy(
+        update={
+            "publication_bytes_per_add": footprint.root_bytes
+            + footprint.new_page_bytes,
+            "largest_snapshot_artifact_bytes": footprint.largest_artifact_bytes,
+            "publication_p90_ms": _publication_p90_ms(stage_source, jobs),
+        }
+    )
+
+
+E3_ARTIFACT_CEILING_BYTES = 1024 * 1024
+E3_BYTES_RATIO = 2
+E3_PUBLICATION_P90_MS = 500.0
+
+
+def e3_assertions(points: list[ScalePoint]) -> list[Assertion]:
+    """The E3 verdicts: publication bytes stay flat, artifacts small, publication fast."""
+    by_size = {point.documents: point for point in points}
+    found = []
+    if 1000 in by_size and 10_000 in by_size:
+        small, large = (
+            by_size[1000].publication_bytes_per_add,
+            by_size[10_000].publication_bytes_per_add,
+        )
+        found.append(
+            Assertion(
+                name="E3.bytes_ratio",
+                passed=large <= E3_BYTES_RATIO * small,
+                detail=f"bytes per add: {small} at 1000, {large} at 10000",
+            )
+        )
+    if points:
+        largest = max(point.largest_snapshot_artifact_bytes for point in points)
+        found.append(
+            Assertion(
+                name="E3.artifact_ceiling",
+                passed=largest <= E3_ARTIFACT_CEILING_BYTES,
+                detail=f"largest snapshot artifact: {largest} bytes",
+            )
+        )
+    if 10_000 in by_size:
+        p90 = by_size[10_000].publication_p90_ms
+        found.append(
+            Assertion(
+                name="E3.publication_p90",
+                passed=p90 <= E3_PUBLICATION_P90_MS,
+                detail=f"publication p90 at 10000: {p90:.1f} ms",
+            )
+        )
+    return found
+
+
+def run_scale(
+    client: BenchClient,
+    spec: SynthSpec,
+    context: RunContext,
+    stage_source: StageSource,
+) -> Samples:
     """Grow a synthetic workspace through the checkpoints, measuring each window."""
     growth, samples, added = _Growth(client, spec, context), Samples(), 0
     questions = [document_at(spec, index).marker for index in range(SCALE_WINDOW)]
@@ -300,19 +386,21 @@ def run_scale(client: BenchClient, spec: SynthSpec, context: RunContext) -> Samp
             return samples
         added = checkpoint
         if latencies:
-            samples.scale.append(
-                _checkpoint(
+            point = _checkpoint(
+                client,
+                checkpoint,
+                latencies,
+                before,
+                _search_latencies(
                     client,
-                    checkpoint,
-                    latencies,
-                    before,
-                    _search_latencies(
-                        client,
-                        questions[: min(checkpoint, SCALE_WINDOW)],
-                        samples.failures,
-                    ),
-                )
+                    questions[: min(checkpoint, SCALE_WINDOW)],
+                    samples.failures,
+                ),
             )
+            samples.scale.append(
+                _with_publication(point, client, stage_source, growth.jobs)
+            )
+    samples.assertions.extend(e3_assertions(samples.scale))
     return samples
 
 
@@ -353,7 +441,7 @@ def _measure(
     inputs: SuiteInputs,
 ) -> Samples:
     if suite == "scale":
-        return run_scale(client, corpus.synthetic, context)
+        return run_scale(client, corpus.synthetic, context, inputs.stage_source)
     sources = iter_sources(corpus, inputs.cache, context.limit)
     loaded = run_ingest(client, sources, inputs.stage_source)
     if suite == "ingest":

@@ -15,7 +15,7 @@ from tychora.contracts.snapshots import (
     SlotFamily,
     membership_sha,
 )
-from tychora.ports.repositories import BatchRow, GcReport
+from tychora.ports.repositories import BatchRow, GcReport, PublicationFootprint
 
 from .artifacts import SqliteArtifactRepository, artifact_ref
 from .batches import BATCH_SELECT, batch_from_row
@@ -311,6 +311,31 @@ class SqliteSnapshotRepository:
             _RETAINED, (keep_last, datetime.now(UTC).isoformat())
         ).fetchall()
         return frozenset(row[0] for row in rows)
+
+    def footprint(self, snapshot_id: str) -> PublicationFootprint:
+        """Return the root bytes and the bytes of pages new relative to the parent."""
+        root = self._db.execute(
+            "SELECT a.size_bytes,s.parent_snapshot_id FROM snapshots s "
+            "JOIN artifacts a ON a.artifact_sha=s.manifest_sha WHERE s.snapshot_id=?",
+            (snapshot_id,),
+        ).fetchone()
+        if root is None:
+            raise absent_snapshot()
+        pages = self._db.execute(
+            "SELECT COUNT(*),COALESCE(SUM(a.size_bytes),0),COALESCE(MAX(a.size_bytes),0) "
+            "FROM snapshot_pages sp JOIN membership_pages p ON p.page_id=sp.page_id "
+            "JOIN artifacts a ON a.artifact_sha=p.manifest_sha WHERE sp.snapshot_id=? "
+            "AND NOT EXISTS (SELECT 1 FROM snapshot_pages b "
+            "WHERE b.snapshot_id IS ? AND b.page_id=sp.page_id)",
+            (snapshot_id, root[1]),
+        ).fetchone()
+        return PublicationFootprint(
+            snapshot_id=snapshot_id,
+            root_bytes=root[0],
+            new_page_bytes=pages[1],
+            new_pages=pages[0],
+            largest_artifact_bytes=max(root[0], pages[2]),
+        )
 
     def collect(
         self,

@@ -77,6 +77,9 @@ class ScalePoint(Contract):
     search_p95_ms: float
     largest_artifact_bytes: NonNegativeInt
     footprint_bytes: NonNegativeInt
+    publication_bytes_per_add: NonNegativeInt = 0
+    largest_snapshot_artifact_bytes: NonNegativeInt = 0
+    publication_p90_ms: float = 0.0
 
 
 class Assertion(Contract):

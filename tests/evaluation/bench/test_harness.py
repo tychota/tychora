@@ -14,11 +14,13 @@ from tychora.evaluation.bench.harness import (
     RunContext,
     SearchOutcome,
     SuiteInputs,
+    e3_assertions,
     run_suite,
 )
-from tychora.evaluation.bench.results import machine_fingerprint
+from tychora.evaluation.bench.results import ScalePoint, machine_fingerprint
 from tychora.evaluation.bench.stages import WallClockStageSource
 from tychora.evaluation.bench.synth import SynthSpec
+from tychora.ports.repositories import PublicationFootprint
 
 STAGES = (
     "accepted",
@@ -65,6 +67,15 @@ class FakeClient:
 
     def footprint(self) -> Footprint:
         return Footprint(total_bytes=1000 * len(self.added), largest_artifact_bytes=500)
+
+    def publication(self) -> PublicationFootprint:
+        return PublicationFootprint(
+            snapshot_id="snap",
+            root_bytes=300,
+            new_page_bytes=100,
+            new_pages=1,
+            largest_artifact_bytes=300,
+        )
 
 
 def _corpus(**synthetic) -> BenchCorpus:
@@ -143,6 +154,46 @@ def test_scale_suite_measures_each_checkpoint(tmp_path):
         (10, 1000.0),
     ]
     assert not result.aborted
+    assert [
+        (point.publication_bytes_per_add, point.largest_snapshot_artifact_bytes)
+        for point in result.scale
+    ] == [(400, 300), (400, 300)]
+    assert [point.publication_p90_ms for point in result.scale] == [1000.0, 1000.0]
+    assert [(a.name, a.passed) for a in result.assertions] == [
+        ("E3.artifact_ceiling", True)
+    ]
+
+
+def _point(documents, bytes_per_add, artifact=300, p90=100.0) -> ScalePoint:
+    return ScalePoint(
+        documents=documents,
+        add_p50_ms=1.0,
+        bytes_per_add=1.0,
+        search_p50_ms=1.0,
+        search_p95_ms=1.0,
+        largest_artifact_bytes=1,
+        footprint_bytes=1,
+        publication_bytes_per_add=bytes_per_add,
+        largest_snapshot_artifact_bytes=artifact,
+        publication_p90_ms=p90,
+    )
+
+
+def test_e3_verdicts_pass_and_fail_on_their_thresholds():
+    flat = e3_assertions([_point(1000, 100), _point(10_000, 200)])
+    assert {a.name: a.passed for a in flat} == {
+        "E3.bytes_ratio": True,
+        "E3.artifact_ceiling": True,
+        "E3.publication_p90": True,
+    }
+    grown = e3_assertions(
+        [_point(1000, 100), _point(10_000, 201, artifact=1024 * 1024 + 1, p90=501.0)]
+    )
+    assert {a.name: a.passed for a in grown} == {
+        "E3.bytes_ratio": False,
+        "E3.artifact_ceiling": False,
+        "E3.publication_p90": False,
+    }
 
 
 def test_scale_suite_stops_at_the_wall_limit(tmp_path):
