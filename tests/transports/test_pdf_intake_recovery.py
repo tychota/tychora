@@ -57,7 +57,9 @@ async def test_receive_rejects_expiry_between_chunks(tmp_path, next_chunk):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("stream", ["idle", "empty", "trickle"])
-async def test_receive_absolute_lifetime_bounds_waits_and_trickle(tmp_path, stream):
+async def test_receive_absolute_lifetime_bounds_waits_and_trickle(
+    tmp_path, monkeypatch, stream
+):
     with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
         service = PdfIntakeService(kb._workspace.owner, kb._workspace.services)
         receipt = await service.prepare(
@@ -68,12 +70,19 @@ async def test_receive_absolute_lifetime_bounds_waits_and_trickle(tmp_path, stre
             ExecutionContext(),
         )
 
-        def shorten():
-            record = service._read(receipt.intake_id)
-            record["expires"] = time.time() + 0.2
-            service._write(record)
+        # Start the 0.2 s lifetime when the receive begins, not before it: a
+        # deadline set ahead of receive() can lapse on a slow runner before
+        # begin() reads the receipt, which then legitimately reports the
+        # already-expired receipt as IDEMPOTENCY_CONFLICT instead of exercising
+        # the in-flight expiry that this test is about.
+        write = service._write
 
-        await kb._workspace.owner.run_blocking(shorten, ExecutionContext())
+        def shorten_on_begin(record):
+            if record["state"] == "receiving":
+                record["expires"] = time.time() + 0.2
+            write(record)
+
+        monkeypatch.setattr(service, "_write", shorten_on_begin)
 
         async def chunks():
             yield b"a"
