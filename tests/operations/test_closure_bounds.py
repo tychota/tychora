@@ -336,3 +336,83 @@ def test_an_original_reached_by_an_unpublished_capture_survives(copied):
 
         states = _reconcile_with_captures(kb, build)
     assert states == {shared["sha256"]: "present"}
+
+
+_BINDING_TABLES = (
+    "revisions",
+    "revision_artifacts",
+    "original_payload_tombstones",
+    "locators",
+    "extractions",
+    "assets",
+    "asset_proxies",
+    "index_batches",
+    "membership_pages",
+    "query_runs",
+    "evaluation_cases",
+    "job_steps",
+    "review_events",
+    "assertion_decisions",
+)
+
+
+def test_one_reconcile_pass_reads_the_bindings_independently_of_pending(copied):
+    with Tychora.open(copied, token_counter=CharacterCounter()) as kb:
+        owner = kb._workspace.owner
+        shas = [
+            row[0]
+            for row in owner_rows(
+                kb,
+                "SELECT artifact_sha FROM artifacts WHERE payload_state='present' "
+                "ORDER BY artifact_sha",
+            )
+        ]
+        service = RemovalService(owner, kb._workspace.services.jobs.repository)
+
+        def binding_reads(candidates) -> int:
+            statements: list[str] = []
+
+            def run():
+                owner.db.set_trace_callback(statements.append)
+                try:
+                    return service.reconcile_pending_deletions(candidates)
+                finally:
+                    owner.db.set_trace_callback(None)
+
+            with owner.store.leases.pin(frozenset({"hold"})):
+                counts = _on_owner(kb, run)
+            assert counts["deleted_payloads"] == 0
+            return sum(
+                any(f"FROM {table}" in sql for table in _BINDING_TABLES)
+                for sql in statements
+            )
+
+        one = binding_reads(frozenset(shas[:1]))
+        assert one > 0
+        assert binding_reads(frozenset(shas[:200])) == one
+
+
+def test_the_bound_set_decides_as_the_row_checks_on_a_real_workspace(copied):
+    from tychora.adapters.sqlite.bindings import BoundSet
+
+    with Tychora.open(copied, token_counter=CharacterCounter()) as kb:
+        owner = kb._workspace.owner
+        service = RemovalService(owner, kb._workspace.services.jobs.repository)
+
+        def compare():
+            db = owner.db
+            shas = frozenset(
+                row[0] for row in db.execute("SELECT artifact_sha FROM artifacts")
+            )
+            rooted = service._rooted()
+            bound = BoundSet.load(db, shas)
+            return [
+                sha
+                for sha in shas
+                if (bound.binds(sha) or sha in rooted)
+                != service._live_root(sha, rooted=rooted)
+            ], len(shas)
+
+        differing, total = _on_owner(kb, compare)
+    assert total > 100
+    assert differing == []

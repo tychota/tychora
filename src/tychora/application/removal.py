@@ -13,6 +13,7 @@ from tychora.adapters.files.references import (
     ClosureWalk,
     workspace_closure_budget,
 )
+from tychora.adapters.sqlite.bindings import BoundSet, live_by_rows
 from tychora.contracts.artifacts import ArtifactRef, ManifestRef, registered_manifest
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
@@ -435,67 +436,8 @@ class RemovalService:
         ``rooted`` is a result of ``_rooted`` taken since the last change to the
         root rows; without it the roots are walked now.
         """
-        db = self.owner.db
-        for (revision_id,) in db.execute(
-            "SELECT revision_id FROM revisions WHERE original_sha=?", (sha,)
-        ):
-            if (revision_id, sha) not in proposed and not db.execute(
-                "SELECT 1 FROM original_payload_tombstones "
-                "WHERE revision_id=? AND artifact_sha=?",
-                (revision_id, sha),
-            ).fetchone():
-                return True
-        for revision_id, role in db.execute(
-            "SELECT revision_id,role FROM revision_artifacts WHERE artifact_sha=?",
-            (sha,),
-        ):
-            if role not in {"original", "source_file"}:
-                return True
-            if (revision_id, sha) not in proposed and not db.execute(
-                "SELECT 1 FROM original_payload_tombstones "
-                "WHERE revision_id=? AND artifact_sha=?",
-                (revision_id, sha),
-            ).fetchone():
-                return True
-        direct = (
-            "SELECT 1 FROM extractions WHERE document_artifact_sha=? OR assertions_artifact_sha=? OR diagnostics_artifact_sha=? "
-            "UNION ALL SELECT 1 FROM assets WHERE artifact_sha=? "
-            "UNION ALL SELECT 1 FROM asset_proxies WHERE derivation_sha=? "
-            "UNION ALL SELECT 1 FROM index_batches WHERE vectors_sha=? "
-            "UNION ALL SELECT 1 FROM snapshots WHERE manifest_sha=? "
-            "UNION ALL SELECT 1 FROM membership_pages WHERE manifest_sha=? "
-            "UNION ALL SELECT 1 FROM index_batches WHERE input_manifest_sha=? "
-            "UNION ALL SELECT 1 FROM jobs WHERE effective_config_sha=? OR request_artifact_sha=? "
-            "UNION ALL SELECT 1 FROM query_runs WHERE retained_payload_sha=? "
-            "UNION ALL SELECT 1 FROM evaluation_datasets WHERE manifest_sha=? "
-            "UNION ALL SELECT 1 FROM evaluation_cases WHERE payload_sha=? "
-            "UNION ALL SELECT 1 FROM evaluation_results WHERE result_artifact_sha=? "
-            "UNION ALL SELECT 1 FROM job_steps WHERE output_artifact_sha=? "
-            "UNION ALL SELECT 1 FROM review_events WHERE reason_artifact_sha=? "
-            "UNION ALL SELECT 1 FROM assertion_decisions WHERE provenance_artifact_sha=? OR reason_artifact_sha=? "
-            "LIMIT 1"
-        )
-        if db.execute(direct, (sha,) * 19).fetchone():
+        if live_by_rows(self.owner.db, sha, proposed):
             return True
-        for (revision_id,) in db.execute(
-            "SELECT e.revision_id FROM locators l JOIN evidence_units u USING(unit_id) "
-            "JOIN extractions e USING(extraction_id) WHERE l.artifact_sha=?",
-            (sha,),
-        ):
-            original_binding = db.execute(
-                "SELECT 1 FROM revisions WHERE revision_id=? AND original_sha=? "
-                "UNION ALL SELECT 1 FROM revision_artifacts WHERE revision_id=? "
-                "AND artifact_sha=? AND role IN ('original','source_file') LIMIT 1",
-                (revision_id, sha, revision_id, sha),
-            ).fetchone()
-            if original_binding is None:
-                return True
-            if (revision_id, sha) not in proposed and not db.execute(
-                "SELECT 1 FROM original_payload_tombstones "
-                "WHERE revision_id=? AND artifact_sha=?",
-                (revision_id, sha),
-            ).fetchone():
-                return True
         return sha in (self._rooted() if rooted is None else rooted)
 
     def reconcile_pending_deletions(
@@ -512,9 +454,11 @@ class RemovalService:
         )
         counts = {"deleted_payloads": 0, "shared_payloads": 0, "pending_payloads": 0}
         # The whole pass is one owner-thread call on the owner's only connection,
-        # so no root row changes while it runs: one walk of the roots serves
-        # every candidate and the recheck after each unlink.
+        # so no binding or root row changes while it runs: one read of the
+        # bindings and one walk of the roots serve every candidate and the
+        # recheck after each unlink.
         rooted = self._rooted(walk=bool(selected))
+        bound = BoundSet.load(self.owner.db, selected, rooted=rooted)
         for sha in sorted(selected):
             with self.owner.artifacts.payload_guard(sha):
                 row = self.owner.db.execute(
@@ -525,7 +469,7 @@ class RemovalService:
                     raise TychoraError(
                         "INTEGRITY_ERROR", "Original artifact registration is missing."
                     )
-                if self._live_root(sha, rooted=rooted):
+                if bound.binds(sha):
                     if row[3] == "delete_pending":
                         ref = ArtifactRef.from_row((sha, *row[:3]))
                         if not self.owner.artifacts.stat(ref).available:
@@ -551,7 +495,7 @@ class RemovalService:
                 ref = ArtifactRef.from_row((sha, *row[:3]))
                 self.owner.artifacts.unlink_registered(ref)
                 with self.owner.store.immediate_transaction():
-                    if self._live_root(sha, rooted=rooted):
+                    if bound.binds(sha):
                         raise TychoraError(
                             "INTEGRITY_ERROR", "Original root appeared after unlink."
                         )
