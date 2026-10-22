@@ -949,6 +949,10 @@ class SourceService:
                 error.code,
                 error.reason,
             )
+        except Exception:  # noqa: BLE001 - native stores raise their own types
+            # Chroma and Ladybug errors are untyped; the job already completed,
+            # so ``manage gc`` finishes whatever this pass left.
+            _LOG.warning("Snapshot collection after publication failed", exc_info=True)
 
     async def _text_records(
         self,
