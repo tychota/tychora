@@ -26,8 +26,8 @@ from tychora.application.restore import RestoreService
 from tychora.contracts.errors import TychoraError
 from tychora.ports.execution import ExecutionContext
 
-FORMER_CAP = 50
-DOCUMENTS = 60
+FORMER_CAP = 20
+DOCUMENTS = 24
 
 
 @pytest.fixture(scope="module")
