@@ -238,6 +238,7 @@ class _Growth:
         self.aborted = False
         self.failures: list[str] = []
         self.jobs: list[str] = []
+        self.added = 0
 
     def grow(self, span: tuple[int, int]) -> list[float]:
         """Add the documents of ``span`` and return each add's latency in milliseconds."""
@@ -252,6 +253,7 @@ class _Growth:
             job_id = self.client.add(_synthetic(document_at(self.spec, index)))
             state = self.client.wait(job_id)
             self.jobs.append(job_id)
+            self.added += 1
             latencies.append((time.perf_counter() - began) * 1000)
             if state != "succeeded":
                 self.failures.append(f"synthetic/{index:06d}: job {state}")
@@ -328,41 +330,46 @@ E3_BYTES_RATIO = 2
 E3_PUBLICATION_P90_MS = 500.0
 
 
-def e3_assertions(points: list[ScalePoint]) -> list[Assertion]:
-    """The E3 verdicts: publication bytes stay flat, artifacts small, publication fast."""
+def _not_measured(name: str, reached: int) -> Assertion:
+    return Assertion(
+        name=name,
+        passed=True,
+        measured=False,
+        detail=f"not measured: stopped at {reached} documents",
+    )
+
+
+def e3_assertions(points: list[ScalePoint], reached: int) -> list[Assertion]:
+    """The three E3 verdicts; one the run did not reach is recorded as not measured."""
     by_size = {point.documents: point for point in points}
-    found = []
+    ratio = _not_measured("E3.bytes_ratio", reached)
     if 1000 in by_size and 10_000 in by_size:
         small, large = (
             by_size[1000].publication_bytes_per_add,
             by_size[10_000].publication_bytes_per_add,
         )
-        found.append(
-            Assertion(
-                name="E3.bytes_ratio",
-                passed=large <= E3_BYTES_RATIO * small,
-                detail=f"bytes per add: {small} at 1000, {large} at 10000",
-            )
+        ratio = Assertion(
+            name="E3.bytes_ratio",
+            passed=large <= E3_BYTES_RATIO * small,
+            detail=f"bytes per add: {small} at 1000, {large} at 10000",
         )
+    ceiling = _not_measured("E3.artifact_ceiling", reached)
     if points:
         largest = max(point.largest_snapshot_artifact_bytes for point in points)
-        found.append(
-            Assertion(
-                name="E3.artifact_ceiling",
-                passed=largest <= E3_ARTIFACT_CEILING_BYTES,
-                detail=f"largest snapshot artifact: {largest} bytes",
-            )
+        ceiling = Assertion(
+            name="E3.artifact_ceiling",
+            passed=largest <= E3_ARTIFACT_CEILING_BYTES,
+            detail=f"largest snapshot artifact: {largest} bytes",
         )
+    p90_verdict = _not_measured("E3.publication_p90", reached)
     if 10_000 in by_size:
         p90 = by_size[10_000].publication_p90_ms
-        found.append(
-            Assertion(
-                name="E3.publication_p90",
-                passed=p90 <= E3_PUBLICATION_P90_MS,
-                detail=f"publication p90 at 10000: {p90:.1f} ms",
-            )
+        p90_verdict = Assertion(
+            name="E3.publication_p90",
+            passed=p90 <= E3_PUBLICATION_P90_MS,
+            detail=f"publication p90 at 10000: {p90:.1f} ms",
         )
-    return found
+    return [ratio, ceiling, p90_verdict]
 
 
 def run_scale(
@@ -383,6 +390,7 @@ def run_scale(
         growth.failures.clear()
         if growth.aborted:
             samples.aborted = True
+            samples.assertions.extend(e3_assertions(samples.scale, growth.added))
             return samples
         added = checkpoint
         if latencies:
@@ -400,7 +408,7 @@ def run_scale(
             samples.scale.append(
                 _with_publication(point, client, stage_source, growth.jobs)
             )
-    samples.assertions.extend(e3_assertions(samples.scale))
+    samples.assertions.extend(e3_assertions(samples.scale, growth.added))
     return samples
 
 

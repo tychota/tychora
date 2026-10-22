@@ -17,7 +17,7 @@ from tychora.evaluation.bench.harness import (
     e3_assertions,
     run_suite,
 )
-from tychora.evaluation.bench.results import ScalePoint, machine_fingerprint
+from tychora.evaluation.bench.results import Assertion, ScalePoint, machine_fingerprint
 from tychora.evaluation.bench.stages import WallClockStageSource
 from tychora.evaluation.bench.synth import SynthSpec
 from tychora.ports.repositories import PublicationFootprint
@@ -38,6 +38,7 @@ class FakeClient:
     def __init__(self) -> None:
         self.added: list[str] = []
         self.searched: list[str] = []
+        self.artifact_bytes = 300
 
     def add(self, source) -> str:
         self.added.append(source.source_key)
@@ -74,7 +75,7 @@ class FakeClient:
             root_bytes=300,
             new_page_bytes=100,
             new_pages=1,
-            largest_artifact_bytes=300,
+            largest_artifact_bytes=self.artifact_bytes,
         )
 
 
@@ -159,8 +160,10 @@ def test_scale_suite_measures_each_checkpoint(tmp_path):
         for point in result.scale
     ] == [(400, 300), (400, 300)]
     assert [point.publication_p90_ms for point in result.scale] == [1000.0, 1000.0]
-    assert [(a.name, a.passed) for a in result.assertions] == [
-        ("E3.artifact_ceiling", True)
+    assert [(a.name, a.measured) for a in result.assertions] == [
+        ("E3.bytes_ratio", False),
+        ("E3.artifact_ceiling", True),
+        ("E3.publication_p90", False),
     ]
 
 
@@ -180,14 +183,15 @@ def _point(documents, bytes_per_add, artifact=300, p90=100.0) -> ScalePoint:
 
 
 def test_e3_verdicts_pass_and_fail_on_their_thresholds():
-    flat = e3_assertions([_point(1000, 100), _point(10_000, 200)])
+    flat = e3_assertions([_point(1000, 100), _point(10_000, 200)], 10_000)
     assert {a.name: a.passed for a in flat} == {
         "E3.bytes_ratio": True,
         "E3.artifact_ceiling": True,
         "E3.publication_p90": True,
     }
     grown = e3_assertions(
-        [_point(1000, 100), _point(10_000, 201, artifact=1024 * 1024 + 1, p90=501.0)]
+        [_point(1000, 100), _point(10_000, 201, artifact=1024 * 1024 + 1, p90=501.0)],
+        10_000,
     )
     assert {a.name: a.passed for a in grown} == {
         "E3.bytes_ratio": False,
@@ -196,20 +200,61 @@ def test_e3_verdicts_pass_and_fail_on_their_thresholds():
     }
 
 
-def test_scale_suite_stops_at_the_wall_limit(tmp_path):
+def _stopped_run(tmp_path, client, **context):
     ticks = iter(range(1000))
-    client = FakeClient()
-    result = run_suite(
+    return run_suite(
         client,
         _corpus(),
         "scale",
         _context(
-            checkpoints=(10,), max_wall_seconds=3.0, clock=lambda: float(next(ticks))
+            checkpoints=(5, 10),
+            max_wall_seconds=context.pop("max_wall_seconds", 8.0),
+            clock=lambda: float(next(ticks)),
         ),
         SuiteInputs(tmp_path, WallClockStageSource(client.events)),
     )
+
+
+def test_scale_suite_stops_at_the_wall_limit(tmp_path):
+    client = FakeClient()
+    result = _stopped_run(tmp_path, client)
     assert result.aborted
     assert len(client.added) < 10
+    verdicts = {a.name: a for a in result.assertions}
+    assert set(verdicts) == {
+        "E3.bytes_ratio",
+        "E3.artifact_ceiling",
+        "E3.publication_p90",
+    }
+    assert verdicts["E3.artifact_ceiling"].measured
+    assert verdicts["E3.artifact_ceiling"].passed
+    for name in ("E3.bytes_ratio", "E3.publication_p90"):
+        assert not verdicts[name].measured
+        assert verdicts[name].detail == (
+            f"not measured: stopped at {len(client.added)} documents"
+        )
+
+
+def test_stopped_run_keeps_a_failed_artifact_ceiling(tmp_path):
+    client = FakeClient()
+    client.artifact_bytes = 1024 * 1024 + 1
+    result = _stopped_run(tmp_path, client)
+    assert result.aborted
+    ceiling = next(a for a in result.assertions if a.name == "E3.artifact_ceiling")
+    assert ceiling.measured and not ceiling.passed
+
+
+def test_run_smaller_by_design_reports_not_measured_without_failing(tmp_path):
+    client = FakeClient()
+    result = _stopped_run(tmp_path, client, max_wall_seconds=1000.0)
+    assert not result.aborted
+    unreached = [a for a in result.assertions if not a.measured]
+    assert [a.name for a in unreached] == ["E3.bytes_ratio", "E3.publication_p90"]
+    assert all(a.passed and "stopped at 10 documents" in a.detail for a in unreached)
+
+
+def test_assertions_without_the_measured_field_still_load():
+    assert Assertion.model_validate({"name": "x", "passed": True}).measured
 
 
 def test_families_suite_is_unavailable(tmp_path):
