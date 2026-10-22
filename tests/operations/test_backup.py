@@ -531,9 +531,30 @@ def test_backup_never_publishes_manifest_above_registered_reference_limit(
 
     f = backup_case
     monkeypatch.setattr(references, "MAX_REFERENCES", 2)
+    copies = []
+    monkeypatch.setattr(
+        "tychora.application.backup.ArchiveWriter.copy_artifact",
+        lambda *args, **kwargs: copies.append(args),
+    )
     with pytest.raises(TychoraError) as error:
         f.export()
     assert error.value.code == "INTEGRITY_ERROR"
+    assert error.value.reason == "backup.manifest_limit"
+    assert copies == []
+    assert not f.destination.exists()
+
+
+def test_backup_manifest_above_the_byte_limit_fails_with_a_registered_reason(
+    backup_case, monkeypatch
+):
+    from tychora.application import backup
+
+    f = backup_case
+    monkeypatch.setattr(backup, "MAX_BACKUP_MANIFEST_BYTES", 64)
+    with pytest.raises(TychoraError) as error:
+        f.export()
+    assert error.value.code == "INTEGRITY_ERROR"
+    assert error.value.reason == "backup.manifest_limit"
     assert not f.destination.exists()
 
 

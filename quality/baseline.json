@@ -380,7 +380,7 @@
     },
     "function_length": {
       "direction": "lower",
-      "measured_at": "840144bc5243",
+      "measured_at": "faffd63b6667",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex.search": 143,
         "src/tychora/adapters/code/capture.py::RepositoryCapture._run": 89,
@@ -402,7 +402,7 @@
         "src/tychora/adapters/docling/pdf_batches.py::run_pdf_batches": 383,
         "src/tychora/adapters/files/archive.py::ArchiveReader.copy_to": 101,
         "src/tychora/adapters/files/assertions.py::verify_assertion_closure": 115,
-        "src/tychora/adapters/files/references.py::from_backup": 186,
+        "src/tychora/adapters/files/references.py::from_backup": 184,
         "src/tychora/adapters/files/url_acquisition.py::UrlAcquisition.open": 110,
         "src/tychora/adapters/ladybug/generation.py::LadybugGraphStore._upsert_assertions": 136,
         "src/tychora/adapters/ladybug/generation.py::LadybugGraphStore.seal_generation": 146,

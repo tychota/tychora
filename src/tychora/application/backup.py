@@ -8,8 +8,10 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 
+from tychora.adapters.files import references
 from tychora.adapters.files.archive import ArchiveWriter
 from tychora.adapters.files.references import (
+    MAX_MANIFEST_BYTES,
     BackupInventory,
     from_backup,
     required_refs,
@@ -24,6 +26,14 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.requests import RequestScope
 from tychora.ports.execution import ExecutionContext
+
+# One backup manifest lists every required artifact in a single typed header,
+# so its reference and byte limits cap what one export can hold.
+MAX_BACKUP_MANIFEST_BYTES = MAX_MANIFEST_BYTES
+
+
+def _manifest_limit(message: str) -> TychoraError:
+    return TychoraError("INTEGRITY_ERROR", message, reason="backup.manifest_limit")
 
 
 @dataclass(frozen=True)
@@ -151,6 +161,8 @@ class BackupService:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Selected configuration exceeds backup limit"
             )
+        if len(inventory.artifacts) > references.MAX_REFERENCES:
+            raise _manifest_limit("Backup inventory exceeds manifest reference limit")
         config_sha = archive.write_json("resolved-config.json", selected_config)
         for ref in inventory.artifacts:
             ctx.checkpoint()
@@ -174,6 +186,8 @@ class BackupService:
             resolved_config_sha256=config_sha,
         )
         header = manifest.as_header()
+        if len(canonical_bytes(header)) > MAX_BACKUP_MANIFEST_BYTES:
+            raise _manifest_limit("Backup manifest exceeds byte limit")
         required_refs(header, capture_published=False)
         manifest_sha = archive.write_json("backup-manifest.json", header)
         archive.write_json(
