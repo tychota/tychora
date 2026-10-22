@@ -815,6 +815,9 @@ it("keeps a selected PDF draft through Models, and text stays submit-ready after
   fireEvent.change(screen.getByLabelText("Content"), {
     target: { value: "Retained plain text" },
   });
+  // Selecting an option that has not loaded yet leaves the select empty, so
+  // the draft never gets a destination; wait for the collections page first.
+  await screen.findByRole("option", { name: collection.title });
   fireEvent.change(screen.getByLabelText("Destination"), {
     target: { value: collection.collection_id },
   });
@@ -884,6 +887,9 @@ it("keeps pending PDF recovery available while independently submitting preserve
   fireEvent.change(screen.getByLabelText("Content"), {
     target: { value: "Independent preserved text" },
   });
+  // Selecting an option that has not loaded yet leaves the select empty, so
+  // the draft never gets a destination; wait for the collections page first.
+  await screen.findByRole("option", { name: collection.title });
   fireEvent.change(screen.getByLabelText("Destination"), {
     target: { value: collection.collection_id },
   });
