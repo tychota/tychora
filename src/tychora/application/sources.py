@@ -713,24 +713,10 @@ class SourceService:
                 ),
                 ctx,
             )
-            if committed is not None:
-                try:
-                    await self._publish(committed, jobs, handle, ctx)
-                    return JobHandle(
-                        id=handle.id, operation=operation, state="succeeded"
-                    )
-                except TychoraError as error:
-                    # A checkpoint outlives its batches and page bytes when
-                    # ``manage gc`` ran after the interruption; prepare afresh.
-                    if error.code != "WORKSPACE_BUSY":
-                        if error.reason not in _STALE_CHECKPOINT_REASONS:
-                            raise
-                        await self.owner.run_blocking(
-                            lambda: jobs.discard_step(
-                                handle.id, self._plan_step(base, watermark)
-                            ),
-                            ctx,
-                        )
+            if committed is not None and await self._resume_plan(
+                committed, jobs, handle, self._plan_step(base, watermark), ctx
+            ):
+                return JobHandle(id=handle.id, operation=operation, state="succeeded")
             if (
                 base is not None
                 and not source.root.vision
@@ -912,6 +898,33 @@ class SourceService:
             self._plan_input(attempt.capture, attempt.config_ref, base, watermark),
             plan_ref,
         )
+
+    async def _resume_plan(
+        self,
+        plan: PublicationPlan,
+        jobs: JobRepository,
+        handle: JobHandle,
+        step: str,
+        ctx: ExecutionContext,
+    ) -> bool:
+        """Publish a checkpointed plan; ``False`` when the add must prepare afresh.
+
+        A busy workspace or a checkpoint that outlived its batches or page bytes
+        (``manage gc`` ran after the interruption) is not an error: the stale
+        checkpoint is discarded so a fresh plan can take its place.
+        """
+        try:
+            await self._publish(plan, jobs, handle, ctx)
+        except TychoraError as error:
+            if error.code == "WORKSPACE_BUSY":
+                return False
+            if error.reason not in _STALE_CHECKPOINT_REASONS:
+                raise
+            await self.owner.run_blocking(
+                lambda: jobs.discard_step(handle.id, step), ctx
+            )
+            return False
+        return True
 
     async def _publish(
         self, plan, jobs: JobRepository, handle: JobHandle, ctx: ExecutionContext
