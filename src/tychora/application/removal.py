@@ -453,10 +453,12 @@ class RemovalService:
             )
         )
         counts = {"deleted_payloads": 0, "shared_payloads": 0, "pending_payloads": 0}
-        # The whole pass is one owner-thread call on the owner's only connection,
-        # so no binding or root row changes while it runs: one read of the
-        # bindings and one walk of the roots serve every candidate and the
-        # recheck after each unlink.
+        # Invariant: the whole pass is one owner-thread call on the owner's only
+        # connection, and between reading the bindings and the last unlink it
+        # writes nothing but artifacts.payload_state. No binding or root row can
+        # change during the pass, so one read of the bindings and one walk of
+        # the roots decide every candidate, and no recheck after an unlink is
+        # needed (test_a_reconcile_pass_writes_only_payload_states pins this).
         rooted = self._rooted(walk=bool(selected))
         bound = BoundSet.load(self.owner.db, selected, rooted=rooted)
         for sha in sorted(selected):
@@ -495,10 +497,6 @@ class RemovalService:
                 ref = ArtifactRef.from_row((sha, *row[:3]))
                 self.owner.artifacts.unlink_registered(ref)
                 with self.owner.store.immediate_transaction():
-                    if bound.binds(sha):
-                        raise TychoraError(
-                            "INTEGRITY_ERROR", "Original root appeared after unlink."
-                        )
                     self.owner.db.execute(
                         "UPDATE artifacts SET payload_state='deleted',payload_deleted_at=? "
                         "WHERE artifact_sha=? AND payload_state='delete_pending'",
