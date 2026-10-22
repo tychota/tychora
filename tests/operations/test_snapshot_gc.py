@@ -642,14 +642,14 @@ def test_reclaim_walks_the_roots_once_however_many_payloads_are_pending(
         ]
         assert len(pending) > 2
         walks = 0
-        closure = RemovalService._manifest_closure
+        load = RemovalService._load_manifest
 
         def counting(self, *args, **kwargs):
             nonlocal walks
             walks += 1
-            return closure(self, *args, **kwargs)
+            return load(self, *args, **kwargs)
 
-        monkeypatch.setattr(RemovalService, "_manifest_closure", counting)
+        monkeypatch.setattr(RemovalService, "_load_manifest", counting)
 
         def reconcile(candidates):
             nonlocal walks

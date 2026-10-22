@@ -1034,7 +1034,7 @@ def create_rich_source(path, content):
 def test_real_caption_copy_commit_and_retention_replay(document_record_case):
     import json
 
-    from tychora.adapters.files.references import required_closure
+    from tychora.adapters.files.references import closure_budget, required_closure
     from tychora.contracts.artifacts import ManifestRef
     from tychora.contracts.composition import DocumentCompositionPlan
     from tychora.ingestion.composition import compose_document, replay_composed_document
@@ -1087,6 +1087,7 @@ def test_real_caption_copy_commit_and_retention_replay(document_record_case):
                 ),
             ),
             load=load,
+            budget=closure_budget(1000),
         )
         assert source.parsed.original_ref.sha256 not in closure
         raw = replay_document(

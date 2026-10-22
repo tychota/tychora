@@ -178,67 +178,177 @@ def required_refs(manifest: JsonValue, *, capture_published: bool) -> frozenset[
     )
 
 
-MAX_CLOSURE_REFERENCES = 100000
-MAX_CLOSURE_MANIFESTS = 10000
+# Absolute ceilings on one closure walk, far above any real workspace. The
+# bound of a walk is derived from the inventory it walks (its artifact rows), so
+# an ordinary corpus never meets a fixed constant: one snapshot root reaches
+# every retained index input of its workspace.
+CLOSURE_MANIFEST_CEILING = 10_000_000
+CLOSURE_REFERENCE_CEILING = 160_000_000
+# Declared references a walk may count per walked artifact row (repeated edges
+# count each time), and floors that keep a small inventory walkable, including
+# a job's inputs walked before their rows are registered.
+CLOSURE_REFERENCES_PER_ARTIFACT = 16
+MIN_CLOSURE_MANIFESTS = 10_000
+MIN_CLOSURE_REFERENCES = 100_000
+
+
+def _limit(message: str) -> TychoraError:
+    return TychoraError("INTEGRITY_ERROR", message, reason="closure.limit_exceeded")
+
+
+@dataclass(frozen=True)
+class ClosureBudget:
+    """Work one closure walk may do: distinct manifests and declared references."""
+
+    manifests: int
+    references: int
+
+
+def closure_budget(artifact_count: int) -> ClosureBudget:
+    """Bound a walk by the inventory it walks.
+
+    Every walked manifest is a registered artifact and is loaded at most once,
+    so the artifact rows bound the manifests; references scale with them.
+    """
+    if artifact_count > CLOSURE_MANIFEST_CEILING:
+        raise _limit("Artifact inventory exceeds closure ceiling")
+    return ClosureBudget(
+        manifests=max(MIN_CLOSURE_MANIFESTS, artifact_count),
+        references=min(
+            CLOSURE_REFERENCE_CEILING,
+            max(
+                MIN_CLOSURE_REFERENCES,
+                CLOSURE_REFERENCES_PER_ARTIFACT * artifact_count,
+            ),
+        ),
+    )
+
+
+def workspace_closure_budget(db) -> ClosureBudget:
+    """Bound a walk of a local workspace by its own artifact rows."""
+    (artifact_rows,) = db.execute("SELECT COUNT(*) FROM artifacts").fetchone()
+    return closure_budget(artifact_rows)
+
+
+class ClosureWalk:
+    """Walk verified typed links over many roots with one bounded visited set.
+
+    Each manifest is loaded at most once across every ``walk`` call, and a
+    repeated SHA (a diamond or a cycle) ends its branch. The budget bounds the
+    whole walk, not one root. The loader owns verified decoding; unavailable or
+    corrupt required manifests fail through it. ``artifacts`` also contains
+    opaque payloads whose bytes the backup/deletion owner must verify under its
+    inventory lease.
+    """
+
+    def __init__(
+        self,
+        *,
+        load: Callable[[ManifestRef], JsonValue],
+        budget: ClosureBudget,
+    ) -> None:
+        self._load = load
+        self._budget = budget
+        self._declarations: dict[str, tuple[str, str]] = {}
+        self._artifacts: dict[str, ArtifactRef] = {}
+        self._work = 0
+
+    @property
+    def artifacts(self) -> frozenset[str]:
+        """Every SHA any walk so far required."""
+        return frozenset(self._artifacts)
+
+    @property
+    def loaded(self) -> frozenset[str]:
+        """Every manifest SHA any walk so far loaded."""
+        return frozenset(self._declarations)
+
+    def _remember(self, ref: ArtifactRef) -> None:
+        previous = self._artifacts.get(ref.sha256)
+        if previous is not None and physical_identity(previous) != physical_identity(
+            ref
+        ):
+            raise _fail("Conflicting artifact declarations for one SHA")
+        self._artifacts.setdefault(ref.sha256, ref)
+
+    def _count(self, work: int) -> None:
+        self._work += work
+        if self._work > self._budget.references:
+            raise _limit("Required closure exceeds reference limit")
+
+    def _visit(
+        self,
+        descriptor: ManifestRef,
+        is_published: Callable[[ArtifactRef, str], bool],
+    ) -> tuple[ManifestRef, ...]:
+        """Load one manifest unless already walked; return the links it adds."""
+        try:
+            descriptor = ManifestRef.model_validate(descriptor.model_dump())
+        except ValueError:
+            raise _fail("Malformed required manifest descriptor") from None
+        ref, kind = descriptor.artifact, descriptor.type
+        self._remember(ref)
+        schema = (kind, str(descriptor.schema_version))
+        previous = self._declarations.get(ref.sha256)
+        if previous is not None:
+            if previous != schema:
+                raise _fail("Conflicting manifest schemas for one SHA")
+            return ()
+        if len(self._declarations) >= self._budget.manifests:
+            raise _limit("Required closure exceeds manifest limit")
+        published = is_published(ref, kind)
+        if published and kind not in CAPTURE_TYPES:
+            raise _fail("Only capture manifests may be marked published")
+        self._declarations[ref.sha256] = schema
+        refs = _parse(self._load(descriptor), capture_published=published)
+        if (refs.type, refs.schema_version) != schema:
+            raise _fail("Required manifest differs from its declared schema")
+        self._count(refs.declared_count)
+        for artifact in refs.artifacts:
+            self._remember(artifact)
+        return refs.manifests
+
+    def walk(
+        self,
+        roots: tuple[ManifestRef, ...],
+        *,
+        published_captures: frozenset[str] = frozenset(),
+        all_captures_published: bool = False,
+    ) -> frozenset[str]:
+        """Add what ``roots`` require; return every SHA required so far.
+
+        A manifest an earlier walk loaded is not loaded again: its whole closure
+        is already counted. ``all_captures_published`` treats every capture this
+        walk loads as published, so their originals are not required.
+        """
+        self._count(len(roots))
+        pending = list(reversed(roots))
+        while pending:
+            pending.extend(
+                reversed(
+                    self._visit(
+                        pending.pop(),
+                        lambda ref, kind: (
+                            ref.sha256 in published_captures
+                            or (all_captures_published and kind in CAPTURE_TYPES)
+                        ),
+                    )
+                )
+            )
+        return self.artifacts
 
 
 def required_closure(
     roots: tuple[ManifestRef, ...],
     *,
     load: Callable[[ManifestRef], JsonValue],
+    budget: ClosureBudget,
     published_captures: frozenset[str] = frozenset(),
 ) -> frozenset[str]:
-    """Walk verified typed links with bounded work and cycle termination.
-
-    The loader owns verified decoding; unavailable/corrupt required manifests
-    fail through it. The returned inventory also contains opaque payloads whose
-    bytes the backup/deletion owner must verify under its inventory lease.
-    """
-    if len(roots) > MAX_CLOSURE_REFERENCES:
-        raise _fail("Required closure exceeds reference limit")
-    pending = list(reversed(roots))
-    declarations: dict[str, tuple[str, str]] = {}
-    artifacts: dict[str, ArtifactRef] = {}
-    work = len(roots)
-
-    def remember(ref: ArtifactRef) -> None:
-        previous = artifacts.get(ref.sha256)
-        if previous is not None and physical_identity(previous) != physical_identity(
-            ref
-        ):
-            raise _fail("Conflicting artifact declarations for one SHA")
-        artifacts.setdefault(ref.sha256, ref)
-
-    while pending:
-        descriptor = pending.pop()
-        try:
-            descriptor = ManifestRef.model_validate(descriptor.model_dump())
-        except ValueError:
-            raise _fail("Malformed required manifest descriptor") from None
-        ref, kind = descriptor.artifact, descriptor.type
-        remember(ref)
-        schema = (kind, str(descriptor.schema_version))
-        previous = declarations.get(ref.sha256)
-        if previous is not None:
-            if previous != schema:
-                raise _fail("Conflicting manifest schemas for one SHA")
-            continue
-        if len(declarations) >= MAX_CLOSURE_MANIFESTS:
-            raise _fail("Required closure exceeds manifest limit")
-        published = ref.sha256 in published_captures
-        if published and kind not in CAPTURE_TYPES:
-            raise _fail("Only capture manifests may be marked published")
-        declarations[ref.sha256] = schema
-        refs = _parse(load(descriptor), capture_published=published)
-        if (refs.type, refs.schema_version) != schema:
-            raise _fail("Required manifest differs from its declared schema")
-        work += refs.declared_count
-        if work > MAX_CLOSURE_REFERENCES:
-            raise _fail("Required closure exceeds reference limit")
-        for artifact in refs.artifacts:
-            remember(artifact)
-        pending.extend(reversed(refs.manifests))
-    return frozenset(artifacts)
+    """Walk verified typed links from ``roots`` in one bounded walk."""
+    return ClosureWalk(load=load, budget=budget).walk(
+        roots, published_captures=published_captures
+    )
 
 
 @dataclass(frozen=True)
@@ -255,6 +365,38 @@ class BackupInventory:
     snapshot_ids: tuple[str, ...]
     tombstones: tuple[tuple[str, str], ...]
     config_shas: tuple[str, ...]
+
+
+def _published_captures(
+    pending: list[ManifestRef],
+    *,
+    load: Callable[[ManifestRef], JsonValue],
+    budget: ClosureBudget,
+) -> frozenset[str]:
+    """Return published job roots and every capture they link.
+
+    Published job captures may link repository captures. Their status is
+    derived solely from the successful canonical job, never payload metadata.
+    """
+    published = {root.artifact.sha256 for root in pending}
+    seen: set[str] = set()
+    while pending:
+        link = pending.pop()
+        if link.artifact.sha256 in seen:
+            continue
+        if len(seen) >= budget.manifests:
+            raise _limit("Required closure exceeds manifest limit")
+        seen.add(link.artifact.sha256)
+        content = load(link)
+        required_refs(content, capture_published=False)
+        if not isinstance(content, dict):
+            raise _fail("Capture must be a typed object")
+        for item in content.get("required_manifests", []):
+            child = ManifestRef.model_validate(item)
+            if child.type in CAPTURE_TYPES:
+                published.add(child.artifact.sha256)
+            pending.append(child)
+    return frozenset(published)
 
 
 def from_backup(db, *, artifacts) -> BackupInventory:
@@ -395,31 +537,17 @@ def from_backup(db, *, artifacts) -> BackupInventory:
                 raise _fail("Required artifact declaration differs from registration")
         return content
 
-    # Published job captures may link repository captures. Their status is
-    # derived solely from the successful canonical job, never payload metadata.
-    published = set(published_job_roots)
-    pending = [root for root in roots if root.artifact.sha256 in published_job_roots]
-    seen: set[str] = set()
-    while pending:
-        link = pending.pop()
-        if link.artifact.sha256 in seen:
-            continue
-        seen.add(link.artifact.sha256)
-        content = load(link)
-        required_refs(content, capture_published=False)
-        if not isinstance(content, dict):
-            raise _fail("Capture must be a typed object")
-        for item in content.get("required_manifests", []):
-            child = ManifestRef.model_validate(item)
-            if child.type in CAPTURE_TYPES:
-                published.add(child.artifact.sha256)
-            pending.append(child)
-        if len(seen) > MAX_CLOSURE_MANIFESTS:
-            raise _fail("Required closure exceeds manifest limit")
-
+    # The copied database's own inventory bounds the walk: an imported archive
+    # declares its rows, and every walked manifest must be one of them.
+    budget = closure_budget(len(registered))
+    published = _published_captures(
+        [root for root in roots if root.artifact.sha256 in published_job_roots],
+        load=load,
+        budget=budget,
+    )
     required = set(
         required_closure(
-            tuple(roots), load=load, published_captures=frozenset(published)
+            tuple(roots), load=load, budget=budget, published_captures=published
         )
     )
     required.update(direct)
