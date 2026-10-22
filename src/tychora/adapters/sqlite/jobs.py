@@ -9,7 +9,11 @@ from io import BytesIO
 from typing import NoReturn
 from uuid import uuid4
 
-from tychora.adapters.files.references import MAX_MANIFEST_BYTES, required_closure
+from tychora.adapters.files.references import (
+    MAX_MANIFEST_BYTES,
+    required_closure,
+    workspace_closure_budget,
+)
 from tychora.adapters.sqlite.repositories import artifact_ref
 from tychora.contracts.artifacts import ArtifactRef, ManifestRef, physical_identity
 from tychora.contracts.errors import TychoraError
@@ -331,15 +335,15 @@ class JobRepository:
                 decoded[link.artifact.sha256] = data
                 return data
 
+            budget = workspace_closure_budget(self.db)
+            linked = (ManifestRef(artifact=root, type=kind, schema_version="1"),)
             try:
-                closure = required_closure(
-                    (ManifestRef(artifact=root, type=kind, schema_version="1"),),
-                    load=load,
-                )
+                closure = required_closure(linked, load=load, budget=budget)
                 if published:
                     closure = required_closure(
-                        (ManifestRef(artifact=root, type=kind, schema_version="1"),),
+                        linked,
                         load=load,
+                        budget=budget,
                         published_captures=frozenset(captures),
                     )
                 for sha in closure:

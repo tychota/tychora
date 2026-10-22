@@ -17,7 +17,7 @@
     },
     "cognitive_complexity": {
       "direction": "lower",
-      "measured_at": "4244bc7a6be7",
+      "measured_at": "840144bc5243",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::search": 58,
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::upsert_batch": 16,
@@ -55,8 +55,7 @@
         "src/tychora/adapters/files/assertions.py::verify_assertion_closure": 33,
         "src/tychora/adapters/files/cas.py::LocalArtifacts::_directory": 20,
         "src/tychora/adapters/files/references.py::_parse_checked": 46,
-        "src/tychora/adapters/files/references.py::from_backup": 74,
-        "src/tychora/adapters/files/references.py::required_closure": 23,
+        "src/tychora/adapters/files/references.py::from_backup": 62,
         "src/tychora/adapters/files/url_acquisition.py::UrlAcquisition::_addresses": 24,
         "src/tychora/adapters/files/url_acquisition.py::UrlAcquisition::open": 39,
         "src/tychora/adapters/ladybug/generation.py::LadybugGraphStore::_upsert_assertions": 51,
@@ -111,7 +110,6 @@
         "src/tychora/application/recovery.py::RecoveryService::_verify_native_batch": 28,
         "src/tychora/application/recovery.py::verify_canonical_native_batch": 20,
         "src/tychora/application/removal.py::RemovalService::_live_root": 18,
-        "src/tychora/application/removal.py::RemovalService::_manifest_closure": 18,
         "src/tychora/application/removal.py::RemovalService::_plan": 37,
         "src/tychora/application/removal.py::RemovalService::purge_originals": 22,
         "src/tychora/application/removal.py::RemovalService::reconcile_pending_deletions": 21,
@@ -238,7 +236,7 @@
         "src/tychora/retrieval/visuals.py::prepare_visual_candidates": 25,
         "src/tychora/retrieval/visuals.py::select_visuals": 61
       },
-      "value": 218
+      "value": 216
     },
     "coverage_branch": {
       "direction": "higher",
@@ -382,7 +380,7 @@
     },
     "function_length": {
       "direction": "lower",
-      "measured_at": "4244bc7a6be7",
+      "measured_at": "840144bc5243",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex.search": 143,
         "src/tychora/adapters/code/capture.py::RepositoryCapture._run": 89,
@@ -404,7 +402,7 @@
         "src/tychora/adapters/docling/pdf_batches.py::run_pdf_batches": 383,
         "src/tychora/adapters/files/archive.py::ArchiveReader.copy_to": 101,
         "src/tychora/adapters/files/assertions.py::verify_assertion_closure": 115,
-        "src/tychora/adapters/files/references.py::from_backup": 200,
+        "src/tychora/adapters/files/references.py::from_backup": 186,
         "src/tychora/adapters/files/url_acquisition.py::UrlAcquisition.open": 110,
         "src/tychora/adapters/ladybug/generation.py::LadybugGraphStore._upsert_assertions": 136,
         "src/tychora/adapters/ladybug/generation.py::LadybugGraphStore.seal_generation": 146,

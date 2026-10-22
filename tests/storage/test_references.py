@@ -161,6 +161,9 @@ def test_manifest_and_assertion_work_is_bounded():
         )
 
 
+BUDGET = references.closure_budget(1000)
+
+
 def store_manifest(store, value):
     ref = store.put_stream(io.BytesIO(canonical_bytes(value)), "application/json")
     return ManifestRef(
@@ -188,11 +191,12 @@ def test_transitive_closure_reads_verified_nested_manifests(tmp_path):
         store, manifest("backup", required_manifests=[child.model_dump()])
     )
     assert references.required_closure(
-        (root,), load=verified_loader(store)
+        (root,), load=verified_loader(store), budget=BUDGET
     ) == frozenset({root.artifact.sha256, child.artifact.sha256, payload.sha256})
     assert references.required_closure(
         (root,),
         load=verified_loader(store),
+        budget=BUDGET,
         published_captures=frozenset({child.artifact.sha256}),
     ) == frozenset({root.artifact.sha256, child.artifact.sha256})
 
@@ -210,7 +214,7 @@ def test_unavailable_required_manifest_fails_closure(tmp_path, corrupt):
     else:
         path.unlink()
     with pytest.raises(TychoraError):
-        references.required_closure((root,), load=verified_loader(store))
+        references.required_closure((root,), load=verified_loader(store), budget=BUDGET)
 
 
 def test_closure_rejects_descriptor_content_mismatch(tmp_path):
@@ -218,7 +222,9 @@ def test_closure_rejects_descriptor_content_mismatch(tmp_path):
     root = store_manifest(store, manifest("registry"))
     wrong = root.model_copy(update={"type": "extraction"})
     with pytest.raises(TychoraError):
-        references.required_closure((wrong,), load=verified_loader(store))
+        references.required_closure(
+            (wrong,), load=verified_loader(store), budget=BUDGET
+        )
 
 
 @pytest.mark.parametrize(
@@ -235,7 +241,7 @@ def test_closure_rejects_conflicting_declarations_for_one_sha(change):
     conflicting = root.model_copy(update=change)
     with pytest.raises(TychoraError):
         references.required_closure(
-            (root, conflicting), load=lambda ref: manifest(ref.type)
+            (root, conflicting), load=lambda ref: manifest(ref.type), budget=BUDGET
         )
 
 
@@ -257,7 +263,7 @@ def test_cycle_terminates_and_diamond_visits_shared_manifest_once():
             "registry", required_manifests=[other.model_dump(), other.model_dump()]
         )
 
-    assert references.required_closure((first,), load=load) == frozenset(
+    assert references.required_closure((first,), load=load, budget=BUDGET) == frozenset(
         {"a" * 64, "b" * 64}
     )
     assert loaded == ["a" * 64, "b" * 64]
@@ -270,6 +276,7 @@ def test_only_capture_roots_may_be_marked_published(tmp_path):
         references.required_closure(
             (root,),
             load=verified_loader(store),
+            budget=BUDGET,
             published_captures=frozenset({root.artifact.sha256}),
         )
 
@@ -283,7 +290,7 @@ def test_closure_reads_assertion_jsonl_without_wrapper(tmp_path):
     )
     root = ManifestRef(artifact=ref, type="assertion", schema_version="1")
     assert references.required_closure(
-        (root,), load=verified_loader(store)
+        (root,), load=verified_loader(store), budget=BUDGET
     ) == frozenset({ref.sha256, payload.sha256})
 
 
@@ -291,14 +298,117 @@ def test_closure_work_limit_applies_to_repeated_edges(monkeypatch):
     root = ManifestRef(
         artifact=ArtifactRef(**artifact()), type="registry", schema_version="1"
     )
-    monkeypatch.setattr(references, "MAX_CLOSURE_REFERENCES", 3, raising=False)
-    with pytest.raises(TychoraError, match="limit"):
+    with pytest.raises(TychoraError, match="limit") as error:
         references.required_closure(
             (root,),
             load=lambda ref: manifest(
                 "registry", required_manifests=[root.model_dump()] * 4
             ),
+            budget=references.ClosureBudget(manifests=10, references=3),
         )
+    assert error.value.reason == "closure.limit_exceeded"
+
+
+def _ref(index: int, kind: str = "registry") -> ManifestRef:
+    sha = f"{index:064x}"
+    return ManifestRef(
+        artifact=ArtifactRef(
+            sha256=sha, size_bytes=3, media_type="application/json", storage_key=sha
+        ),
+        type=kind,
+        schema_version=MANIFEST_VERSIONS[kind],
+    )
+
+
+def _tree(leaves: int, fanout: int = 100):
+    """One root over pages over ``leaves`` manifests, as a snapshot is built."""
+    children = [_ref(index + 1, "index_input") for index in range(leaves)]
+    loaded: dict[str, object] = {
+        child.artifact.sha256: manifest("index_input") for child in children
+    }
+    pages = []
+    for start in range(0, leaves, fanout):
+        page = _ref(leaves + 1 + len(pages))
+        loaded[page.artifact.sha256] = manifest(
+            "registry",
+            required_manifests=[
+                child.model_dump() for child in children[start : start + fanout]
+            ],
+        )
+        pages.append(page)
+    root = _ref(10**9)
+    loaded[root.artifact.sha256] = manifest(
+        "registry", required_manifests=[page.model_dump() for page in pages]
+    )
+    return root, loaded, 1 + len(pages) + leaves
+
+
+def test_one_root_may_reach_more_manifests_than_ten_thousand_documents():
+    # A snapshot root reaches every retained index input of the workspace.
+    root, loaded, size = _tree(10_050)
+    closure = references.required_closure(
+        (root,),
+        load=lambda ref: loaded[ref.artifact.sha256],
+        budget=references.closure_budget(size),
+    )
+    assert len(closure) == size
+
+
+def test_closure_budget_scales_with_the_walked_inventory():
+    budget = references.closure_budget(70_002)
+    assert budget.manifests == 70_002
+    assert budget.references >= 70_002
+    small = references.closure_budget(0)
+    assert small.manifests == references.MIN_CLOSURE_MANIFESTS
+    assert small.references == references.MIN_CLOSURE_REFERENCES
+    with pytest.raises(TychoraError) as error:
+        references.closure_budget(references.CLOSURE_MANIFEST_CEILING + 1)
+    assert error.value.reason == "closure.limit_exceeded"
+
+
+def test_closure_above_its_budget_fails_with_a_registered_reason():
+    root, loaded, size = _tree(120, fanout=10)
+    with pytest.raises(TychoraError) as error:
+        references.required_closure(
+            (root,),
+            load=lambda ref: loaded[ref.artifact.sha256],
+            budget=references.ClosureBudget(manifests=size - 1, references=10**6),
+        )
+    assert error.value.code == "INTEGRITY_ERROR"
+    assert error.value.reason == "closure.limit_exceeded"
+
+
+def test_one_walk_loads_a_manifest_shared_by_several_roots_once():
+    shared = _ref(1)
+    first, second, published = _ref(2), _ref(3), _ref(4, "job_capture")
+    original = artifact("c")
+    loaded = {
+        shared.artifact.sha256: manifest("registry"),
+        first.artifact.sha256: manifest(
+            "registry", required_manifests=[shared.model_dump()]
+        ),
+        second.artifact.sha256: manifest(
+            "registry", required_manifests=[shared.model_dump()]
+        ),
+        published.artifact.sha256: manifest(
+            "job_capture",
+            required_manifests=[shared.model_dump()],
+            original_artifacts=[original],
+        ),
+    }
+    reads = []
+
+    def load(ref):
+        reads.append(ref.artifact.sha256)
+        return loaded[ref.artifact.sha256]
+
+    walk = references.ClosureWalk(load=load, budget=references.closure_budget(4))
+    walk.walk((first,))
+    walk.walk((second,))
+    walk.walk((published,), all_captures_published=True)
+    assert sorted(reads) == sorted(loaded)
+    assert walk.artifacts == frozenset(loaded)
+    assert walk.loaded == frozenset(loaded)
 
 
 def test_direct_headers_reject_conflicting_payload_metadata():
@@ -383,7 +493,7 @@ def test_closure_deduplicates_physical_payloads_with_binding_mime_hints(tmp_path
         with store.open_verified(ref.artifact) as stream:
             return json.load(stream)
 
-    assert references.required_closure((root,), load=load) == {
+    assert references.required_closure((root,), load=load, budget=BUDGET) == {
         root.artifact.sha256,
         child.artifact.sha256,
         payload.sha256,

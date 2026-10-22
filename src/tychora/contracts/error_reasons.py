@@ -97,6 +97,12 @@ _ENTRIES = (
         "Report the diagnostic ID; a membership page exceeded its size bound.",
     ),
     Reason(
+        "INTEGRITY_ERROR",
+        "closure.limit_exceeded",
+        False,
+        "The required manifests exceed what their own inventory allows; restore the workspace from a backup, or do not import this archive.",
+    ),
+    Reason(
         "WORKSPACE_BUSY",
         "owner.live",
         True,

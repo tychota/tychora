@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING, Literal, cast
 from tychora.adapters.files.references import (
     MAX_MANIFEST_BYTES,
     TYPED_MANIFEST_ROOTS,
-    required_closure,
+    ClosureWalk,
+    workspace_closure_budget,
 )
 from tychora.contracts.artifacts import ArtifactRef, ManifestRef, registered_manifest
 from tychora.contracts.errors import TychoraError
@@ -355,19 +356,8 @@ class RemovalService:
             )
         return registered_manifest(ArtifactRef.from_row((sha, *row[:3])), kind)
 
-    def _manifest_closure(
-        self,
-        root: ManifestRef,
-        *,
-        walked: set[str],
-        published: bool = False,
-    ) -> frozenset[str]:
-        """Return what ``root`` requires; ``walked`` collects every manifest loaded."""
-        captures: set[str] = (
-            {root.artifact.sha256}
-            if root.type in {"job_capture", "repository_capture"}
-            else set()
-        )
+    def _load_manifest(self, link: ManifestRef):
+        """Read and decode one verified manifest for the closure walk."""
 
         def unique(pairs):
             value = {}
@@ -377,43 +367,33 @@ class RemovalService:
                 value[key] = item
             return value
 
-        def load(link: ManifestRef, capture_set=captures):
-            if link.type in {"job_capture", "repository_capture"}:
-                capture_set.add(link.artifact.sha256)
-            walked.add(link.artifact.sha256)
-            with self.owner.artifacts.open_verified(link.artifact) as stream:
-                raw = stream.read(MAX_MANIFEST_BYTES + 1)
-            if len(raw) > MAX_MANIFEST_BYTES:
-                raise TychoraError(
-                    "INTEGRITY_ERROR", "Required manifest exceeds byte limit."
-                )
-            try:
-                if link.type == "assertion":
-                    return [
-                        json.loads(line, object_pairs_hook=unique)
-                        for line in raw.splitlines()
-                    ]
-                return json.loads(raw, object_pairs_hook=unique)
-            except (UnicodeError, ValueError):
-                raise TychoraError(
-                    "INTEGRITY_ERROR", "Required manifest is malformed."
-                ) from None
-
-        closure = required_closure((root,), load=load)
-        if published:
-            closure = required_closure(
-                (root,), load=load, published_captures=frozenset(captures)
+        with self.owner.artifacts.open_verified(link.artifact) as stream:
+            raw = stream.read(MAX_MANIFEST_BYTES + 1)
+        if len(raw) > MAX_MANIFEST_BYTES:
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Required manifest exceeds byte limit."
             )
-        return closure
+        try:
+            if link.type == "assertion":
+                return [
+                    json.loads(line, object_pairs_hook=unique)
+                    for line in raw.splitlines()
+                ]
+            return json.loads(raw, object_pairs_hook=unique)
+        except (UnicodeError, ValueError):
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Required manifest is malformed."
+            ) from None
 
     def _rooted(self, *, walk: bool = True) -> frozenset[str]:
         """Return every artifact a typed root manifest or a job capture reaches.
 
-        One call walks each manifest once, instead of one walk of every root
-        per candidate. A root that an earlier walk loaded adds nothing, since a
-        walk loads every manifest it reaches. A published capture is walked on
-        its own unless an unpublished walk reached it, which already counts all
-        of its references. Without ``walk`` nothing is read and the set is empty.
+        One walk with one visited set covers every root, so each manifest is
+        read at most once per call however many roots share it (every retained
+        snapshot reaches the same pages and index inputs). The workspace's own
+        artifact rows bound the walk. Published captures that no unpublished
+        root reached are walked last, with every capture they reach treated as
+        published. Without ``walk`` nothing is read and the set is empty.
         """
         if not walk:
             return frozenset()
@@ -428,16 +408,21 @@ class RemovalService:
             "FROM jobs WHERE captured_inputs_sha IS NOT NULL"
         ).fetchall()
         roots |= {(sha, "job_capture") for sha, published in captures if not published}
-        walked: set[str] = set()
-        rooted: set[str] = set()
-        for sha, kind in sorted(roots):
-            if sha not in walked:
-                ref = self._manifest_ref(sha, kind)
-                rooted |= self._manifest_closure(ref, walked=walked)
-        for sha in sorted({sha for sha, published in captures if published} - walked):
-            ref = self._manifest_ref(sha, "job_capture")
-            rooted |= self._manifest_closure(ref, walked=set(), published=True)
-        return frozenset(rooted)
+        closure = ClosureWalk(
+            load=self._load_manifest, budget=workspace_closure_budget(db)
+        )
+        closure.walk(
+            tuple(self._manifest_ref(sha, kind) for sha, kind in sorted(roots))
+        )
+        published = sorted(
+            {sha for sha, published in captures if published} - closure.loaded
+        )
+        if published:
+            closure.walk(
+                tuple(self._manifest_ref(sha, "job_capture") for sha in published),
+                all_captures_published=True,
+            )
+        return closure.artifacts
 
     def _live_root(
         self,
