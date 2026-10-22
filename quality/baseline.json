@@ -17,7 +17,7 @@
     },
     "cognitive_complexity": {
       "direction": "lower",
-      "measured_at": "ff020c392165",
+      "measured_at": "4244bc7a6be7",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::search": 58,
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::upsert_batch": 16,
@@ -215,7 +215,7 @@
         "src/tychora/ports/vision.py::verify_retained_source_context": 26,
         "src/tychora/retrieval/admission.py::admit": 80,
         "src/tychora/retrieval/anchors.py::permitted_ranges": 17,
-        "src/tychora/retrieval/eligibility.py::EligibilityCompiler::_compile": 106,
+        "src/tychora/retrieval/eligibility.py::EligibilityCompiler::_compile": 99,
         "src/tychora/retrieval/eligibility.py::_filter_matches": 23,
         "src/tychora/retrieval/eligibility.py::run_pinned_eligibility": 31,
         "src/tychora/retrieval/eligibility.py::select_temporal_revisions": 69,
@@ -382,7 +382,7 @@
     },
     "function_length": {
       "direction": "lower",
-      "measured_at": "ff020c392165",
+      "measured_at": "4244bc7a6be7",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex.search": 143,
         "src/tychora/adapters/code/capture.py::RepositoryCapture._run": 89,
@@ -511,7 +511,7 @@
         "src/tychora/interfaces/mcp/tools.py::register_tools": 267,
         "src/tychora/ports/vision.py::RegionInput.exact_region": 95,
         "src/tychora/retrieval/admission.py::admit": 124,
-        "src/tychora/retrieval/eligibility.py::EligibilityCompiler._compile": 330,
+        "src/tychora/retrieval/eligibility.py::EligibilityCompiler._compile": 310,
         "src/tychora/retrieval/eligibility.py::_filter_matches": 86,
         "src/tychora/retrieval/eligibility.py::run_pinned_eligibility": 84,
         "src/tychora/retrieval/graph.py::augment": 104,
