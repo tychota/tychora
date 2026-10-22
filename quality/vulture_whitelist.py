@@ -16,7 +16,6 @@ _.record_assertion_decision  # assertion decision write exercised by tests; engi
 _.is_pinned  # lease query exercised by tests; engine core v2 snapshot leases own it
 _.migrate  # maintenance migration entry point; engine core v2 (new workspace format) owns it
 _.reconcile  # recovery entry point exercised by tests; engine core v2 recovery owns it
-_.prune_native  # explicit native index garbage collection; engine core v2 recovery owns it
 _.rebuild_native  # native index rebuild; engine core v2 `manage rebuild` owns it
 create_reranker  # reranker factory exercised by tests; model defaults (sub-project 3) owns provider construction
 _.traverse  # public client method kb.relations.traverse (sync, async and HTTP clients)
