@@ -17,7 +17,7 @@ MAX_WAIVER_DAYS = 30
 
 @dataclass(frozen=True)
 class Waiver:
-    """One owner-approved, time-limited exception for an advisory without a fix."""
+    """One owner-approved, time-limited exception for a Python or npm advisory."""
 
     id: str
     package: str
@@ -72,25 +72,33 @@ def advisory_findings(
     return findings
 
 
-def npm_vulnerabilities(audit: dict[str, Any]) -> int:
-    """Total vulnerabilities of every severity from `npm audit --json`."""
-    return int(audit["metadata"]["vulnerabilities"]["total"])
+def npm_advisories(audit: dict[str, Any]) -> dict[str, str]:
+    """Advisory id to `npm:<package>` from `npm audit --json`.
+
+    `via` holds advisory objects for the package that carries the flaw and plain
+    package names for transitive exposure; only the objects are advisories.
+    """
+    found: dict[str, str] = {}
+    for vulnerability in audit.get("vulnerabilities", {}).values():
+        for via in vulnerability.get("via", []):
+            if isinstance(via, dict):
+                advisory = str(via["url"]).rsplit("/", 1)[-1]
+                found[advisory] = f"npm:{via['name']}"
+    return found
 
 
 def advisories(root: Path, today: dt.date | None = None) -> list[Metric]:
     """Hard gate over pip-audit (with the register) and npm audit."""
     pip = run([venv_tool("pip-audit"), "--local", "--format", "json"], root)
+    npm = run(
+        ["npm", "--prefix", "dashboard", "audit", "--audit-level=low", "--json"], root
+    )
     reported = reported_advisories(json_output(pip, "pip-audit"))
+    reported |= npm_advisories(json_output(npm, "npm audit"))
     waivers = load_register((root / REGISTER).read_text())
     findings = advisory_findings(
         reported, waivers, today or dt.datetime.now(tz=dt.UTC).date()
     )
-    npm = run(
-        ["npm", "--prefix", "dashboard", "audit", "--audit-level=low", "--json"], root
-    )
-    npm_total = npm_vulnerabilities(json_output(npm, "npm audit"))
-    if npm_total:
-        findings["dashboard: npm audit"] = npm_total
     return [Metric("advisories", sum(findings.values()), kind="hard", per_key=findings)]
 
 
