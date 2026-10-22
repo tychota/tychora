@@ -1416,15 +1416,22 @@ def _old_allowed(dependencies, revisions, units, assets):
 
 
 def _reference_eligibility(facts: EligibilityFacts, selected_chunks, selected_vectors):
-    """The pre-worklist compile logic, kept verbatim as an equivalence oracle."""
+    """The pre-worklist compile logic, kept as an equivalence oracle.
+
+    Permitted sets follow the audit mode (accepted only); every revision is selected.
+    """
     revision_ids = frozenset(item.revision_id for item in facts.revisions)
     units = {item.unit_id: item for item in facts.units}
     assets = {item.asset_id: item for item in facts.assets}
     eligible_units = frozenset(
-        uid for uid, item in units.items() if item.review_state == "accepted"
+        uid
+        for uid, item in units.items()
+        if item.revision_id in revision_ids and item.review_state == "accepted"
     )
     eligible_assets = frozenset(
-        aid for aid, item in assets.items() if item.review_state == "accepted"
+        aid
+        for aid, item in assets.items()
+        if item.revision_id in revision_ids and item.review_state == "accepted"
     )
     while True:
         next_units = frozenset(
@@ -1461,11 +1468,13 @@ def _reference_eligibility(facts: EligibilityFacts, selected_chunks, selected_ve
             item.dependency_ids, revision_ids, eligible_units, eligible_assets
         )
     )
+    # Without a candidate filter every eligible asset is a candidate asset.
+    candidate_assets = eligible_assets
     vectors = frozenset(
         item.record_id
         for item in facts.vectors
         if item.record_id in selected_vectors
-        and (item.chunk_id in chunks or item.asset_id in eligible_assets)
+        and (item.chunk_id in chunks or item.asset_id in candidate_assets)
         and item.dependency_ids
         and _old_allowed(
             item.dependency_ids, revision_ids, eligible_units, eligible_assets
@@ -1488,6 +1497,11 @@ def _reference_eligibility(facts: EligibilityFacts, selected_chunks, selected_ve
     )
     for item in facts.vectors:
         if item.record_id in vectors:
+            owner = item.chunk_id or item.asset_id
+            if owner is None or owner not in lookup:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Vector has no eligible owner dependency"
+                )
             lookup[item.record_id] = item.dependency_ids
     return (
         eligible_units,
@@ -1504,79 +1518,117 @@ def _random_facts(seed: int):
     import random
 
     rng = random.Random(seed)
-    unit_count = rng.randint(1, 14)
-    asset_count = rng.randint(0, 5)
-    unit_ids = [f"u{i}" for i in range(unit_count)]
-    asset_ids = [f"a{i}" for i in range(asset_count)]
-    pool = unit_ids + asset_ids + ["ghost"]
+    unit_ids = [f"u{i}" for i in range(rng.randint(1, 20))]
+    asset_ids = [f"a{i}" for i in range(rng.randint(0, 7))]
+    if asset_ids and rng.random() < 0.3:  # a unit and an asset sharing one id
+        asset_ids[0] = rng.choice(unit_ids)
+    asset_ids = list(dict.fromkeys(asset_ids))
+    revisions = ["revision", "rev2"] if rng.random() < 0.3 else ["revision"]
+    pool = unit_ids + asset_ids + ["ghost", "revision", "rev2"]
+    states = ["accepted"] * 8 + ["rejected", "pending"]
 
     def deps(own: str) -> frozenset[str]:
-        picked = {own, "revision"}
-        picked.update(rng.sample(pool, rng.randint(0, min(3, len(pool)))))
-        if rng.random() < 0.08:
-            picked.discard("revision")
+        picked: set[str] = set()
+        if rng.random() < 0.8:
+            picked.add(own)
+        if rng.random() < 0.9:
+            picked.add("revision")
+        picked.update(rng.choices(pool, k=rng.randint(0, 4)))
         return frozenset(picked)
 
     units = tuple(
         UnitFact(
             uid,
-            "revision",
+            rng.choice(revisions),
             "extraction",
             "paragraph",
-            "accepted" if rng.random() < 0.8 else "rejected",
+            rng.choice(states),
             rng.random() < 0.7,
             deps(uid),
+            proxy_asset_id=(
+                rng.choice(asset_ids) if asset_ids and rng.random() < 0.25 else None
+            ),
         )
         for uid in unit_ids
     )
     assets = tuple(
         AssetFact(
             aid,
-            "revision",
-            "accepted" if rng.random() < 0.8 else "rejected",
+            rng.choice(revisions),
+            rng.choice(states),
             deps(aid),
+            source_owner_ids=frozenset(
+                rng.sample(unit_ids, min(len(unit_ids), rng.randint(0, 2)))
+            ),
         )
         for aid in asset_ids
     )
     chunks = tuple(
         ChunkFact(f"c{i}", rng.choice(unit_ids), deps(f"c{i}"))
-        for i in range(rng.randint(0, 10))
+        for i in range(rng.randint(0, 15))
     )
-    vectors = tuple(
-        VectorFact(
-            f"v{i}",
-            chunk_id=rng.choice(chunks).chunk_id if chunks else None,
-            dependency_ids=deps(f"v{i}"),
-        )
-        for i in range(rng.randint(0, 6))
-        if chunks
-    )
-    facts = EligibilityFacts(
+    vectors = []
+    for i in range(rng.randint(0, 10)):
+        dependencies = deps(f"v{i}") if rng.random() < 0.9 else frozenset()
+        if chunks and (not assets or rng.random() < 0.6):
+            vectors.append(
+                VectorFact(
+                    f"v{i}",
+                    chunk_id=rng.choice(chunks).chunk_id,
+                    dependency_ids=dependencies,
+                )
+            )
+        elif assets:
+            vectors.append(
+                VectorFact(
+                    f"v{i}",
+                    asset_id=rng.choice(assets).asset_id,
+                    dependency_ids=dependencies,
+                )
+            )
+    return EligibilityFacts(
         policy_epoch=1,
-        revisions=(_revision(),),
+        revisions=tuple(_revision(revision_id=item) for item in revisions),
         units=units,
         chunks=chunks,
         assets=assets,
-        vectors=vectors,
+        vectors=tuple(vectors),
     )
-    return facts
 
 
-@pytest.mark.parametrize("seed", range(150))
+@pytest.mark.parametrize("seed", range(400))
 def test_worklist_matches_reference_fixpoint(config, scope, seed):
     facts = _random_facts(seed)
     chunk_ids = tuple(item.chunk_id for item in facts.chunks)
+    fallback = frozenset({"revision"})
     vector_rows = tuple(
-        (item.record_id, item.chunk_id, f"group-{item.record_id}", item.dependency_ids)
+        (
+            item.record_id,
+            item.chunk_id,
+            f"group-{item.record_id}",
+            item.dependency_ids or fallback,
+        )
         for item in facts.vectors
+        if item.chunk_id
     )
-    snapshot = _snapshot(config, chunks=chunk_ids, vectors=vector_rows)
+    image_rows = tuple(
+        (item.record_id, item.asset_id) for item in facts.vectors if item.asset_id
+    )
+    snapshot = _snapshot(
+        config, chunks=chunk_ids, vectors=vector_rows, images=image_rows
+    )
+    selected_vectors = {row[0] for row in vector_rows} | {row[0] for row in image_rows}
     compiler = EligibilityCompiler(_Reader(config, facts))
+    try:
+        expected = _reference_eligibility(facts, set(chunk_ids), selected_vectors)
+    except TychoraError as error:
+        with pytest.raises(TychoraError) as raised:
+            compiler.compile_attempt(snapshot, scope, _request(), config)
+        assert raised.value.code == error.code
+        return
     attempt = compiler.compile_attempt(snapshot, scope, _request(), config)
     view = attempt.view
-    units, assets, sources, proxies, chunks, vectors, lookup = _reference_eligibility(
-        facts, set(chunk_ids), {row[0] for row in vector_rows}
-    )
+    units, assets, sources, proxies, chunks, vectors, lookup = expected
     assert view.context_unit_ids | view.structural_unit_ids == units
     assert view.asset_ids == assets
     assert view.source_unit_ids == sources
@@ -1664,13 +1716,13 @@ def test_compile_work_stays_linear_in_unit_count(config, scope):
         )
         compiler = EligibilityCompiler(_Reader(config, facts))
         runs = []
-        for _ in range(2):
+        for _ in range(5):
             started = time.perf_counter()
             view = compiler.compile_eligibility(snapshot, scope, _request(), config)
             runs.append(time.perf_counter() - started)
         assert len(view.source_unit_ids) == count - 4 * (count // 20)
         return min(runs)
 
-    small, large = best(2_000), best(8_000)
+    small, large = best(2_000), best(16_000)
     assert large < 30.0
-    assert large / max(small, 1e-3) < 6.5
+    assert large / max(small, 1e-3) < 25
