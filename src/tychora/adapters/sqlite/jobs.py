@@ -640,6 +640,22 @@ class JobRepository:
             pass
         return ref
 
+    def discard_step(self, job_id: str, step_key: str) -> None:
+        """Forget one completed checkpoint so the step can be recomputed.
+
+        Reserved ``__tychora__/`` steps are never discarded. The output
+        artifact stays registered; nothing references it afterward.
+        """
+        if not step_key or step_key.startswith("__tychora__/"):
+            raise TychoraError("INVALID_REQUEST", "Invalid checkpoint key")
+        with self._write():
+            if self.get(job_id).state != "running":
+                _fail("Only a running job may discard a checkpoint")
+            self.db.execute(
+                "DELETE FROM job_steps WHERE job_id=? AND step_key=?",
+                (job_id, step_key),
+            )
+
     def checkpoint(
         self, job_id: str, step_key: str, input_sha: str, output: ArtifactRef
     ) -> None:

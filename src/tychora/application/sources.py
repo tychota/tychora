@@ -98,6 +98,7 @@ if TYPE_CHECKING:
 
 # Matches the owner's per-authorization dependency bound.
 _LOG = logging.getLogger(__name__)
+_STALE_CHECKPOINT_REASONS = frozenset({"batch.missing", "payload.missing"})
 MAX_UPLOAD_DEPENDENCIES = 2048
 
 
@@ -719,8 +720,17 @@ class SourceService:
                         id=handle.id, operation=operation, state="succeeded"
                     )
                 except TychoraError as error:
+                    # A checkpoint outlives its batches and page bytes when
+                    # ``manage gc`` ran after the interruption; prepare afresh.
                     if error.code != "WORKSPACE_BUSY":
-                        raise
+                        if error.reason not in _STALE_CHECKPOINT_REASONS:
+                            raise
+                        await self.owner.run_blocking(
+                            lambda: jobs.discard_step(
+                                handle.id, self._plan_step(base, watermark)
+                            ),
+                            ctx,
+                        )
             if (
                 base is not None
                 and not source.root.vision
