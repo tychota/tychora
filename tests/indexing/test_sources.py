@@ -1057,10 +1057,14 @@ async def test_png_source_uses_owner_authorized_visual_provider(tmp_path, monkey
             ids=[row.record_id for row in image.batches[0].vector_records],
             include=["metadatas"],
         )["metadatas"]
-        revision_id = owner.db.execute(
-            "SELECT revision_id FROM extractions WHERE extraction_id=?",
-            (image.batches[0].extraction_id,),
-        ).fetchone()[0]
+        extraction_id = image.batches[0].extraction_id
+        revision_id = await owner.run_blocking(
+            lambda: owner.db.execute(
+                "SELECT revision_id FROM extractions WHERE extraction_id=?",
+                (extraction_id,),
+            ).fetchone()[0],
+            ExecutionContext(),
+        )
         for binding, metadata in zip(
             image.batches[0].vector_records, stored, strict=True
         ):

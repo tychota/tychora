@@ -171,7 +171,10 @@ async def create(root: Path, models: Path) -> None:
         snapshot = await owner.run_blocking(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
-        assert {slot.slot for slot in snapshot.slots} >= {"text", "graph"}
+        slots = await owner.run_blocking(
+            lambda: owner.store.snapshot_slots(snapshot), ExecutionContext()
+        )
+        assert {slot.slot for slot in slots} >= {"text", "graph"}
         backup = root / "canonical-backup"
         admin = await owner.run_blocking(
             lambda: _whole_workspace_scope(owner, scope), ExecutionContext()
@@ -184,7 +187,7 @@ async def create(root: Path, models: Path) -> None:
         )
         print(
             f"PREPARED installed={package} snapshot={snapshot.snapshot_id} "
-            f"slots={','.join(slot.slot for slot in snapshot.slots)} "
+            f"slots={','.join(slot.slot for slot in slots)} "
             f"archive={backup}"
         )
 
