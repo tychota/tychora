@@ -16,6 +16,7 @@ def eligible_cache_key(view: EligibilityView) -> tuple[str, int, str, str, str]:
     )
 
 
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field, replace
 from datetime import date
 from types import MappingProxyType
@@ -297,11 +298,55 @@ def _filter_matches(
 
 def _allowed_dependencies(
     dependencies: frozenset[str],
-    revisions: frozenset[str],
-    units: frozenset[str],
-    assets: frozenset[str],
+    revisions: AbstractSet[str],
+    units: AbstractSet[str],
+    assets: AbstractSet[str],
 ) -> bool:
-    return dependencies <= revisions | units | assets
+    return all(
+        item in revisions or item in units or item in assets for item in dependencies
+    )
+
+
+def _dependents_index(
+    revision_ids: frozenset[str],
+    tables: tuple[tuple[bool, Mapping[str, frozenset[str]]], ...],
+) -> dict[str, list[tuple[bool, str]]]:
+    dependents: dict[str, list[tuple[bool, str]]] = {}
+    for is_unit, table in tables:
+        for key, dependencies in table.items():
+            for item in dependencies - revision_ids:
+                dependents.setdefault(item, []).append((is_unit, key))
+    return dependents
+
+
+def _dependency_fixpoint(
+    revision_ids: frozenset[str],
+    unit_dependencies: Mapping[str, frozenset[str]],
+    asset_dependencies: Mapping[str, frozenset[str]],
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Greatest set of units and assets whose dependencies all stay eligible.
+
+    Removal is monotone, so a worklist reaches the same fixpoint as repeated full
+    passes in time linear in the items plus their dependency edges.
+    """
+    units = set(unit_dependencies)
+    assets = set(asset_dependencies)
+    tables = ((True, unit_dependencies), (False, asset_dependencies))
+    dependents = _dependents_index(revision_ids, tables)
+    pending = [
+        (is_unit, key)
+        for is_unit, table in tables
+        for key, dependencies in table.items()
+        if not _allowed_dependencies(dependencies, revision_ids, units, assets)
+    ]
+    while pending:
+        is_unit, key = pending.pop()
+        members = units if is_unit else assets
+        if key in members:
+            members.remove(key)
+            if key not in units and key not in assets:
+                pending.extend(dependents.get(key, ()))
+    return frozenset(units), frozenset(assets)
 
 
 class EligibilityCompiler:
@@ -518,32 +563,11 @@ class EligibilityCompiler:
             aid for aid, item in assets.items() if item.review_state in original_reviews
         )
         # A dependency is a real canonical leaf, never a replacement revision claim.
-        eligible_units = permitted_units
-        eligible_assets = permitted_assets
-        while True:
-            next_units = frozenset(
-                uid
-                for uid in eligible_units
-                if _allowed_dependencies(
-                    units[uid].dependency_ids,
-                    revision_ids,
-                    eligible_units,
-                    eligible_assets,
-                )
-            )
-            next_assets = frozenset(
-                aid
-                for aid in eligible_assets
-                if _allowed_dependencies(
-                    assets[aid].dependency_ids,
-                    revision_ids,
-                    next_units,
-                    eligible_assets,
-                )
-            )
-            if (next_units, next_assets) == (eligible_units, eligible_assets):
-                break
-            eligible_units, eligible_assets = next_units, next_assets
+        eligible_units, eligible_assets = _dependency_fixpoint(
+            revision_ids,
+            {uid: units[uid].dependency_ids for uid in permitted_units},
+            {aid: assets[aid].dependency_ids for aid in permitted_assets},
+        )
         context_source_units = frozenset(
             uid
             for uid in eligible_units
@@ -617,11 +641,12 @@ class EligibilityCompiler:
             if batch.extraction_id in extraction_ids
             for row in batch.vector_records
         }
+        chunk_owner_units = source_units | candidate_proxy_units
         eligible_chunks = frozenset(
             item.chunk_id
             for item in facts.chunks
             if item.chunk_id in selected_chunks
-            if item.unit_id in source_units | candidate_proxy_units
+            if item.unit_id in chunk_owner_units
             and _allowed_dependencies(
                 item.dependency_ids, revision_ids, eligible_units, eligible_assets
             )
@@ -736,7 +761,8 @@ def _dependency_lookup(
     lookup = {
         item.unit_id: item.dependency_ids
         for item in facts.units
-        if item.unit_id in view.context_unit_ids | view.structural_unit_ids
+        if item.unit_id in view.context_unit_ids
+        or item.unit_id in view.structural_unit_ids
     }
     lookup.update(
         {
