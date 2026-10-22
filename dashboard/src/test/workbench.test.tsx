@@ -551,6 +551,9 @@ describe("exact provenance", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Inspect original" }));
     await screen.findByRole("button", { name: "Download original bytes" });
+    // The object URL is created in a passive effect, which can still be
+    // pending when the committed button is first found.
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1));
     const url = create.mock.results[0].value;
     unmount();
     expect(revoke).toHaveBeenCalledWith(url);
