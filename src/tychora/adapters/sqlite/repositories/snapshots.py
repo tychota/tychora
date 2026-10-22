@@ -447,12 +447,16 @@ class SqliteSnapshotRepository:
     def _orphan_batches(
         self, candidates: set[str], leased: frozenset[str], *, everywhere: bool
     ) -> list[str]:
-        """Return unbound, unleased batches: published candidates, or every one."""
+        """Return unbound, unleased batches: published candidates, or every one.
+
+        A ``removed`` batch is always a candidate: it was deferred because its
+        native store was closed, and every later pass retries it.
+        """
         return [
             row[0]
             for row in self._db.execute(
                 f"SELECT batch_id FROM index_batches b WHERE {_UNBOUND_BATCH} "
-                f"AND batch_id NOT {_IN_IDS} AND (? OR (state IN ('ready','pending') "
+                f"AND batch_id NOT {_IN_IDS} AND (? OR state='removed' OR (state IN ('ready','pending') "
                 f"AND batch_id {_IN_IDS})) ORDER BY batch_id",
                 (
                     json.dumps(sorted(leased)),

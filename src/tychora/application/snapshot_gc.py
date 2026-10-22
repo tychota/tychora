@@ -62,7 +62,7 @@ class SnapshotGc:
         """Delete up to ``limit`` unretained snapshots and purge their orphan batches.
 
         A batch whose native store is not open stays ``removed`` with its rows,
-        and a later pass with ``include_unpublished`` retries it.
+        and every later pass retries it.
         """
         store = self.owner.store
         with typed_storage_errors():
