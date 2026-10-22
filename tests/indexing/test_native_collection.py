@@ -113,3 +113,24 @@ def test_batches_of_a_detached_index_wait_and_can_be_built_again(corpus):
     )
     assert f.vector.verify_batch(first.receipt).ready
     assert not f.vector.verify_batch(second.receipt).ready
+
+
+def test_published_only_pass_retries_batches_deferred_for_a_closed_store(corpus):
+    f = corpus
+    ids = _snapshot_ids(f)
+    deferred = [_text_batches(f, sid)[0] for sid in ids[:2]]
+    attached = dict(f.store.vector_indexes)
+    f.store.vector_indexes.clear()
+    first = SnapshotGc(_owner(f)).collect(ExecutionContext())
+    assert first.deferred_batches == 2
+    f.store.vector_indexes.update(attached)
+    retry = SnapshotGc(_owner(f)).collect(ExecutionContext())
+    assert retry.deferred_batches == 0 and retry.batches == 2
+    for batch in deferred:
+        assert not f.vector.verify_batch(batch.receipt).ready
+        assert (
+            f.store.db.execute(
+                "SELECT 1 FROM index_batches WHERE batch_id=?", (batch.batch_id,)
+            ).fetchone()
+            is None
+        )
