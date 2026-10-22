@@ -575,7 +575,11 @@ def test_native_recovery_streams_batches_without_loading_every_slot(projected):
     with patch.object(
         f.store, "snapshot_slots", side_effect=AssertionError("loads every slot")
     ):
-        _health_service(f)._verify_native_on_owner(ExecutionContext())
+        snapshot_id, records, _generations, _skipped = _health_service(
+            f
+        )._verify_native_on_owner(ExecutionContext())
+    assert snapshot_id == f.store.active_snapshot_id()
+    assert records > 0
 
 
 def test_native_health_holds_at_most_one_batch_at_a_time(projected):

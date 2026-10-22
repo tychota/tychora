@@ -105,10 +105,15 @@ def test_write_vectors_is_idempotent_and_refuses_a_different_row(seeded_batch):
 
 
 def test_begin_is_idempotent_for_the_same_batch(seeded_batch):
-    _, uow, batch, _ = seeded_batch
+    db, uow, batch, _ = seeded_batch
     with uow.write() as tx:
         tx.batches.begin(batch)
         tx.batches.begin(batch)
+    rows = db.execute(
+        "SELECT batch_id,state FROM index_batches WHERE batch_id=?",
+        (batch.batch_id,),
+    ).fetchall()
+    assert rows == [(batch.batch_id, "building")]
 
 
 def test_begin_refuses_a_different_row_under_the_same_batch_id(seeded_batch):
