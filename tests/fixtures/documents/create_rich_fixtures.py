@@ -2,6 +2,13 @@
 
 Run with the locked test-fixtures dependency group. Coordinates in the manifest
 are manually reviewed source drawing regions in PDF points, top-left origin.
+
+The PDF embeds subsets of Bitstream Vera Sans (shipped with reportlab, under the
+Bitstream Vera font licence, which permits embedding). With the standard
+Helvetica left unembedded, Docling's page renderer substituted whatever
+sans-serif the host had: Liberation Sans on the Ubuntu runners produced a page
+on which the layout model read the figure caption as body text, so no caption
+was linked to the figure. Embedded glyphs render the same on every host.
 """
 
 from pathlib import Path
@@ -20,7 +27,12 @@ def build(destination: Path) -> None:
     from docx.shared import Inches
     from PIL import Image, ImageDraw
     from reportlab.lib.utils import ImageReader
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
     from reportlab.pdfgen import canvas
+
+    pdfmetrics.registerFont(TTFont("Vera", "Vera.ttf"))
+    pdfmetrics.registerFont(TTFont("VeraBd", "VeraBd.ttf"))
 
     destination.mkdir(parents=True, exist_ok=True)
     picture = Image.new("RGB", (640, 320), "white")
@@ -31,12 +43,17 @@ def build(destination: Path) -> None:
     draw.text((180, 270), "REFERENCE VESSEL", fill="black", font_size=20)
     draw.text((400, 220), "BLUE MARKER", fill="black", font_size=20)
     picture.save(destination / "rich-figure.png")
-    pdf = canvas.Canvas(str(destination / "rich.pdf"), pagesize=(612, 792), invariant=1)
+    pdf = canvas.Canvas(
+        str(destination / "rich.pdf"),
+        pagesize=(612, 792),
+        invariant=1,
+        initialFontName="Vera",
+    )
     pdf.setTitle("Synthetic field notebook")
     pdf.setAuthor("Tychora synthetic fixtures")
 
     def text(value, x, y, size=12):
-        pdf.setFont("Helvetica-Bold" if size > 12 else "Helvetica", size)
+        pdf.setFont("VeraBd" if size > 12 else "Vera", size)
         pdf.drawString(x, 792 - y, value)
 
     def table(top, rows):
