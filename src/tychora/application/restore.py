@@ -534,6 +534,11 @@ def load_restored_runtime_config(path: Path) -> ResolvedConfig:
         db.close()
 
 
+def _entries(copied: frozenset[str]) -> int:
+    """Count the artifact files physically copied from an archive."""
+    return sum(name.startswith("artifacts/") for name in copied)
+
+
 class RestoreService:
     def __init__(
         self,
@@ -584,10 +589,10 @@ class RestoreService:
                 raise TychoraError("INTEGRITY_ERROR", "Backup receipt differs")
             db = open_verified_import(stage.stage / "corpus.sqlite3")
             try:
-                inventory = from_backup(
-                    db, artifacts=LocalArtifacts(stage.stage / "artifacts")
-                )
                 copied_artifacts = LocalArtifacts(stage.stage / "artifacts")
+                inventory = from_backup(
+                    db, artifacts=copied_artifacts, archive_entries=_entries(copied)
+                )
                 for artifact in inventory.artifacts:
                     ctx.checkpoint()
                     with copied_artifacts.open_verified(artifact):

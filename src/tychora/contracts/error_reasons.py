@@ -103,6 +103,12 @@ _ENTRIES = (
         "The required manifests exceed what their own inventory allows; restore the workspace from a backup, or do not import this archive.",
     ),
     Reason(
+        "INTEGRITY_ERROR",
+        "backup.manifest_limit",
+        False,
+        "The workspace holds more required artifacts than one backup manifest can list; export it after the paged backup format ships.",
+    ),
+    Reason(
         "WORKSPACE_BUSY",
         "owner.live",
         True,

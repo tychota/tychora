@@ -367,6 +367,16 @@ class BackupInventory:
     config_shas: tuple[str, ...]
 
 
+def _backup_budget(db, archive_entries: int | None) -> ClosureBudget:
+    """Bound a backup walk, checking the row ceiling before any row is read.
+
+    An imported archive passes ``archive_entries``, the artifact files it
+    physically holds: its rows are its own claim and never widen the budget.
+    """
+    budget = workspace_closure_budget(db)
+    return budget if archive_entries is None else closure_budget(archive_entries)
+
+
 def _published_captures(
     pending: list[ManifestRef],
     *,
@@ -399,7 +409,7 @@ def _published_captures(
     return frozenset(published)
 
 
-def from_backup(db, *, artifacts) -> BackupInventory:
+def from_backup(db, *, artifacts, archive_entries=None) -> BackupInventory:
     """Enumerate only typed roots from a validated, copied canonical database.
 
     Hashes in provenance/data JSON and identity columns never create edges.
@@ -414,6 +424,7 @@ def from_backup(db, *, artifacts) -> BackupInventory:
     if len(rows) != 1:
         raise _fail("Copied database has ambiguous workspace identity")
     workspace_id, policy_epoch, lexical_epoch, active_snapshot = rows[0]
+    budget = _backup_budget(db, archive_entries)
     registered = {}
     states = {}
     for sha, size, media, key, state in db.execute(
@@ -537,9 +548,6 @@ def from_backup(db, *, artifacts) -> BackupInventory:
                 raise _fail("Required artifact declaration differs from registration")
         return content
 
-    # The copied database's own inventory bounds the walk: an imported archive
-    # declares its rows, and every walked manifest must be one of them.
-    budget = closure_budget(len(registered))
     published = _published_captures(
         [root for root in roots if root.artifact.sha256 in published_job_roots],
         load=load,
