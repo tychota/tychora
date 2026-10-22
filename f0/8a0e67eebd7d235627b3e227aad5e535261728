@@ -1,0 +1,40 @@
+tests/storage/test_batch_repository.py
+  s_ab847b2c6c265a::t_28927f75922736 170-224
+tests/storage/test_snapshot_repository.py
+  s_ab847b2c6c265a::t_f4dd9a46712fa4 172
+  s_ab847b2c6c265a::t_28927f75922736 3,10-11,149-171,173-181
+tests/storage/test_families.py
+  s_ab847b2c6c265a::t_28927f75922736 100-101
+tests/contracts/test_error_reasons.py
+  s_ab847b2c6c265a::t_28927f75922736 59,82
+src/tychora/adapters/sqlite/repositories/snapshots.py
+  s_ab847b2c6c265a::t_f2c04e5e34f2ee 16-23,39,49
+src/tychora/indexing/coordinator.py
+  s_ab847b2c6c265a::t_f2c04e5e34f2ee 194-195
+src/tychora/resources/migrations/0001.sql
+  s_ab847b2c6c265a::t_ce2d9097a4efee 408
+  s_ab847b2c6c265a::t_f2c04e5e34f2ee 380-381,404-406,415
+src/tychora/adapters/sqlite/repositories/batches.py
+  s_ab847b2c6c265a::t_ce2d9097a4efee 115-123,125-128,140,143,145-150,155,171
+src/tychora/contracts/error_reasons.py
+  s_ab847b2c6c265a::t_f2c04e5e34f2ee 124-128
+  s_ab847b2c6c265a::t_342ecfdc168200 123
+src/tychora/adapters/sqlite/migrations.py
+  s_ab847b2c6c265a::t_ce2d9097a4efee 12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f08a0e67eebd7d235627b3e227aad5e535261728",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}

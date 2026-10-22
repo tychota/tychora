@@ -1,0 +1,23 @@
+tests/operations/test_closure_bounds.py
+  s_ab847b2c6c265a::t_b50c2384ac9c73 419-455
+src/tychora/application/removal.py
+  s_ab847b2c6c265a::t_b50c2384ac9c73 456-461
+quality/baseline.json
+  s_ab847b2c6c265a::t_cec78fab8d1824 20,114,533,572,601
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cede6179e519b74f6ec2518ed965912fabad139a",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
