@@ -292,8 +292,8 @@
     },
     "duplication_tests": {
       "direction": "lower",
-      "measured_at": "14ef340863a3",
-      "value": 4.43
+      "measured_at": "3ce9d6244f37",
+      "value": 4.41
     },
     "duplication_typescript": {
       "direction": "lower",

@@ -88,6 +88,7 @@ class Assertion(Contract):
     name: NonEmptyStr
     passed: bool
     detail: str = ""
+    measured: bool = True
 
 
 class BenchResult(Contract):
