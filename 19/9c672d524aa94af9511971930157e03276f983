@@ -1,0 +1,19 @@
+src/tychora/adapters/sqlite/publication.py
+  s_ab847b2c6c265a::t_105f7ac938789a 325-328,332,334-336,350-352,366,377-384
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "199c672d524aa94af9511971930157e03276f983",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}

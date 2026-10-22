@@ -1,0 +1,32 @@
+quality/baseline.json
+  s_ab847b2c6c265a::t_5d64e0a6aea35d 295-296
+tests/operations/test_restore.py
+  s_ab847b2c6c265a::t_6fb4e5cda50c4b 837-838,847-867,869,877,884,891-896
+  s_ab847b2c6c265a::t_da8b4577ea61a5 879-881
+  s_ab847b2c6c265a::t_516056d5d72403 839-846,868,878
+  s_ab847b2c6c265a::t_c0b4c36be50c62 882-883,885-890
+  s_ab847b2c6c265a::t_429098f5f33557 870-876
+tests/operations/test_backup.py
+  s_ab847b2c6c265a::t_82c4cff507f48d 787-790,797-811,824-826
+  s_ab847b2c6c265a::t_6fb4e5cda50c4b 764-769,771-786,796
+  s_ab847b2c6c265a::t_da8b4577ea61a5 791-795
+  s_ab847b2c6c265a::t_380f6b271fea85 770,812-823
+quality/jscpd/tests.json
+  s_ab847b2c6c265a::t_5d64e0a6aea35d 18,20,31,36,48,63,86,105-106,109,128,157,177-178,194,220,226,228,242,245,262
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b6b287cac4c340d6c5723d5692fcd9a763b6d8c8",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}

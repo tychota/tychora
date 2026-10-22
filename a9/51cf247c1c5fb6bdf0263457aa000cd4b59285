@@ -1,0 +1,55 @@
+src/tychora/application/recovery.py
+  s_ab847b2c6c265a::t_0d3ca52134107b 262,300,302
+  s_ab847b2c6c265a::t_5f7e7eb3dd1806 27,150,161,216-258,263,293-299,301,303-310,313-315,317,319-329,338-344,346-354,386
+src/tychora/contracts/publication.py
+  s_ab847b2c6c265a::t_6a4237e8533b92 43,76-86
+src/tychora/indexing/coordinator.py
+  s_ab847b2c6c265a::t_1198350bb6d850 56-60,564-585
+  s_ab847b2c6c265a::t_f9e86dfb2499cd 512,523-533,535-536,561,761,781-789,791-792,807
+  s_ab847b2c6c265a::t_e7fba982ba3115 5
+  s_ab847b2c6c265a::t_7a674dfa0a293a 586
+tests/retrieval/test_eligibility.py
+  s_ab847b2c6c265a::t_59d567bdb65103 52,153,157-159,182,203,205
+  s_ab847b2c6c265a::t_abc7013a460e60 228
+src/tychora/adapters/sqlite/corpus.py
+  s_ab847b2c6c265a::t_cc7c41bba32071 210,213
+src/tychora/adapters/files/references.py
+  s_ab847b2c6c265a::t_cc7c41bba32071 323
+tests/indexing/test_publication.py
+  s_ab847b2c6c265a::t_b42b67e588f34b 971-973
+  s_ab847b2c6c265a::t_01d8e4ec50d628 646,666
+  s_ab847b2c6c265a::t_481815afab4469 967-970,974-1033
+quality/baseline.json
+  s_ab847b2c6c265a::t_d4c46b0a6dbb3a 20,79-80,117,394,429-430,466,468,554,594,625
+tests/operations/test_restore.py
+  s_ab847b2c6c265a::t_01d8e4ec50d628 588,600-604,627,634-649,655,693,695,698,702,704-719
+src/tychora/resources/migrations/0001.sql
+  s_ab847b2c6c265a::t_9db6709c69e6aa 286,297,300-301
+src/tychora/adapters/sqlite/migrations.py
+  s_ab847b2c6c265a::t_6a4237e8533b92 12
+src/tychora/adapters/sqlite/publication.py
+  s_ab847b2c6c265a::t_3010999f500fcd 391-393,405-406,408-415
+  s_ab847b2c6c265a::t_b42b67e588f34b 31,34-39
+  s_ab847b2c6c265a::t_cc7c41bba32071 78,81,120,123,248-251,295-325,331-333,335-342,399,402,407,452,603,606
+  s_ab847b2c6c265a::t_9c6c02b9710229 360-390,420
+tests/transports/test_http.py
+  s_ab847b2c6c265a::t_414a393692ea26 287
+src/tychora/application/removal.py
+  s_ab847b2c6c265a::t_cc7c41bba32071 175-178,428
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a951cf247c1c5fb6bdf0263457aa000cd4b59285",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
