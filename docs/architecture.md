@@ -92,7 +92,9 @@ The canonical file is `WORKSPACE/corpus.sqlite3`. The adapter uses Python's `sql
 | `review_events`, `assertion_decisions` | Review events and decisions on relationship assertions |
 | `chunks`, `lexical_records`, `lexical_fts` | Indexing windows and lexical representations |
 | `index_families`, `index_batches`, `vector_records` | Provider/model configuration, index membership, cached inputs and receipts |
-| `snapshots`, `snapshot_members`, `snapshot_indexes`, `snapshot_batches` | Published corpus/index combinations |
+| `snapshots`, `snapshot_indexes`, `snapshot_pages`, `snapshot_root_batches` | Published corpus/index combinations: a snapshot names its 256 bucketed membership pages and its slot roots |
+| `membership_pages`, `page_members`, `page_batches` | Immutable membership pages shared across snapshots, their members and the index batches each page binds |
+| `snapshot_members`, `snapshot_batches` (views) | Per-snapshot members and batches, derived from the page and root tables |
 | `jobs`, `job_steps`, `job_events` | Durable operation state and diagnostics |
 | `original_payload_tombstones` | Explicit original-payload deletion state |
 | `query_runs`, evaluation tables | Query records and registered evaluation data/results |
