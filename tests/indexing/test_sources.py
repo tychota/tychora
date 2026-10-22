@@ -755,62 +755,13 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
             for slot in (await _slots(owner, view))
             if slot.slot == "graph"
         )
-        previous_graph_batch = next(
-            slot.batches[0].batch_id
-            for slot in (await _slots(owner, resumed))
-            if slot.slot == "graph"
-        )
-        active_graph_batch = active_graph.batches[0].batch_id
-        with owner.leases.pin(frozenset({view.snapshot_id})):
-            leased = await owner.run_blocking(
-                lambda: recovery._prune_native_on_owner(scope, ExecutionContext()),
-                ExecutionContext(),
-            )
-            assert leased.admission_busy and not leased.pruned_batches
-        from tychora.application.restore import RESTORE_SUSPENSION
-
-        marker = tmp_path / "data" / RESTORE_SUSPENSION
-        marker.write_bytes(
-            canonical_bytes(
-                {
-                    "type": "restore-suspension",
-                    "schema_version": 1,
-                    "workspace_id": owner.workspace_id,
-                    "pending_deletion_suspended": True,
-                }
-            )
-        )
-        owner.restore_deletion_suspended = True
-        suspended = await owner.run_blocking(
-            lambda: recovery._prune_native_on_owner(scope, ExecutionContext()),
+        await owner.run_blocking(
+            lambda: owner.db.execute(
+                "UPDATE index_batches SET state='pending' WHERE batch_id=?",
+                (old_graph_batch,),
+            ).connection.commit(),
             ExecutionContext(),
         )
-        assert suspended.deletion_suspended and not suspended.pruned_batches
-        marker.unlink()
-        owner.restore_deletion_suspended = False
-        pruned = await owner.run_blocking(
-            lambda: recovery._prune_native_on_owner(scope, ExecutionContext()),
-            ExecutionContext(),
-        )
-        assert old_graph_batch in pruned.pruned_batches
-        assert previous_graph_batch not in pruned.pruned_batches
-        assert active_graph_batch not in pruned.pruned_batches
-        assert (
-            await owner.run_blocking(
-                lambda: owner.db.execute(
-                    "SELECT state FROM index_batches WHERE batch_id=?",
-                    (old_graph_batch,),
-                ).fetchone()[0],
-                ExecutionContext(),
-            )
-            == "pending"
-        )
-        assert not (
-            await owner.run_blocking(
-                lambda: recovery._prune_native_on_owner(scope, ExecutionContext()),
-                ExecutionContext(),
-            )
-        ).pruned_batches
         await owner.run_blocking(
             lambda: recovery._rebuild_native_on_owner(
                 scope, ExecutionContext(), ("graph",), view.snapshot_id

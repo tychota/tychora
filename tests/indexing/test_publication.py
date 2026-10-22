@@ -751,9 +751,7 @@ def _recovery_owner(f, path, grant=None):
     )
 
 
-def test_native_gc_prunes_only_unprotected_vector_batch_then_rebuilds(
-    projected_corpus, tmp_path
-):
+def test_rebuild_restores_a_pruned_vector_batch(projected_corpus, tmp_path):
     from tychora.application.recovery import RecoveryReport, RecoveryService
 
     f = projected_corpus
@@ -764,7 +762,6 @@ def test_native_gc_prunes_only_unprotected_vector_batch_then_rebuilds(
         if slot.slot == "text"
     )
     f.add_revision("second version")
-    previous = f.store.resolve_snapshot(None)
     f.add_revision("third version")
     active = f.store.resolve_snapshot(None)
     for job_id, snapshot_id in f.store.db.execute(
@@ -786,24 +783,16 @@ def test_native_gc_prunes_only_unprotected_vector_batch_then_rebuilds(
             return RecoveryReport(active.workspace_id, 0, pending, 0, False)
 
     recovery = IsolatedRecovery(owner)
-    pruned = recovery._prune_native_on_owner(grant, ExecutionContext())
-    assert old_batch.batch_id in pruned.pruned_batches
-    for protected in (previous, active):
-        batch = next(
-            slot.batches[0]
-            for slot in f.store.snapshot_slots(protected)
-            if slot.slot == "text"
-        )
-        assert batch.batch_id not in pruned.pruned_batches
-        assert f.vector.verify_batch(batch.receipt).ready
-    assert not f.vector.verify_batch(old_batch.receipt).ready
-    assert (
-        f.store.db.execute(
-            "SELECT state FROM index_batches WHERE batch_id=?", (old_batch.batch_id,)
-        ).fetchone()[0]
-        == "pending"
+    # A pruned batch lost its native records and waits as pending.
+    f.vector.drop_records(
+        tuple(r.record_id for r in old_batch.vector_records), ExecutionContext()
     )
-    assert not recovery._prune_native_on_owner(grant, ExecutionContext()).pruned_batches
+    f.store.db.execute(
+        "UPDATE index_batches SET state='pending' WHERE batch_id=?",
+        (old_batch.batch_id,),
+    )
+    f.store.db.commit()
+    assert not f.vector.verify_batch(old_batch.receipt).ready
     recovery._rebuild_native_on_owner(
         grant, ExecutionContext(), ("text",), oldest.snapshot_id
     )

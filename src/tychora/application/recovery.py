@@ -16,7 +16,6 @@ from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.adapters.sqlite.vector_owners import OwnerRow, vector_owner_rows
 from tychora.application.removal import RemovalService
 from tychora.application.restore import RESTORE_SUSPENSION, deletion_suspended
-from tychora.application.workspace_authority import require_all_collections
 from tychora.configuration.indexed_representation import pinned_runtime_compatible
 from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.resolve import validate_retained_config
@@ -44,15 +43,6 @@ class RecoveryReport:
     native_verified_records: int = 0
     native_verified_generations: int = 0
     native_skipped_pending_batches: int = 0
-
-
-@dataclass(frozen=True)
-class NativeGcReport:
-    workspace_id: str
-    pruned_batches: tuple[str, ...]
-    retained_batches: int
-    deletion_suspended: bool
-    admission_busy: bool
 
 
 def verify_semantic_vector_family(
@@ -488,118 +478,6 @@ class RecoveryService:
         return self.owner.run_blocking_sync(
             lambda: self._reconcile_on_owner(ctx, verify_payloads=verify_payloads), ctx
         )
-
-    def prune_native(
-        self, scope: RequestScope, ctx: ExecutionContext
-    ) -> NativeGcReport:
-        """Explicit conservative GC; canonical receipts and CAS are never removed."""
-        return self.owner.run_blocking_sync(
-            lambda: self._prune_native_on_owner(scope, ctx), ctx
-        )
-
-    def _prune_native_on_owner(
-        self, scope: RequestScope, ctx: ExecutionContext, *, admitted: bool = False
-    ) -> NativeGcReport:
-        if not admitted:
-            with self.owner.comparison_admission.mutation_nowait():
-                return self._prune_native_on_owner(scope, ctx, admitted=True)
-        grant = self.owner.scope.narrow(scope)
-        if "manage" not in grant.capabilities:
-            raise TychoraError("FORBIDDEN_SCOPE", "Native GC requires management grant")
-        db = self.owner.db
-        require_all_collections(self.owner, grant, "Native GC")
-        with (
-            self.owner.maintenance_barrier(),
-            self.owner.leases.exclusive_if_idle() as no_leases,
-        ):
-            health = self._reconcile_on_owner(ctx)
-            batches = tuple(
-                row
-                for row in db.execute(
-                    "SELECT b.batch_id,b.family_id,f.channel,b.receipt_json "
-                    "FROM index_batches b JOIN index_families f USING(family_id) "
-                    "WHERE f.channel IN ('text','image','graph') AND b.state='ready' "
-                    "ORDER BY b.batch_id"
-                )
-            )
-            busy = (
-                not no_leases
-                or db.execute(
-                    "SELECT 1 FROM jobs WHERE state IN ('running','cancelling') LIMIT 1"
-                ).fetchone()
-                is not None
-            )
-            if health.deletion_suspended or busy:
-                return NativeGcReport(
-                    health.workspace_id,
-                    (),
-                    len(batches),
-                    health.deletion_suspended,
-                    busy,
-                )
-            active = self.owner.store.active_snapshot_id()
-            protected: set[str] = set()
-            if active is not None:
-                protected.add(active)
-                previous = db.execute(
-                    "SELECT parent_snapshot_id FROM snapshots WHERE snapshot_id=?",
-                    (active,),
-                ).fetchone()
-                if previous is None:
-                    raise TychoraError("INTEGRITY_ERROR", "Active snapshot is missing")
-                if previous[0] is not None:
-                    protected.add(previous[0])
-            protected_batches = {
-                batch_id
-                for snapshot_id, batch_id in db.execute(
-                    "SELECT snapshot_id,batch_id FROM snapshot_batches"
-                )
-                if snapshot_id in protected
-            }
-            pruned: list[str] = []
-            for batch_id, family_id, channel, receipt_json in batches:
-                ctx.checkpoint()
-                if batch_id in protected_batches:
-                    continue
-                if channel == "graph":
-                    if receipt_json is None:
-                        continue
-                    receipt = GraphBatchReceipt.model_validate_json(receipt_json)
-                    index = self.owner.store.graph_indexes.get(receipt.generation_id)
-                    if index is None:
-                        continue
-                else:
-                    index = self.owner.store.vector_indexes.get(family_id)
-                    if index is None:
-                        continue
-                    record_ids = tuple(
-                        row[0]
-                        for row in db.execute(
-                            "SELECT record_id FROM vector_records "
-                            "WHERE batch_id=? ORDER BY record_id",
-                            (batch_id,),
-                        )
-                    )
-                # Make absence visible before touching a nontransactional native store.
-                with self.owner.store.immediate_transaction():
-                    db.execute(
-                        "UPDATE index_batches SET state='pending' "
-                        "WHERE batch_id=? AND state='ready'",
-                        (batch_id,),
-                    )
-                self.owner.store.batch_cache.discard((batch_id,))
-                if channel == "graph":
-                    index.drop_generation(receipt.generation_id, ctx)
-                elif record_ids:
-                    index.drop_records(record_ids, ctx)
-                pruned.append(batch_id)
-            return NativeGcReport(
-                health.workspace_id,
-                tuple(pruned),
-                len(batches) - len(pruned),
-                False,
-                False,
-            )
 
     def rebuild_native(
         self,
