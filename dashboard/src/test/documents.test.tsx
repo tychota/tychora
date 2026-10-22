@@ -95,6 +95,25 @@ beforeEach(() => {
     return respond(path, init);
   });
 });
+/**
+ * Select the destination once the collections page has rendered its option:
+ * choosing a value that has no option yet leaves the select empty, and the
+ * draft then never gets a destination.
+ */
+async function chooseDestination() {
+  await screen.findByRole("option", { name: collection.title });
+  fireEvent.change(screen.getByLabelText("Destination"), {
+    target: { value: collection.collection_id },
+  });
+}
+/** Submit the pasted text once the form allows it, and wait for its job link. */
+async function indexText() {
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Index text" })).toBeEnabled(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Index text" }));
+  await screen.findByRole("link", { name: "Follow job" });
+}
 async function open(path = "/dashboard/documents") {
   history.replaceState({}, "", path);
   render(<App />);
@@ -167,14 +186,8 @@ it("requires one explicit destination and sends qualified title-only document me
   await screen.findByRole("option", { name: collection.title });
   expect(screen.getByRole("button", { name: "Index text" })).toBeDisabled();
   expect(documentSchema.advanced).toBe(true);
-  fireEvent.change(screen.getByLabelText("Destination"), {
-    target: { value: collection.collection_id },
-  });
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Index text" })).toBeEnabled(),
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Index text" }));
-  await screen.findByRole("link", { name: "Follow job" });
+  await chooseDestination();
+  await indexText();
   const posted = requests.find((r) => r.path === "/v1/sources")!;
   expect(JSON.parse(posted.init.body as string)).toMatchObject({
     kind: "document@1",
@@ -343,15 +356,8 @@ it("allows a writer-only simple text path without manager model inventory calls"
   fireEvent.change(screen.getByLabelText("Content"), {
     target: { value: "Writer-only original notes" },
   });
-  await screen.findByRole("option", { name: collection.title });
-  fireEvent.change(screen.getByLabelText("Destination"), {
-    target: { value: collection.collection_id },
-  });
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Index text" })).toBeEnabled(),
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Index text" }));
-  await screen.findByRole("link", { name: "Follow job" });
+  await chooseDestination();
+  await indexText();
   expect(requests.some((r) => r.path.startsWith("/v1/models"))).toBe(false);
 });
 
@@ -718,10 +724,7 @@ it.each([undefined, "missing", "corrupt"] as const)(
     fireEvent.change(screen.getByLabelText("Title"), {
       target: { value: "Synthetic document asset review" },
     });
-    await screen.findByRole("option", { name: collection.title });
-    fireEvent.change(screen.getByLabelText("Destination"), {
-      target: { value: collection.collection_id },
-    });
+    await chooseDestination();
     fireEvent.click(screen.getByRole("button", { name: "Files" }));
     const file = new File(["synthetic bytes"], "review.docx");
     Object.defineProperty(file, "arrayBuffer", {
@@ -815,12 +818,7 @@ it("keeps a selected PDF draft through Models, and text stays submit-ready after
   fireEvent.change(screen.getByLabelText("Content"), {
     target: { value: "Retained plain text" },
   });
-  // Selecting an option that has not loaded yet leaves the select empty, so
-  // the draft never gets a destination; wait for the collections page first.
-  await screen.findByRole("option", { name: collection.title });
-  fireEvent.change(screen.getByLabelText("Destination"), {
-    target: { value: collection.collection_id },
-  });
+  await chooseDestination();
   fireEvent.click(screen.getByRole("button", { name: "Files" }));
   const file = new File(["synthetic"], "synthetic.pdf");
   Object.defineProperty(file, "size", { value: 2000000 });
@@ -847,11 +845,7 @@ it("keeps a selected PDF draft through Models, and text stays submit-ready after
   expect(screen.getByText(/Upload failed/)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Pasted text" }));
   expect(screen.getByLabelText("Content")).toHaveValue("Retained plain text");
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Index text" })).toBeEnabled(),
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Index text" }));
-  await screen.findByRole("link", { name: "Follow job" });
+  await indexText();
   expect(file.arrayBuffer).not.toHaveBeenCalled();
   expect(localStorage.length + sessionStorage.length).toBe(0);
 });
@@ -887,12 +881,7 @@ it("keeps pending PDF recovery available while independently submitting preserve
   fireEvent.change(screen.getByLabelText("Content"), {
     target: { value: "Independent preserved text" },
   });
-  // Selecting an option that has not loaded yet leaves the select empty, so
-  // the draft never gets a destination; wait for the collections page first.
-  await screen.findByRole("option", { name: collection.title });
-  fireEvent.change(screen.getByLabelText("Destination"), {
-    target: { value: collection.collection_id },
-  });
+  await chooseDestination();
   fireEvent.click(screen.getByRole("button", { name: "Files" }));
   fireEvent.change(screen.getByLabelText("Source file"), {
     target: { files: [new File(["synthetic"], "synthetic.pdf")] },
@@ -911,11 +900,7 @@ it("keeps pending PDF recovery available while independently submitting preserve
   expect(
     screen.getByRole("button", { name: "Check submission" }),
   ).toBeVisible();
-  await waitFor(() =>
-    expect(screen.getByRole("button", { name: "Index text" })).toBeEnabled(),
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Index text" }));
-  await screen.findByRole("link", { name: "Follow job" });
+  await indexText();
   fireEvent.click(
     screen.getByRole("checkbox", { name: /confirm this exact analysis/ }),
   );
