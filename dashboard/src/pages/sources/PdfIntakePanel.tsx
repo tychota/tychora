@@ -59,6 +59,18 @@ export function PdfIntake({
   const mounted = useRef(true);
   const cleaning = useRef(new Set<ApiClient>());
   const descriptorKey = JSON.stringify(descriptor);
+  // The inputs the reset effect below last ran for. Until it has run for the
+  // rendered ones, starting would be abandoned by that pending reset, so the
+  // upload stays disabled for that one commit.
+  const [synced, setSynced] = useState<{
+    file: File;
+    descriptorKey: string;
+    epoch: number;
+  } | null>(null);
+  const settled =
+    synced?.file === file &&
+    synced.descriptorKey === descriptorKey &&
+    synced.epoch === epoch;
   const abandon = (report: boolean) => {
     generation.current++;
     operation.current?.abort();
@@ -110,6 +122,7 @@ export function PdfIntake({
     );
     setExpired(false);
     setUncertain(!!retained);
+    setSynced({ file, descriptorKey, epoch });
     return () => {
       mounted.current = false;
       abandon(true);
@@ -158,7 +171,7 @@ export function PdfIntake({
     );
   };
   const start = async () => {
-    if (!valid || active || uncertain || pending.current) return;
+    if (!valid || !settled || active || uncertain || pending.current) return;
     abandon(true);
     setStatus(null);
     setError(null);
@@ -412,7 +425,7 @@ export function PdfIntake({
       {!active && phase !== "submitted" && (
         <button
           type="button"
-          disabled={!valid || uncertain}
+          disabled={!valid || !settled || uncertain}
           onClick={() => void start()}
         >
           {status ? "Analyse again" : "Analyse PDF"}

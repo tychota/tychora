@@ -293,8 +293,8 @@
     },
     "duplication_typescript": {
       "direction": "lower",
-      "measured_at": "7558693ca4c9",
-      "value": 4.08
+      "measured_at": "5577f3b180eb",
+      "value": 3.92
     },
     "function_body_imports": {
       "direction": "lower",
