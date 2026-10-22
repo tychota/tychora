@@ -1,0 +1,20 @@
+tests/indexing/test_sources.py
+  s_ab847b2c6c265a::t_be7fa8e60938b7 196-216,222,230,240-248,287-340
+  s_ab847b2c6c265a::t_311431d21b1e58 6,341-342
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f3ec34cba61e0743660f87ea61a0843437a94168",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}

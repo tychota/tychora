@@ -1,0 +1,23 @@
+src/tychora/indexing/coordinator.py
+  s_ab847b2c6c265a::t_3ef82fda375e16 212-220,665-672,678,681-688,871-877,1256,1262,1284,1288,1307,1311
+  s_ab847b2c6c265a::t_0cc0f5d11c18e0 10
+  s_ab847b2c6c265a::t_50b39634ce734f 664,673-677,679-680,694,701,704,708,870,879-880,1257-1261,1263-1267,1280-1283,1289-1290,1303-1306,1312-1313
+quality/baseline.json
+  s_ab847b2c6c265a::t_014511adae2404 290-291
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5241108965257950d2293a4da12f3722f1037e1e",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}

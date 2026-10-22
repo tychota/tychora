@@ -1,0 +1,22 @@
+tests/indexing/test_planning.py
+  s_ab847b2c6c265a::t_9be77db896e780 1-141,146
+  s_ab847b2c6c265a::t_4a50ac380ceabc 142-145
+src/tychora/indexing/planning.py
+  s_ab847b2c6c265a::t_4a50ac380ceabc 1-56
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e6d3a1e5508a3115c620448c3e87c57614c6db4e",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
