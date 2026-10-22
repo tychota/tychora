@@ -416,3 +416,40 @@ def test_the_bound_set_decides_as_the_row_checks_on_a_real_workspace(copied):
         differing, total = _on_owner(kb, compare)
     assert total > 100
     assert differing == []
+
+
+def test_a_reconcile_pass_writes_only_payload_states(copied):
+    """The per-pass bound set stays valid: the pass changes no binding row."""
+    with Tychora.open(copied, token_counter=CharacterCounter()) as kb:
+        _mark_rooted_pending(kb)
+        owner = kb._workspace.owner
+        service = RemovalService(owner, kb._workspace.services.jobs.repository)
+        statements: list[str] = []
+
+        def run():
+            _payload(owner.artifacts, owner.db, "unbound pending payload")
+            owner.db.commit()
+            owner.db.set_trace_callback(statements.append)
+            try:
+                return service.reconcile_pending_deletions()
+            finally:
+                owner.db.set_trace_callback(None)
+
+        counts = _on_owner(kb, run)
+    assert counts["deleted_payloads"] >= 1
+    assert counts["shared_payloads"] >= 1
+    writes = [
+        sql.split()
+        for sql in statements
+        if sql.lstrip().split()[0].upper() in {"INSERT", "UPDATE", "DELETE", "REPLACE"}
+    ]
+    assert writes
+    targets = {
+        words[words.index("INTO") + 1]
+        if words[0].upper() == "INSERT"
+        else words[2]
+        if words[0].upper() == "DELETE"
+        else words[1]
+        for words in writes
+    }
+    assert targets == {"artifacts"}, targets
