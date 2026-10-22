@@ -253,6 +253,51 @@ expires = 2026-11-15
 """
 
 
+NPM_AUDIT = {
+    "vulnerabilities": {
+        "vitest": {"via": ["@vitest/mocker"]},
+        "@vitest/mocker": {
+            "via": [
+                {
+                    "name": "@vitest/mocker",
+                    "url": "https://github.com/advisories/GHSA-qxg6-89mg-rqv8",
+                }
+            ]
+        },
+    }
+}
+NPM_REGISTER = """
+[[advisory]]
+id = "GHSA-qxg6-89mg-rqv8"
+package = "npm:@vitest/mocker"
+reason = "Fixed in 4.1.12, held back by the 14-day minimum release age."
+reviewer = "product owner"
+approved = 2026-10-22
+expires = 2026-11-05
+"""
+
+
+def test_waived_npm_advisory_passes_and_unlisted_one_fails():
+    reported = advisories.npm_advisories(NPM_AUDIT)
+    waivers = advisories.load_register(NPM_REGISTER)
+    today = dt.date(2026, 10, 22)
+    assert advisories.advisory_findings(reported, waivers, today) == {}
+    assert advisories.advisory_findings(reported, [], today) == {
+        "npm:@vitest/mocker:GHSA-qxg6-89mg-rqv8: not in quality/advisories.toml": 1
+    }
+
+
+def test_expired_npm_waiver_fails_and_stale_one_is_reported():
+    reported = advisories.npm_advisories(NPM_AUDIT)
+    waivers = advisories.load_register(NPM_REGISTER)
+    assert advisories.advisory_findings(reported, waivers, dt.date(2026, 11, 6)) == {
+        "npm:@vitest/mocker:GHSA-qxg6-89mg-rqv8: waiver expired 2026-11-05": 1
+    }
+    assert advisories.advisory_findings({}, waivers, dt.date(2026, 10, 22)) == {
+        "GHSA-qxg6-89mg-rqv8: no longer reported; remove it from quality/advisories.toml": 1
+    }
+
+
 def test_advisory_register_lists_unlisted_expired_and_obsolete_entries():
     waivers = advisories.load_register(REGISTER)
     reported = {"PYSEC-2026-311": "chromadb", "GHSA-new": "fastapi"}
@@ -287,10 +332,10 @@ def test_pip_audit_and_npm_audit_parsing():
         ]
     }
     assert advisories.reported_advisories(pip) == {"PYSEC-2026-311": "chromadb"}
-    assert (
-        advisories.npm_vulnerabilities({"metadata": {"vulnerabilities": {"total": 0}}})
-        == 0
-    )
+    assert advisories.npm_advisories(NPM_AUDIT) == {
+        "GHSA-qxg6-89mg-rqv8": "npm:@vitest/mocker"
+    }
+    assert advisories.npm_advisories({"vulnerabilities": {}}) == {}
 
 
 @pytest.mark.parametrize(
