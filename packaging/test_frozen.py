@@ -843,9 +843,14 @@ def native_recovery(artifact: Path, cwd: Path, model_bundle: str) -> None:
         check=False,
     )
     assert prepared.returncode == 0, prepared.stderr[-3000:]
-    assert (
-        "PREPARED installed=" in prepared.stdout
-        and "slots=lexical,text,graph" in prepared.stdout
+    fields = dict(
+        item.split("=", 1)
+        for item in prepared.stdout.split("PREPARED ", 1)[-1].split()
+        if "=" in item
+    )
+    assert "PREPARED installed=" in prepared.stdout, prepared.stdout[-3000:]
+    assert set(fields.get("slots", "").split(",")) == {"lexical", "text", "graph"}, (
+        prepared.stdout[-3000:]
     )
     native_env = {"TYCHORA_MODEL_CACHE": model_bundle}
     restored = cwd / "restored native knowledge"
