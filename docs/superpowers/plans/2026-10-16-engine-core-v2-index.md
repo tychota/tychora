@@ -16,7 +16,7 @@
 | --- | --- | --- | --- | --- |
 | 1 | `2026-10-16-engine-core-v2-phase-1-foundations.md` | Benchmark harness, error reasons, repository ports, format 2, workspace rebuild | Fully detailed | Sub-project 0 merged |
 | 2 | `2026-10-16-engine-core-v2-phase-2-snapshot-pages.md` | Membership pages, publication of new batches only, per-batch vector artifacts, family identity, retention and GC | Fully detailed | 1 |
-| 3 | `2026-10-16-engine-core-v2-phase-3-write-time-structure.md` | Boundary keys and section levels, linear windowing, persisted representation facts | Task granularity, to be expanded before execution | 1 |
+| 3 | `2026-10-16-engine-core-v2-phase-3-write-time-structure.md` | Boundary keys and section levels, linear windowing, persisted representation facts | Fully detailed | 1 |
 | 4 | `2026-10-16-engine-core-v2-phase-4-query-path.md` | Lanes and read pool, snapshot catalog, eligibility v2 and cache, de-revalidated query path, stop words, strict mode, editions, per-request narrowing | Task granularity, to be expanded before execution | 2, 3 |
 | 5 | `2026-10-16-engine-core-v2-phase-5-trace-usage-aggregates.md` | Query trace, usage ledger and prices, aggregates, background phases, dashboard endpoints, purge commands | Task granularity, to be expanded before execution | 2, 4 |
 | 6 | `2026-10-16-engine-core-v2-phase-6-incremental-graph.md` | Graph contributions, live graph, compaction, degree table, neighbours and impact tools, hubs endpoint, edge weights | Task granularity, to be expanded before execution | 2, 4, 5 |
@@ -316,35 +316,63 @@ Schema added by phase 2: `membership_pages`, `page_members`, `page_batches`, `sn
 SectionLevel = Literal["part", "chapter", "section", "article", "annex", "clause", "file"]
 class Depth(Contract): n: PositiveInt
 ContextLevel = SectionLevel | Depth | Literal["document"]
+DEFAULT_CONTEXT_LEVEL = "depth:1"
 def parse_context_level(text: str) -> ContextLevel        # "article", "depth:2", "document"
-class SectionEntry(Contract): key: NonEmptyStr; level: SectionLevel | None; depth: NonNegativeInt  # depth 0 = document root
+class SectionEntry(Contract): key: NonEmptyStr; level: SectionLevel | None; depth: NonNegativeInt  # depth 0 = document root, depth == index in the path
 BoundaryScheme = Literal["file", "section", "table", "article", "figure"]
 def boundary_key(scheme: BoundaryScheme, native_ref: str) -> str   # "<scheme>:<native_ref>"
 ROOT_SECTION_KEY = "section:#root"
 def section_key(section_path: Sequence[SectionEntry], level: ContextLevel) -> str
 def context_key(section_path: Sequence[SectionEntry], context_level: ContextLevel) -> str
 def chunk_section_key(section_path: Sequence[SectionEntry], section_depth: int, context_level: ContextLevel) -> str
+class HeadingLevel(Contract): pattern: NonEmptyStr; level: SectionLevel   # kind TOML key heading_levels; matched with the `regex` package under a timeout
+def parse_heading_levels(value: object) -> tuple[HeadingLevel, ...]; def kind_heading_levels(kind: Mapping) -> tuple[HeadingLevel, ...]
+def heading_level_for(levels: Sequence[HeadingLevel], text: str) -> SectionLevel | None
+def dump_section_path(path: Sequence[SectionEntry]) -> list[dict]
+def section_path_of(attributes: Mapping, boundary: str) -> tuple[SectionEntry, ...]   # no stored path: the boundary key alone
+def normalizer_definition(kind: Mapping) -> dict   # the kind without context_level; digested by every normalizer fingerprint
+
+# src/tychora/ingestion/sections.py (added)
+class Placement; class Placeable; def place_units(...) -> ...; ARTICLE_NORMALIZERS
+def native_normalizer_fingerprint(kind: Mapping, registry: Registry) -> str   # "native-normalizer-v2"; re-exported by ingestion/native.py
 
 # src/tychora/configuration/registry.py (changed)
 class Registry: def context_level(self, kind_id: str) -> ContextLevel: ...   # kind TOML key context_level, default "depth:1"
 
-# src/tychora/ports/tokens.py (changed)
-class TokenCounter(Protocol):
-    def count_with_offsets(self, text: str) -> tuple[tuple[int, int], ...]: ...  # char span per token
+# src/tychora/ports/tokens.py (changed; TokenCounter itself is unchanged)
+@runtime_checkable
+class OffsetTokenCounter(TokenCounter, Protocol):
+    def count_with_offsets(self, text: str) -> tuple[tuple[int, int], ...]: ...  # char span per counted token; additive contract
+# Neither BenchCounter nor the Voyage counter implements it: both keep the counted split (identical windows).
 
-# src/tychora/ports/repositories.py (added)
-class UnitRow(Contract): unit_id; extraction_id; boundary_key; ordinal: int; text_sha; char_count: int
-class ChunkRow(Contract): chunk_id; unit_id; extraction_id; char_start: int; char_end: int; context_group_key: str
+# src/tychora/indexing/windows.py (changed)
+def window_unit(prepared, counter, *, context_level: ContextLevel = Depth(n=1)) -> tuple[SearchWindow, ...]
+# src/tychora/contracts/indexing.py (changed): SearchWindow.context_key; context_group_key = digest("context-group-v1", extraction_id, context_key)
+def dependency_digest(dependency_ids: Iterable[str]) -> str
+class OwnerDependencies(Contract): owner_id; dependency_ids: frozenset[str]
 class IntervalRow(Contract): unit_id; char_start: int; char_end: int; dependency_digest: Sha256
+class RepresentationFacts(Contract): extraction_id; dependencies: tuple[OwnerDependencies, ...]; intervals: tuple[IntervalRow, ...]
+# src/tychora/indexing/intervals.py (added): def overlapping_pairs(...)   # sort-and-sweep
+# src/tychora/indexing/representations.py (added; facts are computed in indexing, not in the adapter)
+class ChunkSpan(NamedTuple): chunk_id; unit_id; char_start; char_end
+def representation_facts(rows, prepared: PreparedExtraction, chunks: Iterable[ChunkSpan]) -> RepresentationFacts
+
+# src/tychora/ports/repositories.py (added; IntervalRow re-exported from contracts/indexing.py)
+class UnitRow(Contract): unit_id; extraction_id; boundary_key; ordinal: int; text_sha; char_count: int
+class ChunkRow(Contract): chunk_id; unit_id; extraction_id; char_start: int; char_end: int; context_group_key: str   # not tychora.contracts.corpus.ChunkRow
 class RepresentationRepository(Protocol):
     def units(self, unit_ids: tuple[str, ...]) -> tuple[UnitRow, ...]: ...
     def chunks(self, chunk_ids: tuple[str, ...]) -> tuple[ChunkRow, ...]: ...
     def dependencies(self, owner_ids: tuple[str, ...]) -> Mapping[str, frozenset[str]]: ...
-    def intervals(self, unit_ids: tuple[str, ...]) -> tuple[IntervalRow, ...]: ...
-    def neighbours(self, unit_id: str, radius: int) -> tuple[UnitRow, ...]: ...  # same boundary_key
+    def intervals(self, unit_ids: tuple[str, ...]) -> tuple[IntervalRow, ...]: ...   # document order
+    def write(self, facts: RepresentationFacts) -> None: ...
+    # neighbours(unit_id, radius) -> tuple[UnitRow, ...] (same boundary_key): added by phase 4, its first caller
+# ReadTransaction.representations; CorpusStore.commit_extraction(bundle, facts: RepresentationFacts | None = None) -> str
+# src/tychora/adapters/sqlite/migrations.py: SCHEMA_CHECKSUM changed with 0001.sql; every earlier format-two checksum is in EARLIER_FORMAT_TWO_CHECKSUMS
+# ProjectionCoordinator.prepare(..., *, on_stage: Callable[[str], None] | None = None) emits windowing, normalize_commit, embedding
 ```
 
-Schema added: `representation_dependencies(owner_id, dependency_id)`, `ownership_intervals(unit_id, char_start, char_end, dependency_digest)`. Normalizer fingerprints become `docling-normalizer-v3` and `native-normalizer-v2`.
+Schema added: `representation_dependencies(owner_id, dependency_id)` (owners: units, chunks, assets, vector groups, and interval dependency sets keyed by their `dependency_digest`), `ownership_intervals(unit_id, char_start, char_end, dependency_digest)`. Normalizer fingerprints become `native-normalizer-v2`, `docling-normalizer-v3`, `docling-record-normalizer-v3` and `code-normalizer-v2`. Reasons added: `kind.section_levels_invalid`, `kind.unknown`, `tokens.atomic_limit`. Job stages added: `windowing`, `normalize_commit`, `embedding`. Dependency added: `regex>=2024.11.6`.
 
 ### Produced by phase 4
 
@@ -541,3 +569,16 @@ Recorded here so the spec can be amended; each plan states the default it applie
 13. **Real-PDF probe queries.** E5 cites "the 2026-10-15 real-PDF probes", whose queries were never recorded. Default: phase 1's query set includes "verification outcome" only; the probe queries are added when the product owner supplies them (public documents only).
 14. **Offline profile coverage.** No deterministic vector provider exists in `src`, so the offline profile measures lexical work only until phase 7's families suite adds a deterministic vector provider for benchmarks.
 15. **Publication bytes per add.** Phase 1 approximates them by workspace growth; phase 2 replaces the approximation with `SnapshotRepository.footprint`.
+16. **What `depth` counts.** §4.10 says "its heading depth (1 for a top-level chapter)". A document whose top headings are `##` would get depth 2 if the Markdown level were used. Answer: depth is the nesting depth (an entry's index in the path), so the outermost heading present is depth 1 whatever its markup level; the parser's level only decides nesting.
+17. **Records below records.** "The record itself is the article" does not say what a numbered paragraph inside an article is. Answer: every provision or rule is its own boundary (`article:<its ref>`); a top-level one has level `article`, a nested one level `clause` with the enclosing records in its path. `annex` is assigned only through kind heading patterns: no records normalizer recognises annexes structurally today (`ingestion/normalize.py:533-540`).
+18. **Units outside the scheme table.** Asset proxies and pixel-source units have no row. Answer: they keep `boundary_key = native_ref` and carry no `section_path`; `section_path_of` resolves such a unit to its boundary key, so its context group is unchanged.
+19. **Tables split across pages.** Answer: each Docling table item is one `table:` boundary; its table and row views share it. Fragments are joined only by the reviewed `table-continuation` assertion (`ingestion/tables.py`), never by sharing a key, because a continuation can be rejected after ingestion.
+20. **Identical windows need an additive tokenizer.** Counting a range from one tokenisation equals counting the range alone only when the tokenizer is additive at split positions; the spec's property test cannot hold for every tokenizer. Answer: `OffsetTokenCounter` states the contract, the property test checks it on additive counters, a counter without offsets or with unusable spans keeps the counted split. As built, neither `BenchCounter` (not additive) nor the Voyage counter implements `count_with_offsets`, so both keep the counted split and their windows stay identical; a Voyage offset counter needs an additivity qualification first (left to a later phase).
+21. **`context_level` versus pinned kinds.** Kind envelopes are digest-pinned (`Registry.validate_activation`, `configuration/registry.py:209-236`) and `extraction_fingerprint` digests every kind (`configuration/resolve.py:540-551`), so changing a retained kind's `context_level` is refused today however the normalizer fingerprints are computed. Answer: this phase excludes `context_level` from normalizer fingerprints, so the extraction ID is stable; exempting the field from the envelope digest belongs to the kind ontology (sub-project 5), which owns per-kind values.
+22. **What `dependency_digest` names.** Answer: the digest of an interval's dependency set, which is stored in `representation_dependencies` with that digest as `owner_id`; phase 4 reads intervals and resolves their sets in the same query as the candidates' own sets.
+23. **Vector-group dependencies are not known at commit.** Context groups depend on the text provider configuration and are built after `commit_extraction`. Answer: their sets are written with the text batch, in the batch's transaction, keyed by group ID.
+24. **Fingerprints the spec does not name.** Answer: `docling-record-normalizer-v3` and `code-normalizer-v2` bump too, since their output changes; composed documents follow automatically, because the composition fingerprint digests the base normalizer fingerprint.
+25. **Root keys.** Answer: Markdown and Docling documents use `section:#root`; plain text and JSON records use `file:<source_key>` (text with no headings); a standalone image uses `figure:<ref>`; a code extraction uses `section:#root` above its `file:` entries, so `document` groups a whole repository.
+26. **Measuring the windowing gate before traces.** Answer: the coordinator emits `windowing` and `normalize_commit` job stages; bench-small has no 100-page document, so a 300,000-character single-unit probe stands in, measured with the additive `OffsetCharacters` counter (not `BenchCounter`, which stays on the counted path); informative off the reference runner.
+27. **`depth:N` deeper than the unit.** §4.10's fallback reads "the depth-1 ancestor". Answer: applied literally, then raised to the context key by `chunk_section_key`'s "never coarser" rule.
+28. **Fact reads before facts exist.** Extractions committed by tests without facts, and any committed by an earlier commit of this branch, have no rows. Answer: the coordinator's reuse path writes the facts of an extraction it finds already committed, so every published member has them; how a read reports a missing set is phase 4's decision (suggested default: `INTEGRITY_ERROR` reason `canonical.row_invalid`).
