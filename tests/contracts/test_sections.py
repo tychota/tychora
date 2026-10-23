@@ -1,6 +1,7 @@
 """Section levels, boundary keys and the context and chunking key resolver."""
 
 import random
+import time
 
 import pytest
 
@@ -207,3 +208,42 @@ def test_normalizer_definition_ignores_only_the_context_level():
         "normalizer": "numbered_provisions@1",
         "heading_levels": [],
     }
+
+
+def _levels(pattern):
+    return parse_heading_levels([{"pattern": pattern, "level": "article"}])
+
+
+@pytest.mark.parametrize(
+    "pattern", [r"^(a+)+$", r"(a*)*", r"(a|aa)+$", r"(\w+\s?)+$", r"^((a+)b)*$"]
+)
+def test_backtracking_prone_patterns_are_refused(pattern):
+    with pytest.raises(ValueError, match="backtrack"):
+        _levels(pattern)
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        r"^Article \d+",
+        r"^Annex [A-Z]+",
+        r"^(Part|Chapter) [IVXLC]+",
+        r"^\d+(\.\d+)*\s",
+        r"^(a+)?b",
+    ],
+)
+def test_ordinary_heading_patterns_are_accepted(pattern):
+    assert _levels(pattern)
+
+
+def test_heading_match_is_bounded_on_adversarial_text():
+    levels = _levels(r"^\d+(\.\d+)*\s")
+    start = time.perf_counter()
+    assert heading_level_for(levels, "1." * 5000 + "!") is None
+    assert time.perf_counter() - start < 0.05
+
+
+def test_only_the_heading_prefix_is_matched():
+    levels = _levels(r"^x+$")
+    assert heading_level_for(levels, "x" * 256) == "article"
+    assert heading_level_for(levels, "x" * 256 + "y") == "article"
