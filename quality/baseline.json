@@ -17,7 +17,7 @@
     },
     "cognitive_complexity": {
       "direction": "lower",
-      "measured_at": "b6011bddcb9b",
+      "measured_at": "0605d1a067cd",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::search": 58,
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::upsert_batch": 16,
@@ -69,7 +69,7 @@
         "src/tychora/adapters/sqlite/code_provenance.py::validate_code_record": 19,
         "src/tychora/adapters/sqlite/corpus.py::CorpusStore::_check_membership": 27,
         "src/tychora/adapters/sqlite/corpus.py::CorpusStore::commit_extraction": 43,
-        "src/tychora/adapters/sqlite/eligibility.py::read_eligibility_facts": 98,
+        "src/tychora/adapters/sqlite/eligibility.py::read_eligibility_facts": 63,
         "src/tychora/adapters/sqlite/graph.py::read_graph_build": 53,
         "src/tychora/adapters/sqlite/jobs.py::JobRepository::_reconcile": 17,
         "src/tychora/adapters/sqlite/jobs.py::JobRepository::_verified_manifest": 29,
@@ -162,7 +162,6 @@
         "src/tychora/formatting/render.py::render_unchecked": 43,
         "src/tychora/indexing/groups.py::build_groups": 27,
         "src/tychora/indexing/representations.py::_document_facts": 20,
-        "src/tychora/indexing/representations.py::_document_intervals": 20,
         "src/tychora/indexing/representations.py::_locator_intervals": 19,
         "src/tychora/indexing/representations.py::_prepare_proxy_unit": 18,
         "src/tychora/indexing/representations.py::_prepare_source_unit": 16,
@@ -234,7 +233,7 @@
         "src/tychora/retrieval/visuals.py::prepare_visual_candidates": 25,
         "src/tychora/retrieval/visuals.py::select_visuals": 61
       },
-      "value": 214
+      "value": 213
     },
     "coverage_branch": {
       "direction": "higher",
@@ -288,8 +287,8 @@
     },
     "duplication_tests": {
       "direction": "lower",
-      "measured_at": "4aa07520bbb1",
-      "value": 4.3
+      "measured_at": "0605d1a067cd",
+      "value": 4.28
     },
     "duplication_typescript": {
       "direction": "lower",
@@ -378,7 +377,7 @@
     },
     "function_length": {
       "direction": "lower",
-      "measured_at": "b6011bddcb9b",
+      "measured_at": "0605d1a067cd",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex.search": 143,
         "src/tychora/adapters/code/capture.py::RepositoryCapture._run": 89,
@@ -410,7 +409,7 @@
         "src/tychora/adapters/ladybug/traversal.py::resolve_graph_traversal_policy": 89,
         "src/tychora/adapters/sqlite/corpus.py::CorpusStore._check_membership": 96,
         "src/tychora/adapters/sqlite/corpus.py::CorpusStore.commit_extraction": 243,
-        "src/tychora/adapters/sqlite/eligibility.py::read_eligibility_facts": 290,
+        "src/tychora/adapters/sqlite/eligibility.py::read_eligibility_facts": 235,
         "src/tychora/adapters/sqlite/graph.py::read_graph_build": 155,
         "src/tychora/adapters/sqlite/lexical.py::LexicalIndex.search": 103,
         "src/tychora/adapters/sqlite/validation.py::validate_bundle": 427,

@@ -1,5 +1,6 @@
 """Immutable indexing inputs, source windows, and receipt identities."""
 
+from collections.abc import Iterable
 from typing import Literal, Self
 from uuid import UUID
 
@@ -227,3 +228,49 @@ class IndexRecordDigest(Contract):
     record_id: Identifier
     input_sha: Sha256
     value_sha: Sha256
+
+
+def dependency_digest(dependency_ids: Iterable[str]) -> str:
+    """The identity of one dependency set; its owner key when persisted."""
+    return digest("ownership-dependencies-v1", sorted(dependency_ids))
+
+
+class OwnerDependencies(Contract):
+    """Every identity one owner's text needs: a unit, chunk, asset, group or interval set."""
+
+    owner_id: Identifier
+    dependency_ids: frozenset[Identifier] = Field(min_length=1)
+
+
+class IntervalRow(Contract):
+    """One owned interval of a unit and the digest of its dependency set."""
+
+    unit_id: Identifier
+    char_start: NonNegativeInt
+    char_end: PositiveInt
+    dependency_digest: Sha256
+
+
+class RepresentationFacts(Contract):
+    """The dependency sets and ownership intervals one extraction persists."""
+
+    extraction_id: Identifier
+    dependencies: tuple[OwnerDependencies, ...] = ()
+    intervals: tuple[IntervalRow, ...] = ()
+
+    @model_validator(mode="after")
+    def consistent(self) -> Self:
+        """Each owner and interval appears once, and every interval's set is present."""
+        owners = [item.owner_id for item in self.dependencies]
+        keys = [(row.unit_id, row.char_start) for row in self.intervals]
+        if len(set(owners)) != len(owners) or len(set(keys)) != len(keys):
+            raise ValueError("Representation facts repeat an owner or an interval")
+        if any(row.char_end <= row.char_start for row in self.intervals):
+            raise ValueError("Representation intervals must be nonempty")
+        if not {row.dependency_digest for row in self.intervals} <= set(owners):
+            raise ValueError("An interval names a dependency set the facts omit")
+        return self
+
+    def dependency_map(self) -> dict[str, frozenset[str]]:
+        """Owner ID to dependency IDs."""
+        return {item.owner_id: item.dependency_ids for item in self.dependencies}
