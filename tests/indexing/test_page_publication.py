@@ -633,3 +633,38 @@ def test_native_health_cancelled_mid_run_stops_before_loading_next_batch(project
         _health_service(f)._verify_native_on_owner(ctx)
     assert raised.value.code == "CANCELLED"
     assert len(loads) == 1
+
+
+def _refused_eligibility(f, view, message):
+    with pytest.raises(TychoraError) as error:
+        f.store.read_eligibility_facts(view)
+    assert (error.value.code, error.value.reason, str(error.value)) == (
+        "INTEGRITY_ERROR",
+        "canonical.binding_mismatch",
+        message,
+    )
+
+
+def test_text_group_with_tampered_context_key_is_refused(projected):
+    f = projected
+    view = f.store.resolve_snapshot(None)
+    f.store.db.execute("UPDATE chunks SET context_group_key='tampered'")
+    f.store.db.commit()
+    _refused_eligibility(f, view, "Text group omits or adds represented owners")
+
+
+def test_revision_metadata_differing_from_its_digest_is_refused(projected):
+    f = projected
+    view = f.store.resolve_snapshot(None)
+    f.store.db.execute("UPDATE revisions SET metadata_json='{\"forged\":true}'")
+    f.store.db.commit()
+    _refused_eligibility(f, view, "Selected metadata differs from immutable digest")
+
+
+def test_member_without_canonical_facts_in_the_workspace_is_refused(projected):
+    f = projected
+    view = f.store.resolve_snapshot(None)
+    foreign = view.model_copy(update={"workspace_id": "another-workspace"})
+    _refused_eligibility(
+        f, foreign, "Selected extraction no longer has canonical facts"
+    )
