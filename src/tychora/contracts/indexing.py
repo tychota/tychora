@@ -101,6 +101,7 @@ class SearchWindow(Contract):
     chunker_fingerprint: Sha256
     boundary_key: NonEmptyStr
     context_group_key: Identifier
+    context_key: NonEmptyStr
     dependency_ids: frozenset[Identifier] = Field(min_length=1)
     title: NonEmptyStr
     kind_id: NonEmptyStr
@@ -121,7 +122,7 @@ class SearchWindow(Contract):
             self.char_end,
             self.chunker_fingerprint,
         ) or self.context_group_key != digest(
-            "context-group-v1", self.extraction_id, self.boundary_key
+            "context-group-v1", self.extraction_id, self.context_key
         ):
             raise ValueError("Search window chunk identity differs")
         if not {self.unit_id, self.revision_id} <= self.dependency_ids:

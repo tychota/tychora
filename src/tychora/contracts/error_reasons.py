@@ -286,6 +286,12 @@ _ENTRIES = (
     ),
     Reason(
         "INVALID_REQUEST",
+        "kind.unknown",
+        False,
+        "Use a kind the workspace registry defines; list them with `tychora inspect kinds`.",
+    ),
+    Reason(
+        "INVALID_REQUEST",
         "tokens.atomic_limit",
         False,
         "Check the configured tokenizer: it counts one source code point above the window ceiling.",
