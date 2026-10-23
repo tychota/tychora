@@ -4,6 +4,7 @@ from dataclasses import replace
 
 from tests.helpers.corpus import seed_bundle
 from tests.helpers.eligibility import eligibility_view
+from tests.ingestion.conftest import native_case  # noqa: F401
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.evidence import (
     CodeLocator,
@@ -13,6 +14,7 @@ from tychora.contracts.evidence import (
 )
 from tychora.contracts.indexing import OwnedInterval
 from tychora.indexing.representations import prepare_extraction
+from tychora.ingestion.normalize import normalize
 from tychora.retrieval.fusion import FusedCandidate
 from tychora.retrieval.rerank import (
     RankedEvidence,
@@ -1597,3 +1599,27 @@ def test_lane_and_role_read_the_frozen_registry_without_dumping(tmp_path, monkey
     monkeypatch.setattr(ResolvedConfig, "model_dump", forbidden)
     assert segments._lane(resolved, "manual@1")
     assert segments._role(resolved, "manual@1", {})
+
+
+def test_neighbour_context_attaches_within_native_section(native_case, tmp_path):  # noqa: F811
+    text = (
+        "# Pumps\n\nCheck the housing.\n\nInspect seals quarterly.\n\n"
+        "Record the outcome.\n\n# Valves\n\nReplace worn valves.\n"
+    )
+    parsed, _, registry = native_case(text)
+    rows = normalize(parsed, parsed.registration.revision.revision_id, registry)
+    prepared = prepare_extraction(rows)
+    units = rows.units
+    view = eligibility_view(
+        revision_ids=frozenset({rows.revision.revision_id}),
+        context_unit_ids=frozenset(unit.unit_id for unit in units),
+        chunk_ids=frozenset(),
+    )
+    segment = assemble_segments(
+        _ranked(rows, prepared, (units[2],)), view, config(tmp_path), Counter()
+    ).segments[0]
+    assert segment.context_only_unit_ids == (units[1].unit_id, units[3].unit_id)
+    edge = assemble_segments(
+        _ranked(rows, prepared, (units[3],)), view, config(tmp_path), Counter()
+    ).segments[0]
+    assert edge.context_only_unit_ids == (units[2].unit_id,)

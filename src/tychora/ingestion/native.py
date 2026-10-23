@@ -27,6 +27,8 @@ from tychora.contracts.identity import digest
 from tychora.ports.artifacts import Artifacts
 from tychora.ports.execution import ExecutionContext
 
+from .sections import native_normalizer_fingerprint
+
 MAX_NATIVE_BYTES = 4 * 1024 * 1024
 MAX_BLOCK_TOKENS = 100000
 MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
@@ -184,7 +186,7 @@ class NativeParser:
                 "Code symbols require an installed language adapter",
             )
         parser = native_parser_fingerprint(self.registration.format, config)
-        normalizer = digest("native-normalizer-v1", kind, registry.schema_digests)
+        normalizer = native_normalizer_fingerprint(kind, registry)
         from .normalize import prepare_records, resolve_records
 
         if self.registration.format == "json":
