@@ -27,6 +27,17 @@ No universal throughput target or provider cost is asserted. A verified local pu
 
 Vector retrieval uses logical cosine over validated unit-normalized finite float32 values. The embedded Chroma HNSW collection physically stores `ip` with `ef_search=200`, `embedding_function=None`, and exact stored little-endian float32 byte receipts. `1-dot` is a finite-precision cosine-distance approximation for unit vectors; near ties and ANN short results can change order or mark coverage truncated. The eligible-ID search partitions at 5,000 IDs, admits at most 64 partitions and 20,000 record checks, and never falls back to an unfiltered query when eligibility is empty. These bounds and receipts protect the published view; they do not prove universal top-k recall or a latency SLA.
 
+## Ingest stages
+
+The `ingest` suite reports `queue`, `acquire_register`, `parse`, `windowing`
+(splitting normalized units into search windows), `normalize_commit` (building the
+extraction and its representation facts for commit), `embedding`, `projection`,
+`publication` and `total`. `windowing`, `normalize_commit` and `embedding` are
+sub-stage markers inside the preparation step, emitted with `JobRepository.mark`:
+it observes cancellation like a stage but does not re-verify job bindings, so the
+markers add no measurable ingest cost. Each stage's time runs from the previous
+job event.
+
 ## Benchmark corpus and harness
 
 `benchmarks/bench-small.toml` (100 seeded synthetic documents) needs no download.

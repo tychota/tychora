@@ -63,6 +63,45 @@ Source metadata `scope.project` projects into the registered project facet. A mi
 
 Settings `GET /v1/settings` returns redacted effective values. `PUT /v1/settings` takes exactly `{ "profile": "name", "workspace_toml": "..." }` and requires management scope. Activation can return `WORKSPACE_BUSY` while work is active. It changes the effective policy epoch without rebuilding indexes; an incompatible pinned representation may return `PROFILE_INCOMPATIBLE` until a compatible snapshot is published. Credentials are `env:NAME` or API-resolved `secret:NAME` references, never secret values in the TOML. The current config archive is a versioned field projection containing reference names; a non-null query default cannot be exported.
 
+## Section levels and context level
+
+A kind definition may declare two optional keys that shape the write-time
+structure of its documents.
+
+`heading_levels` is a list of at most 32 tables, each exactly `pattern` and
+`level`. `pattern` is a regular expression of 1 to 256 characters matched against
+the start of a heading (only its first 256 characters are read); `level` is one
+of the named section levels. The first matching pattern names the heading's
+level. Patterns that nest repeats or repeat an alternation, and patterns that do
+not compile, are refused. Each match is limited to 0.25 s and one document may
+spend at most 2 s matching headings in total; exceeding either limit fails the
+ingest loudly rather than counting as "no match".
+
+```toml
+heading_levels = [
+  { pattern = "^Article \\d+", level = "article" },
+  { pattern = "^Annex [A-Z]+", level = "annex" },
+]
+context_level = "article"
+```
+
+`context_level` names the section level at which text is grouped for context. It
+is `document`, one of those section levels, or `depth:N` (N from 1 to 999, counted below
+the document root); the default is `depth:1`. An invalid value of either key is
+refused with `INVALID_REQUEST`, reason `kind.section_levels_invalid`. A kind that
+retained revisions already use is pinned: settings activation refuses a change of
+its `context_level`.
+
+## Workspaces created before this format
+
+Workspaces created before write-time structure (phase 3), including those
+created with current `main`, are refused on open with `PROFILE_INCOMPATIBLE`,
+reason `workspace.format_old`. Recreate them from their retained originals:
+
+```bash
+tychora --workspace ./knowledge-new manage rebuild workspace --from ./knowledge
+```
+
 ## Guided workspace edits
 
 Full workspace managers can inspect `GET /v1/settings/fields`, preview a
