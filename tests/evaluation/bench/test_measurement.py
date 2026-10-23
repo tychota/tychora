@@ -208,3 +208,11 @@ def test_written_result_has_umask_permissions(tmp_path):
     finally:
         os.umask(previous)
     assert path.stat().st_mode & 0o777 == 0o644
+
+
+def test_windowing_commit_and_embedding_stages_have_budget_rows():
+    """Prepare's job stages land in the budget rows of the same names."""
+    assert ingest_bucket("windowing") == "windowing"
+    assert ingest_bucket("normalize_commit") == "normalize_commit"
+    assert ingest_bucket("embedding") == "embedding"
+    assert {"windowing", "normalize_commit", "embedding"} <= set(INGEST_STAGE_BUDGETS_S)

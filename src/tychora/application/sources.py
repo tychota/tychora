@@ -852,7 +852,11 @@ class SourceService:
                 store.leases.pin(frozenset(() if base is None else (base,)))
             )
             prepared = self.coordinator.prepare(
-                attempt.bundle, base, attempt.handle, ctx
+                attempt.bundle,
+                base,
+                attempt.handle,
+                ctx,
+                on_stage=lambda stage: attempt.jobs.stage(attempt.handle.id, stage),
             )
             leases.enter_context(store.leases.pin(frozenset(prepared.reused_batch_ids)))
             return base, prepared

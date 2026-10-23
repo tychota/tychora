@@ -62,14 +62,11 @@ def _contextualization(
 
 
 def _validate_windows(windows: tuple[SearchWindow, ...], counter: TokenCounter) -> None:
+    """Windows carry their exact count from ``window_unit``; check identity only."""
     if len({window.chunk_id for window in windows}) != len(windows):
         raise ValueError("Context groups require unique windows")
-    for window in windows:
-        if (
-            window.tokenizer_id != counter.tokenizer_id
-            or counter.count(window.text) != window.token_count
-        ):
-            raise ValueError("Window count differs from the qualified tokenizer")
+    if any(window.tokenizer_id != counter.tokenizer_id for window in windows):
+        raise ValueError("Window count differs from the qualified tokenizer")
 
 
 def _make_group(
@@ -89,7 +86,7 @@ def _make_group(
         }
     )
     input_sha = representation_input_sha(inputs, config, contextualization, options)
-    tokens = sum(counter.count(text) for text in inputs)
+    tokens = counter.count(capsule) + sum(window.token_count for window in windows)
     dependencies = frozenset(
         dependency for window in windows for dependency in window.dependency_ids
     )
