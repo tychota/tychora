@@ -286,6 +286,12 @@ _ENTRIES = (
     ),
     Reason(
         "INVALID_REQUEST",
+        "tokens.atomic_limit",
+        False,
+        "Check the configured tokenizer: it counts one source code point above the window ceiling.",
+    ),
+    Reason(
+        "INVALID_REQUEST",
         "label.missing",
         False,
         "Fix the gold label: no source, revision or unit matches it in this workspace.",

@@ -109,8 +109,8 @@ async def test_repository_ingestion_delta_matrix_uses_actual_pipeline(
             )
             return original_embed(groups, ctx)
 
-        def measured_prepare(bundle, base, job, ctx):
-            prepared = original_prepare(bundle, base, job, ctx)
+        def measured_prepare(bundle, base, job, ctx, **stages):
+            prepared = original_prepare(bundle, base, job, ctx, **stages)
             observed["projected_units"] += len(prepared.bundle.units)
             return prepared
 

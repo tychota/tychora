@@ -173,6 +173,10 @@ def _input_manifest(
     )
 
 
+def _ignore_stage(stage: str) -> None:
+    """Drop a job-stage marker when no job records stages."""
+
+
 def _require_not_pruned(row: BatchRow | None) -> None:
     """Refuse a batch whose native records were pruned; it is rebuilt natively first."""
     if row is not None and row.state == "pending":
@@ -1179,13 +1183,23 @@ class ProjectionCoordinator:
         base_snapshot_id: str | None,
         job: JobHandle,
         ctx: ExecutionContext,
+        *,
+        on_stage: Callable[[str], None] | None = None,
     ) -> PreparedProjection:
-        """Commit the canonical extraction and resolve the families an add needs."""
+        """Commit the canonical extraction and resolve the families an add needs.
+
+        ``on_stage`` marks ``windowing``, ``normalize_commit`` and, once the
+        families are resolved, ``embedding``, so each stage's duration ends
+        where the next begins.
+        """
+        mark = on_stage or _ignore_stage
         ctx.checkpoint()
         self._require_collection_open(bundle.collection.collection_id)
         config_ref = self._config_ref(job)
+        mark("windowing")
         windows = self._windows(bundle)
         canonical = self._canonical_bundle(bundle, windows)
+        mark("normalize_commit")
         self._commit_or_reuse(canonical)
         base = (
             self.store.resolve_snapshot(base_snapshot_id) if base_snapshot_id else None
@@ -1199,6 +1213,7 @@ class ProjectionCoordinator:
         old = {item.slot: item for item in base.families} if base else {}
         text = self._prepare_text(old.get("text"), canonical, windows, config_ref)
         image = self._prepare_image(old.get("image"), canonical, config_ref)
+        mark("embedding")
         return PreparedProjection(
             bundle=canonical,
             base_snapshot_id=base_snapshot_id,
