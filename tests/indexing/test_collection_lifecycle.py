@@ -185,12 +185,19 @@ async def test_captured_bundle_cannot_overwrite_current_collection(
             assert consent.collection_upload_providers == ("voyage",)
 
 
+class SparseCounter(Counter):
+    """Counts a token per four characters so the small response budget holds a section."""
+
+    def count(self, text: str) -> int:
+        return len(text) // 4
+
+
 @pytest.mark.asyncio
 async def test_archived_members_survive_unrelated_publication_and_reactivate(tmp_path):
     from tychora.contracts.collections import CollectionCreate
     from tychora.contracts.requests import QueryRequest
 
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=SparseCounter()) as kb:
         ws = kb._workspace
         service = ws.services.collections
         a = await service.create(
@@ -256,7 +263,7 @@ async def test_archived_members_survive_unrelated_publication_and_reactivate(tmp
             kb.scope,
             ExecutionContext(),
         )
-        assert len(query.result.citations) == 2
+        assert {c.source_ref for c in query.result.citations} == {"a.md", "b.md"}
 
 
 @pytest.mark.asyncio

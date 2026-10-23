@@ -1,7 +1,7 @@
 """Pure conversion from captured parser facts to canonical corpus rows."""
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from hashlib import sha256
 from typing import Any, cast
 
@@ -28,6 +28,44 @@ from tychora.contracts.extraction import (
     ParsedRecord,
     ParsedUnit,
 )
+from tychora.contracts.sections import ROOT_SECTION_KEY, boundary_key
+
+from .sections import (
+    ARTICLE_NORMALIZERS,
+    Placeable,
+    Placement,
+    native_normalizer_fingerprint,
+    place_units,
+)
+
+
+def native_placements(
+    units: Sequence[ParsedUnit],
+    registration: NativeRegistration,
+    kind: Mapping[str, Any],
+) -> dict[str, Placement]:
+    """Boundary keys and section paths of native units, in reading order."""
+    articles = kind["normalizer"] in ARTICLE_NORMALIZERS
+    root = (
+        ROOT_SECTION_KEY
+        if registration.format == "markdown"
+        else boundary_key("file", registration.source.source_key)
+    )
+    return place_units(
+        (
+            Placeable(
+                native_ref=unit.native_ref,
+                heading_level=unit.heading_level,
+                text=unit.text,
+                unit_type=unit.unit_type,
+                parent_ref=unit.parent_ref,
+                record=articles
+                and (unit.identifier is not None or unit.token_kind == "json_record"),
+            )
+            for unit in units
+        ),
+        root,
+    )
 
 
 def normalize(
@@ -63,9 +101,7 @@ def normalize(
             )
         seen.add(unit.native_ref)
     kind = cast(Mapping[str, Any], registry.kinds[registration.revision.kind_id])
-    if parsed.normalizer_fingerprint != identity.digest(
-        "native-normalizer-v1", kind, registry.schema_digests
-    ):
+    if parsed.normalizer_fingerprint != native_normalizer_fingerprint(kind, registry):
         raise TychoraError(
             "INTEGRITY_ERROR",
             "Normalizer fingerprint differs from original registry/kind binding",
@@ -81,6 +117,7 @@ def normalize(
         )
         for i, p in enumerate(native_units)
     }
+    placements = native_placements(native_units, registration, kind)
     for ordinal, unit in enumerate(native_units):
         uid = identifiers[unit.native_ref]
         loc = TextLocator(
@@ -97,7 +134,7 @@ def normalize(
                 ordinal=ordinal,
                 unit_type=unit.unit_type,
                 native_ref=unit.native_ref,
-                boundary_key=unit.native_ref,
+                boundary_key=placements[unit.native_ref].boundary_key,
                 heading_path=unit.heading_path,
                 text=unit.source_substring,
                 text_sha=sha256(unit.source_substring.encode()).hexdigest(),
@@ -108,6 +145,7 @@ def normalize(
                         "line_start": unit.line_start,
                         "line_end": unit.line_end,
                         "cells": unit.cells,
+                        "section_path": placements[unit.native_ref].attribute(),
                     }
                 ),
             )

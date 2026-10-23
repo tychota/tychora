@@ -16,7 +16,7 @@ class Counter:
     tokenizer_id = "cl100k_base"
 
     def count(self, text):
-        return len(text)
+        return len(text) // 4
 
 
 def legacy_workspace(tmp_path):
@@ -162,7 +162,10 @@ async def test_upgrade_reuses_legacy_extraction_and_adds_title_only_document(tmp
                 "/v1/queries", json={"question": "cobalt", "modalities": ["lexical"]}
             )
             assert mixed.status_code == 200, mixed.text
-            assert len(mixed.json()["citations"]) == 2
+            assert {c["source_ref"] for c in mixed.json()["citations"]} == {
+                "legacy",
+                "document",
+            }
             from tychora.application.backup import BackupService
 
             archive = tmp_path / "archive"
@@ -181,7 +184,7 @@ async def test_upgrade_reuses_legacy_extraction_and_adds_title_only_document(tmp
         )
         with Tychora.open(tmp_path / "restored", token_counter=Counter()) as restored:
             result = restored.search({"question": "cobalt", "modalities": ["lexical"]})
-            assert len(result.citations) == 2
+            assert {c.source_ref for c in result.citations} == {"legacy", "document"}
             reused = restored.sources.add(source)
             assert restored.jobs.wait(reused.id, timeout=5).state == "succeeded"
             restored_owner = restored._workspace.owner
