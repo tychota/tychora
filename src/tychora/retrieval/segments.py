@@ -349,7 +349,7 @@ def _continuation_context(
             source.unit_type not in {"table", "table_row"}
             or target.unit_type not in {"table", "table_row"}
             or source.extraction_id != target.extraction_id
-            or source.boundary_key != target.boundary_key
+            or not _separate_fragments(source, target)
             or not target.text
             or not target.citable
             or target.text_origin != "source"
@@ -390,12 +390,25 @@ def _is_document_unit(unit) -> bool:
     return any(isinstance(locator, DocumentLocator) for locator in unit.locators)
 
 
+def _separate_fragments(first, second) -> bool:
+    """Whether two units are distinct table fragments of one boundary.
+
+    A table and its row views share one boundary key, so the key alone cannot tell
+    a continuation on another fragment from a view of the fragment already matched.
+    """
+    refs = first.attributes.get("source_refs")
+    return first.boundary_key == second.boundary_key and (
+        refs is None or refs != second.attributes.get("source_refs")
+    )
+
+
 def _same_section(first, second) -> bool:
     """Whether two units share the section that bounds neighbour context and joins.
 
-    Document normalizers give every paragraph its own boundary key, so document
-    units are grouped by their heading path instead. Document tables are excluded:
-    a table continued on another page joins only through a verified graph path.
+    Document units are grouped by their heading path, which every unit under one
+    section header shares with that section's boundary key. Document tables are
+    excluded: a table continued on another page joins only through a verified graph
+    path.
     """
     if _is_document_unit(first) or _is_document_unit(second):
         return (

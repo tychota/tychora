@@ -1,7 +1,7 @@
 """Exact original table/row/caption views for pre-commit composition."""
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from hashlib import sha256
 from typing import Any, cast
 
@@ -12,6 +12,7 @@ from tychora.contracts.documents import DocumentUnit
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.extraction import ExtractionArtifact
 from tychora.contracts.identity import digest, extraction_id, unit_id
+from tychora.contracts.sections import HeadingLevel
 from tychora.contracts.tables import TableFragment
 
 from .document_identity import DocumentNormalizationContext
@@ -23,12 +24,56 @@ from .document_parts import (
     validate_document_ownership,
 )
 from .documents import assemble_document_bundle
+from .sections import document_placements, view_placement
+
+
+def _row_parts(
+    item: DocumentUnit,
+    row: int,
+    text: str,
+    parts: tuple[Any, ...],
+    source: tuple[str, str],
+) -> tuple[str, tuple[Any, ...], tuple[Any, ...], list[dict[str, Any]]] | None:
+    """The tab-joined parts of one table row, or None when no source cell starts there.
+
+    ``source`` is the source key and the original artifact digest locators cite.
+    """
+    cells = cast(Mapping[str, Any], item.raw_item["data"])["table_cells"]
+    selected = [
+        part for part in parts if cells[part.cell_index]["start_row_offset_idx"] == row
+    ]
+    if not selected:
+        return None
+    fragments, output_parts, output_locators, output_separators = [], [], [], []
+    offset = 0
+    for index, part in enumerate(selected):
+        if index:
+            output_separators.append(
+                {"unit_start": offset, "unit_end": offset + 1, "text": "\t"}
+            )
+            fragments.append("\t")
+            offset += 1
+        value = text[part.unit_start : part.unit_end]
+        part = part.model_copy(
+            update={"unit_start": offset, "unit_end": offset + len(value)}
+        )
+        output_parts.append(part)
+        output_locators.extend(_part_locators(item, part, *source))
+        fragments.append(value)
+        offset += len(value)
+    return (
+        "".join(fragments),
+        tuple(output_parts),
+        tuple(output_locators),
+        output_separators,
+    )
 
 
 def source_views(
     parsed: ExtractionArtifact,
     context: DocumentNormalizationContext,
     base: ExtractionBundle | None,
+    headings: Sequence[HeadingLevel] = (),
 ) -> tuple[ExtractionBundle, tuple[TableFragment, ...]]:
     revision = parsed.registration.revision.revision_id
     eid = extraction_id(
@@ -36,6 +81,7 @@ def source_views(
     )
     source_key = parsed.registration.source.source_key
     items = normalize_native_document_units(parsed)
+    placements = document_placements(items, headings)
     budget = _Budget()
     units = list(base.units) if base else []
     for index, unit in enumerate(units):
@@ -60,40 +106,13 @@ def source_views(
             legacy_v1=context.legacy_v1,
         )
         if row is not None:
-            cells = cast(Mapping[str, Any], item.raw_item["data"])["table_cells"]
-            selected = [
-                part
-                for part in parts
-                if cells[part.cell_index]["start_row_offset_idx"] == row
-            ]
-            fragments, output_parts, output_locators, output_separators = [], [], [], []
-            offset = 0
-            for index, part in enumerate(selected):
-                if index:
-                    output_separators.append(
-                        {"unit_start": offset, "unit_end": offset + 1, "text": "\t"}
-                    )
-                    fragments.append("\t")
-                    offset += 1
-                value = text[part.unit_start : part.unit_end]
-                part = part.model_copy(
-                    update={"unit_start": offset, "unit_end": offset + len(value)}
-                )
-                output_parts.append(part)
-                output_locators.extend(
-                    _part_locators(item, part, source_key, parsed.original_ref.sha256)
-                )
-                fragments.append(value)
-                offset += len(value)
-            # A fully covered merged row has no independent source cell anchor.
-            if not selected:
-                return ""
-            text, parts, locators = (
-                "".join(fragments),
-                tuple(output_parts),
-                tuple(output_locators),
+            selection = _row_parts(
+                item, row, text, parts, (source_key, parsed.original_ref.sha256)
             )
-            serialized_separators = output_separators
+            # A fully covered merged row has no independent source cell anchor.
+            if selection is None:
+                return ""
+            text, parts, locators, serialized_separators = selection
         else:
             serialized_separators = [sep.model_dump(mode="json") for sep in separators]
         for unit in units:
@@ -111,6 +130,7 @@ def source_views(
             else f"docling-view:{kind}:{item.native_ref}"
             + (f":{row}" if row is not None else "")
         )
+        placement = view_placement(placements[item.native_ref], kind, item.native_ref)
         ordinal = len(units)
         uid = unit_id(eid, ref, ordinal, sha256(text.encode()).hexdigest())
         unit = EvidenceUnit(
@@ -120,7 +140,7 @@ def source_views(
             ordinal=ordinal,
             unit_type=kind,
             native_ref=ref,
-            boundary_key=ref,
+            boundary_key=placement.boundary_key,
             heading_path=item.heading_path,
             text=text,
             text_sha=sha256(text.encode()).hexdigest(),
@@ -132,6 +152,7 @@ def source_views(
                     "source_parts": [part.model_dump(mode="json") for part in parts],
                     "structural_separators": serialized_separators,
                     "semantic_diagnostics": [],
+                    "section_path": placement.attribute(),
                 }
             ),
         )
@@ -233,7 +254,7 @@ def source_views(
         supports = set(overlaps[uid])
         for ref in caption_refs:
             supports.update(owners[ref])
-        headings = [
+        intervening = [
             other.heading_level
             for other in items[previous_ordinal + 1 : item.ordinal]
             if other.heading_level
@@ -262,8 +283,8 @@ def source_views(
                     ),
                     0,
                 ),
-                intervening_heading_level=min(headings)
-                if headings and previous_ordinal >= 0
+                intervening_heading_level=min(intervening)
+                if intervening and previous_ordinal >= 0
                 else None,
                 bbox=prov.geometry if prov else None,
                 page_width=prov.page_width if prov else None,

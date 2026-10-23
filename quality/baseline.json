@@ -17,7 +17,7 @@
     },
     "cognitive_complexity": {
       "direction": "lower",
-      "measured_at": "c412147a23b9",
+      "measured_at": "639739ce89c4",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::search": 58,
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::upsert_batch": 16,
@@ -187,9 +187,9 @@
         "src/tychora/ingestion/document_records.py::_fields": 51,
         "src/tychora/ingestion/document_records.py::_groups": 59,
         "src/tychora/ingestion/document_records.py::normalize_document_records": 57,
-        "src/tychora/ingestion/document_views.py::source_views": 81,
+        "src/tychora/ingestion/document_views.py::source_views": 70,
         "src/tychora/ingestion/documents.py::assemble_document_bundle": 23,
-        "src/tychora/ingestion/documents.py::normalize_document": 18,
+        "src/tychora/ingestion/documents.py::normalize_document": 17,
         "src/tychora/ingestion/documents.py::replay_document": 23,
         "src/tychora/ingestion/native.py::parse_markdown": 24,
         "src/tychora/ingestion/normalize.py::_fields": 31,
@@ -378,7 +378,7 @@
     },
     "function_length": {
       "direction": "lower",
-      "measured_at": "c412147a23b9",
+      "measured_at": "639739ce89c4",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex.search": 143,
         "src/tychora/adapters/code/capture.py::RepositoryCapture._run": 89,
@@ -488,11 +488,10 @@
         "src/tychora/ingestion/document_parts.py::_validate_source_parts": 123,
         "src/tychora/ingestion/document_parts.py::represent_document_parts": 111,
         "src/tychora/ingestion/document_records.py::_groups": 126,
-        "src/tychora/ingestion/document_records.py::normalize_document_records": 208,
-        "src/tychora/ingestion/document_views.py::source_views": 258,
-        "src/tychora/ingestion/document_views.py::source_views.view": 92,
+        "src/tychora/ingestion/document_records.py::normalize_document_records": 201,
+        "src/tychora/ingestion/document_views.py::source_views": 235,
         "src/tychora/ingestion/documents.py::assemble_document_bundle": 117,
-        "src/tychora/ingestion/documents.py::normalize_document": 91,
+        "src/tychora/ingestion/documents.py::normalize_document": 89,
         "src/tychora/ingestion/native.py::NativeParser.extract": 104,
         "src/tychora/ingestion/normalize.py::normalize": 168,
         "src/tychora/ingestion/normalize.py::prepare_records": 118,
@@ -524,11 +523,11 @@
         "src/tychora/retrieval/visuals.py::_visual": 92,
         "src/tychora/retrieval/visuals.py::select_visuals": 109
       },
-      "value": 143
+      "value": 142
     },
     "integrity_raises_without_reason": {
       "direction": "lower",
-      "measured_at": "c412147a23b9",
+      "measured_at": "639739ce89c4",
       "per_key": {
         "src/tychora/adapters/code/capture.py": 3,
         "src/tychora/adapters/code/normalize.py": 3,
@@ -582,7 +581,7 @@
         "src/tychora/evaluation/runner.py": 5,
         "src/tychora/ingestion/acquire.py": 3,
         "src/tychora/ingestion/document_records.py": 2,
-        "src/tychora/ingestion/documents.py": 6,
+        "src/tychora/ingestion/documents.py": 5,
         "src/tychora/ingestion/native.py": 1,
         "src/tychora/ingestion/normalize.py": 4,
         "src/tychora/interfaces/http/app.py": 1,
@@ -596,7 +595,7 @@
         "src/tychora/retrieval/segments.py": 8,
         "src/tychora/retrieval/visuals.py": 4
       },
-      "value": 351
+      "value": 350
     },
     "layering_exceptions": {
       "direction": "lower",
@@ -611,7 +610,7 @@
     },
     "missing_docstrings": {
       "direction": "lower",
-      "measured_at": "c412147a23b9",
+      "measured_at": "639739ce89c4",
       "per_key": {
         "src/tychora/__main__.py::D100": 1,
         "src/tychora/adapters/chroma/index.py::D102": 5,
@@ -810,7 +809,7 @@
         "src/tychora/ingestion/document_identity.py::D101": 1,
         "src/tychora/ingestion/document_identity.py::D102": 2,
         "src/tychora/ingestion/document_parts.py::D103": 1,
-        "src/tychora/ingestion/document_records.py::D103": 2,
+        "src/tychora/ingestion/document_records.py::D103": 1,
         "src/tychora/ingestion/document_views.py::D103": 1,
         "src/tychora/ingestion/documents.py::D103": 2,
         "src/tychora/ingestion/native.py::D101": 1,
@@ -888,7 +887,7 @@
         "src/tychora/retrieval/segments.py::D101": 1,
         "src/tychora/retrieval/segments.py::D102": 1
       },
-      "value": 1001
+      "value": 1000
     },
     "modules_in_import_cycles": {
       "direction": "lower",
