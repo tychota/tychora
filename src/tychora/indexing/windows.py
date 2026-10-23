@@ -1,5 +1,6 @@
 """Lossless token-counted windows over canonical source text."""
 
+import logging
 import re
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from tychora.contracts.identity import chunk_id, digest
 from tychora.contracts.indexing import RepresentationUnit, SearchWindow
 from tychora.ports.tokens import OffsetTokenCounter, TokenCounter
 
+_LOG = logging.getLogger(__name__)
 TARGET_TOKENS = 512
 SOFT_CEILING_TOKENS = 800
 _BOUNDARY = re.compile(
@@ -116,6 +118,8 @@ class _Spans:
 def _spans(counter: OffsetTokenCounter, text: str, start: int) -> _Spans | None:
     """The interval's spans, or ``None`` unless they are ordered and inside the text."""
     spans = counter.count_with_offsets(text)
+    if not spans and text:
+        return None
     starts = tuple(start + left for left, _ in spans)
     ends = tuple(start + right for _, right in spans)
     if any(not 0 <= left < right <= len(text) for left, right in spans) or any(
@@ -153,20 +157,27 @@ def _stop(text: str, cursor: int, end: int, spans: _Spans) -> int:
 
 
 def _split_by_spans(
-    text: str, start: int, end: int, spans: _Spans
-) -> tuple[tuple[int, int, int], ...]:
-    """Split one interval from its spans: every count comes from one tokenisation."""
+    text: str, start: int, end: int, counter: TokenCounter, spans: _Spans
+) -> tuple[tuple[int, int, int], ...] | None:
+    """Split one interval from its spans, or ``None`` if the spans miscount.
+
+    The first window is counted exactly and must match its span count, so a
+    counter that breaks the offsets contract keeps the counted split; every
+    other count comes from the one tokenisation.
+    """
     output = []
     cursor = start
     while cursor < end:
         remaining = spans.count(cursor, end)
-        if remaining <= SOFT_CEILING_TOKENS:
-            if remaining <= 0:
-                raise ValueError("Nonempty source interval has no provider tokens")
-            output.append((cursor, end, remaining))
-            break
-        stop = _stop(text, cursor, end, spans)
-        output.append((cursor, stop, spans.count(cursor, stop)))
+        stop = (
+            end if remaining <= SOFT_CEILING_TOKENS else _stop(text, cursor, end, spans)
+        )
+        count = spans.count(cursor, stop)
+        if not output and _count(counter, text[cursor:stop]) != count:
+            return None
+        if stop == end and count <= 0:
+            raise ValueError("Nonempty source interval has no provider tokens")
+        output.append((cursor, stop, count))
         cursor = stop
     return tuple(output)
 
@@ -177,8 +188,12 @@ def _split(
     """Split by offsets when the counter reports usable spans, else by counting."""
     if isinstance(counter, OffsetTokenCounter):
         spans = _spans(counter, text[start:end], start)
-        if spans is not None:
-            return _split_by_spans(text, start, end, spans)
+        windows = (
+            None if spans is None else _split_by_spans(text, start, end, counter, spans)
+        )
+        if windows is not None:
+            return windows
+        _LOG.debug("Token offsets disagree with counts; counting each range")
     return _split_interval(text, start, end, counter)
 
 
