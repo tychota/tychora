@@ -1,12 +1,16 @@
 """Section levels, boundary keys and the context and chunking key resolver."""
 
 import random
+import re
 import time
 
 import pytest
+import regex
 
 from tychora.contracts.base import FrozenJsonMap
+from tychora.contracts.errors import TychoraError
 from tychora.contracts.sections import (
+    HEADING_MATCH_SECONDS,
     ROOT_SECTION_KEY,
     ContextLevel,
     Depth,
@@ -247,3 +251,51 @@ def test_only_the_heading_prefix_is_matched():
     levels = _levels(r"^x+$")
     assert heading_level_for(levels, "x" * 256) == "article"
     assert heading_level_for(levels, "x" * 256 + "y") == "article"
+
+
+def _timed(pattern):
+    """Validate and match a pattern against adversarial headings; return seconds."""
+    start = time.perf_counter()
+    try:
+        levels = _levels(pattern)
+        for text in ("a" * 256, "a" * 255 + "!", "1" * 255 + "!", "a," * 128):
+            heading_level_for(levels, text)
+    except (ValueError, TychoraError):
+        pass
+    return time.perf_counter() - start
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [r"^\w*\w*\w*\w*\w*!", r"^(\d+)\d*\d*\d*$", r".*.*.*.*x", r"(?:a.*){8}!"],
+)
+def test_polynomial_patterns_are_refused_or_time_out(pattern):
+    assert _timed(pattern) < 1.5
+
+
+def test_timeout_is_an_error_not_a_miss(monkeypatch):
+    def slow(pattern, text, *, timeout):
+        assert timeout == HEADING_MATCH_SECONDS
+        raise TimeoutError
+
+    monkeypatch.setattr(regex, "match", slow)
+    with pytest.raises(TychoraError) as err:
+        heading_level_for(_levels(r"^Article"), "Article 1")
+    assert err.value.code == "INVALID_REQUEST"
+    assert err.value.reason == "kind.section_levels_invalid"
+
+
+@pytest.mark.parametrize(
+    ("pattern", "text", "expected"),
+    [
+        (r"^Article \d+", "Article 12 Scope", True),
+        (r"^Article \d+", "Article ٣ Scope", True),
+        (r"^Annex [A-Z]+", "Annex II", True),
+        (r"^(Part|Chapter) [IVXLC]+", "Chapter IV", True),
+        (r"^\d+(\.\d+)*\s", "1.2.3 Terms", True),
+        (r"^\d+(\.\d+)*\s", "Terms", False),
+    ],
+)
+def test_regex_engine_matches_the_re_semantics(pattern, text, expected):
+    assert bool(re.match(pattern, text)) == expected
+    assert (heading_level_for(_levels(pattern), text) is not None) == expected

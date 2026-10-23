@@ -13,7 +13,10 @@ from collections.abc import Mapping, Sequence
 from importlib import import_module
 from typing import Any, Literal, cast, get_args
 
+import regex
+
 from .base import Contract, NonEmptyStr, NonNegativeInt, PositiveInt
+from .errors import TychoraError
 
 # The stdlib regular-expression parser, used to reject backtracking-prone patterns.
 _sre = import_module("re._constants")
@@ -53,6 +56,7 @@ ROOT_SECTION_KEY = "section:#root"
 DEFAULT_CONTEXT_LEVEL = "depth:1"
 MAX_HEADING_LEVELS = 32
 MAX_HEADING_PATTERN_CHARS = 256
+HEADING_MATCH_SECONDS = 0.25
 _DEPTH = re.compile(r"depth:([1-9][0-9]{0,2})")
 
 
@@ -207,7 +211,8 @@ def _check_pattern(pattern: str) -> None:
     try:
         tree = _sre_parser.parse(pattern)
         re.compile(pattern)
-    except (re.error, RecursionError, OverflowError):
+        regex.compile(pattern)
+    except (re.error, regex.error, RecursionError, OverflowError):
         raise ValueError(f"Invalid heading pattern: {pattern!r}") from None
     if _catastrophic(tree):
         raise ValueError(
@@ -248,10 +253,22 @@ def heading_level_for(levels: Sequence[HeadingLevel], text: str) -> SectionLevel
     """The level of the first pattern matching a heading's text, if any.
 
     Only the first ``MAX_HEADING_PATTERN_CHARS`` characters of a longer heading are
-    matched, which bounds the work any accepted pattern can do.
+    matched, and each match is limited to ``HEADING_MATCH_SECONDS`` with the
+    ``regex`` engine, which bounds the work any accepted pattern can do. A pattern
+    that exceeds the limit fails the normalization; it never counts as no match.
     """
     head = text[:MAX_HEADING_PATTERN_CHARS]
-    return next((item.level for item in levels if re.match(item.pattern, head)), None)
+    for item in levels:
+        try:
+            if regex.match(item.pattern, head, timeout=HEADING_MATCH_SECONDS):
+                return item.level
+        except TimeoutError:
+            raise TychoraError(
+                "INVALID_REQUEST",
+                f"Heading pattern took too long to match: {item.pattern!r}",
+                reason="kind.section_levels_invalid",
+            ) from None
+    return None
 
 
 def dump_section_path(path: Sequence[SectionEntry]) -> list[dict[str, Any]]:
