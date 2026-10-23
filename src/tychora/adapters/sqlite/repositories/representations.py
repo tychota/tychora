@@ -3,7 +3,7 @@
 import json
 import sqlite3
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 
 from pydantic import ValidationError
 
@@ -16,7 +16,8 @@ from .workspace import require_write
 
 _IN_IDS = "IN (SELECT value FROM json_each(?))"
 _UNITS = (
-    "SELECT unit_id,extraction_id,boundary_key,ordinal,text_sha,length(text) "
+    "SELECT unit_id,extraction_id,boundary_key,ordinal,text_sha,"
+    "length(text) AS char_count "
     f"FROM evidence_units WHERE unit_id {_IN_IDS} ORDER BY extraction_id,ordinal"
 )
 _CHUNKS = (
@@ -27,9 +28,12 @@ _DEPENDENCIES = (
     "SELECT owner_id,dependency_id FROM representation_dependencies "
     f"WHERE owner_id {_IN_IDS}"
 )
+# Document order: the unit's extraction and ordinal, then the interval's start.
 _INTERVALS = (
-    "SELECT unit_id,char_start,char_end,dependency_digest FROM ownership_intervals "
-    f"WHERE unit_id {_IN_IDS} ORDER BY unit_id,char_start"
+    "SELECT i.unit_id AS unit_id,i.char_start AS char_start,i.char_end AS char_end,"
+    "i.dependency_digest AS dependency_digest FROM ownership_intervals i "
+    f"JOIN evidence_units u USING(unit_id) WHERE i.unit_id {_IN_IDS} "
+    "ORDER BY u.extraction_id,u.ordinal,i.char_start"
 )
 
 
@@ -37,11 +41,11 @@ def _ids(values: tuple[str, ...]) -> str:
     return json.dumps(sorted(set(values)))
 
 
-def _contracts[T: Contract](model: type[T], rows: Iterable[tuple]) -> tuple[T, ...]:
-    """Validate rows whose columns follow the model's field order."""
-    fields = tuple(model.model_fields)
+def rows_by_name[T: Contract](model: type[T], cursor: sqlite3.Cursor) -> tuple[T, ...]:
+    """Validate each row as the model, binding every column to the field it names."""
+    names = tuple(column[0] for column in cursor.description)
     try:
-        return tuple(model(**dict(zip(fields, row, strict=True))) for row in rows)
+        return tuple(model(**dict(zip(names, row, strict=True))) for row in cursor)
     except ValidationError:
         raise TychoraError(
             "INTEGRITY_ERROR",
@@ -68,7 +72,7 @@ class SqliteRepresentationRepository:
     def _select[T: Contract](
         self, model: type[T], query: str, ids: tuple[str, ...]
     ) -> tuple[T, ...]:
-        return _contracts(model, self._db.execute(query, (_ids(ids),)))
+        return rows_by_name(model, self._db.execute(query, (_ids(ids),)))
 
     def units(self, unit_ids: tuple[str, ...]) -> tuple[UnitRow, ...]:
         """Return the stored units among these IDs; unknown IDs are skipped."""

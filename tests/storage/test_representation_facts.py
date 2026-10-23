@@ -8,8 +8,13 @@ from tychora import Tychora
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.adapters.sqlite.repositories import SqliteRepresentationRepository
+from tychora.adapters.sqlite.repositories.representations import rows_by_name
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.indexing import OwnerDependencies, RepresentationFacts
+from tychora.contracts.indexing import (
+    IntervalRow,
+    OwnerDependencies,
+    RepresentationFacts,
+)
 from tychora.indexing.representations import (
     ChunkSpan,
     prepare_extraction,
@@ -158,24 +163,73 @@ def test_repository_reads_bind_id_tuples(store):
     assert sum("json_each" in statement for statement in statements) == 3
 
 
-def test_published_add_persists_what_eligibility_derives(tmp_path):
-    text = (
-        "# Pumps\n\nCheck the housing.\n\nInspect seals quarterly.\n\n"
-        "# Valves\n\nReplace worn valves.\n"
+def test_rows_are_built_by_column_name(store):
+    bundle = seed_bundle("Seal checks are quarterly.")
+    facts = _facts(bundle)
+    store.commit_extraction(bundle, facts)
+    reordered = store.db.execute(
+        "SELECT dependency_digest,char_end,char_start,unit_id FROM ownership_intervals"
     )
+    assert rows_by_name(IntervalRow, reordered) == facts.intervals
+    renamed = store.db.execute(
+        "SELECT unit_id,char_start,char_end,dependency_digest AS digest "
+        "FROM ownership_intervals"
+    )
+    with pytest.raises(TychoraError) as error:
+        rows_by_name(IntervalRow, renamed)
+    assert error.value.reason == "canonical.row_invalid"
+
+
+_MANUAL = (
+    "# Pumps\n\nCheck the housing.\n\nInspect seals quarterly.\n\n"
+    "# Valves\n\nReplace worn valves.\n"
+)
+
+
+def _add_manual(kb):
+    job = kb.sources.add(
+        {
+            "type": "text",
+            "source_key": "manual.md",
+            "collection_id": "default",
+            "kind": "document@1",
+            "format": "markdown",
+            "text": _MANUAL,
+            "metadata": {"title": "Pumps"},
+        }
+    )
+    assert kb.jobs.wait(job.id).state == "succeeded"
+
+
+def test_intervals_read_back_in_document_order(tmp_path, monkeypatch):
+    committed: list[RepresentationFacts | None] = []
+    commit = CorpusStore.commit_extraction
+
+    def recording_commit(self, bundle, facts=None):
+        committed.append(facts)
+        return commit(self, bundle, facts)
+
+    monkeypatch.setattr(CorpusStore, "commit_extraction", recording_commit)
     with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
-        job = kb.sources.add(
-            {
-                "type": "text",
-                "source_key": "manual.md",
-                "collection_id": "default",
-                "kind": "document@1",
-                "format": "markdown",
-                "text": text,
-                "metadata": {"title": "Pumps"},
-            }
-        )
-        assert kb.jobs.wait(job.id).state == "succeeded"
+        _add_manual(kb)
+        owner = kb._workspace.owner
+        (facts,) = committed
+        assert facts is not None
+        units = tuple(dict.fromkeys(row.unit_id for row in facts.intervals))
+
+        def read():
+            with owner.store.uow.read() as tx:
+                return tx.representations.intervals(tuple(sorted(units)))
+
+        intervals = owner.run_blocking_sync(read, ExecutionContext())
+    assert len(units) > 2
+    assert list(units) != sorted(units)
+    assert intervals == facts.intervals
+
+
+def test_published_add_persists_what_eligibility_derives(tmp_path):
+    with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
+        _add_manual(kb)
         owner = kb._workspace.owner
 
         def read():
