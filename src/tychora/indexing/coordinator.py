@@ -45,7 +45,13 @@ from tychora.contracts.identity import (
     vector_record_id,
 )
 from tychora.contracts.identity import family_id as derive_family_id
-from tychora.contracts.indexing import ContextGroup, FamilySpec, SearchWindow
+from tychora.contracts.indexing import (
+    ContextGroup,
+    FamilySpec,
+    PreparedExtraction,
+    RepresentationFacts,
+    SearchWindow,
+)
 from tychora.contracts.operations import JobHandle
 from tychora.contracts.publication import (
     LexicalBatchReceipt,
@@ -74,10 +80,14 @@ from tychora.contracts.vector_batches import (
     encode_vector_batch,
 )
 from tychora.contracts.vectors import BatchReceipt, VectorBatch, VectorOwner
-from tychora.indexing.groups import build_groups
+from tychora.indexing.groups import build_groups, group_facts
 from tychora.indexing.planning import member_count_after, next_page
 from tychora.indexing.receipts import receipt_digest
-from tychora.indexing.representations import prepare_extraction
+from tychora.indexing.representations import (
+    ChunkSpan,
+    prepare_extraction,
+    representation_facts,
+)
 from tychora.indexing.windows import window_unit
 from tychora.ports.artifacts import Artifacts
 from tychora.ports.embeddings import OwnerBoundVisualEmbedder, TextEmbedder
@@ -386,9 +396,10 @@ class ProjectionCoordinator:
             _fail("Projection job is not running")
         return ArtifactRef.from_row(row)
 
-    def _windows(self, bundle: ExtractionBundle) -> tuple[SearchWindow, ...]:
-        prepared = prepare_extraction(bundle)
-        level = self.store.registry.context_level(bundle.revision.kind_id)
+    def _windows(
+        self, prepared: PreparedExtraction, kind_id: str
+    ) -> tuple[SearchWindow, ...]:
+        level = self.store.registry.context_level(kind_id)
         return tuple(
             window
             for item in prepared.units
@@ -417,7 +428,9 @@ class ProjectionCoordinator:
             _fail("Canonical chunk rows differ from exact representation windows")
         return bundle.model_copy(update={"chunks": chunks})
 
-    def _commit_or_reuse(self, bundle: ExtractionBundle) -> None:
+    def _commit_or_reuse(
+        self, bundle: ExtractionBundle, facts: RepresentationFacts
+    ) -> None:
         db = self.store.db
         row = db.execute(
             "SELECT revision_id,parser_fingerprint,normalizer_fingerprint,document_artifact_sha,assertions_artifact_sha,diagnostics_artifact_sha "
@@ -438,6 +451,8 @@ class ProjectionCoordinator:
                     "Existing canonical extraction conflicts with fresh parser output"
                 )
             self.store._check_membership(bundle)
+            with self.store.uow.write() as tx:
+                tx.representations.write(facts)
             # Fresh capture timestamps and registered path observations do not
             # replace an already committed canonical source/revision/extraction.
             return
@@ -491,7 +506,7 @@ class ProjectionCoordinator:
                     )
                 }
             )
-        self.store.commit_extraction(bundle)
+        self.store.commit_extraction(bundle, facts)
 
     def _family_nonce(self, channel: str, identity_sha: str) -> str:
         """Return the nonce of the family already created for this identity, or a new one."""
@@ -610,6 +625,7 @@ class ProjectionCoordinator:
         bundle: ExtractionBundle,
         manifest: ArtifactRef,
         out: _VectorOutput,
+        facts: RepresentationFacts | None = None,
     ) -> NewBatch:
         """Store a vector batch's record rows and mark it ready in one transaction."""
         batch = NewBatch(
@@ -634,9 +650,13 @@ class ProjectionCoordinator:
             )
             for b in out.bindings
         )
-        self._store_batch(
-            batch, lambda tx: tx.batches.write_vectors(batch.batch_id, rows)
-        )
+
+        def write(tx: WriteTransaction) -> None:
+            tx.batches.write_vectors(batch.batch_id, rows)
+            if facts is not None:
+                tx.representations.write(facts)
+
+        self._store_batch(batch, write)
         return batch
 
     def _text_family(
@@ -795,7 +815,11 @@ class ProjectionCoordinator:
             ),
         )
         return self._vector_batch(
-            "text", bundle, manifest, _VectorOutput(receipt, vectors, bindings)
+            "text",
+            bundle,
+            manifest,
+            _VectorOutput(receipt, vectors, bindings),
+            group_facts(bundle.extraction.extraction_id, groups),
         )
 
     def _vector_artifact(
@@ -1198,10 +1222,19 @@ class ProjectionCoordinator:
         self._require_collection_open(bundle.collection.collection_id)
         config_ref = self._config_ref(job)
         mark("windowing")
-        windows = self._windows(bundle)
+        extraction = prepare_extraction(bundle)
+        windows = self._windows(extraction, bundle.revision.kind_id)
         canonical = self._canonical_bundle(bundle, windows)
         mark("normalize_commit")
-        self._commit_or_reuse(canonical)
+        facts = representation_facts(
+            canonical,
+            extraction,
+            (
+                ChunkSpan(row.chunk_id, row.unit_id, row.char_start, row.char_end)
+                for row in canonical.chunks
+            ),
+        )
+        self._commit_or_reuse(canonical, facts)
         base = (
             self.store.resolve_snapshot(base_snapshot_id) if base_snapshot_id else None
         )
