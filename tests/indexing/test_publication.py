@@ -1,5 +1,6 @@
 """Atomic snapshot publication against the real canonical SQLite schema."""
 
+import json
 import struct
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -1263,3 +1264,20 @@ def test_native_health_covers_more_than_128_batches(projected_corpus, tmp_path):
     )
     assert batches > 128
     assert report == (snapshot.snapshot_id, expected, graphs, 0)
+
+
+def test_text_batches_persist_their_group_dependencies(projected_corpus):
+    f = projected_corpus
+    view = f.store.resolve_snapshot(None)
+    with f.store.uow.read() as tx:
+        (batch,) = tx.batches.for_snapshot(view.snapshot_id, "text")
+    with f.store.artifacts.open_verified(batch.input_manifest) as stream:
+        manifest = json.load(stream)
+    expected = {
+        item["group_id"]: frozenset(item["dependency_ids"])
+        for item in manifest["data"]["representations"]
+    }
+    with f.store.uow.read() as tx:
+        stored = tx.representations.dependencies(tuple(expected))
+    assert expected
+    assert stored == expected

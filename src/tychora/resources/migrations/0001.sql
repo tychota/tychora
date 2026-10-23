@@ -193,6 +193,20 @@ CREATE TABLE chunks (
   FOREIGN KEY(unit_id, extraction_id) REFERENCES evidence_units(unit_id, extraction_id)
 ) STRICT;
 
+CREATE TABLE representation_dependencies (
+  owner_id TEXT NOT NULL,
+  dependency_id TEXT NOT NULL,
+  PRIMARY KEY(owner_id, dependency_id)
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE ownership_intervals (
+  unit_id TEXT NOT NULL REFERENCES evidence_units(unit_id),
+  char_start INTEGER NOT NULL CHECK(char_start>=0),
+  char_end INTEGER NOT NULL CHECK(char_end>char_start),
+  dependency_digest TEXT NOT NULL,
+  PRIMARY KEY(unit_id, char_start)
+) STRICT;
+
 CREATE TABLE identifiers (
   namespace TEXT NOT NULL,
   normalized_value TEXT NOT NULL,

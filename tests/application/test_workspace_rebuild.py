@@ -11,6 +11,7 @@ from tests.helpers.legacy import OutputCounter as Counter
 from tests.helpers.legacy import add_text as _add
 from tests.helpers.legacy import make_format_one
 from tychora import Tychora
+from tychora.adapters.sqlite.migrations import EARLIER_FORMAT_TWO_CHECKSUMS
 from tychora.api import rebuild_workspace_from
 from tychora.contracts.corpus import ReviewTarget
 from tychora.contracts.errors import TychoraError
@@ -534,3 +535,26 @@ def test_a_failed_destination_opens_after_the_documented_retry(old, tmp_path):
     rebuild_workspace_from(root, destination, token_counter=Counter())
     with Tychora.open(destination, token_counter=Counter()) as kb:
         assert _read(kb, "SELECT count(*) FROM sources")[0][0] >= 1
+
+
+def test_a_phase_two_workspace_is_refused_then_rebuilds(tmp_path):
+    root = tmp_path / "phase-two"
+    with Tychora.open(root, token_counter=Counter()) as kb:
+        _add(kb, "alpha", "Alpha verification outcome.")
+    with _edit(root) as db:
+        # The phase 2 schema had neither representation fact table.
+        db.execute("DROP TABLE representation_dependencies")
+        db.execute("DROP TABLE ownership_intervals")
+        db.execute(
+            "UPDATE schema_migrations SET checksum=?",
+            (EARLIER_FORMAT_TWO_CHECKSUMS[-1],),
+        )
+    before = _fingerprint(root)
+    with pytest.raises(TychoraError) as error:
+        Tychora.open(root, token_counter=Counter())
+    assert error.value.reason == "workspace.format_old"
+    assert _fingerprint(root) == before
+    report = rebuild_workspace_from(root, tmp_path / "new", token_counter=Counter())
+    assert [item.source_key for item in report.sources] == ["alpha"]
+    with Tychora.open(tmp_path / "new", token_counter=Counter()) as kb:
+        assert _read(kb, "SELECT COUNT(*) FROM representation_dependencies")[0][0] > 0

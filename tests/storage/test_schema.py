@@ -30,7 +30,7 @@ def test_canonical_schema_integrity(tmp_path):
         r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='view'")
     }
     assert views == {"snapshot_members", "snapshot_batches"}
-    assert len({n for n in names if not n.startswith("lexical_fts")}) == 42
+    assert len({n for n in names if not n.startswith("lexical_fts")}) == 44
     assert "lexical_fts" in names
     assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
@@ -524,3 +524,29 @@ def test_unknown_checksum_reports_schema_mismatch(tmp_path):
     with pytest.raises(TychoraError) as imported:
         open_verified_import(path)
     assert imported.value.reason == "workspace.schema_mismatch"
+
+
+PHASE_TWO_CHECKSUM = "2415f138aa1778f80ea655acaf59eeaf7d7c7dc28fa3d983d78222875127c4f1"
+
+
+def test_phase_two_checksum_reports_format_old(tmp_path):
+    assert PHASE_TWO_CHECKSUM in EARLIER_FORMAT_TWO_CHECKSUMS
+    path = tmp_path / "corpus.sqlite3"
+    db = open_corpus(path, initialize=True)
+    db.execute("UPDATE schema_migrations SET checksum=?", (PHASE_TWO_CHECKSUM,))
+    db.close()
+    with pytest.raises(TychoraError) as error:
+        open_corpus(path)
+    assert error.value.reason == "workspace.format_old"
+
+
+def test_representation_fact_tables_exist(tmp_path):
+    db = open_corpus(tmp_path / "corpus.sqlite3", initialize=True)
+    try:
+        names = {
+            row[0]
+            for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+    finally:
+        db.close()
+    assert {"representation_dependencies", "ownership_intervals"} <= names

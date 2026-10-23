@@ -7,10 +7,13 @@ from tychora.contracts.candidates import ChannelCandidates
 from tychora.contracts.corpus import ExtractionBundle, ReviewTarget
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.graph import EligibilityView
+from tychora.contracts.indexing import RepresentationFacts
 
 
 class CorpusStore(Protocol):
-    def commit_extraction(self, bundle: ExtractionBundle) -> str: ...
+    def commit_extraction(
+        self, bundle: ExtractionBundle, facts: RepresentationFacts | None = None
+    ) -> str: ...
     def hydrate(self, unit_ids: tuple[str, ...]) -> tuple[EvidenceUnit, ...]: ...
     def record_review(
         self,

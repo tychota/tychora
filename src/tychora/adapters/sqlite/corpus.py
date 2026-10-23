@@ -6,7 +6,11 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import NoReturn, cast
 
-from tychora.adapters.sqlite.repositories import SqliteUnitOfWork, artifact_ref
+from tychora.adapters.sqlite.repositories import (
+    SqliteRepresentationRepository,
+    SqliteUnitOfWork,
+    artifact_ref,
+)
 from tychora.application.collection_policy import require_active_collection
 from tychora.application.leases import LeaseSet
 from tychora.configuration.models import ResolvedConfig
@@ -18,6 +22,7 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit, Geometry
 from tychora.contracts.graph import EligibilityView
 from tychora.contracts.identity import canonical_bytes, digest
+from tychora.contracts.indexing import RepresentationFacts
 from tychora.contracts.publication import (
     PublicationPlan,
     RetainedBatch,
@@ -252,7 +257,10 @@ class CorpusStore(PolicyRepository):
         self._insert(table, values, (key,))
         return raised
 
-    def commit_extraction(self, bundle: ExtractionBundle) -> str:
+    def commit_extraction(
+        self, bundle: ExtractionBundle, facts: RepresentationFacts | None = None
+    ) -> str:
+        """Store one extraction and its representation facts in one transaction."""
         if self.db.in_transaction:
             _fail("Corpus writes require their own transaction")
         payloads = verify_artifacts(bundle, self.artifacts)
@@ -443,58 +451,75 @@ class CorpusStore(PolicyRepository):
                         )
                 for row in bundle.records:
                     self._insert("structured_records", _row(row), ("unit_id",))
-                for row in bundle.facets:
-                    definition = self.registry.facet(row.facet_key)
-                    storage_type = {
-                        "string": "text",
-                        "integer": "number",
-                        "number": "number",
-                        "boolean": "boolean",
-                        "date": "date",
-                        "date-time": "text",
-                    }[cast(str, definition["value_type"])]
-                    self._insert(
-                        "facet_definitions",
-                        {
-                            "facet_key": row.facet_key,
-                            "value_type": storage_type,
-                            "operators_json": _json(definition["operators"]),
-                            "filter_scope": definition["filter_scope"],
-                            "definition_hash": digest("facet-v1", definition),
-                        },
-                        ("facet_key",),
-                    )
-                    values = {
-                        "revision_id": row.revision_id,
-                        "unit_id": row.unit_id,
-                        "facet_key": row.facet_key,
-                        "ordinal": row.ordinal,
-                        "text_value": None,
-                        "number_value": None,
-                        "boolean_value": None,
-                    }
-                    column = (
-                        "text_value"
-                        if storage_type in ("text", "date")
-                        else storage_type + "_value"
-                    )
-                    values[column] = (
-                        int(row.value) if storage_type == "boolean" else row.value
-                    )
-                    self._insert(
-                        "facet_values",
-                        values,
-                        ("revision_id", "unit_id", "facet_key", "ordinal"),
-                    )
+                self._insert_facets(bundle)
                 for row in bundle.identifiers:
                     self._insert(
                         "identifiers",
                         _row(row),
                         ("namespace", "normalized_value", "unit_id"),
                     )
+                self._write_facts(bundle, facts)
             return bundle.extraction.extraction_id
         except sqlite3.IntegrityError:
             _fail("Corpus constraint violation")
+
+    def _insert_facets(self, bundle: ExtractionBundle) -> None:
+        """Insert each facet value and its registered definition."""
+        for row in bundle.facets:
+            definition = self.registry.facet(row.facet_key)
+            storage_type = {
+                "string": "text",
+                "integer": "number",
+                "number": "number",
+                "boolean": "boolean",
+                "date": "date",
+                "date-time": "text",
+            }[cast(str, definition["value_type"])]
+            self._insert(
+                "facet_definitions",
+                {
+                    "facet_key": row.facet_key,
+                    "value_type": storage_type,
+                    "operators_json": _json(definition["operators"]),
+                    "filter_scope": definition["filter_scope"],
+                    "definition_hash": digest("facet-v1", definition),
+                },
+                ("facet_key",),
+            )
+            values = {
+                "revision_id": row.revision_id,
+                "unit_id": row.unit_id,
+                "facet_key": row.facet_key,
+                "ordinal": row.ordinal,
+                "text_value": None,
+                "number_value": None,
+                "boolean_value": None,
+            }
+            column = (
+                "text_value"
+                if storage_type in ("text", "date")
+                else storage_type + "_value"
+            )
+            values[column] = int(row.value) if storage_type == "boolean" else row.value
+            self._insert(
+                "facet_values",
+                values,
+                ("revision_id", "unit_id", "facet_key", "ordinal"),
+            )
+
+    def _write_facts(
+        self, bundle: ExtractionBundle, facts: RepresentationFacts | None
+    ) -> None:
+        """Write an extraction's facts inside its commit transaction."""
+        if facts is None:
+            return
+        if facts.extraction_id != bundle.extraction.extraction_id:
+            raise TychoraError(
+                "INTEGRITY_ERROR",
+                "Representation facts belong to another extraction",
+                reason="canonical.binding_mismatch",
+            )
+        SqliteRepresentationRepository(self.db, writable=True).write(facts)
 
     def _check_membership(self, bundle: ExtractionBundle) -> None:
         eid = bundle.extraction.extraction_id

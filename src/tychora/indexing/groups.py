@@ -1,13 +1,19 @@
 """Deterministic contextual and independent provider input groups."""
 
 from collections import defaultdict
+from collections.abc import Iterable
 from typing import Literal
 
 from tychora.configuration.models import ResolvedConfig
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes, digest
-from tychora.contracts.indexing import ContextGroup, SearchWindow
+from tychora.contracts.indexing import (
+    ContextGroup,
+    OwnerDependencies,
+    RepresentationFacts,
+    SearchWindow,
+)
 from tychora.ports.tokens import TokenCounter
 
 Contextualization = Literal["joint", "independent"]
@@ -224,3 +230,17 @@ def build_groups(
         packed.append(group.model_copy(update={"request_index": request_index}))
         request_tokens += group.token_count
     return tuple(packed)
+
+
+def group_facts(
+    extraction_id: str, groups: Iterable[ContextGroup]
+) -> RepresentationFacts:
+    """The dependency set of each context group, keyed by group ID."""
+    found = {group.group_id: group.dependency_ids for group in groups}
+    return RepresentationFacts(
+        extraction_id=extraction_id,
+        dependencies=tuple(
+            OwnerDependencies(owner_id=group_id, dependency_ids=dependencies)
+            for group_id, dependencies in sorted(found.items())
+        ),
+    )

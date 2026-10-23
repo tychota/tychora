@@ -18,6 +18,7 @@ from tychora.configuration.registry import Registry
 from tychora.contracts.corpus import ExtractionBundle
 from tychora.contracts.extraction import ExtractionArtifact
 from tychora.contracts.graph import GraphBatchReceipt, GraphManifest
+from tychora.contracts.indexing import RepresentationFacts
 from tychora.contracts.publication import PublicationPlan
 from tychora.contracts.requests import SourceInput
 from tychora.indexing.coordinator import ProjectionCoordinator
@@ -82,9 +83,11 @@ def run(root: Path, point: str) -> None:
             elif point == "artifact_before_sql":
                 original_commit = owner.store.commit_extraction
 
-                def paused_commit(bundle: ExtractionBundle) -> str:
+                def paused_commit(
+                    bundle: ExtractionBundle, facts: RepresentationFacts | None = None
+                ) -> str:
                     injector.hit(point)
-                    return original_commit(bundle)
+                    return original_commit(bundle, facts)
 
                 patch.object(owner.store, "commit_extraction", paused_commit).start()
             elif point == "publish_before_event":

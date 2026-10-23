@@ -10,6 +10,7 @@ from tychora.ports.repositories import (
     BatchRepository,
     FamilyRepository,
     ReadTransaction,
+    RepresentationRepository,
     SnapshotRepository,
     WorkspaceRepository,
     WriteTransaction,
@@ -18,6 +19,7 @@ from tychora.ports.repositories import (
 from .artifacts import SqliteArtifactRepository
 from .batches import SqliteBatchRepository
 from .families import SqliteFamilyRepository
+from .representations import SqliteRepresentationRepository
 from .snapshots import SqliteSnapshotRepository
 from .workspace import SqliteWorkspaceRepository
 
@@ -64,6 +66,7 @@ class SqliteTransaction:
     families: FamilyRepository
     batches: BatchRepository
     snapshots: SnapshotRepository
+    representations: RepresentationRepository
 
     def __init__(self, db: sqlite3.Connection, *, writable: bool) -> None:
         self.workspace = SqliteWorkspaceRepository(db, writable=writable)
@@ -71,6 +74,7 @@ class SqliteTransaction:
         self.families = SqliteFamilyRepository(db, writable=writable)
         self.batches = SqliteBatchRepository(db, writable=writable)
         self.snapshots = SqliteSnapshotRepository(db, writable=writable)
+        self.representations = SqliteRepresentationRepository(db, writable=writable)
 
 
 class SqliteUnitOfWork:

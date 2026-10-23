@@ -17,7 +17,7 @@
     },
     "cognitive_complexity": {
       "direction": "lower",
-      "measured_at": "0605d1a067cd",
+      "measured_at": "bdf716f87bcf",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::search": 58,
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::upsert_batch": 16,
@@ -68,7 +68,7 @@
         "src/tychora/adapters/ladybug/traversal.py::resolve_graph_traversal_policy": 49,
         "src/tychora/adapters/sqlite/code_provenance.py::validate_code_record": 19,
         "src/tychora/adapters/sqlite/corpus.py::CorpusStore::_check_membership": 27,
-        "src/tychora/adapters/sqlite/corpus.py::CorpusStore::commit_extraction": 43,
+        "src/tychora/adapters/sqlite/corpus.py::CorpusStore::commit_extraction": 38,
         "src/tychora/adapters/sqlite/eligibility.py::read_eligibility_facts": 63,
         "src/tychora/adapters/sqlite/graph.py::read_graph_build": 53,
         "src/tychora/adapters/sqlite/jobs.py::JobRepository::_reconcile": 17,
@@ -287,8 +287,8 @@
     },
     "duplication_tests": {
       "direction": "lower",
-      "measured_at": "0605d1a067cd",
-      "value": 4.28
+      "measured_at": "bdf716f87bcf",
+      "value": 4.26
     },
     "duplication_typescript": {
       "direction": "lower",
@@ -377,7 +377,7 @@
     },
     "function_length": {
       "direction": "lower",
-      "measured_at": "0605d1a067cd",
+      "measured_at": "bdf716f87bcf",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex.search": 143,
         "src/tychora/adapters/code/capture.py::RepositoryCapture._run": 89,
@@ -408,7 +408,7 @@
         "src/tychora/adapters/ladybug/traversal.py::GraphTraversal.structural_context": 156,
         "src/tychora/adapters/ladybug/traversal.py::resolve_graph_traversal_policy": 89,
         "src/tychora/adapters/sqlite/corpus.py::CorpusStore._check_membership": 96,
-        "src/tychora/adapters/sqlite/corpus.py::CorpusStore.commit_extraction": 243,
+        "src/tychora/adapters/sqlite/corpus.py::CorpusStore.commit_extraction": 205,
         "src/tychora/adapters/sqlite/eligibility.py::read_eligibility_facts": 235,
         "src/tychora/adapters/sqlite/graph.py::read_graph_build": 155,
         "src/tychora/adapters/sqlite/lexical.py::LexicalIndex.search": 103,
@@ -609,7 +609,7 @@
     },
     "missing_docstrings": {
       "direction": "lower",
-      "measured_at": "639739ce89c4",
+      "measured_at": "bdf716f87bcf",
       "per_key": {
         "src/tychora/__main__.py::D100": 1,
         "src/tychora/adapters/chroma/index.py::D102": 5,
@@ -647,7 +647,7 @@
         "src/tychora/adapters/ladybug/traversal.py::D102": 3,
         "src/tychora/adapters/sqlite/code_provenance.py::D103": 1,
         "src/tychora/adapters/sqlite/corpus.py::D101": 1,
-        "src/tychora/adapters/sqlite/corpus.py::D102": 8,
+        "src/tychora/adapters/sqlite/corpus.py::D102": 7,
         "src/tychora/adapters/sqlite/eligibility.py::D103": 1,
         "src/tychora/adapters/sqlite/evaluations.py::D101": 1,
         "src/tychora/adapters/sqlite/evaluations.py::D102": 4,
@@ -886,7 +886,7 @@
         "src/tychora/retrieval/segments.py::D101": 1,
         "src/tychora/retrieval/segments.py::D102": 1
       },
-      "value": 1000
+      "value": 999
     },
     "modules_in_import_cycles": {
       "direction": "lower",

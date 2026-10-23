@@ -22,6 +22,7 @@ from tychora.contracts.base import (
 )
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
+from tychora.contracts.indexing import IntervalRow, RepresentationFacts
 from tychora.contracts.publication import (
     BatchReceiptVariant,
     LexicalRecord,
@@ -296,6 +297,52 @@ class SnapshotRepository(Protocol):
         ...
 
 
+class UnitRow(Contract):
+    """One evidence unit's identity, place and text digest, without its text."""
+
+    unit_id: Identifier
+    extraction_id: Identifier
+    boundary_key: NonEmptyStr
+    ordinal: NonNegativeInt
+    text_sha: Sha256
+    char_count: NonNegativeInt
+
+
+class ChunkRow(Contract):
+    """One chunk's range in its unit and its context group."""
+
+    chunk_id: Identifier
+    unit_id: Identifier
+    extraction_id: Identifier
+    char_start: NonNegativeInt
+    char_end: NonNegativeInt
+    context_group_key: NonEmptyStr
+
+
+class RepresentationRepository(Protocol):
+    """Write-time representation facts; each read binds its ID tuple once."""
+
+    def units(self, unit_ids: tuple[str, ...]) -> tuple[UnitRow, ...]:
+        """Return the stored units among these IDs; unknown IDs are skipped."""
+        ...
+
+    def chunks(self, chunk_ids: tuple[str, ...]) -> tuple[ChunkRow, ...]:
+        """Return the stored chunks among these IDs; unknown IDs are skipped."""
+        ...
+
+    def dependencies(self, owner_ids: tuple[str, ...]) -> Mapping[str, frozenset[str]]:
+        """Return the dependency set of each stored owner among these IDs."""
+        ...
+
+    def intervals(self, unit_ids: tuple[str, ...]) -> tuple[IntervalRow, ...]:
+        """Return the ownership intervals of these units in unit and start order."""
+        ...
+
+    def write(self, facts: RepresentationFacts) -> None:
+        """Store facts once; a repeat is a no-op and a different set is refused."""
+        ...
+
+
 class ReadTransaction(Protocol):
     """Repositories bound to one read transaction; writes through them are refused."""
 
@@ -304,6 +351,7 @@ class ReadTransaction(Protocol):
     families: FamilyRepository
     batches: BatchRepository
     snapshots: SnapshotRepository
+    representations: RepresentationRepository
 
 
 class WriteTransaction(ReadTransaction, Protocol):
