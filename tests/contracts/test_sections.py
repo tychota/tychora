@@ -319,3 +319,16 @@ def test_heading_match_time_is_budgeted_per_document(monkeypatch):
             heading_level_for(levels, "a", budget)
     assert err.value.code == "INVALID_REQUEST"
     assert err.value.reason == "kind.section_levels_invalid"
+
+
+def test_heading_budget_grows_with_the_number_of_headings(monkeypatch):
+    ticks = iter(range(100_000))
+    # Each match spends 0.25 ms: 20,000 headings spend 5 s, over the 2 s floor but
+    # within the 20 s that 1 ms per heading allows.
+    monkeypatch.setattr(sections_module, "_monotonic", lambda: next(ticks) * 0.000_125)
+    monkeypatch.setattr(regex, "match", lambda pattern, text, *, timeout: None)
+    levels = _levels(r"^Article")
+    budget = HeadingBudget()
+    for _ in range(20_000):
+        assert heading_level_for(levels, "a", budget) is None
+    assert budget.spent > HeadingBudget().seconds
