@@ -26,6 +26,7 @@ from tychora.contracts.extraction import ExtractionArtifact
 from tychora.contracts.identity import canonical_bytes, digest, extraction_id, unit_id
 
 from .document_identity import DocumentNormalizationContext
+from .sections import document_placements, figure_placement
 
 
 def normalize_document(
@@ -57,14 +58,11 @@ def normalize_document(
         from .document_records import normalize_document_records
 
         return normalize_document_records(parsed, revision_id, registry)
-    if parsed.normalizer_fingerprint != digest(
-        "docling-normalizer-v2", kind, registry.schema_digests
-    ):
-        raise TychoraError("INTEGRITY_ERROR", "Document normalizer fingerprint differs")
     eid = extraction_id(
         revision_id, parsed.parser_fingerprint, parsed.normalizer_fingerprint
     )
     document_units = normalize_native_document_units(parsed)
+    placements = document_placements(document_units)
     ids = {
         u.native_ref: unit_id(
             eid, u.native_ref, u.ordinal, sha256(u.text.encode()).hexdigest()
@@ -86,6 +84,7 @@ def normalize_document(
                 "provenance": [p.model_dump(mode="json") for p in unit.provenance],
                 "cells": unit.cells,
                 "heading_level": unit.heading_level,
+                "section_path": placements[unit.native_ref].attribute(),
             }
         )
         units.append(
@@ -96,7 +95,7 @@ def normalize_document(
                 ordinal=unit.ordinal,
                 unit_type=unit.unit_type,
                 native_ref=unit.native_ref,
-                boundary_key=unit.native_ref,
+                boundary_key=placements[unit.native_ref].boundary_key,
                 heading_path=unit.heading_path,
                 text=unit.text,
                 text_sha=sha256(unit.text.encode()).hexdigest(),
@@ -155,6 +154,7 @@ def normalize_standalone_image(
     eid = extraction_id(revision_id, parsed.parser_fingerprint, fingerprint)
     text_sha = sha256(b"").hexdigest()
     uid = unit_id(eid, image.native_ref, 0, text_sha)
+    placement = figure_placement(image.native_ref)
     unit = EvidenceUnit(
         unit_id=uid,
         extraction_id=eid,
@@ -162,7 +162,7 @@ def normalize_standalone_image(
         ordinal=0,
         unit_type="image_original",
         native_ref=image.native_ref,
-        boundary_key=image.native_ref,
+        boundary_key=placement.boundary_key,
         text="",
         text_sha=text_sha,
         text_origin="source",
@@ -177,6 +177,7 @@ def normalize_standalone_image(
                 "color_mode": image.color_mode,
                 "pixel_transform": image.pixel_transform,
                 "document_representation": "docling-image-source@1",
+                "section_path": placement.attribute(),
             }
         ),
     )

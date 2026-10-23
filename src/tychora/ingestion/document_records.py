@@ -1,7 +1,7 @@
 """Literal rich-document records with explicit original field ownership."""
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import Any, cast
@@ -23,6 +23,11 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.extraction import ExtractionArtifact
 from tychora.contracts.identity import canonical_bytes, digest, extraction_id, unit_id
+from tychora.contracts.sections import (
+    ROOT_SECTION_KEY,
+    HeadingLevel,
+    normalizer_definition,
+)
 
 from .document_identity import DocumentNormalizationContext
 from .document_parts import (
@@ -33,18 +38,21 @@ from .document_parts import (
 )
 from .documents import assemble_document_bundle
 from .normalize import DEFAULT_LABELS, RECORD_FIELDS, RECORD_TYPES
+from .sections import ARTICLE_NORMALIZERS, Placeable, Placement, place_units
 
 
 def document_normalizer_fingerprint(
     kind: Mapping[str, Any], registry: Registry, *, legacy_v1: bool = False
 ) -> str:
-    version = "v1" if legacy_v1 else "v2"
-    version = (
-        f"docling-normalizer-{version}"
+    """Identity of the rich-document normalizer's output for one kind definition."""
+    family = (
+        "docling-normalizer"
         if kind["normalizer"] == "structured_sections@1"
-        else f"docling-record-normalizer-{version}"
+        else "docling-record-normalizer"
     )
-    return digest(version, kind, registry.schema_digests)
+    if legacy_v1:
+        return digest(f"{family}-v1", kind, registry.schema_digests)
+    return digest(f"{family}-v3", normalizer_definition(kind), registry.schema_digests)
 
 
 @dataclass
@@ -292,6 +300,40 @@ def _groups(
     return groups
 
 
+def _identifier_row(group: _Group, uid: str, strategy: str) -> IdentifierRow:
+    """The provision or rule identifier a group carries, as written in the source."""
+    assert group.identifier is not None
+    return IdentifierRow(
+        namespace="provision" if strategy == "numbered_provisions@1" else "rule",
+        normalized_value=group.identifier,
+        original_value=group.identifier,
+        unit_id=uid,
+    )
+
+
+def _group_placements(
+    groups: Sequence[_Group], strategy: str, headings: Sequence[HeadingLevel] = ()
+) -> list[Placement]:
+    """Place record groups: numbered provisions and rules are articles."""
+    articles = strategy in ARTICLE_NORMALIZERS
+    placed = place_units(
+        (
+            Placeable(
+                native_ref=group.native_ref,
+                heading_level=group.originals[0].heading_level,
+                text=group.originals[0].text,
+                unit_type=group.unit_type,
+                parent_ref=group.parent_ref,
+                record=articles and group.identifier is not None,
+            )
+            for group in groups
+        ),
+        ROOT_SECTION_KEY,
+        headings,
+    )
+    return [placed[group.native_ref] for group in groups]
+
+
 def normalize_document_records(
     parsed: ExtractionArtifact,
     revision_id: str,
@@ -338,6 +380,7 @@ def normalize_document_records(
         kind.get("normalizer_options", {}),
         budget,
     )
+    placements = _group_placements(groups, strategy)
     units = []
     locators = []
     records = []
@@ -364,7 +407,7 @@ def normalize_document_records(
                 ordinal=ordinal,
                 unit_type=group.unit_type,
                 native_ref=group.native_ref,
-                boundary_key=group.native_ref,
+                boundary_key=placements[ordinal].boundary_key,
                 heading_path=group.originals[0].heading_path,
                 text=text,
                 text_sha=sha256(text.encode()).hexdigest(),
@@ -378,6 +421,7 @@ def normalize_document_records(
                         ],
                         "source_refs": [i.native_ref for i in group.originals],
                         "semantic_diagnostics": group.diagnostics,
+                        "section_path": placements[ordinal].attribute(),
                     }
                 ),
             )
@@ -392,16 +436,7 @@ def normalize_document_records(
             for i, loc in enumerate(fragments)
         )
         if group.identifier:
-            identifiers.append(
-                IdentifierRow(
-                    namespace="provision"
-                    if strategy == "numbered_provisions@1"
-                    else "rule",
-                    normalized_value=group.identifier,
-                    original_value=group.identifier,
-                    unit_id=uid,
-                )
-            )
+            identifiers.append(_identifier_row(group, uid, strategy))
         if group.value is not None:
             group.value["provenance"] = [
                 p.source_domain + ":" + str(p.source_start) + ":" + str(p.source_end)

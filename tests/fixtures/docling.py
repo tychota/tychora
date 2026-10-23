@@ -5,6 +5,8 @@ that parse with the real Docling bundle read it through asset_path, so tests usi
 them must carry @pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS").
 """
 
+import base64
+import io
 import json
 import shutil
 from contextlib import ExitStack
@@ -20,8 +22,8 @@ from tests.fixtures.documents.create_record_fixtures import (
     record_content,
 )
 from tests.helpers.assets import asset_path
-from tychora.adapters.docling.parser import DoclingParser
-from tychora.application.owner import WorkspaceOwner
+from tychora.adapters.docling.parser import INVENTORY, DoclingParser
+from tychora.application.owner import StagedOutput, WorkspaceOwner
 from tychora.configuration.registry import Registry
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts import SourceInput, identity
@@ -138,6 +140,58 @@ def rich_capture(execution, document_kind):
         format=execution.format,
     )
     return captured.original_ref
+
+
+def picture_item(captions=()):
+    """A Docling picture item carrying the rich-figure fixture as its image."""
+    pixels = (Path(__file__).parent / "documents/rich-figure.png").read_bytes()
+    return {
+        "self_ref": "#/pictures/0",
+        "parent": {"$ref": "#/body"},
+        "children": [],
+        "label": "picture",
+        "prov": [],
+        "captions": [{"$ref": ref} for ref in captions],
+        "image": {
+            "uri": "data:image/png;base64," + base64.b64encode(pixels).decode(),
+            "size": {"width": 640.0, "height": 320.0},
+            "dpi": 72,
+            "mimetype": "image/png",
+        },
+    }
+
+
+def retain_export(execution, rich_capture, export):
+    """Retain a synthetic Docling export as the parser would, without the models.
+
+    Returns the retained extraction artifact and the registry it was bound to.
+    """
+    registry = Registry.from_config(execution.config)
+    kind = registry.kinds["manual@1"]
+    assert isinstance(kind, FrozenJsonMap)
+    parser = DoclingParser(
+        execution.owner,
+        execution.registration,
+        Path("/nonexistent-explicit-model-bundle"),
+    )
+    payload = identity.canonical_bytes(export)
+    artifact = execution.owner.run_blocking_sync(
+        lambda: parser._retain(
+            (
+                (
+                    StagedOutput("document.json", "application/json", len(payload)),
+                    io.BytesIO(payload),
+                ),
+            ),
+            rich_capture,
+            execution.config,
+            registry,
+            kind,
+            json.loads(INVENTORY.read_text()),
+        ),
+        execution.ctx,
+    )
+    return artifact, registry
 
 
 @pytest.fixture

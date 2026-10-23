@@ -2,11 +2,12 @@
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from tychora.configuration.registry import Registry
 from tychora.contracts.identity import digest
 from tychora.contracts.sections import (
+    ROOT_SECTION_KEY,
     HeadingLevel,
     SectionEntry,
     boundary_key,
@@ -14,6 +15,9 @@ from tychora.contracts.sections import (
     heading_level_for,
     normalizer_definition,
 )
+
+if TYPE_CHECKING:
+    from tychora.contracts.documents import DocumentUnit
 
 ARTICLE_NORMALIZERS = frozenset({"numbered_provisions@1", "rule_records@1"})
 
@@ -99,3 +103,38 @@ def place_units(
             placement = Placement(path[-1].key, path)
         placements[item.native_ref] = placement
     return placements
+
+
+TABLE_VIEW_TYPES = frozenset({"table", "table_row"})
+
+
+def document_placements(
+    items: "Iterable[DocumentUnit]", headings: Sequence[HeadingLevel] = ()
+) -> dict[str, Placement]:
+    """Place Docling items: section headers open sections, tables are their own boundary."""
+    return place_units(
+        (
+            Placeable(
+                native_ref=item.native_ref,
+                heading_level=item.heading_level,
+                text=item.text,
+                unit_type=item.unit_type,
+            )
+            for item in items
+        ),
+        ROOT_SECTION_KEY,
+        headings,
+    )
+
+
+def view_placement(item: Placement, kind: str, native_ref: str) -> Placement:
+    """A table or row view is keyed by its table; any other view keeps its item's place."""
+    if kind in TABLE_VIEW_TYPES:
+        return Placement(boundary_key("table", native_ref), item.section_path)
+    return item
+
+
+def figure_placement(native_ref: str) -> Placement:
+    """A standalone image with no section is its own document root."""
+    key = boundary_key("figure", native_ref)
+    return Placement(key, (SectionEntry(key=key, depth=0),))

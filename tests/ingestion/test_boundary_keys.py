@@ -5,6 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from tests.fixtures.docling import picture_item, retain_export
+from tests.ingestion.test_docling_mapping import mapping_case
+from tychora.adapters.docling.mapping import map_document
 from tychora.contracts.identity import digest
 from tychora.contracts.sections import (
     BOUNDARY_SCHEMES,
@@ -12,8 +15,19 @@ from tychora.contracts.sections import (
     normalizer_definition,
     section_path_of,
 )
+from tychora.ingestion.document_records import (
+    _Group,
+    _group_placements,
+    document_normalizer_fingerprint,
+)
 from tychora.ingestion.native import native_normalizer_fingerprint
 from tychora.ingestion.normalize import normalize
+from tychora.ingestion.sections import (
+    document_placements,
+    figure_placement,
+    view_placement,
+)
+from tychora.retrieval.segments import _same_section
 
 FIXTURES = Path(__file__).parents[1] / "fixtures/documents"
 
@@ -227,3 +241,211 @@ def test_json_records_are_placed_under_the_file(native_case):
         assert unit.boundary_key == "file:synthetic.json"
         assert _path(unit) == [("file:synthetic.json", None, 0)]
     assert_boundary_contract(bundle)
+
+
+def _text(ref, label, text, level=None):
+    item = {
+        "self_ref": ref,
+        "parent": {"$ref": "#/body"},
+        "children": [],
+        "label": label,
+        "text": text,
+        "orig": text,
+        "prov": [],
+    }
+    if level is not None:
+        item["level"] = level
+    return item
+
+
+def _table(ref, rows):
+    return {
+        "self_ref": ref,
+        "parent": {"$ref": "#/body"},
+        "children": [],
+        "label": "table",
+        "prov": [],
+        "data": {
+            "num_rows": len(rows),
+            "num_cols": len(rows[0]),
+            "table_cells": [
+                {
+                    "text": value,
+                    "start_row_offset_idx": row,
+                    "end_row_offset_idx": row + 1,
+                    "start_col_offset_idx": column,
+                    "end_col_offset_idx": column + 1,
+                }
+                for row, values in enumerate(rows)
+                for column, value in enumerate(values)
+            ],
+        },
+    }
+
+
+def _export(texts, tables=(), order=None):
+    """A synthetic Docling export whose body lists the items in reading order."""
+    export, original = mapping_case()
+    refs = order or [item["self_ref"] for item in (*texts, *tables)]
+    export["texts"] = list(texts)
+    export["tables"] = list(tables)
+    export["body"]["children"] = [{"$ref": ref} for ref in refs]
+    return export, original
+
+
+SECTIONED = (
+    _text("#/texts/0", "title", "Pump manual"),
+    _text("#/texts/1", "text", "Read this first."),
+    _text("#/texts/2", "section_header", "Seals", level=1),
+    _text("#/texts/3", "text", "Inspect seals quarterly."),
+    _text("#/texts/4", "section_header", "Seal rings", level=2),
+    _text("#/texts/5", "text", "Replace worn rings."),
+    _text("#/texts/6", "section_header", "Valves", level=1),
+    _text("#/texts/7", "caption", "Table 1 Valve hours"),
+)
+
+
+def test_docling_units_use_enclosing_section_header():
+    export, original = _export(SECTIONED)
+    placements = document_placements(map_document(export, original).units)
+    assert placements["#/texts/1"].boundary_key == "section:#/texts/0"
+    assert placements["#/texts/3"].boundary_key == "section:#/texts/2"
+    assert placements["#/texts/5"].boundary_key == "section:#/texts/4"
+    assert [entry.key for entry in placements["#/texts/5"].section_path] == [
+        "section:#root",
+        "section:#/texts/2",
+        "section:#/texts/4",
+    ]
+    assert placements["#/texts/6"].boundary_key == "section:#/texts/6"
+    assert [entry.depth for entry in placements["#/texts/6"].section_path] == [0, 1]
+    assert placements["#/texts/7"].boundary_key == "section:#/texts/6"
+
+
+def test_split_table_fragments_keep_their_own_table_keys():
+    texts = (_text("#/texts/0", "section_header", "Hours", level=1),)
+    tables = (
+        _table("#/tables/0", [["Pump", "Hours"], ["A", "3"]]),
+        _table("#/tables/1", [["Pump", "Hours"], ["B", "5"]]),
+    )
+    export, original = _export(texts, tables)
+    placements = document_placements(map_document(export, original).units)
+    first, second = placements["#/tables/0"], placements["#/tables/1"]
+    assert first.boundary_key == "table:#/tables/0"
+    assert second.boundary_key == "table:#/tables/1"
+    assert first.section_path[-1].key == "section:#/texts/0"
+    for kind in ("table", "table_row"):
+        assert view_placement(first, kind, "#/tables/0").boundary_key == (
+            "table:#/tables/0"
+        )
+        assert view_placement(second, kind, "#/tables/1").boundary_key == (
+            "table:#/tables/1"
+        )
+    caption = placements["#/texts/0"]
+    assert view_placement(caption, "caption", "#/texts/0") == caption
+
+
+def test_standalone_image_uses_figure_scheme():
+    placement = figure_placement("#/original-image")
+    assert placement.boundary_key == "figure:#/original-image"
+    assert [(e.key, e.depth) for e in placement.section_path] == [
+        ("figure:#/original-image", 0)
+    ]
+
+
+def test_docling_normalizer_fingerprints_are_v3(native_case):
+    _, _, registry = native_case("# Manual\n")
+    structured, records = registry.kinds["manual@1"], registry.kinds["standard@1"]
+    for kind, family in (
+        (structured, "docling-normalizer"),
+        (records, "docling-record-normalizer"),
+    ):
+        assert document_normalizer_fingerprint(kind, registry) == digest(
+            f"{family}-v3", normalizer_definition(kind), registry.schema_digests
+        )
+        assert document_normalizer_fingerprint(
+            kind, registry, legacy_v1=True
+        ) == digest(f"{family}-v1", kind, registry.schema_digests)
+
+
+def _group(ref, level, text, identifier=None, parent=None):
+    unit = map_document(*_export((_text(ref, "section_header", text, level),))).units[0]
+    return _Group(
+        originals=(unit,),
+        native_ref=ref,
+        parent_ref=parent,
+        unit_type="section_header",
+        identifier=identifier,
+    )
+
+
+def test_record_groups_are_placed_like_native_records():
+    groups = [
+        _group("#/texts/0", 1, "Rules"),
+        _group("#/texts/1", 2, "STD-1 Seals", identifier="STD-1"),
+        _group("#/texts/2", 2, "Notes"),
+    ]
+    articles = _group_placements(groups, "numbered_provisions@1")
+    assert articles[1].boundary_key == "article:#/texts/1"
+    assert [entry.key for entry in articles[1].section_path] == [
+        "section:#root",
+        "section:#/texts/0",
+        "article:#/texts/1",
+    ]
+    # A record heading opens an article, not a section: what follows nests under
+    # the enclosing section, as it does for native records.
+    assert [entry.key for entry in articles[2].section_path][:2] == [
+        "section:#root",
+        "section:#/texts/0",
+    ]
+    assert articles[2].boundary_key == "section:#/texts/2"
+    plain = _group_placements(groups, "feedback_records@1")
+    assert plain[1].boundary_key == "section:#/texts/1"
+
+
+@pytest.fixture
+def docling_bundle(execution, rich_capture):
+    """The registry and bundle of a retained synthetic export with sections, a picture and a table."""
+    texts = (*SECTIONED[:7], _text("#/texts/7", "caption", "Figure 1 Seal ring"))
+    order = [item["self_ref"] for item in texts[:4]] + ["#/pictures/0", "#/texts/7"]
+    order += [item["self_ref"] for item in texts[4:7]] + ["#/tables/0"]
+    table = _table("#/tables/0", [["Valve", "Hours"], ["V1", "7"]])
+    export, _ = _export(texts, (table,), order)
+    export["pictures"] = [picture_item(captions=("#/texts/7",))]
+    artifact, registry = retain_export(execution, rich_capture, export)
+    return registry, normalize(
+        artifact, artifact.registration.revision.revision_id, registry
+    )
+
+
+@pytest.mark.parametrize("execution", ["pdf"], indirect=True)
+@pytest.mark.parametrize("document_kind", ["manual@1"], indirect=True)
+def test_picture_and_caption_use_enclosing_section(docling_bundle):
+    registry, bundle = docling_bundle
+    units = {unit.native_ref: unit for unit in bundle.units}
+    assert units["#/texts/3"].boundary_key == "section:#/texts/2"
+    assert units["#/pictures/0"].boundary_key == "section:#/texts/2"
+    assert units["#/texts/7"].boundary_key == "section:#/texts/2"
+    table = units["#/tables/0"]
+    assert table.boundary_key == "table:#/tables/0"
+    path = section_path_of(table.attributes, table.boundary_key)
+    assert path[-1].key == "section:#/texts/6"
+    assert bundle.extraction.normalizer_fingerprint == document_normalizer_fingerprint(
+        registry.kinds["manual@1"], registry
+    )
+
+
+@pytest.mark.parametrize("execution", ["pdf"], indirect=True)
+@pytest.mark.parametrize("document_kind", ["manual@1"], indirect=True)
+def test_neighbour_scope_follows_the_docling_section(docling_bundle):
+    units = {unit.native_ref: unit for unit in docling_bundle[1].units}
+    paragraph, caption = units["#/texts/3"], units["#/texts/7"]
+    assert paragraph.boundary_key == caption.boundary_key
+    assert _same_section(paragraph, caption)
+    assert not _same_section(paragraph, units["#/texts/5"])
+    assert not _same_section(paragraph, units["#/tables/0"])
+
+
+@pytest.mark.parametrize("execution", ["pdf"], indirect=True)
+@pytest.mark.parametrize("document_kind", ["manual@1"], indirect=True)
+def test_docling_boundary_key_is_never_a_paragraph_ref(docling_bundle):
+    assert_boundary_contract(docling_bundle[1])

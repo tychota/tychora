@@ -1,5 +1,6 @@
 from hashlib import sha256
 
+from tests.fixtures.docling import picture_item, retain_export
 from tychora.adapters.docling.mapping import map_document
 from tychora.contracts.artifacts import ArtifactRef
 
@@ -186,65 +187,13 @@ def test_document_validation_rejects_invented_heading_context(field, value):
 
 @pytest.fixture
 def retained_case(execution, rich_capture):
-    import base64
-    import io
-    import json
-    from pathlib import Path
-
-    from tychora.adapters.docling.parser import INVENTORY, DoclingParser
-    from tychora.application.owner import StagedOutput
-    from tychora.configuration.registry import Registry
-    from tychora.contracts.base import FrozenJsonMap
-    from tychora.contracts.identity import canonical_bytes
-
     export, _ = mapping_case()
-    pixels = (
-        Path(__file__).parents[1] / "fixtures/documents/rich-figure.png"
-    ).read_bytes()
-    picture = {
-        "self_ref": "#/pictures/0",
-        "parent": {"$ref": "#/body"},
-        "children": [],
-        "label": "picture",
-        "prov": [],
-        "captions": [],
-        "image": {
-            "uri": "data:image/png;base64," + base64.b64encode(pixels).decode(),
-            "size": {"width": 640.0, "height": 320.0},
-            "dpi": 72,
-            "mimetype": "image/png",
-        },
-    }
-    export["pictures"] = [picture]
+    export["pictures"] = [picture_item()]
     export["body"]["children"].append({"$ref": "#/pictures/0"})
     if execution.format == "docx":
         export["texts"][0]["prov"] = []
         export["pages"] = {}
-    registry = Registry.from_config(execution.config)
-    parser = DoclingParser(
-        execution.owner,
-        execution.registration,
-        Path("/nonexistent-explicit-model-bundle"),
-    )
-    payload = canonical_bytes(export)
-    kind = registry.kinds["manual@1"]
-    assert isinstance(kind, FrozenJsonMap)
-    artifact = execution.owner.run_blocking_sync(
-        lambda: parser._retain(
-            (
-                (
-                    StagedOutput("document.json", "application/json", len(payload)),
-                    io.BytesIO(payload),
-                ),
-            ),
-            rich_capture,
-            execution.config,
-            registry,
-            kind,
-            json.loads(INVENTORY.read_text()),
-        ),
-        execution.ctx,
-    )
+    artifact, registry = retain_export(execution, rich_capture, export)
     return artifact, execution, registry
 
 

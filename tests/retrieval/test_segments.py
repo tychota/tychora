@@ -6,6 +6,7 @@ from tests.helpers.corpus import seed_bundle
 from tests.helpers.eligibility import eligibility_view
 from tests.ingestion.conftest import native_case  # noqa: F401
 from tychora.configuration.resolve import resolve_config
+from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.evidence import (
     CodeLocator,
     DocumentLocator,
@@ -22,7 +23,11 @@ from tychora.retrieval.rerank import (
     RerankFacts,
     RerankMatch,
 )
-from tychora.retrieval.segments import OutputTokenCounter, assemble_segments
+from tychora.retrieval.segments import (
+    OutputTokenCounter,
+    _separate_fragments,
+    assemble_segments,
+)
 
 
 class Counter:
@@ -572,6 +577,25 @@ def test_continuation_context_requires_current_eligible_graph_path(tmp_path):
         .context_excerpts
         == ()
     )
+
+
+def test_table_views_of_one_fragment_are_not_continuations():
+    bundle = seed_bundle("Pump A", kind="manual@1")
+    table = bundle.units[0].model_copy(
+        update={
+            "unit_type": "table",
+            "boundary_key": "table:#/tables/0",
+            "attributes": FrozenJsonMap({"source_refs": ("#/tables/0",)}),
+        }
+    )
+    row = table.model_copy(update={"unit_type": "table_row"})
+    other = table.model_copy(
+        update={"attributes": FrozenJsonMap({"source_refs": ("#/tables/1",)})}
+    )
+    assert not _separate_fragments(table, row)
+    assert _separate_fragments(table, other)
+    assert _separate_fragments(bundle.units[0], bundle.units[0])
+    assert not _separate_fragments(table, bundle.units[0])
 
 
 def test_owned_match_expands_to_paragraph_boundary_without_changing_source(tmp_path):
@@ -1422,7 +1446,7 @@ def test_separator_between_table_cell_fragments_yields_no_fragment():
 
 
 def _document_case(spans):
-    """Docling-shaped units: per-paragraph boundary keys, shared heading paths."""
+    """Docling-shaped units: per-paragraph refs, shared heading paths."""
     from hashlib import sha256
 
     from tychora.contracts.evidence import DocumentLocator
