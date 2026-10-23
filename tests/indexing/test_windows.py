@@ -220,7 +220,7 @@ def test_prepared_extraction_reuses_complete_code_ownership_view(counter) -> Non
             ordinal=ordinal,
             unit_type="symbol",
             native_ref=f"symbol:{ordinal}",
-            boundary_key=path,
+            boundary_key=f"file:{path}",
             text=text,
             text_sha=sha256(text.encode()).hexdigest(),
             locators=(
@@ -473,7 +473,9 @@ def test_retained_code_requires_complete_file_bindings(
     )
     if corruption == "missing_file":
         kept = tuple(
-            unit for unit in bundle.units if unit.boundary_key != binding.source_ref
+            unit
+            for unit in bundle.units
+            if unit.boundary_key != "file:" + binding.source_ref
         )
         kept_ids = {unit.unit_id for unit in kept}
         bundle = _replace_units(bundle, kept).model_copy(
@@ -555,7 +557,7 @@ def test_retained_code_ranges_handle_bom_unicode_and_crlf_without_maps(
         ordinal=0,
         unit_type="code_file",
         native_ref=container_native,
-        boundary_key=path,
+        boundary_key=f"file:{path}",
         text="",
         text_sha=empty_sha,
         citable=False,
@@ -594,7 +596,7 @@ def test_retained_code_ranges_handle_bom_unicode_and_crlf_without_maps(
         ordinal=1,
         unit_type="code",
         native_ref=native_ref,
-        boundary_key=path,
+        boundary_key=f"file:{path}",
         text=text,
         text_sha=text_sha,
         locators=(
@@ -698,7 +700,7 @@ def test_retained_code_ranges_handle_bom_unicode_and_crlf_without_maps(
         ordinal=2,
         unit_type="code",
         native_ref=overlap_native,
-        boundary_key=path,
+        boundary_key=f"file:{path}",
         text=overlap_text,
         text_sha=overlap_sha,
         locators=(

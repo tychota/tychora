@@ -69,7 +69,11 @@ CLASSIFIED_REASONS = {
     },
     "CAPABILITY_MISSING": {"storage.version_unsupported", "native.unavailable"},
     "LIMIT_EXCEEDED": {"evaluation.binding_budget"},
-    "INVALID_REQUEST": {"bench.incomparable", "review.time_naive"},
+    "INVALID_REQUEST": {
+        "bench.incomparable",
+        "review.time_naive",
+        "kind.section_levels_invalid",
+    },
 }
 
 

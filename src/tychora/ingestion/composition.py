@@ -25,6 +25,7 @@ from tychora.contracts.documents import DocumentUnit
 from tychora.contracts.extraction import ExtractionArtifact
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.relationships import RelationshipAssertion, encode_assertions
+from tychora.contracts.sections import kind_heading_levels
 from tychora.contracts.tables import TableFragment
 from tychora.ports.artifacts import Artifacts
 from tychora.ports.execution import ExecutionContext
@@ -421,6 +422,20 @@ def _verified_region_context_ids(
     )
 
 
+def _record_base(
+    parsed: ExtractionArtifact,
+    registry: Registry,
+    kind: Mapping[str, Any],
+    context: DocumentNormalizationContext,
+) -> ExtractionBundle | None:
+    """The record-grouped bundle that source views extend, if the kind has one."""
+    if kind["normalizer"] == "structured_sections@1":
+        return None
+    return normalize_document_records(
+        parsed, parsed.registration.revision.revision_id, registry, context=context
+    )
+
+
 def build_composed_document(
     parsed: ExtractionArtifact,
     registry: Registry,
@@ -456,17 +471,10 @@ def build_composed_document(
         )
         fragments = ()
     else:
-        base = (
-            None
-            if kind["normalizer"] == "structured_sections@1"
-            else normalize_document_records(
-                parsed,
-                parsed.registration.revision.revision_id,
-                registry,
-                context=context,
-            )
+        base = _record_base(parsed, registry, kind, context)
+        bundle, fragments = source_views(
+            parsed, context, base, kind_heading_levels(kind)
         )
-        bundle, fragments = source_views(parsed, context, base)
     resolver = _SelectorResolver(parsed)
     payloads: dict[str, bytes] = {}
     refs: dict[str, ArtifactRef] = {}

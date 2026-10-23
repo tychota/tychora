@@ -28,7 +28,11 @@ from tychora.contracts.extraction import (
     ParsedRecord,
     ParsedUnit,
 )
-from tychora.contracts.sections import ROOT_SECTION_KEY, boundary_key
+from tychora.contracts.sections import (
+    ROOT_SECTION_KEY,
+    boundary_key,
+    kind_heading_levels,
+)
 
 from .sections import (
     ARTICLE_NORMALIZERS,
@@ -65,6 +69,7 @@ def native_placements(
             for unit in units
         ),
         root,
+        kind_heading_levels(kind),
     )
 
 

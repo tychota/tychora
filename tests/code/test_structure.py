@@ -1,7 +1,9 @@
 import json
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
@@ -22,7 +24,12 @@ from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.contracts.acquisition import CapturedFile, CaptureManifest
 from tychora.contracts.base import FrozenJsonMap
-from tychora.contracts.code import CapturedSyntax, CodeRegistration
+from tychora.contracts.code import (
+    CODE_ASSERTION_PROJECTION,
+    CODE_RESOLVER_FINGERPRINT,
+    CapturedSyntax,
+    CodeRegistration,
+)
 from tychora.contracts.corpus import (
     CollectionRow,
     RevisionRow,
@@ -31,6 +38,11 @@ from tychora.contracts.corpus import (
 )
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import digest, extraction_id, revision_id, source_id
+from tychora.contracts.sections import (
+    ROOT_SECTION_KEY,
+    normalizer_definition,
+    section_path_of,
+)
 from tychora.ports.language import Definition, SourceSpan
 
 
@@ -641,3 +653,27 @@ def test_empty_standalone_code_source_still_requires_metadata_pair(tmp_path):
     )
     with pytest.raises(TychoraError, match="requires relative_path and language"):
         store.commit_extraction(bundle)
+
+
+def test_code_units_use_file_scheme(tmp_path):
+    artifacts, registration, parsed = _registration(tmp_path)
+    retained = retain_code_extraction(registration, parsed, registry(), artifacts)
+    bundle = normalize_code(
+        replay_code_extraction(retained.raw_document_ref, registration, artifacts),
+        registry(),
+    )
+    for unit in bundle.units:
+        path = unit.attributes["relative_path"]
+        assert unit.boundary_key == f"file:{path}"
+        assert [
+            (entry.key, entry.level, entry.depth)
+            for entry in section_path_of(unit.attributes, unit.boundary_key)
+        ] == [(ROOT_SECTION_KEY, None, 0), (f"file:{path}", "file", 1)]
+    kind = cast(Mapping[str, Any], registry().kinds["code_file@1"])
+    assert bundle.extraction.normalizer_fingerprint == digest(
+        "code-normalizer-v2",
+        normalizer_definition(kind),
+        registry().schema_digests,
+        CODE_RESOLVER_FINGERPRINT,
+        CODE_ASSERTION_PROJECTION,
+    )

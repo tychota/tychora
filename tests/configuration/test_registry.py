@@ -1,5 +1,8 @@
 """Configuration semantics against real installed and synthetic local packs."""
 
+from collections.abc import Mapping
+from typing import Any, cast
+
 import pytest
 
 from tests.typed_json import json_array, json_number, json_object, json_string
@@ -850,3 +853,33 @@ def test_schema_check_cache_is_bounded(monkeypatch):
         {"bounded@1": {}},
     )
     assert len(calls) == 4
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        [{"pattern": "(", "level": "article"}],
+        [{"pattern": "^A", "level": "paragraph"}],
+        "^Article",
+    ],
+)
+def test_invalid_heading_levels_are_refused_at_load(builtin_config, value):
+    config = changed_config(
+        builtin_config(),
+        lambda data: data["kinds"]["standard@1"].update({"heading_levels": value}),
+    )
+    with pytest.raises(TychoraError) as err:
+        Registry.from_config(config)
+    assert err.value.code == "INVALID_REQUEST"
+    assert err.value.reason == "kind.section_levels_invalid"
+
+
+def test_heading_levels_load_when_valid(builtin_config):
+    config = changed_config(
+        builtin_config(),
+        lambda data: data["kinds"]["standard@1"].update(
+            {"heading_levels": [{"pattern": r"^\d+(\.\d+)*", "level": "clause"}]}
+        ),
+    )
+    kind = cast(Mapping[str, Any], Registry.from_config(config).kinds["standard@1"])
+    assert kind["heading_levels"]

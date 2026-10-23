@@ -26,6 +26,7 @@ from tychora.contracts.identity import canonical_bytes, digest, extraction_id, u
 from tychora.contracts.sections import (
     ROOT_SECTION_KEY,
     HeadingLevel,
+    kind_heading_levels,
     normalizer_definition,
 )
 
@@ -380,7 +381,7 @@ def normalize_document_records(
         kind.get("normalizer_options", {}),
         budget,
     )
-    placements = _group_placements(groups, strategy)
+    placements = _group_placements(groups, strategy, kind_heading_levels(kind))
     units = []
     locators = []
     records = []

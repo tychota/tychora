@@ -280,6 +280,12 @@ _ENTRIES = (
     ),
     Reason(
         "INVALID_REQUEST",
+        "kind.section_levels_invalid",
+        False,
+        "Fix the kind's `heading_levels` or `context_level`: levels are part, chapter, section, article, annex, clause or file.",
+    ),
+    Reason(
+        "INVALID_REQUEST",
         "label.missing",
         False,
         "Fix the gold label: no source, revision or unit matches it in this workspace.",

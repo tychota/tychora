@@ -31,6 +31,7 @@ from tychora.contracts.indexing import (
     PreparedExtraction,
     RepresentationUnit,
 )
+from tychora.contracts.sections import boundary_key
 
 type RepresentationRows = ExtractionBundle | RetainedRepresentationRows
 
@@ -224,7 +225,7 @@ def _retained_code_files(
             or unit.citable
             or unit.text_origin != "source"
             or unit.native_ref != f"{path}#file"
-            or unit.boundary_key != path
+            or unit.boundary_key != boundary_key("file", path)
             or locator.artifact_ref != artifact_ref
             or locator.native_ref != path
             or locator.relative_path != path
@@ -301,7 +302,7 @@ def _validate_locator(
     if (
         locator.native_ref != locator.relative_path
         or unit.text_origin != "source"
-        or unit.boundary_key != retained.relative_path
+        or unit.boundary_key != boundary_key("file", retained.relative_path)
         or unit.attributes.get("relative_path") != retained.relative_path
         or unit.attributes.get("language") != retained.language
         or locator.byte_end - locator.byte_start != local_map.byte_offsets[-1]
