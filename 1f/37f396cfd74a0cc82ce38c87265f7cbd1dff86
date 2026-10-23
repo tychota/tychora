@@ -1,0 +1,38 @@
+quality/baseline.json
+  s_ab847b2c6c265a::t_6df88493171225 290-291
+  s_ab847b2c6c265a::t_66f0df6f3f06e3 612,657,889
+tests/application/test_ingest_stage_cost.py
+  s_ab847b2c6c265a::t_5920f92907e6a3 12
+  s_ab847b2c6c265a::t_cce5e28b1995f5 28-31,34-37
+  s_ab847b2c6c265a::t_bc23648cc40e55 1-6,8-10,13-23,25,38-39
+  s_ab847b2c6c265a::t_a2aaa31f12370a 7,11,24,26-27,32-33
+src/tychora/adapters/sqlite/jobs.py
+  s_ab847b2c6c265a::t_3f3647b730b3ec 490-495
+  s_ab847b2c6c265a::t_a2aaa31f12370a 488,496-498,510-513
+  s_ab847b2c6c265a::t_64e706e31b774b 487,499
+  s_ab847b2c6c265a::t_9ccd4bf4576377 489
+src/tychora/application/sources.py
+  s_ab847b2c6c265a::t_3f3647b730b3ec 859
+tests/application/test_inspection.py
+  s_ab847b2c6c265a::t_a2aaa31f12370a 50-54,78-79
+src/tychora/ports/jobs.py
+  s_ab847b2c6c265a::t_3f3647b730b3ec 48-51
+tests/jobs/test_events.py
+  s_ab847b2c6c265a::t_1a54e3a83ce1ad 279-325
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1f37f396cfd74a0cc82ce38c87265f7cbd1dff86",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
