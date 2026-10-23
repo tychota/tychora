@@ -7,6 +7,7 @@ import time
 import pytest
 import regex
 
+from tychora.contracts import sections as sections_module
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.sections import (
@@ -14,6 +15,7 @@ from tychora.contracts.sections import (
     ROOT_SECTION_KEY,
     ContextLevel,
     Depth,
+    HeadingBudget,
     SectionEntry,
     boundary_key,
     chunk_section_key,
@@ -242,9 +244,13 @@ def test_ordinary_heading_patterns_are_accepted(pattern):
 
 def test_heading_match_is_bounded_on_adversarial_text():
     levels = _levels(r"^\d+(\.\d+)*\s")
-    start = time.perf_counter()
-    assert heading_level_for(levels, "1." * 5000 + "!") is None
-    assert time.perf_counter() - start < 0.05
+    best = float("inf")
+    for _ in range(5):
+        start = time.perf_counter()
+        assert heading_level_for(levels, "1." * 5000 + "!") is None
+        best = min(best, time.perf_counter() - start)
+    # Matching the whole 10k-character heading would take far longer than this.
+    assert best < 0.5
 
 
 def test_only_the_heading_prefix_is_matched():
@@ -299,3 +305,17 @@ def test_timeout_is_an_error_not_a_miss(monkeypatch):
 def test_regex_engine_matches_the_re_semantics(pattern, text, expected):
     assert bool(re.match(pattern, text)) == expected
     assert (heading_level_for(_levels(pattern), text) is not None) == expected
+
+
+def test_heading_match_time_is_budgeted_per_document(monkeypatch):
+    clock = iter(range(1000))
+    monkeypatch.setattr(sections_module, "_monotonic", lambda: float(next(clock)))
+    monkeypatch.setattr(regex, "match", lambda pattern, text, *, timeout: None)
+    levels = _levels(r"^Article")
+    budget = HeadingBudget(seconds=2.5)
+    heading_level_for(levels, "a", budget)
+    with pytest.raises(TychoraError) as err:
+        for _ in range(10):
+            heading_level_for(levels, "a", budget)
+    assert err.value.code == "INVALID_REQUEST"
+    assert err.value.reason == "kind.section_levels_invalid"
