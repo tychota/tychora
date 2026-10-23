@@ -491,17 +491,28 @@ def test_fts_membership_grouping_and_row_writes_leave_the_epoch(populated):
     )
 
 
-def test_known_earlier_checksum_reports_format_old(tmp_path):
-    assert (
-        "5899bf5b00ec52d686602369801491bdc6e50d6e9dd803e790bb1cd32d15cabe"
-        in EARLIER_FORMAT_TWO_CHECKSUMS
-    )
+# Every format-2 0001.sql that main ever shipped, oldest first. Regenerate with:
+#   git log --format=%h origin/main -- src/tychora/resources/migrations/0001.sql
+# then sha256 of `git show <commit>:src/tychora/resources/migrations/0001.sql` for each
+# commit whose DDL carries CHECK(schema_version=2).
+MAIN_FORMAT_TWO_CHECKSUMS = (
+    "5899bf5b00ec52d686602369801491bdc6e50d6e9dd803e790bb1cd32d15cabe",  # e1ed4a8
+    "0a328df5a0dc5ecc1648af4514d367452e76376d26e3413d59a62698696c0100",  # ad776c5
+    "34efa306dd83f828a5d30c0566e9e464817dd291e8d18b05688a3d74daea2f7e",  # 80ab2a1
+    "45e1270ec14e7ded8ad6814837084ee497cf4d5189d51aedb11f13c47677983b",  # ec8c3ce
+    "9190a384d3d9588241a481fe2eb20eff1b9013d338a61ecfb6e5743dabdbf214",  # 7047fb9
+    "793f03cc454083123ce003d41294a389723fc82ba9e0deab0638cd04e8cce404",  # 482452c
+    "2415f138aa1778f80ea655acaf59eeaf7d7c7dc28fa3d983d78222875127c4f1",  # 61902c1
+)
+
+
+@pytest.mark.parametrize("checksum", MAIN_FORMAT_TWO_CHECKSUMS)
+def test_every_earlier_main_checksum_reports_format_old(tmp_path, checksum):
+    assert checksum in EARLIER_FORMAT_TWO_CHECKSUMS
     assert SCHEMA_CHECKSUM not in EARLIER_FORMAT_TWO_CHECKSUMS
     path = tmp_path / "corpus.sqlite3"
     db = open_corpus(path, initialize=True)
-    db.execute(
-        "UPDATE schema_migrations SET checksum=?", (EARLIER_FORMAT_TWO_CHECKSUMS[0],)
-    )
+    db.execute("UPDATE schema_migrations SET checksum=?", (checksum,))
     db.close()
     with pytest.raises(TychoraError) as error:
         open_corpus(path)
@@ -524,20 +535,6 @@ def test_unknown_checksum_reports_schema_mismatch(tmp_path):
     with pytest.raises(TychoraError) as imported:
         open_verified_import(path)
     assert imported.value.reason == "workspace.schema_mismatch"
-
-
-PHASE_TWO_CHECKSUM = "2415f138aa1778f80ea655acaf59eeaf7d7c7dc28fa3d983d78222875127c4f1"
-
-
-def test_phase_two_checksum_reports_format_old(tmp_path):
-    assert PHASE_TWO_CHECKSUM in EARLIER_FORMAT_TWO_CHECKSUMS
-    path = tmp_path / "corpus.sqlite3"
-    db = open_corpus(path, initialize=True)
-    db.execute("UPDATE schema_migrations SET checksum=?", (PHASE_TWO_CHECKSUM,))
-    db.close()
-    with pytest.raises(TychoraError) as error:
-        open_corpus(path)
-    assert error.value.reason == "workspace.format_old"
 
 
 def test_representation_fact_tables_exist(tmp_path):
