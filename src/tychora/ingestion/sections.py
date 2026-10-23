@@ -8,6 +8,7 @@ from tychora.configuration.registry import Registry
 from tychora.contracts.identity import digest
 from tychora.contracts.sections import (
     ROOT_SECTION_KEY,
+    HeadingBudget,
     HeadingLevel,
     SectionEntry,
     boundary_key,
@@ -81,6 +82,7 @@ def place_units(
     open_sections: list[tuple[int, SectionEntry]] = []
     records: dict[str, Placement] = {}
     placements: dict[str, Placement] = {}
+    budget = HeadingBudget()
     for item in items:
         if item.heading_level:
             while open_sections and open_sections[-1][0] >= item.heading_level:
@@ -92,7 +94,7 @@ def place_units(
         elif item.heading_level:
             entry = SectionEntry(
                 key=boundary_key("section", item.native_ref),
-                level=heading_level_for(headings, item.text),
+                level=heading_level_for(headings, item.text, budget),
                 depth=len(path),
             )
             open_sections.append((item.heading_level, entry))

@@ -9,6 +9,7 @@ re-normalizes a document.
 """
 
 import re
+import time
 from collections.abc import Mapping, Sequence
 from importlib import import_module
 from typing import Any, Literal, cast, get_args
@@ -30,6 +31,7 @@ __all__ = [
     "BoundaryScheme",
     "ContextLevel",
     "Depth",
+    "HeadingBudget",
     "HeadingLevel",
     "SectionEntry",
     "SectionLevel",
@@ -57,6 +59,7 @@ DEFAULT_CONTEXT_LEVEL = "depth:1"
 MAX_HEADING_LEVELS = 32
 MAX_HEADING_PATTERN_CHARS = 256
 HEADING_MATCH_SECONDS = 0.25
+HEADING_DOCUMENT_SECONDS = 2.0
 _DEPTH = re.compile(r"depth:([1-9][0-9]{0,2})")
 
 
@@ -249,25 +252,61 @@ def kind_heading_levels(kind: Mapping[str, Any]) -> tuple[HeadingLevel, ...]:
     return parse_heading_levels(kind.get("heading_levels"))
 
 
-def heading_level_for(levels: Sequence[HeadingLevel], text: str) -> SectionLevel | None:
+_monotonic = time.monotonic
+
+
+class HeadingBudget:
+    """Cumulative time one document may spend matching heading patterns."""
+
+    def __init__(self, seconds: float = HEADING_DOCUMENT_SECONDS) -> None:
+        self.seconds = seconds
+        self.spent = 0.0
+
+    def remaining(self) -> float:
+        """Seconds left in the budget."""
+        return self.seconds - self.spent
+
+
+def _too_slow(pattern: str, what: str) -> TychoraError:
+    """The loud refusal for a heading pattern that exceeded its time."""
+    return TychoraError(
+        "INVALID_REQUEST",
+        f"Heading pattern {what}: {pattern!r}",
+        reason="kind.section_levels_invalid",
+    )
+
+
+def heading_level_for(
+    levels: Sequence[HeadingLevel], text: str, budget: HeadingBudget | None = None
+) -> SectionLevel | None:
     """The level of the first pattern matching a heading's text, if any.
 
     Only the first ``MAX_HEADING_PATTERN_CHARS`` characters of a longer heading are
     matched, and each match is limited to ``HEADING_MATCH_SECONDS`` with the
-    ``regex`` engine, which bounds the work any accepted pattern can do. A pattern
-    that exceeds the limit fails the normalization; it never counts as no match.
+    ``regex`` engine, which bounds the work any accepted pattern can do. A
+    ``budget`` additionally bounds the cumulative time across a whole document's
+    headings. A pattern that exceeds either limit fails the normalization; it never
+    counts as no match.
     """
     head = text[:MAX_HEADING_PATTERN_CHARS]
     for item in levels:
+        timeout = HEADING_MATCH_SECONDS
+        if budget is not None:
+            if budget.remaining() <= 0:
+                raise _too_slow(item.pattern, "exhausted the document time budget")
+            timeout = min(timeout, budget.remaining())
+        started = _monotonic()
         try:
-            if regex.match(item.pattern, head, timeout=HEADING_MATCH_SECONDS):
-                return item.level
+            matched = regex.match(item.pattern, head, timeout=timeout)
         except TimeoutError:
-            raise TychoraError(
-                "INVALID_REQUEST",
-                f"Heading pattern took too long to match: {item.pattern!r}",
-                reason="kind.section_levels_invalid",
-            ) from None
+            raise _too_slow(item.pattern, "took too long to match") from None
+        finally:
+            if budget is not None:
+                budget.spent += _monotonic() - started
+        if matched:
+            return item.level
+    if budget is not None and budget.remaining() <= 0:
+        raise _too_slow("", "exhausted the document time budget")
     return None
 
 
