@@ -2,12 +2,13 @@
 
 import codecs
 import weakref
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from itertools import pairwise
-from typing import Any, cast
+from typing import Any, NamedTuple, cast
 
 from tychora.contracts.code_storage import CodeFileDescriptor
 from tychora.contracts.corpus import (
@@ -27,13 +28,21 @@ from tychora.contracts.evidence import (
 )
 from tychora.contracts.identity import canonical_bytes, digest, unit_id
 from tychora.contracts.indexing import (
+    IntervalRow,
     OwnedInterval,
+    OwnerDependencies,
     PreparedExtraction,
+    RepresentationFacts,
     RepresentationUnit,
+    dependency_digest,
 )
 from tychora.contracts.sections import boundary_key
 
+from .intervals import overlapping_pairs
+
 type RepresentationRows = ExtractionBundle | RetainedRepresentationRows
+type _LocatorPair = tuple[EvidenceUnit, TextLocator | CodeLocator]
+type _PartPair = tuple[str, DocumentSourcePart]
 
 
 @dataclass(frozen=True)
@@ -44,9 +53,8 @@ class _RetainedIndex:
     asset_owners: Mapping[str, frozenset[str]]
     code_maps: Mapping[str, "_LocalCodeMap"]
     document_parts: Mapping[str, tuple[DocumentSourcePart, ...]]
-    source_locators: Mapping[
-        tuple[str, str, str], tuple[tuple[EvidenceUnit, TextLocator | CodeLocator], ...]
-    ]
+    locator_overlaps: Mapping[str, tuple[_LocatorPair, ...]]
+    part_overlaps: Mapping[tuple[str, int], tuple[_PartPair, ...]]
 
 
 @dataclass(frozen=True)
@@ -545,6 +553,7 @@ def _build_bundle_index(bundle: RepresentationRows) -> _RetainedIndex:
         raise ValueError("Duplicate canonical asset identity")
     proxies = _validated_proxies(bundle, units, assets)
     asset_owners = _validated_asset_owners(bundle, units, assets)
+    document_parts = _validated_documents(bundle)
     return _RetainedIndex(
         units=units,
         assets=assets,
@@ -554,8 +563,9 @@ def _build_bundle_index(bundle: RepresentationRows) -> _RetainedIndex:
             for asset_id, owner_ids in asset_owners.items()
         },
         code_maps=code_maps,
-        document_parts=_validated_documents(bundle),
-        source_locators=_source_locators(units),
+        document_parts=document_parts,
+        locator_overlaps=_locator_overlaps(units),
+        part_overlaps=_part_overlaps(document_parts),
     )
 
 
@@ -701,22 +711,72 @@ def _source_domain(locator: object) -> tuple[str, str, str] | None:
     return None
 
 
-def _source_locators(
+def _swept[K, V](
+    domains: Iterable[Sequence[tuple[K, int, int, V]]],
+) -> dict[K, tuple[V, ...]]:
+    """For each key, the values of every same-domain range overlapping one of its ranges.
+
+    Each domain holds ``(key, start, end, value)`` entries. A key's own nonempty
+    ranges count as overlapping it. One sort-and-sweep per domain finds the pairs;
+    each key's values keep their domain order, the order a pairwise scan yields.
+    """
+    tables = [tuple(entries) for entries in domains]
+    hits: dict[K, list[tuple[int, int]]] = defaultdict(list)
+    for number, entries in enumerate(tables):
+        for position, (key, start, end, _) in enumerate(entries):
+            if start < end:
+                hits[key].append((number, position))
+        ranges = [(start, end) for _, start, end, _ in entries]
+        for left, right in overlapping_pairs(ranges):
+            hits[entries[left][0]].append((number, right))
+            hits[entries[right][0]].append((number, left))
+    return {
+        key: tuple(tables[number][position][3] for number, position in sorted(found))
+        for key, found in hits.items()
+    }
+
+
+def _locator_overlaps(
     units: Mapping[str, EvidenceUnit],
-) -> dict[
-    tuple[str, str, str], tuple[tuple[EvidenceUnit, TextLocator | CodeLocator], ...]
-]:
-    """Group source locators by domain in unit order, so ownership scans one file."""
-    grouped: dict[
-        tuple[str, str, str], list[tuple[EvidenceUnit, TextLocator | CodeLocator]]
-    ] = defaultdict(list)
+) -> dict[str, tuple[_LocatorPair, ...]]:
+    """For each unit, every same-domain source locator overlapping one of its own."""
+    domains: dict[tuple[str, str, str], list[tuple[str, int, int, _LocatorPair]]] = (
+        defaultdict(list)
+    )
     for owner in units.values():
         for candidate in owner.locators:
             domain = _source_domain(candidate)
             if domain is not None:
                 assert isinstance(candidate, (TextLocator, CodeLocator))
-                grouped[domain].append((owner, candidate))
-    return {domain: tuple(items) for domain, items in grouped.items()}
+                domains[domain].append(
+                    (
+                        owner.unit_id,
+                        candidate.char_start,
+                        candidate.char_end,
+                        (owner, candidate),
+                    )
+                )
+    return _swept(domains.values())
+
+
+def _part_overlaps(
+    document_parts: Mapping[str, tuple[DocumentSourcePart, ...]],
+) -> dict[tuple[str, int], tuple[_PartPair, ...]]:
+    """For each unit part, every same-domain part overlapping it, itself included."""
+    domains: dict[str, list[tuple[tuple[str, int], int, int, _PartPair]]] = defaultdict(
+        list
+    )
+    for owner_id, parts in document_parts.items():
+        for position, part in enumerate(parts):
+            domains[part.source_domain].append(
+                (
+                    (owner_id, position),
+                    part.source_start,
+                    part.source_end,
+                    (owner_id, part),
+                )
+            )
+    return _swept(domains.values())
 
 
 def project_code_excerpt_locator(
@@ -779,10 +839,8 @@ def _locator_intervals(
     if len(locators) != 1:
         raise ValueError("Text/code representation requires one source locator")
     locator = locators[0]
-    domain = _source_domain(locator)
-    assert domain is not None
     result: list[tuple[int, int, str]] = []
-    for owner, candidate in index.source_locators.get(domain, ()):
+    for owner, candidate in index.locator_overlaps.get(target.unit_id, ()):
         left = max(locator.char_start, candidate.char_start)
         right = min(locator.char_end, candidate.char_end)
         if left < right:
@@ -833,32 +891,22 @@ def _document_intervals(
     if target_parts is None:
         return None
     result: list[tuple[int, int, str]] = []
-    for part in target_parts:
-        for owner_id, candidates in index.document_parts.items():
+    for position, part in enumerate(target_parts):
+        for owner_id, candidate in index.part_overlaps.get(
+            (target.unit_id, position), ()
+        ):
             owner = index.units[owner_id]
-            for candidate in candidates:
-                if candidate.source_domain != part.source_domain:
-                    continue
-                left = max(part.source_start, candidate.source_start)
-                right = min(part.source_end, candidate.source_end)
-                if left < right:
-                    target_start = part.unit_start + left - part.source_start
-                    owner_start = candidate.unit_start + left - candidate.source_start
-                    length = right - left
-                    if (
-                        target.text[target_start : target_start + length]
-                        != owner.text[owner_start : owner_start + length]
-                    ):
-                        raise ValueError(
-                            "Retained document source slices differ across owners"
-                        )
-                    result.append(
-                        (
-                            target_start,
-                            target_start + length,
-                            owner.unit_id,
-                        )
-                    )
+            left = max(part.source_start, candidate.source_start)
+            right = min(part.source_end, candidate.source_end)
+            target_start = part.unit_start + left - part.source_start
+            owner_start = candidate.unit_start + left - candidate.source_start
+            length = right - left
+            if (
+                target.text[target_start : target_start + length]
+                != owner.text[owner_start : owner_start + length]
+            ):
+                raise ValueError("Retained document source slices differ across owners")
+            result.append((target_start, target_start + length, owner.unit_id))
     return result
 
 
@@ -867,23 +915,34 @@ def _partition(
     revision_id: str,
     overlaps: list[tuple[int, int, str]],
 ) -> tuple[OwnedInterval, ...]:
+    """Cut the unit text at every owner boundary; each piece depends on the owners open over it.
+
+    One sweep over the sorted boundaries opens and closes owners, so the cost is
+    the boundaries' sort plus the size of the dependency sets produced.
+    """
+    opening: dict[int, list[str]] = defaultdict(list)
+    closing: dict[int, list[str]] = defaultdict(list)
     boundaries = {0, len(unit.text)}
-    for start, end, _ in overlaps:
+    for start, end, owner in overlaps:
         if not 0 <= start < end <= len(unit.text):
             raise ValueError("Canonical owner interval exceeds unit text")
         boundaries.update((start, end))
-    ordered = sorted(boundaries)
+        opening[start].append(owner)
+        closing[end].append(owner)
+    open_owners: dict[str, int] = defaultdict(int)
     intervals = []
-    for start, end in pairwise(ordered):
-        owners = {
-            owner for left, right, owner in overlaps if left < end and start < right
-        }
-        owners.add(unit.unit_id)
+    for start, end in pairwise(sorted(boundaries)):
+        for owner in closing.get(start, ()):
+            open_owners[owner] -= 1
+            if not open_owners[owner]:
+                del open_owners[owner]
+        for owner in opening.get(start, ()):
+            open_owners[owner] += 1
         intervals.append(
             OwnedInterval(
                 char_start=start,
                 char_end=end,
-                dependency_ids=frozenset({revision_id, *owners}),
+                dependency_ids=frozenset({revision_id, unit.unit_id, *open_owners}),
             )
         )
     return tuple(intervals)
@@ -1065,4 +1124,167 @@ def prepare_extraction(bundle: RepresentationRows) -> PreparedExtraction:
                 bundle.units, key=lambda item: (item.ordinal, item.unit_id)
             )
         ),
+    )
+
+
+class ChunkSpan(NamedTuple):
+    """The range one chunk covers in its unit."""
+
+    chunk_id: str
+    unit_id: str
+    char_start: int
+    char_end: int
+
+
+def _source_ranges(
+    units: Iterable[EvidenceUnit],
+) -> Iterator[tuple[tuple[str, str], int, int, str]]:
+    """Each text or code locator as its source key, its range and its unit."""
+    for unit in units:
+        for locator in unit.locators:
+            if isinstance(locator, (TextLocator, CodeLocator)):
+                key = (locator.artifact_ref, locator.native_ref)
+                yield key, locator.char_start, locator.char_end, unit.unit_id
+
+
+def _point_owners(units: Iterable[EvidenceUnit]) -> dict[str, set[str]]:
+    """Units whose source range strictly contains the position of an empty locator.
+
+    Only empty units read these owners, and an empty unit's locators are empty.
+    """
+    spans: dict[tuple[str, str], list[tuple[int, int, str]]] = defaultdict(list)
+    points: list[tuple[tuple[str, str], int, str]] = []
+    for key, start, end, owner_id in _source_ranges(units):
+        if start < end:
+            spans[key].append((start, end, owner_id))
+        else:
+            points.append((key, start, owner_id))
+    ordered = {key: sorted(items) for key, items in spans.items()}
+    starts = {key: [start for start, _, _ in items] for key, items in ordered.items()}
+    owners: dict[str, set[str]] = defaultdict(set)
+    for key, point, point_id in points:
+        before = bisect_left(starts.get(key, []), point)
+        owners[point_id].update(
+            owner for _, end, owner in ordered.get(key, [])[:before] if end > point
+        )
+    return owners
+
+
+def _unit_dependencies(
+    unit: EvidenceUnit,
+    ownership: tuple[OwnedInterval, ...],
+    revision_id: str,
+    proxy: AssetProxyRow | None,
+    point_owners: Mapping[str, set[str]],
+) -> frozenset[str]:
+    """A unit depends on its intervals' owners, else on its declared or containing owners."""
+    covered = frozenset(
+        dep for interval in ownership for dep in interval.dependency_ids
+    )
+    if covered:
+        return covered
+    declared = unit.attributes.get(
+        "overlapping_owner_ids", unit.attributes.get("range_dependency_ids")
+    )
+    owners = (
+        set(cast(tuple[str, ...], declared))
+        if declared is not None
+        else set(point_owners.get(unit.unit_id) or {unit.unit_id})
+    )
+    owners.add(unit.unit_id)
+    if proxy is not None:
+        owners.add(proxy.asset_id)
+        owners.update(proxy.required_unit_ids)
+    return frozenset({revision_id, *owners})
+
+
+def _covered_dependencies(
+    ownership: tuple[OwnedInterval, ...], ends: Sequence[int], start: int, end: int
+) -> frozenset[str]:
+    """The dependencies of the intervals a range touches; ownership partitions in order.
+
+    ``ends`` holds each interval's end, so the first touched interval is a bisection.
+    """
+    first = bisect_right(ends, start)
+    covered: set[str] = set()
+    for interval in ownership[first:]:
+        if interval.char_start >= end:
+            break
+        covered.update(interval.dependency_ids)
+    return frozenset(covered)
+
+
+def _interval_rows(
+    ownership: Mapping[str, tuple[OwnedInterval, ...]],
+    owners: dict[str, frozenset[str]],
+) -> list[IntervalRow]:
+    """One row per owned interval; its dependency set is added as an owner keyed by digest."""
+    rows = []
+    for owner_id, owned in ownership.items():
+        for interval in owned:
+            key = dependency_digest(interval.dependency_ids)
+            owners.setdefault(key, interval.dependency_ids)
+            rows.append(
+                IntervalRow(
+                    unit_id=owner_id,
+                    char_start=interval.char_start,
+                    char_end=interval.char_end,
+                    dependency_digest=key,
+                )
+            )
+    return rows
+
+
+def representation_facts(
+    rows: RepresentationRows,
+    prepared: PreparedExtraction,
+    chunks: Iterable[ChunkSpan],
+) -> RepresentationFacts:
+    """Every dependency set the units, chunks, assets and intervals of one extraction need.
+
+    A chunk depends on the owners of the intervals it covers; an asset on itself
+    and every unit linked to it; an interval's set is stored under its digest.
+    """
+    revision = rows.revision.revision_id
+    ownership = {item.unit.unit_id: item.ownership for item in prepared.units}
+    proxies = {proxy.proxy_unit_id: proxy for proxy in rows.proxies}
+    points = _point_owners(rows.units)
+    units = {
+        unit.unit_id: _unit_dependencies(
+            unit, ownership[unit.unit_id], revision, proxies.get(unit.unit_id), points
+        )
+        for unit in rows.units
+    }
+    owners: dict[str, frozenset[str]] = dict(units)
+    ends = {
+        owner_id: [interval.char_end for interval in owned]
+        for owner_id, owned in ownership.items()
+    }
+    for chunk in chunks:
+        owners[chunk.chunk_id] = (
+            _covered_dependencies(
+                ownership[chunk.unit_id],
+                ends[chunk.unit_id],
+                chunk.char_start,
+                chunk.char_end,
+            )
+            or units[chunk.unit_id]
+        )
+    linked: dict[str, set[str]] = defaultdict(set)
+    for link in rows.unit_assets:
+        linked[link.asset_id].add(link.unit_id)
+    for asset in rows.assets:
+        owners[asset.asset_id] = frozenset(
+            {revision, asset.asset_id}.union(
+                *(units[unit_id] for unit_id in linked[asset.asset_id])
+            )
+        )
+    intervals = _interval_rows(ownership, owners)
+    return RepresentationFacts(
+        extraction_id=rows.extraction.extraction_id,
+        dependencies=tuple(
+            OwnerDependencies(owner_id=owner, dependency_ids=deps)
+            for owner, deps in sorted(owners.items())
+        ),
+        intervals=tuple(intervals),
     )

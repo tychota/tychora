@@ -38,7 +38,11 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.identity import digest
 from tychora.contracts.publication import RetainedBatch, RetainedSlot, SnapshotView
-from tychora.indexing.representations import prepare_extraction
+from tychora.indexing.representations import (
+    ChunkSpan,
+    prepare_extraction,
+    representation_facts,
+)
 from tychora.retrieval.eligibility import (
     AssetFact,
     ChunkFact,
@@ -56,23 +60,6 @@ def _integrity(
     message: str, reason: str = "canonical.binding_mismatch"
 ) -> TychoraError:
     return TychoraError("INTEGRITY_ERROR", message, reason=reason)
-
-
-def _owners_by_locator(
-    rows: list[tuple[str, str, str, int, int]],
-) -> dict[str, set[str]]:
-    """Every overlapping original range owner, including descendants."""
-    owners: dict[str, set[str]] = defaultdict(set)
-    for uid, artifact, source, start, end in rows:
-        for other, other_artifact, other_source, left, right in rows:
-            if (
-                artifact == other_artifact
-                and source == other_source
-                and start < right
-                and left < end
-            ):
-                owners[uid].add(other)
-    return owners
 
 
 def _rows(db, query: str, args: tuple[str, ...] = ()) -> list[dict]:
@@ -495,64 +482,24 @@ def read_eligibility_facts(
                 )
                 revision_facets.append((member.revision_id, key, value))
             unit_rows = db.execute(
-                "SELECT unit_id,unit_type,citable,attributes_json FROM evidence_units WHERE extraction_id=?",
+                "SELECT unit_id,unit_type,citable FROM evidence_units WHERE extraction_id=?",
                 (member.extraction_id,),
             ).fetchall()
-            proxy_rows = {
-                uid: asset
-                for uid, asset in db.execute(
-                    "SELECT proxy_unit_id,asset_id FROM asset_proxies "
-                    "WHERE proxy_unit_id IN (SELECT unit_id FROM evidence_units WHERE extraction_id=?)",
-                    (member.extraction_id,),
-                )
-            }
-            locator_rows: list[tuple[str, str, str, int, int]] = []
-            for uid, artifact, source, details in db.execute(
-                "SELECT l.unit_id,l.artifact_sha,l.source_ref,l.details_json FROM locators l "
-                "JOIN evidence_units u USING(unit_id) WHERE u.extraction_id=?",
+            chunk_rows = db.execute(
+                "SELECT chunk_id,unit_id,context_group_key,char_start,char_end FROM chunks WHERE extraction_id=?",
                 (member.extraction_id,),
-            ):
-                locator = json.loads(details)
-                if locator.get("type") in ("text", "code"):
-                    locator_rows.append(
-                        (
-                            uid,
-                            artifact,
-                            source,
-                            locator["char_start"],
-                            locator["char_end"],
-                        )
-                    )
-            overlap = _owners_by_locator(locator_rows)
-            prepared = prepare_extraction(retained_rows(store, member))
-            ownership = {item.unit.unit_id: item.ownership for item in prepared.units}
-            attributes = {uid: json.loads(raw) for uid, _, _, raw in unit_rows}
-            unit_deps: dict[str, frozenset[str]] = {}
-            for uid, unit_type, citable, _ in unit_rows:
-                attrs = attributes[uid]
-                declared = attrs.get(
-                    "overlapping_owner_ids", attrs.get("range_dependency_ids")
-                )
-                owners = (
-                    set(declared) if declared is not None else overlap.get(uid, {uid})
-                )
-                owners.add(uid)
-                proxy_asset = proxy_rows.get(uid)
-                if proxy_asset is not None:
-                    owners.add(proxy_asset)
-                    owners.update(
-                        child
-                        for (child,) in db.execute(
-                            "SELECT required_unit_id FROM asset_proxy_dependencies WHERE proxy_unit_id=?",
-                            (uid,),
-                        )
-                    )
-                deps = frozenset(
-                    dependency
-                    for interval in ownership[uid]
-                    for dependency in interval.dependency_ids
-                ) or frozenset({member.revision_id, *owners})
-                unit_deps[uid] = deps
+            ).fetchall()
+            retained = retained_rows(store, member)
+            dependencies = representation_facts(
+                retained,
+                prepare_extraction(retained),
+                (
+                    ChunkSpan(chunk, uid, start, end)
+                    for chunk, uid, _, start, end in chunk_rows
+                ),
+            ).dependency_map()
+            proxy_assets = {p.proxy_unit_id: p.asset_id for p in retained.proxies}
+            for uid, unit_type, citable in unit_rows:
                 facets = []
                 for key, text, number, boolean in db.execute(
                     "SELECT facet_key,text_value,number_value,boolean_value FROM facet_values WHERE unit_id=?",
@@ -576,34 +523,28 @@ def read_eligibility_facts(
                         unit_type,
                         store.review_state(ReviewTarget(unit_id=uid)),
                         bool(citable),
-                        deps,
-                        proxy_asset_id=proxy_asset,
+                        dependencies[uid],
+                        proxy_asset_id=proxy_assets.get(uid),
                         facets=tuple(facets),
                     )
                 )
-            asset_owners: dict[str, set[str]] = defaultdict(set)
             source_asset_owners: dict[str, set[str]] = defaultdict(set)
-            for uid, aid, role in db.execute(
-                "SELECT ua.unit_id,ua.asset_id,ua.role FROM unit_assets ua JOIN evidence_units u USING(unit_id) "
-                "WHERE u.extraction_id=?",
+            for uid, aid in db.execute(
+                "SELECT ua.unit_id,ua.asset_id FROM unit_assets ua JOIN evidence_units u USING(unit_id) "
+                "WHERE u.extraction_id=? AND ua.role='source'",
                 (member.extraction_id,),
             ):
-                asset_owners[aid].add(uid)
-                if role == "source":
-                    source_asset_owners[aid].add(uid)
+                source_asset_owners[aid].add(uid)
             for (aid,) in db.execute(
                 "SELECT asset_id FROM assets WHERE extraction_id=?",
                 (member.extraction_id,),
             ):
-                deps = {member.revision_id, aid}
-                for uid in asset_owners.get(aid, ()):
-                    deps.update(unit_deps[uid])
                 asset_facts.append(
                     AssetFact(
                         aid,
                         member.revision_id,
                         store.review_state(ReviewTarget(asset_id=aid)),
-                        frozenset(deps),
+                        dependencies[aid],
                         source_owner_ids=frozenset(source_asset_owners.get(aid, ())),
                     )
                 )
@@ -614,18 +555,9 @@ def read_eligibility_facts(
                     (member.extraction_id,),
                 )
             }
-            for chunk_id, uid, group, start, end in db.execute(
-                "SELECT chunk_id,unit_id,context_group_key,char_start,char_end FROM chunks WHERE extraction_id=?",
-                (member.extraction_id,),
-            ):
-                interval_deps = frozenset(
-                    dependency
-                    for interval in ownership[uid]
-                    if interval.char_start < end and start < interval.char_end
-                    for dependency in interval.dependency_ids
-                )
+            for chunk_id, uid, group, start, _end in chunk_rows:
                 chunk_facts.append(
-                    ChunkFact(chunk_id, uid, interval_deps or unit_deps[uid], group)
+                    ChunkFact(chunk_id, uid, dependencies[chunk_id], group)
                 )
                 chunk_order[chunk_id] = (
                     unit_ordinals[uid],
