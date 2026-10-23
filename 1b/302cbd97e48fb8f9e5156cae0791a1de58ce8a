@@ -1,0 +1,24 @@
+src/tychora/contracts/sections.py
+  s_ab847b2c6c265a::t_0b5aa265bed852 319
+  s_ab847b2c6c265a::t_aec897ce28a7ad 260-265,270,274-275
+  s_ab847b2c6c265a::t_c03452f18b70a2 63
+  s_ab847b2c6c265a::t_7cb91446c96898 300-301
+tests/contracts/test_sections.py
+  s_ab847b2c6c265a::t_812a6a61c29d64 322-334
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1b302cbd97e48fb8f9e5156cae0791a1de58ce8a",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "unknown"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
