@@ -276,3 +276,50 @@ def test_result_damage_without_retirement_is_not_a_retention_limitation(jobs, da
     with pytest.raises(TychoraError) as error, jobs.artifacts.open_verified(result):
         pytest.fail("Damaged result bytes were readable")
     assert error.value.code == "INTEGRITY_ERROR"
+
+
+def test_mark_emits_ordered_stage_events_without_verifying_bindings(jobs, monkeypatch):
+    job = accepted(jobs)
+    jobs.repo.start(job.id)
+    jobs.repo.stage(job.id, "parse")
+    calls = []
+    original = type(jobs.repo)._verify_bindings
+
+    def counting(self, status):
+        calls.append(status.id)
+        return original(self, status)
+
+    monkeypatch.setattr(type(jobs.repo), "_verify_bindings", counting)
+    for name in ("windowing", "normalize_commit", "embedding"):
+        jobs.repo.mark(job.id, name)
+    assert calls == []
+    events = jobs.repo.events_after(job.id, 0, 100)
+    assert [event.stage for event in events[-3:]] == [
+        "windowing",
+        "normalize_commit",
+        "embedding",
+    ]
+    assert all(event.state == "running" for event in events[-3:])
+    stamps = [event.timestamp for event in events]
+    assert stamps == sorted(stamps)
+    assert [event.sequence for event in events] == list(range(1, len(events) + 1))
+
+
+def test_mark_observes_cancellation(jobs):
+    job = accepted(jobs)
+    jobs.repo.start(job.id)
+    jobs.repo.stage(job.id, "parse")
+    jobs.repo.cancel(job.id)
+    with pytest.raises(TychoraError) as error:
+        jobs.repo.mark(job.id, "windowing")
+    assert error.value.code == "CANCELLED"
+    assert jobs.repo.get(job.id).state == "cancelled"
+
+
+def test_mark_requires_a_running_job_and_a_valid_key(jobs):
+    job = accepted(jobs)
+    with pytest.raises(TychoraError):
+        jobs.repo.mark(job.id, "windowing")
+    jobs.repo.start(job.id)
+    with pytest.raises(TychoraError):
+        jobs.repo.mark(job.id, "__tychora__/retry")

@@ -484,6 +484,19 @@ class JobRepository:
         return self.get(job_id)
 
     def stage(self, job_id: str, stage: str) -> None:
+        """Emit a real stage event after verifying the job's bindings."""
+        self._stage(job_id, stage, verify=True)
+
+    def mark(self, job_id: str, stage: str) -> None:
+        """Emit a sub-stage event inside the running stage.
+
+        Observes cancellation like ``stage`` but skips the binding verification:
+        the enclosing real stage already verified the bindings and leases pin them.
+        """
+        self._stage(job_id, stage, verify=False)
+
+    def _stage(self, job_id: str, stage: str, *, verify: bool) -> None:
+        """Emit a stage event, observing cancellation; optionally verify bindings."""
         if not stage or stage.startswith("__tychora__/"):
             raise TychoraError("INVALID_REQUEST", "Invalid stage key")
         with self._write():
@@ -494,9 +507,10 @@ class JobRepository:
             else:
                 if status.state != "running":
                     _fail("Stage requires a running job")
-                if stage != "acquire" and status.captured_inputs is None:
-                    _fail("Commit captured inputs before processing stages")
-                self._verify_bindings(status)
+                if verify:
+                    if stage != "acquire" and status.captured_inputs is None:
+                        _fail("Commit captured inputs before processing stages")
+                    self._verify_bindings(status)
                 self._emit(job_id, stage)
         if cancelled:
             raise TychoraError("CANCELLED", "Job was cancelled")

@@ -287,8 +287,8 @@
     },
     "duplication_tests": {
       "direction": "lower",
-      "measured_at": "bdf716f87bcf",
-      "value": 4.26
+      "measured_at": "3287787b2056",
+      "value": 4.23
     },
     "duplication_typescript": {
       "direction": "lower",
@@ -609,7 +609,7 @@
     },
     "missing_docstrings": {
       "direction": "lower",
-      "measured_at": "bdf716f87bcf",
+      "measured_at": "3287787b2056",
       "per_key": {
         "src/tychora/__main__.py::D100": 1,
         "src/tychora/adapters/chroma/index.py::D102": 5,
@@ -654,7 +654,7 @@
         "src/tychora/adapters/sqlite/history.py::D101": 1,
         "src/tychora/adapters/sqlite/history.py::D102": 2,
         "src/tychora/adapters/sqlite/jobs.py::D101": 1,
-        "src/tychora/adapters/sqlite/jobs.py::D102": 16,
+        "src/tychora/adapters/sqlite/jobs.py::D102": 15,
         "src/tychora/adapters/sqlite/lexical.py::D101": 1,
         "src/tychora/adapters/sqlite/lexical.py::D102": 1,
         "src/tychora/adapters/sqlite/migrations.py::D103": 2,
@@ -886,7 +886,7 @@
         "src/tychora/retrieval/segments.py::D101": 1,
         "src/tychora/retrieval/segments.py::D102": 1
       },
-      "value": 999
+      "value": 998
     },
     "modules_in_import_cycles": {
       "direction": "lower",

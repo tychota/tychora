@@ -47,8 +47,11 @@ class Counter:
 
 
 @asynccontextmanager
-async def _published(tmp_path: Path):
-    """A workspace with one published synthetic manual and its first unit id."""
+async def _published(tmp_path: Path, before_add=None):
+    """A workspace with one published synthetic manual and its first unit id.
+
+    ``before_add`` is called once the workspace is open and before the manual is added.
+    """
     settings = tmp_path / "workspace.toml"
     settings.write_text('schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n')
     config = resolve_config(settings, "test", {})
@@ -72,6 +75,8 @@ async def _published(tmp_path: Path):
             ),
             ExecutionContext(),
         )
+        if before_add is not None:
+            before_add()
         service = SourceService(
             owner,
             ProjectionCoordinator(
