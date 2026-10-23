@@ -856,7 +856,7 @@ class SourceService:
                 base,
                 attempt.handle,
                 ctx,
-                on_stage=lambda stage: attempt.jobs.stage(attempt.handle.id, stage),
+                on_stage=lambda stage: attempt.jobs.mark(attempt.handle.id, stage),
             )
             leases.enter_context(store.leases.pin(frozenset(prepared.reused_batch_ids)))
             return base, prepared
