@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from hashlib import sha256
 
 import pytest
 from pydantic import ValidationError
@@ -6,8 +7,10 @@ from pydantic import ValidationError
 from tests.helpers.corpus import seed_bundle
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
+from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.identity import chunk_id, digest
-from tychora.contracts.indexing import SearchWindow
+from tychora.contracts.indexing import OwnedInterval, RepresentationUnit, SearchWindow
+from tychora.contracts.sections import Depth, SectionEntry, dump_section_path
 from tychora.indexing.groups import build_groups, representation_input_sha
 from tychora.indexing.representations import prepare_extraction
 from tychora.indexing.windows import window_unit
@@ -54,6 +57,7 @@ def _window(
         tokenizer_id=tokenizer_id,
         chunker_fingerprint=fingerprint,
         boundary_key=boundary,
+        context_key=boundary,
         context_group_key=digest("context-group-v1", extraction, boundary),
         dependency_ids=dependencies or frozenset({revision, unit}),
         title=title,
@@ -347,3 +351,85 @@ def test_group_counts_capsule_and_windows_with_verified_provider_tokenizer(
     assert group.token_count == sum(
         voyage_counter.count(text) for text in group.input_texts
     )
+
+
+def _sectioned(
+    name: str, ordinal: int, path: tuple[SectionEntry, ...]
+) -> RepresentationUnit:
+    text = f"Paragraph {name} of the manual."
+    unit = EvidenceUnit(
+        unit_id=f"unit-{name}",
+        extraction_id="extraction-a",
+        parent_id=None,
+        ordinal=ordinal,
+        unit_type="paragraph",
+        native_ref=f"block:{ordinal}",
+        boundary_key=path[-1].key,
+        text=text,
+        text_sha=sha256(text.encode()).hexdigest(),
+        locators=(),
+        attributes=FrozenJsonMap({"section_path": dump_section_path(path)}),
+    )
+    return RepresentationUnit(
+        unit=unit,
+        revision_id="revision-a",
+        title="Synthetic Manual",
+        kind_id="manual@1",
+        ownership=(
+            OwnedInterval(
+                char_start=0,
+                char_end=len(text),
+                dependency_ids=frozenset({"revision-a", unit.unit_id}),
+            ),
+        ),
+    )
+
+
+ROOT = SectionEntry(key="section:#root", depth=0)
+CHAPTER = SectionEntry(key="section:block:0", level="chapter", depth=1)
+
+
+def _two_sections(level_a=None, level_b=None):
+    return (
+        _sectioned(
+            "a",
+            1,
+            (
+                ROOT,
+                CHAPTER,
+                SectionEntry(key="section:block:1", level=level_a, depth=2),
+            ),
+        ),
+        _sectioned(
+            "b",
+            3,
+            (
+                ROOT,
+                CHAPTER,
+                SectionEntry(key="section:block:2", level=level_b, depth=2),
+            ),
+        ),
+    )
+
+
+def test_context_group_spans_top_level_chapter_by_default(config_factory):
+    counter = ExactCounter("voyage-context-4")
+    windows = tuple(w for rep in _two_sections() for w in window_unit(rep, counter))
+    assert len({w.boundary_key for w in windows}) == 2
+    assert {w.context_key for w in windows} == {"section:block:0"}
+    (group,) = build_groups(windows, config_factory(), counter)
+    assert group.window_ids == tuple(w.chunk_id for w in windows)
+
+
+def test_context_level_article_groups_per_article(config_factory):
+    counter = ExactCounter("voyage-context-4")
+    reps = _two_sections("article", "article")
+    windows = tuple(
+        w for rep in reps for w in window_unit(rep, counter, context_level="article")
+    )
+    assert {w.context_key for w in windows} == {"section:block:1", "section:block:2"}
+    assert len(build_groups(windows, config_factory(), counter)) == 2
+    chapter = tuple(
+        w for rep in reps for w in window_unit(rep, counter, context_level=Depth(n=1))
+    )
+    assert len({w.context_group_key for w in chapter}) == 1

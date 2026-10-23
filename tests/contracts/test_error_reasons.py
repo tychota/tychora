@@ -73,6 +73,7 @@ CLASSIFIED_REASONS = {
         "bench.incomparable",
         "review.time_naive",
         "kind.section_levels_invalid",
+        "kind.unknown",
         "tokens.atomic_limit",
     },
 }

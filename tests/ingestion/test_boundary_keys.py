@@ -8,6 +8,7 @@ import pytest
 from tests.fixtures.docling import picture_item, retain_export
 from tests.ingestion.test_docling_mapping import mapping_case
 from tychora.adapters.docling.mapping import map_document
+from tychora.configuration.registry import Registry
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.identity import digest
@@ -18,6 +19,8 @@ from tychora.contracts.sections import (
     normalizer_definition,
     section_path_of,
 )
+from tychora.indexing.representations import prepare_extraction
+from tychora.indexing.windows import window_unit
 from tychora.ingestion.document_records import (
     _Group,
     _group_placements,
@@ -501,3 +504,40 @@ def test_docling_heading_pattern_names_level():
         (HeadingLevel(pattern=r"^Article \d+", level="article"),),
     )
     assert placements["#/texts/1"].section_path[-1].level == "article"
+
+
+class _Characters:
+    model = "synthetic-codepoint-counter"
+    tokenizer_id = "synthetic-codepoint-counter@1"
+
+    def count(self, text):
+        return len(text)
+
+
+def test_context_level_change_takes_effect_on_rebuild_without_renormalizing(
+    native_case, tmp_path
+):
+    """Holds for unpinned kinds; pinned kinds refuse context_level changes."""
+    text = "# Pumps\n\n## Seals\n\nInspect seals.\n\n## Rings\n\nReplace rings.\n"
+    chapter = _documents_config(tmp_path, context_level="depth:1")
+    document = _documents_config(tmp_path, context_level="document")
+    first, _, _ = native_case(text, config_override=chapter)
+    second, _, _ = native_case(text, config_override=document)
+    one = normalize(
+        first, first.registration.revision.revision_id, Registry.from_config(chapter)
+    )
+    two = normalize(
+        second, second.registration.revision.revision_id, Registry.from_config(document)
+    )
+    assert one.extraction.extraction_id == two.extraction.extraction_id
+    keys = []
+    for bundle, config in ((one, chapter), (two, document)):
+        level = Registry.from_config(config).context_level("manual@1")
+        windows = [
+            window
+            for item in prepare_extraction(bundle).units
+            for window in window_unit(item, _Characters(), context_level=level)
+        ]
+        keys.append({window.context_key for window in windows})
+    assert keys[0] == {"section:" + one.units[0].native_ref}
+    assert keys[1] == {"section:#root"}

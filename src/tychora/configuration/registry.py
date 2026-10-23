@@ -16,7 +16,12 @@ from tychora.contracts.requests import (
     OrFilter,
 )
 from tychora.contracts.requirements import ResponseRequirement
-from tychora.contracts.sections import parse_heading_levels
+from tychora.contracts.sections import (
+    DEFAULT_CONTEXT_LEVEL,
+    ContextLevel,
+    parse_context_level,
+    parse_heading_levels,
+)
 
 from .models import ResolvedConfig
 from .schemas import LocalSchemas
@@ -144,6 +149,17 @@ class Registry(Contract):
 
     def validate_record(self, kind_id: str, value: JsonValue) -> JsonValue:
         return self._validate(kind_id, "record_schema", value)
+
+    def context_level(self, kind_id: str) -> ContextLevel:
+        """The section level a kind's context groups span (``depth:1`` by default)."""
+        kind = self.kinds.get(kind_id)
+        if not isinstance(kind, Mapping):
+            raise TychoraError(
+                "INVALID_REQUEST", "Unknown kind: " + kind_id, reason="kind.unknown"
+            )
+        return parse_context_level(
+            str(kind.get("context_level", DEFAULT_CONTEXT_LEVEL))
+        )
 
     def discover_kinds(self, counts: Mapping[str, int]) -> tuple[FrozenJsonMap, ...]:
         """Counts are supplied by the separately scoped corpus discovery service."""
@@ -338,7 +354,11 @@ def _validate_section_levels(kind: dict[str, Any]) -> None:
     """Refuse a kind whose section-level declarations do not parse."""
     try:
         parse_heading_levels(kind.get("heading_levels"))
-    except ValueError:
+        level = kind.get("context_level", DEFAULT_CONTEXT_LEVEL)
+        if not isinstance(level, str):
+            raise TypeError("A context level is a string")
+        parse_context_level(level)
+    except (ValueError, TypeError):
         raise TychoraError(
             "INVALID_REQUEST",
             "Invalid kind section levels: " + str(kind.get("id")),

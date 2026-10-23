@@ -190,7 +190,7 @@ def build_groups(
         if any(
             window.title != first.title
             or window.kind_id != first.kind_id
-            or window.boundary_key != first.boundary_key
+            or window.context_key != first.context_key
             for window in ordered
         ):
             raise ValueError("Context group canonical metadata differs")

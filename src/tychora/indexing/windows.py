@@ -9,6 +9,7 @@ from itertools import pairwise
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import chunk_id, digest
 from tychora.contracts.indexing import RepresentationUnit, SearchWindow
+from tychora.contracts.sections import ContextLevel, Depth, context_key, section_path_of
 from tychora.ports.tokens import OffsetTokenCounter, TokenCounter
 
 _LOG = logging.getLogger(__name__)
@@ -197,8 +198,14 @@ def _split(
     return _split_interval(text, start, end, counter)
 
 
+_TOP_LEVEL = Depth(n=1)
+
+
 def window_unit(
-    prepared: RepresentationUnit, counter: TokenCounter
+    prepared: RepresentationUnit,
+    counter: TokenCounter,
+    *,
+    context_level: ContextLevel = _TOP_LEVEL,
 ) -> tuple[SearchWindow, ...]:
     """Create adjacent exact source windows without loading any tokenizer or storage."""
     unit = prepared.unit
@@ -214,7 +221,10 @@ def window_unit(
         TARGET_TOKENS,
         SOFT_CEILING_TOKENS,
     )
-    group_key = digest("context-group-v1", unit.extraction_id, unit.boundary_key)
+    group = context_key(
+        section_path_of(unit.attributes, unit.boundary_key), context_level
+    )
+    group_key = digest("context-group-v1", unit.extraction_id, group)
     output = []
     for interval in prepared.ownership:
         for start, end, count in _split(
@@ -236,6 +246,7 @@ def window_unit(
                     chunker_fingerprint=fingerprint,
                     boundary_key=unit.boundary_key,
                     context_group_key=group_key,
+                    context_key=group,
                     dependency_ids=interval.dependency_ids,
                     title=prepared.title,
                     kind_id=prepared.kind_id,

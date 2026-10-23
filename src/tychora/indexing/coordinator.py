@@ -388,10 +388,11 @@ class ProjectionCoordinator:
 
     def _windows(self, bundle: ExtractionBundle) -> tuple[SearchWindow, ...]:
         prepared = prepare_extraction(bundle)
+        level = self.store.registry.context_level(bundle.revision.kind_id)
         return tuple(
             window
             for item in prepared.units
-            for window in window_unit(item, self.counter)
+            for window in window_unit(item, self.counter, context_level=level)
         )
 
     def _canonical_bundle(

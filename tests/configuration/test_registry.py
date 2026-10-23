@@ -8,6 +8,7 @@ import pytest
 from tests.typed_json import json_array, json_number, json_object, json_string
 from tychora.configuration.schemas import LocalSchemas, import_inclusive_end
 from tychora.contracts.errors import TychoraError
+from tychora.contracts.sections import Depth
 
 
 def test_schema_replay_uses_persisted_transitive_targets():
@@ -883,3 +884,35 @@ def test_heading_levels_load_when_valid(builtin_config):
     )
     kind = cast(Mapping[str, Any], Registry.from_config(config).kinds["standard@1"])
     assert kind["heading_levels"]
+
+
+def test_context_level_defaults_to_top_level_chapter(builtin_config):
+    assert Registry.from_config(builtin_config()).context_level("manual@1") == Depth(
+        n=1
+    )
+
+
+def test_context_level_reads_the_kind_value(builtin_config):
+    config = changed_config(
+        builtin_config(),
+        lambda data: data["kinds"]["law@1"].update({"context_level": "article"}),
+    )
+    assert Registry.from_config(config).context_level("law@1") == "article"
+
+
+@pytest.mark.parametrize("value", ["depth:0", "paragraph", 3])
+def test_invalid_context_level_is_refused_at_load(builtin_config, value):
+    config = changed_config(
+        builtin_config(),
+        lambda data: data["kinds"]["law@1"].update({"context_level": value}),
+    )
+    with pytest.raises(TychoraError) as err:
+        Registry.from_config(config)
+    assert err.value.reason == "kind.section_levels_invalid"
+
+
+def test_unknown_kind_has_no_context_level(builtin_config):
+    with pytest.raises(TychoraError) as err:
+        Registry.from_config(builtin_config()).context_level("missing@1")
+    assert err.value.code == "INVALID_REQUEST"
+    assert err.value.reason == "kind.unknown"
