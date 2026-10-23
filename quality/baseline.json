@@ -252,9 +252,9 @@
     },
     "coverage_line": {
       "direction": "higher",
-      "measured_at": "96748752868a",
+      "measured_at": "754ee3cf2226",
       "per_key": {
-        "tychora/adapters/sqlite/eligibility.py": 94.4,
+        "tychora/adapters/sqlite/eligibility.py": 95.43,
         "tychora/adapters/sqlite/lexical.py": 94.29,
         "tychora/adapters/sqlite/publication.py": 86.33,
         "tychora/contracts/identity.py": 100.0,
@@ -263,7 +263,7 @@
         "tychora/retrieval/fusion.py": 95.83,
         "tychora/retrieval/lexical_query.py": 95.77
       },
-      "value": 88.67
+      "value": 88.9
     },
     "dashboard_coverage_branches": {
       "direction": "higher",
