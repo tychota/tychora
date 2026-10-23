@@ -17,7 +17,7 @@
     },
     "cognitive_complexity": {
       "direction": "lower",
-      "measured_at": "639739ce89c4",
+      "measured_at": "b6011bddcb9b",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::search": 58,
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex::upsert_batch": 16,
@@ -137,7 +137,7 @@
         "src/tychora/configuration/compatibility.py::_verify_historical": 19,
         "src/tychora/configuration/registry.py::Registry::_from_config": 17,
         "src/tychora/configuration/registry.py::Registry::historical_definitions": 16,
-        "src/tychora/configuration/registry.py::_validate_definitions": 161,
+        "src/tychora/configuration/registry.py::_validate_definitions": 160,
         "src/tychora/configuration/registry.py::compile_filter": 47,
         "src/tychora/configuration/resolve.py::_load_pack": 45,
         "src/tychora/configuration/resolve.py::_resolve_config": 133,
@@ -178,7 +178,7 @@
         "src/tychora/ingestion/acquire.py::Acquirer::capture": 24,
         "src/tychora/ingestion/assets.py::ProxyFactory::make_proxy": 33,
         "src/tychora/ingestion/composition.py::_selected": 28,
-        "src/tychora/ingestion/composition.py::build_composed_document": 109,
+        "src/tychora/ingestion/composition.py::build_composed_document": 107,
         "src/tychora/ingestion/composition.py::composition_input_references": 25,
         "src/tychora/ingestion/composition.py::replay_composed_document": 18,
         "src/tychora/ingestion/document_parts.py::_part_locators": 16,
@@ -283,13 +283,13 @@
     },
     "duplication_python": {
       "direction": "lower",
-      "measured_at": "c7692178cc85",
-      "value": 1.05
+      "measured_at": "b6011bddcb9b",
+      "value": 1.02
     },
     "duplication_tests": {
       "direction": "lower",
-      "measured_at": "0706f348cc8a",
-      "value": 4.34
+      "measured_at": "b6011bddcb9b",
+      "value": 4.32
     },
     "duplication_typescript": {
       "direction": "lower",
@@ -378,12 +378,12 @@
     },
     "function_length": {
       "direction": "lower",
-      "measured_at": "639739ce89c4",
+      "measured_at": "b6011bddcb9b",
       "per_key": {
         "src/tychora/adapters/chroma/index.py::ChromaVectorIndex.search": 143,
         "src/tychora/adapters/code/capture.py::RepositoryCapture._run": 89,
         "src/tychora/adapters/code/capture.py::RepositoryCapture.snapshot": 88,
-        "src/tychora/adapters/code/normalize.py::_build": 471,
+        "src/tychora/adapters/code/normalize.py::_build": 449,
         "src/tychora/adapters/code/normalize.py::replay_code_extraction": 143,
         "src/tychora/adapters/code/normalize.py::retain_code_extraction": 116,
         "src/tychora/adapters/code/python.py::PythonAdapter._reference_nodes": 88,
@@ -467,7 +467,7 @@
         "src/tychora/application/sources.py::SourceService.execute_accepted": 213,
         "src/tychora/application/vision_selection.py::derive_selected_region": 128,
         "src/tychora/application/visual.py::OwnerVisualAccess._resolve_item": 88,
-        "src/tychora/configuration/registry.py::_validate_definitions": 268,
+        "src/tychora/configuration/registry.py::_validate_definitions": 267,
         "src/tychora/configuration/resolve.py::_resolve_config": 260,
         "src/tychora/configuration/resolve.py::_validate_schemas": 97,
         "src/tychora/configuration/schemas.py::LocalSchemas.__init__": 115,
@@ -484,7 +484,7 @@
         "src/tychora/indexing/representations.py::_validate_retained_code_records": 109,
         "src/tychora/ingestion/acquire.py::Acquirer._capture": 123,
         "src/tychora/ingestion/assets.py::ProxyFactory.make_proxy": 119,
-        "src/tychora/ingestion/composition.py::build_composed_document": 427,
+        "src/tychora/ingestion/composition.py::build_composed_document": 420,
         "src/tychora/ingestion/document_parts.py::_validate_source_parts": 123,
         "src/tychora/ingestion/document_parts.py::represent_document_parts": 111,
         "src/tychora/ingestion/document_records.py::_groups": 126,

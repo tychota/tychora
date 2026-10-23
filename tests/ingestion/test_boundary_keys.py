@@ -8,10 +8,13 @@ import pytest
 from tests.fixtures.docling import picture_item, retain_export
 from tests.ingestion.test_docling_mapping import mapping_case
 from tychora.adapters.docling.mapping import map_document
+from tychora.configuration.resolve import resolve_config
+from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.identity import digest
 from tychora.contracts.sections import (
     BOUNDARY_SCHEMES,
     ROOT_SECTION_KEY,
+    HeadingLevel,
     normalizer_definition,
     section_path_of,
 )
@@ -449,3 +452,52 @@ def test_neighbour_scope_follows_the_docling_section(docling_bundle):
 @pytest.mark.parametrize("document_kind", ["manual@1"], indirect=True)
 def test_docling_boundary_key_is_never_a_paragraph_ref(docling_bundle):
     assert_boundary_contract(docling_bundle[1])
+
+
+def _documents_config(tmp_path, **kind_fields):
+    """The documents@1 profile with fields added to manual@1."""
+    path = tmp_path / "custom.toml"
+    path.write_text('schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n')
+    config = resolve_config(path, "test", {})
+    data = config.model_dump(mode="json")["registry"]
+    data["kinds"]["manual@1"].update(kind_fields)
+    return config.model_copy(
+        update={
+            "registry": FrozenJsonMap(data),
+            "registry_digest": digest("registry-v1", data),
+        }
+    )
+
+
+ARTICLE_HEADINGS = [{"pattern": r"^Article \d+", "level": "article"}]
+
+
+def test_kind_heading_pattern_names_level(native_case, tmp_path):
+    text = "# Article 1 Scope\n\nBody.\n\n# Definitions\n\nTerms.\n"
+    config = _documents_config(tmp_path, heading_levels=ARTICLE_HEADINGS)
+    units = _units(native_case, text, config_override=config)
+    assert _path(units["Body."])[-1] == (_own(units["# Article 1 Scope"]), "article", 1)
+    assert _path(units["Terms."])[-1] == (_own(units["# Definitions"]), None, 1)
+
+
+def test_heading_pattern_change_changes_normalizer_fingerprint(native_case, tmp_path):
+    plain, _, _ = native_case("# Article 1\n\nBody.\n")
+    patterned, _, _ = native_case(
+        "# Article 1\n\nBody.\n",
+        config_override=_documents_config(tmp_path, heading_levels=ARTICLE_HEADINGS),
+    )
+    assert plain.normalizer_fingerprint != patterned.normalizer_fingerprint
+
+
+def test_docling_heading_pattern_names_level():
+    export, original = _export(
+        (
+            _text("#/texts/0", "section_header", "Article 3 Duties", level=1),
+            _text("#/texts/1", "text", "Keep records."),
+        )
+    )
+    placements = document_placements(
+        map_document(export, original).units,
+        (HeadingLevel(pattern=r"^Article \d+", level="article"),),
+    )
+    assert placements["#/texts/1"].section_path[-1].level == "article"

@@ -54,6 +54,13 @@ from tychora.contracts.relationships import (
     assertion_index_document,
     partition_assertions,
 )
+from tychora.contracts.sections import (
+    ROOT_SECTION_KEY,
+    SectionEntry,
+    boundary_key,
+    dump_section_path,
+    normalizer_definition,
+)
 from tychora.ports.artifacts import ArtifactReader, Artifacts
 from tychora.ports.language import Definition, Reference, SourceSpan, SyntaxResult
 
@@ -161,8 +168,8 @@ def _fingerprints(
     )
     kind = cast(Mapping[str, Any], registry.kinds[registration.revision.kind_id])
     normalizer = digest(
-        "code-normalizer-v1",
-        kind,
+        "code-normalizer-v2",
+        normalizer_definition(kind),
         registry.schema_digests,
         CODE_RESOLVER_FINGERPRINT,
         CODE_ASSERTION_PROJECTION,
@@ -175,8 +182,8 @@ def _legacy_normalizer_fingerprint(
 ) -> str:
     kind = cast(Mapping[str, Any], registry.kinds[registration.revision.kind_id])
     return digest(
-        "code-normalizer-v1",
-        kind,
+        "code-normalizer-v2",
+        normalizer_definition(kind),
         registry.schema_digests,
         CODE_RESOLVER_FINGERPRINT,
     )
@@ -235,6 +242,44 @@ def _native_ref(path: str, native_ref: str) -> str:
     return f"{path}#{native_ref}"
 
 
+def _owned_range(
+    uid: str, item: CapturedSyntax, span: Definition | SourceSpan
+) -> OwnedRange:
+    """The source range a definition or uncovered span owns in its file."""
+    return OwnedRange(
+        owner_unit_id=uid,
+        artifact_ref=item.captured.artifact_ref.sha256,
+        relative_path=item.captured.relative_path,
+        char_start=span.char_start,
+        char_end=span.char_end,
+        byte_start=span.byte_start,
+        byte_end=span.byte_end,
+    )
+
+
+def _file_attributes(
+    path: str, language: str, sections: list[dict[str, Any]]
+) -> FrozenJsonMap:
+    """The attributes of a symbol or code unit of one file."""
+    return FrozenJsonMap(
+        {
+            "relative_path": path,
+            "language": language,
+            "section_path": sections,
+        }
+    )
+
+
+def _file_placement(path: str) -> tuple[str, list[dict[str, Any]]]:
+    """The boundary key and section path of every unit of one file."""
+    key = boundary_key("file", path)
+    sections = (
+        SectionEntry(key=ROOT_SECTION_KEY, depth=0),
+        SectionEntry(key=key, level="file", depth=1),
+    )
+    return key, dump_section_path(sections)
+
+
 def _build(
     parsed: CodeExtractionArtifact, registry: Registry
 ) -> tuple[ExtractionBundle, tuple[RelationshipAssertion, ...], tuple[Resolution, ...]]:
@@ -269,6 +314,7 @@ def _build(
 
     for file_ordinal, item in enumerate(parsed.files):
         path, syntax = item.captured.relative_path, item.syntax
+        file_key, file_sections = _file_placement(path)
         container_native = _native_ref(path, "file")
         container_id = unit_id(eid, container_native, 0, sha256(b"").hexdigest())
         container_ids[path] = container_id
@@ -280,7 +326,7 @@ def _build(
                 ordinal=len(units),
                 unit_type="code_file",
                 native_ref=container_native,
-                boundary_key=path,
+                boundary_key=file_key,
                 text="",
                 text_sha=sha256(b"").hexdigest(),
                 citable=False,
@@ -297,6 +343,7 @@ def _build(
                             item.captured.model_dump(mode="json"),
                         ),
                         "adapter_fingerprint": syntax.adapter_fingerprint,
+                        "section_path": file_sections,
                     }
                 ),
             )
@@ -329,26 +376,14 @@ def _build(
                     ordinal=len(units),
                     unit_type="symbol",
                     native_ref=_native_ref(path, definition.native_ref),
-                    boundary_key=path,
+                    boundary_key=file_key,
                     text=text,
                     text_sha=sha256(text.encode()).hexdigest(),
                     locators=(locator,),
-                    attributes=FrozenJsonMap(
-                        {"relative_path": path, "language": syntax.language}
-                    ),
+                    attributes=_file_attributes(path, syntax.language, file_sections),
                 )
             )
-            source_ranges.append(
-                OwnedRange(
-                    owner_unit_id=uid,
-                    artifact_ref=item.captured.artifact_ref.sha256,
-                    relative_path=path,
-                    char_start=definition.char_start,
-                    char_end=definition.char_end,
-                    byte_start=definition.byte_start,
-                    byte_end=definition.byte_end,
-                )
-            )
+            source_ranges.append(_owned_range(uid, item, definition))
             for key, value in (
                 ("code.path", path),
                 ("code.language", syntax.language),
@@ -371,27 +406,15 @@ def _build(
                     ordinal=len(units),
                     unit_type="code",
                     native_ref=native,
-                    boundary_key=path,
+                    boundary_key=file_key,
                     text=text,
                     text_sha=sha256(text.encode()).hexdigest(),
                     citable=bool(text),
                     locators=(locator,),
-                    attributes=FrozenJsonMap(
-                        {"relative_path": path, "language": syntax.language}
-                    ),
+                    attributes=_file_attributes(path, syntax.language, file_sections),
                 )
             )
-            source_ranges.append(
-                OwnedRange(
-                    owner_unit_id=uid,
-                    artifact_ref=item.captured.artifact_ref.sha256,
-                    relative_path=path,
-                    char_start=span.char_start,
-                    char_end=span.char_end,
-                    byte_start=span.byte_start,
-                    byte_end=span.byte_end,
-                )
-            )
+            source_ranges.append(_owned_range(uid, item, span))
             for key, value in (("code.path", path), ("code.language", syntax.language)):
                 facets.append(FacetRow(unit_id=uid, facet_key=key, value=value))
 

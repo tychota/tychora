@@ -16,6 +16,7 @@ from tychora.contracts.requests import (
     OrFilter,
 )
 from tychora.contracts.requirements import ResponseRequirement
+from tychora.contracts.sections import parse_heading_levels
 
 from .models import ResolvedConfig
 from .schemas import LocalSchemas
@@ -333,6 +334,18 @@ def _strings(value: Any, *, nonempty: bool = True) -> bool:
     )
 
 
+def _validate_section_levels(kind: dict[str, Any]) -> None:
+    """Refuse a kind whose section-level declarations do not parse."""
+    try:
+        parse_heading_levels(kind.get("heading_levels"))
+    except ValueError:
+        raise TychoraError(
+            "INVALID_REQUEST",
+            "Invalid kind section levels: " + str(kind.get("id")),
+            reason="kind.section_levels_invalid",
+        ) from None
+
+
 def _require(definition: Any, fields: tuple[str, ...]) -> None:
     if not isinstance(definition, dict) or any(
         not isinstance(definition.get(field), str) or not definition[field].strip()
@@ -412,10 +425,9 @@ def _validate_definitions(data: dict[str, Any]) -> None:
             or not _strings(kind.get("examples"))
         ):
             _invalid("Unresolved role, normalizer or examples")
-        if "allowed_uses" in kind and not _strings(
-            kind["allowed_uses"], nonempty=False
-        ):
+        if not _strings(kind.get("allowed_uses", []), nonempty=False):
             _invalid("Invalid kind usage restrictions")
+        _validate_section_levels(kind)
         options = kind.get("normalizer_options", {})
         common = {"target_labels", "status_labels", "foundation_labels"}
         allowed = {

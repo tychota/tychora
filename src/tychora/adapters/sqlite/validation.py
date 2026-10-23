@@ -25,6 +25,7 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import CodeLocator, TextLocator
 from tychora.contracts.identity import digest, normalize_source_key
 from tychora.contracts.requests import EqFilter
+from tychora.contracts.sections import normalizer_definition
 from tychora.ports.artifacts import ArtifactReader
 
 from .code_provenance import validate_code_record
@@ -398,15 +399,15 @@ def validate_bundle(
         )
         kind = cast(Mapping[str, Any], registry.kinds[revision.kind_id])
         normalizer_fingerprint = digest(
-            "code-normalizer-v1",
-            kind,
+            "code-normalizer-v2",
+            normalizer_definition(kind),
             registry.schema_digests,
             CODE_RESOLVER_FINGERPRINT,
             CODE_ASSERTION_PROJECTION,
         )
         legacy_normalizer = digest(
-            "code-normalizer-v1",
-            kind,
+            "code-normalizer-v2",
+            normalizer_definition(kind),
             registry.schema_digests,
             CODE_RESOLVER_FINGERPRINT,
         )

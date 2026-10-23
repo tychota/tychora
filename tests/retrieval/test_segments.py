@@ -1233,7 +1233,7 @@ def test_clipped_code_citation_uses_retained_encoding_and_cr_line_map(tmp_path):
                 "unit_id": "file-container",
                 "unit_type": "code_file",
                 "native_ref": f"{path}#file",
-                "boundary_key": path,
+                "boundary_key": f"file:{path}",
                 "text": "",
                 "text_sha": empty_sha,
                 "citable": False,
@@ -1267,7 +1267,7 @@ def test_clipped_code_citation_uses_retained_encoding_and_cr_line_map(tmp_path):
                 "parent_id": container.unit_id,
                 "ordinal": 1,
                 "unit_type": "code",
-                "boundary_key": path,
+                "boundary_key": f"file:{path}",
                 "locators": (
                     CodeLocator(
                         artifact_ref=original.sha256,

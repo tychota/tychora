@@ -24,6 +24,7 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.extraction import ExtractionArtifact
 from tychora.contracts.identity import canonical_bytes, digest, extraction_id, unit_id
+from tychora.contracts.sections import kind_heading_levels
 
 from .document_identity import DocumentNormalizationContext
 from .sections import document_placements, figure_placement
@@ -62,7 +63,7 @@ def normalize_document(
         revision_id, parsed.parser_fingerprint, parsed.normalizer_fingerprint
     )
     document_units = normalize_native_document_units(parsed)
-    placements = document_placements(document_units)
+    placements = document_placements(document_units, kind_heading_levels(kind))
     ids = {
         u.native_ref: unit_id(
             eid, u.native_ref, u.ordinal, sha256(u.text.encode()).hexdigest()
