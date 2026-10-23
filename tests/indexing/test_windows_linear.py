@@ -67,6 +67,77 @@ class Unordered(Characters):
         return tuple((index, index + 1) for index in reversed(range(len(text))))
 
 
+RUN = re.compile(r"\w+|\s+|[^\w\s]")
+
+
+class Runs:
+    """One token per word, whitespace or punctuation run, plus a fixed overhead."""
+
+    model = "synthetic-run-counter"
+    tokenizer_id = "synthetic-run-counter@1"
+    overhead = 0
+
+    def count(self, text: str) -> int:
+        """Count runs and add the overhead."""
+        return len(RUN.findall(text)) + self.overhead
+
+
+class OffsetRuns(Runs):
+    """Run spans: additive, with tokens that straddle ownership cuts."""
+
+    def count_with_offsets(self, text: str) -> tuple[tuple[int, int], ...]:
+        """One span per run."""
+        return tuple(match.span() for match in RUN.finditer(text))
+
+
+class Runs2(Runs):
+    """Runs with two fixed tokens, so ``count("")`` is not zero."""
+
+    overhead = 2
+
+
+class OffsetRuns2(OffsetRuns):
+    """Run spans with two fixed tokens."""
+
+    overhead = 2
+
+
+class Doubled(Characters):
+    """Two tokens per code point."""
+
+    def count(self, text: str) -> int:
+        """Count each code point twice."""
+        return 2 * len(text)
+
+
+class HalfSpans(Doubled):
+    """Breaks the contract: one span per code point while ``count`` says two."""
+
+    def count_with_offsets(self, text: str) -> tuple[tuple[int, int], ...]:
+        """One span per code point."""
+        return tuple((index, index + 1) for index in range(len(text)))
+
+
+class SpacelessSpans(Characters):
+    """Breaks the contract: whitespace is counted but has no span."""
+
+    def count_with_offsets(self, text: str) -> tuple[tuple[int, int], ...]:
+        """Spans for non-whitespace code points only."""
+        return tuple(
+            (index, index + 1)
+            for index, character in enumerate(text)
+            if not character.isspace()
+        )
+
+
+class NoSpans(Characters):
+    """Reports no spans for nonempty text."""
+
+    def count_with_offsets(self, text: str) -> tuple[tuple[int, int], ...]:
+        """No spans at all."""
+        return ()
+
+
 class Spy(OffsetCharacters):
     """Counts every character handed to the tokenizer."""
 
@@ -155,7 +226,13 @@ def _outcome(prepared: RepresentationUnit, counter) -> object:
 
 
 @pytest.mark.parametrize(
-    "fast,counted", [(OffsetCharacters, Characters), (OffsetWords, Words)]
+    "fast,counted",
+    [
+        (OffsetCharacters, Characters),
+        (OffsetWords, Words),
+        (OffsetRuns, Runs),
+        (OffsetRuns2, Runs2),
+    ],
 )
 def test_linear_windows_equal_reference_on_1000_random_texts(fast, counted):
     """The offsets split gives the counted split's windows, counts and errors."""
@@ -175,7 +252,36 @@ def test_long_unit_counts_tokens_in_linear_time():
     assert len(windows) > 20
     assert "".join(window.text for window in windows) == text
     assert all(window.token_count == len(window.text) for window in windows)
+    assert spy.characters == len(text) + len(windows[0].text)
     assert spy.characters < 2 * len(text)
+
+
+@pytest.mark.parametrize(
+    "liar,counted",
+    [
+        (HalfSpans, Doubled),
+        (SpacelessSpans, Characters),
+        (NoSpans, Characters),
+    ],
+)
+def test_spans_that_disagree_with_counts_fall_back_to_counting(liar, counted):
+    """A counter breaking the offsets contract still gets the counted windows."""
+    for text in ("Seal is fine. " * 200, ("word " * 150 + ". ") * 10):
+        prepared = _representation(text, (len(text) // 3,))
+        windows = window_unit(prepared, liar())
+        assert windows == window_unit(prepared, counted())
+        assert all(
+            window.token_count == counted().count(window.text) for window in windows
+        )
+
+
+def test_tokens_straddling_cuts_and_fixed_tokens_keep_counted_windows():
+    """Runs cut by ownership edges and a nonzero ``count("")`` match the counted split."""
+    text = ("Inspect" + "x" * 900 + " the pump seal. ") * 40 + "valve" * 400
+    cuts = tuple(range(3, len(text), 997))
+    prepared = _representation(text, cuts)
+    for fast, counted in ((OffsetRuns, Runs), (OffsetRuns2, Runs2)):
+        assert _outcome(prepared, fast()) == _outcome(prepared, counted())
 
 
 def test_counter_without_offsets_keeps_counted_windows():
