@@ -60,6 +60,7 @@ MAX_HEADING_LEVELS = 32
 MAX_HEADING_PATTERN_CHARS = 256
 HEADING_MATCH_SECONDS = 0.25
 HEADING_DOCUMENT_SECONDS = 2.0
+HEADING_SECONDS_PER_HEADING = 0.001
 _DEPTH = re.compile(r"depth:([1-9][0-9]{0,2})")
 
 
@@ -256,15 +257,22 @@ _monotonic = time.monotonic
 
 
 class HeadingBudget:
-    """Cumulative time one document may spend matching heading patterns."""
+    """Cumulative time one document may spend matching heading patterns.
+
+    The allowance is at least ``seconds`` and grows by ``HEADING_SECONDS_PER_HEADING``
+    for every heading matched, so a large document with many cheap headings is not
+    refused while a slow pattern still fails within a bounded time per heading.
+    """
 
     def __init__(self, seconds: float = HEADING_DOCUMENT_SECONDS) -> None:
         self.seconds = seconds
         self.spent = 0.0
+        self.headings = 0
 
     def remaining(self) -> float:
         """Seconds left in the budget."""
-        return self.seconds - self.spent
+        allowance = max(self.seconds, self.headings * HEADING_SECONDS_PER_HEADING)
+        return allowance - self.spent
 
 
 def _too_slow(pattern: str, what: str) -> TychoraError:
@@ -289,6 +297,8 @@ def heading_level_for(
     counts as no match.
     """
     head = text[:MAX_HEADING_PATTERN_CHARS]
+    if budget is not None:
+        budget.headings += 1
     for item in levels:
         timeout = HEADING_MATCH_SECONDS
         if budget is not None:
@@ -306,7 +316,7 @@ def heading_level_for(
         if matched:
             return item.level
     if budget is not None and budget.remaining() <= 0:
-        raise _too_slow("", "exhausted the document time budget")
+        raise _too_slow(levels[-1].pattern, "exhausted the document time budget")
     return None
 
 
