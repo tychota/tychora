@@ -139,7 +139,7 @@ def _vectors(
     sealed = {record.record_id: record for record in receipt.records}
     groups = _groups(data) if item.slot == "text" else {}
     rows = db.execute(
-        "SELECT record_id,chunk_id,asset_id,input_sha,row_index FROM vector_records "
+        "SELECT record_id,chunk_id,asset_id,input_sha,row_index,group_id FROM vector_records "
         "WHERE batch_id=? ORDER BY record_id",
         (batch_id,),
     ).fetchall()
@@ -148,10 +148,12 @@ def _vectors(
     ):
         raise _differs("Vector SQL differs from its batch receipt")
     bindings = []
-    for record_id, chunk_id, asset_id, input_sha, row_index in rows:
-        if input_sha != sealed[record_id].input_sha:
-            raise _differs("Vector SQL differs from its batch receipt")
+    for record_id, chunk_id, asset_id, input_sha, row_index, group_id in rows:
         group = groups.get(record_id, {})
+        if input_sha != sealed[record_id].input_sha or group_id != group.get(
+            "group_id"
+        ):
+            raise _differs("Vector SQL differs from its batch receipt")
         bindings.append(
             VectorRecordBinding(
                 record_id=record_id,

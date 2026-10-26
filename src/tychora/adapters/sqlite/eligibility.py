@@ -292,7 +292,8 @@ _VECTOR_ROWS = (
     "SELECT v.record_id,v.chunk_id,v.asset_id,v.group_id,b.extraction_id "
     "FROM snapshot_batches sb JOIN index_batches b ON b.batch_id=sb.batch_id "
     "JOIN vector_records v ON v.batch_id=sb.batch_id "
-    "WHERE sb.snapshot_id=? AND sb.slot IN ('text','image')"
+    "WHERE sb.snapshot_id=? AND sb.slot IN ('text','image') "
+    "AND b.extraction_id IN (SELECT value FROM json_each(?))"
 )
 
 
@@ -300,9 +301,9 @@ def _vector_facts(
     db, snapshot_id: str, selected: set[str], assets: Mapping[str, AssetFact]
 ) -> tuple[VectorFact, ...]:
     """Each selected vector record with its context group's or asset's set."""
-    rows = [
-        row for row in db.execute(_VECTOR_ROWS, (snapshot_id,)) if row[4] in selected
-    ]
+    rows = db.execute(
+        _VECTOR_ROWS, (snapshot_id, json.dumps(sorted(selected)))
+    ).fetchall()
     groups = _persisted(db, tuple({row[3] for row in rows if row[3] is not None}))
     facts = []
     for record_id, chunk_id, asset_id, group_id, _ in rows:

@@ -111,7 +111,7 @@ class CorpusStore(PolicyRepository):
         snapshot: SnapshotView,
         members: tuple[SnapshotMember, ...] | None = None,
     ):
-        """Detach the snapshot's eligibility facts; no artifact is reopened.
+        """Detach the snapshot's eligibility facts; the configuration artifact is not reopened.
 
         The configuration artifact was verified when the snapshot was published.
         """
