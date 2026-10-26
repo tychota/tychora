@@ -7,7 +7,7 @@ import json
 import sqlite3
 import struct
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, cast
@@ -46,6 +46,7 @@ from tychora.contracts.evidence import (
 from tychora.contracts.graph import GraphCandidates
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.indexing import FamilySpec
+from tychora.contracts.publication import SnapshotView
 from tychora.contracts.requests import (
     ImageInput,
     PassageInput,
@@ -295,11 +296,8 @@ class QueryService:
             self.execution_plan.__dict__ if self.execution_plan else None,
         )
 
-    def _validate_provider_families(self, snapshot_id: str) -> None:
+    def _validate_provider_families(self, snapshot: SnapshotView) -> None:
         """Check actual factory identity against configured and pinned family before cache reuse."""
-        from collections.abc import Mapping
-
-        snapshot = self.owner.store.resolve_snapshot(snapshot_id)
         plan = self.execution_plan
         if plan is not None:
             if plan.text and (self.text_provider is None or self.text_index is None):
@@ -581,8 +579,10 @@ class QueryService:
         async def operation(
             attempt: EligibilityAttempt,
         ) -> DeliveredResult:
+            snapshot = attempt.snapshot
+            assert snapshot is not None
             await self.owner.run_write(
-                lambda: self._validate_provider_families(attempt.view.snapshot_id),
+                lambda: self._validate_provider_families(snapshot),
                 ctx,
                 "interactive",
             )

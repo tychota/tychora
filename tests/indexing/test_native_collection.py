@@ -7,6 +7,7 @@ import pytest
 from tests.indexing.test_publication import ProjectedCorpus, make_projected_corpus
 from tychora.adapters.sqlite.repositories import snapshots as snapshot_rows
 from tychora.application.snapshot_gc import SnapshotGc
+from tychora.retrieval.catalog import SnapshotCatalog
 from tychora.ports.execution import ExecutionContext
 
 
@@ -32,6 +33,7 @@ def _owner(f: ProjectedCorpus):
         leases=f.store.leases,
         workspace_id=f.store.resolve_snapshot(None).workspace_id,
         restore_deletion_suspended=False,
+        catalog=SnapshotCatalog(),
     )
 
 

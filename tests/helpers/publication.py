@@ -16,6 +16,8 @@ from tychora.contracts.publication import (
     LexicalRecord,
     NewBatch,
     PublicationPlan,
+    SnapshotMember,
+    SnapshotView,
     snapshot_root_document,
 )
 from tychora.contracts.snapshots import (
@@ -28,6 +30,7 @@ from tychora.contracts.snapshots import (
 )
 from tychora.indexing.planning import member_count_after, next_page
 from tychora.ports.artifacts import Artifacts
+from tychora.ports.repositories import Cursor
 
 
 def lexical_family(
@@ -163,3 +166,15 @@ def lexical_plan(
         "application/json",
     )
     return draft.model_copy(update={"manifest": root})
+
+
+def members_of(store: CorpusStore, view: SnapshotView) -> tuple[SnapshotMember, ...]:
+    """Every member of a published snapshot, read page by page."""
+    found: list[SnapshotMember] = []
+    cursor: Cursor | None = None
+    with store.uow.read() as tx:
+        while True:
+            page, cursor = tx.snapshots.members(view.snapshot_id, after=cursor)
+            found.extend(page)
+            if cursor is None:
+                return tuple(found)

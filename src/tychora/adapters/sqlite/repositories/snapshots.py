@@ -15,12 +15,17 @@ from tychora.contracts.snapshots import (
     SlotFamily,
     membership_sha,
 )
-from tychora.ports.repositories import BatchRow, GcReport, PublicationFootprint
+from tychora.ports.repositories import (
+    BatchRow,
+    Cursor,
+    GcReport,
+    PublicationFootprint,
+)
 
 from .artifacts import SqliteArtifactRepository, artifact_ref
 from .batches import BATCH_SELECT, batch_from_row
 from .families import FAMILY_COLUMNS, family_from_row
-from .workspace import SqliteWorkspaceRepository, require_write
+from .workspace import require_write
 
 _SNAPSHOT_ROW = (
     "SELECT workspace_id,parent_snapshot_id,membership_sha,config_sha,member_count "
@@ -67,6 +72,15 @@ def absent_snapshot() -> TychoraError:
     )
 
 
+def _member(row: tuple) -> SnapshotMember:
+    return SnapshotMember(
+        source_id=row[0],
+        revision_id=row[1],
+        extraction_id=row[2],
+        is_default=bool(row[3]),
+    )
+
+
 class SqliteSnapshotRepository:
     """Snapshot rows, the workspace's active snapshot and page rows."""
 
@@ -102,8 +116,10 @@ class SqliteSnapshotRepository:
                 (snapshot_id,),
             )
         )
-        members = self._members(snapshot_id)
-        if membership_sha(page_ids) != row[2] or len(members) != row[4]:
+        (count,) = self._db.execute(
+            "SELECT COUNT(*) FROM snapshot_members WHERE snapshot_id=?", (snapshot_id,)
+        ).fetchone()
+        if membership_sha(page_ids) != row[2] or count != row[4]:
             raise _integrity("Snapshot rows differ from their membership digest")
         return SnapshotView(
             snapshot_id=snapshot_id,
@@ -114,10 +130,48 @@ class SqliteSnapshotRepository:
             member_count=row[4],
             page_ids=page_ids,
             families=self._families(snapshot_id),
-            members=members,
-            lexical_statistics_epoch=SqliteWorkspaceRepository(
-                self._db, writable=False
-            ).lexical_epoch(),
+        )
+
+    def member(self, snapshot_id: str, extraction_id: str) -> SnapshotMember | None:
+        """Return the member that selects this extraction, or ``None``."""
+        row = self._db.execute(
+            "SELECT source_id,revision_id,extraction_id,is_default FROM snapshot_members "
+            "WHERE snapshot_id=? AND extraction_id=?",
+            (snapshot_id, extraction_id),
+        ).fetchone()
+        return None if row is None else _member(row)
+
+    def members(
+        self, snapshot_id: str, *, after: Cursor | None = None, limit: int = 1000
+    ) -> tuple[tuple[SnapshotMember, ...], Cursor | None]:
+        """Return one page of members in source, revision and extraction order."""
+        if not 1 <= limit <= 10_000:
+            raise TychoraError(
+                "INVALID_REQUEST",
+                "Member page size must be 1..10000",
+                reason="cursor.invalid",
+            )
+        start = (
+            ("", "", "")
+            if after is None
+            else (*map(str, after.sort_key), after.last_id)
+        )
+        if len(start) != 3:
+            raise TychoraError(
+                "INVALID_REQUEST", "Cursor is invalid.", reason="cursor.invalid"
+            )
+        rows = self._db.execute(
+            "SELECT source_id,revision_id,extraction_id,is_default FROM snapshot_members "
+            "WHERE snapshot_id=? AND (source_id,revision_id,extraction_id)>(?,?,?) "
+            "ORDER BY source_id,revision_id,extraction_id LIMIT ?",
+            (snapshot_id, *start, limit + 1),
+        ).fetchall()
+        page = tuple(_member(row) for row in rows[:limit])
+        if len(rows) <= limit:
+            return page, None
+        last = page[-1]
+        return page, Cursor(
+            sort_key=(last.source_id, last.revision_id), last_id=last.extraction_id
         )
 
     def _families(self, snapshot_id: str) -> tuple[SlotFamily, ...]:
@@ -136,22 +190,6 @@ class SqliteSnapshotRepository:
             )
         except ValueError:
             raise _integrity("Snapshot slot differs from its family") from None
-
-    def _members(self, snapshot_id: str) -> tuple[SnapshotMember, ...]:
-        return tuple(
-            SnapshotMember(
-                source_id=r[0],
-                revision_id=r[1],
-                extraction_id=r[2],
-                is_default=bool(r[3]),
-            )
-            for r in self._db.execute(
-                "SELECT source_id,revision_id,extraction_id,is_default "
-                "FROM snapshot_members WHERE snapshot_id=? "
-                "ORDER BY source_id,revision_id,extraction_id",
-                (snapshot_id,),
-            )
-        )
 
     def insert_snapshot(self, plan: PublicationPlan) -> None:
         """Store a snapshot over pages already stored, with its slots and root batches."""

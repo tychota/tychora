@@ -28,6 +28,7 @@ from tychora.contracts.publication import (
     LexicalRecord,
     NewBatch,
     PublicationPlan,
+    SnapshotMember,
     SnapshotView,
 )
 from tychora.contracts.snapshots import IndexFamily, MembershipPage, PageBatch
@@ -272,6 +273,19 @@ class SnapshotRepository(Protocol):
 
     def view(self, snapshot_id: str) -> SnapshotView:
         """Read a published snapshot from its rows; no artifact is opened."""
+        ...
+
+    def member(self, snapshot_id: str, extraction_id: str) -> SnapshotMember | None:
+        """Return the member that selects this extraction, or ``None``."""
+        ...
+
+    def members(
+        self, snapshot_id: str, *, after: Cursor | None = None, limit: int = 1000
+    ) -> tuple[tuple[SnapshotMember, ...], Cursor | None]:
+        """Return one page of members in source, revision and extraction order.
+
+        The returned cursor continues after the page; it is ``None`` after the last.
+        """
         ...
 
     def insert_snapshot(self, plan: PublicationPlan) -> None:

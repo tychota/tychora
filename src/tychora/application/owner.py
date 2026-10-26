@@ -74,6 +74,7 @@ from tychora.ports.vision import (
     RetainedDocumentRegionProof,
     pixel_identity,
 )
+from tychora.retrieval.catalog import SnapshotCatalog
 
 from .collection_policy import require_active_collection
 from .consent import enabled_upload_providers, parse_upload_policy
@@ -311,6 +312,7 @@ class WorkspaceOwner:
             required_slots=_required_slots(self.config),
             leases=self.leases,
         )
+        self.catalog = SnapshotCatalog()
         self._reads = ReadPool(
             lambda: open_read_connection(database),
             workers=max(1, min(4, os.cpu_count() or 1)),

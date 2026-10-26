@@ -96,15 +96,15 @@ def content_page(
     if not windows and request.chunk_id is not None:
         raise TychoraError("INVALID_REQUEST", "Chunk filters require windows.")
     pin_request = InspectRequest(subject="diagnostics", id=request.extraction_id)
-    with service._pin_retained(pin_request) as snapshot:
+    with service._pin_retained(pin_request) as pin:
         ctx.checkpoint()
-        member = snapshot.members[0]
+        member = pin.members[0]
         if (member.source_id, member.revision_id) != (
             request.source_id,
             request.revision_id,
         ):
             raise TychoraError("NOT_FOUND", "Retained lineage is unavailable.")
-        attempt = service._attempt(snapshot, granted)
+        attempt = service._attempt(pin.view, granted, pin.members)
         if request.revision_id not in attempt.view.revision_ids:
             raise TychoraError("FORBIDDEN_SCOPE", "Item is outside the readable scope.")
         binding = digest(
@@ -181,7 +181,7 @@ def content_page(
                             id=uid,
                             range=CodepointRange(char_start=start, char_end=end),
                         ),
-                        snapshot,
+                        pin,
                         attempt,
                         prepared=prepared,
                     )

@@ -57,7 +57,6 @@ class RetainedBindingCache:
     def __init__(self, owner: WorkspaceOwner, snapshot_id: str) -> None:
         self.owner = owner
         self.snapshot_id = snapshot_id
-        self.members = None
         self.units: dict[str, tuple | None] = {}
         self.assets: dict[str, tuple | None] = {}
         self.binding_count = 0
@@ -96,10 +95,7 @@ class RetainedBindingCache:
 
     def _load(self, extraction_id: str, relative_path: str | None = None) -> None:
         """Bind one pinned extraction, or one code file of it, within the budget."""
-        if self.members is None:
-            snapshot = self.owner.store.resolve_snapshot(self.snapshot_id)
-            self.members = {member.extraction_id: member for member in snapshot.members}
-        member = self.members.get(extraction_id)
+        member = self.owner.store.snapshot_member(self.snapshot_id, extraction_id)
         if member is None:
             return
         key = extraction_id, relative_path

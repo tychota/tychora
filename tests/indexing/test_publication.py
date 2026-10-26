@@ -11,7 +11,7 @@ from uuid import UUID, uuid5
 import pytest
 
 from tests.helpers.corpus import COLLECTION, reader, registry, seed_bundle
-from tests.helpers.publication import lexical_plan
+from tests.helpers.publication import lexical_plan, members_of
 from tychora.adapters.chroma.index import ChromaVectorIndex
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
@@ -486,7 +486,7 @@ def test_identical_source_reuses_canonical_and_native_batches(
     new_id = f.add_revision("old source text")
     new = f.store.resolve_snapshot(None)
     assert new_id != old.snapshot_id
-    assert new.members == old.members
+    assert members_of(f.store, new) == members_of(f.store, old)
     assert f.store.snapshot_slots(new) == f.store.snapshot_slots(old)
     assert (f.embedder.calls, f.vector.upserts) == before
 
@@ -831,7 +831,8 @@ def test_concurrent_source_additions_rebase_without_losing_membership(
         second_bundle, f.store.active_snapshot_id(), job, ExecutionContext()
     )
     f.store.publish_snapshot(rebased)
-    selected = {member.source_id for member in f.store.resolve_snapshot(None).members}
+    view = f.store.resolve_snapshot(None)
+    selected = {member.source_id for member in members_of(f.store, view)}
     assert selected == {
         seed_bundle("old source text").source.source_id,
         seed_bundle("first addition", source_key="first.md").source.source_id,

@@ -3,6 +3,7 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from tests.helpers.publication import members_of
 from tests.helpers.timing import scaled
 from tests.transports.test_http import Counter
 from tychora import Tychora
@@ -240,13 +241,14 @@ async def test_archived_members_survive_unrelated_publication_and_reactivate(tmp
         add(b.collection_id, "b.md")
         page = await service.documents(kb.scope, ExecutionContext())
         assert [doc.collection_id for doc in page.documents] == [b.collection_id]
-        snapshot = await ws.owner.run_write(
-            lambda: ws.owner.store.resolve_snapshot(None), ExecutionContext()
+        members = await ws.owner.run_write(
+            lambda: members_of(ws.owner.store, ws.owner.store.resolve_snapshot(None)),
+            ExecutionContext(),
         )
         assert all(
             any(
                 (m.source_id, m.revision_id, m.extraction_id) == tuple(row)
-                for m in snapshot.members
+                for m in members
             )
             for row in identities
         )

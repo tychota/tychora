@@ -139,14 +139,6 @@ def test_compiled_attempt_exposes_overlap_warning(tmp_path):
         member_count=2,
         page_ids=(),
         families=(),
-        members=(
-            SnapshotMember(
-                source_id="source", revision_id="one", extraction_id="one-extraction"
-            ),
-            SnapshotMember(
-                source_id="source", revision_id="two", extraction_id="two-extraction"
-            ),
-        ),
     )
 
     snapshot_view = snapshot
@@ -154,7 +146,7 @@ def test_compiled_attempt_exposes_overlap_warning(tmp_path):
     class Reader:
         registry = Registry.from_config(config)
 
-        def read_eligibility_facts(self, snapshot):
+        def read_eligibility_facts(self, snapshot, members=None):
             return facts
 
         def policy_epoch(self, workspace_id):
@@ -179,5 +171,13 @@ def test_compiled_attempt_exposes_overlap_warning(tmp_path):
             {"question": "Why?", "mode": "audit", "as_of": "2024-01-01"}
         ),
         config,
+        members=(
+            SnapshotMember(
+                source_id="source", revision_id="one", extraction_id="one-extraction"
+            ),
+            SnapshotMember(
+                source_id="source", revision_id="two", extraction_id="two-extraction"
+            ),
+        ),
     )
     assert attempt.warnings

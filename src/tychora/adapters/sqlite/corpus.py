@@ -27,6 +27,7 @@ from tychora.contracts.publication import (
     PublicationPlan,
     RetainedBatch,
     RetainedSlot,
+    SnapshotMember,
     SnapshotView,
 )
 from tychora.contracts.snapshots import SlotFamily
@@ -111,8 +112,12 @@ class CorpusStore(PolicyRepository):
         """Verify a plan's new pages and batches, then activate its snapshot."""
         return publish_snapshot(self, plan)
 
-    def read_eligibility_facts(self, snapshot: SnapshotView):
-        from .eligibility import read_eligibility_facts
+    def read_eligibility_facts(
+        self,
+        snapshot: SnapshotView,
+        members: tuple[SnapshotMember, ...] | None = None,
+    ):
+        from .eligibility import all_members, read_eligibility_facts
 
         row = self.db.execute(
             "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
@@ -134,7 +139,11 @@ class CorpusStore(PolicyRepository):
         ):
             _fail("Snapshot resolved-config artifact is invalid")
 
-        return read_eligibility_facts(self, snapshot)
+        return read_eligibility_facts(
+            self,
+            snapshot,
+            members if members is not None else all_members(self, snapshot.snapshot_id),
+        )
 
     def retained_config(self, snapshot: SnapshotView) -> ResolvedConfig:
         return self.retained_config_sha(snapshot.config_sha)
@@ -190,6 +199,13 @@ class CorpusStore(PolicyRepository):
             )
         with self.uow.read() as tx:
             return tx.snapshots.view(snapshot_id)
+
+    def snapshot_member(
+        self, snapshot_id: str, extraction_id: str
+    ) -> SnapshotMember | None:
+        """Return the member of a snapshot that selects this extraction, in a short read."""
+        with self.uow.read() as tx:
+            return tx.snapshots.member(snapshot_id, extraction_id)
 
     @contextmanager
     def pin_snapshot(self, selector: str | None):

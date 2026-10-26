@@ -11,6 +11,7 @@ from tests.evaluation.conftest import (
     add_repository,
     code_profile_config,
 )
+from tests.helpers.publication import members_of
 from tests.helpers.timing import scaled
 from tychora import Tychora
 from tychora.adapters.sqlite.retained_bindings import binding_footprint, binding_key
@@ -112,7 +113,9 @@ def _result_rows(owner, result) -> int:
     extraction_id = key[0]
     member = next(
         member
-        for member in owner.store.resolve_snapshot(result.snapshot_id).members
+        for member in members_of(
+            owner.store, owner.store.resolve_snapshot(result.snapshot_id)
+        )
         if member.extraction_id == extraction_id
     )
     return binding_footprint(owner.db, member)[0]
@@ -465,7 +468,9 @@ def test_one_code_file_above_the_budget_is_still_refused(tmp_path, monkeypatch):
             return verify_result_locators(owner, result)
 
         def file_rows() -> int:
-            member = owner.store.resolve_snapshot(result.snapshot_id).members[0]
+            member = members_of(
+                owner.store, owner.store.resolve_snapshot(result.snapshot_id)
+            )[0]
             return binding_footprint(owner.db, member, "target.py")[0]
 
         rows = kb._workspace.bridge.call(owner.run_write(file_rows, ExecutionContext()))
@@ -493,7 +498,9 @@ def test_mixed_whole_and_file_bindings_never_exceed_the_budget(tmp_path, monkeyp
         owner = kb._workspace.owner
 
         def assess():
-            member = owner.store.resolve_snapshot(result.snapshot_id).members[0]
+            member = members_of(
+                owner.store, owner.store.resolve_snapshot(result.snapshot_id)
+            )[0]
             whole = binding_footprint(owner.db, member)[0]
             single = binding_footprint(owner.db, member, "target.py")[0]
             monkeypatch.setattr(
