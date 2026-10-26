@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+from collections.abc import Sequence
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
@@ -28,6 +29,28 @@ _REFERENCE_USE = "lookup"
 
 def now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _listed_uses(override: object, known: frozenset[str]) -> frozenset[str]:
+    """The uses a tuple or list override names, refusing any other shape."""
+    if (
+        isinstance(override, (str, bytes))
+        or not isinstance(override, Sequence)
+        or not all(isinstance(use, str) for use in override)
+    ):
+        raise TychoraError(
+            "INVALID_REQUEST",
+            "An allowed-use override must be never_generate, reference_only "
+            "or a list of uses",
+        )
+    uses = frozenset(cast(Sequence[str], override))
+    if not uses <= known:
+        raise TychoraError(
+            "INVALID_REQUEST",
+            "Allowed-use override names an unknown use",
+            reason="policy.use_unknown",
+        )
+    return uses
 
 
 class PolicyRepository:
@@ -211,21 +234,28 @@ class PolicyRepository:
             self._bump(row[0])
 
     def _narrowed_uses(self, override: AllowedUsesOverride) -> list[str] | None:
-        """The sorted uses an override keeps, or ``None`` for no override."""
-        known = self._known_uses()
+        """The sorted uses an override keeps, or ``None`` for no override.
+
+        An override that keeps no use is refused: ``None`` clears the
+        override and ``withdraw_source`` withdraws the source.
+        """
         if override is None:
             return None
+        known = self._known_uses()
         if override == "never_generate":
-            return sorted(known - {_GENERATION_USE})
-        if override == "reference_only":
-            return sorted(known & {_REFERENCE_USE})
-        if isinstance(override, tuple) and set(override) <= known:
-            return sorted(set(override))
-        raise TychoraError(
-            "INVALID_REQUEST",
-            "Allowed-use override names an unknown use",
-            reason="policy.use_unknown",
-        )
+            kept = known - {_GENERATION_USE}
+        elif override == "reference_only":
+            kept = known & {_REFERENCE_USE}
+        else:
+            kept = _listed_uses(override, known)
+        if not kept:
+            raise TychoraError(
+                "INVALID_REQUEST",
+                "An allowed-use override must keep at least one use; pass None "
+                "to clear the override, or use withdraw_source to withdraw the source",
+                reason="policy.use_override_empty",
+            )
+        return sorted(kept)
 
     def _known_uses(self) -> frozenset[str]:
         """Every use a mode of the active registry defines."""

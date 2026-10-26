@@ -12,10 +12,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from tychora.contracts.corpus import SourceRow
 from tychora.contracts.errors import TychoraError
 
 if TYPE_CHECKING:
     from tychora.contracts.publication import SnapshotMember
+
+# The ``sources`` columns a retained binding carries: withdrawal and use
+# overrides are policy state, not representation.
+SOURCE_COLUMNS = ",".join(SourceRow.model_fields)
 
 
 @dataclass(frozen=True, slots=True)

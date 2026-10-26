@@ -1,5 +1,6 @@
 """Typed immutable rows accepted by the corpus repository."""
 
+from collections.abc import Sequence
 from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
@@ -18,11 +19,9 @@ from .code_storage import CodeFileDescriptor
 from .evidence import EvidenceUnit, Locator, ReviewState
 
 AccessRank = Annotated[int, Field(ge=0, le=3)]
-# How a source's granted uses narrow: a named narrowing, the uses to keep, or
-# ``None`` to remove the override.
-AllowedUsesOverride = (
-    Literal["never_generate", "reference_only"] | tuple[str, ...] | None
-)
+# How a source's granted uses narrow: a named narrowing, the uses to keep (a
+# tuple or list), or ``None`` to remove the override.
+AllowedUsesOverride = Literal["never_generate", "reference_only"] | Sequence[str] | None
 
 
 class WorkspaceRow(Contract):

@@ -42,7 +42,7 @@ CREATE TABLE sources (
   registration_json TEXT NOT NULL CHECK(json_valid(registration_json)),
   access_floor INTEGER NOT NULL CHECK(access_floor BETWEEN 0 AND 3),
   withdrawn_at TEXT,
-  allowed_uses_override TEXT CHECK(allowed_uses_override IS NULL OR json_valid(allowed_uses_override)),
+  allowed_uses_override TEXT CHECK(allowed_uses_override IS NULL OR (json_valid(allowed_uses_override) AND json_type(allowed_uses_override)='array')),
   created_at TEXT NOT NULL,
   UNIQUE(collection_id, source_key)
 ) STRICT;

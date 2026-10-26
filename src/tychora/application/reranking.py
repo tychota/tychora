@@ -13,6 +13,7 @@ from threading import Lock, get_ident
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NoReturn
 
+from tychora.adapters.sqlite.retained_bindings import SOURCE_COLUMNS
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.candidates import CandidateKey, ChannelCandidate
@@ -51,9 +52,6 @@ if TYPE_CHECKING:
     from tychora.retrieval.admission import Admission
     from tychora.retrieval.eligibility import EligibilityAttempt
     from tychora.retrieval.rerank import RerankFacts
-
-# Representation columns only: withdrawal and use overrides are policy state.
-_SOURCE_COLUMNS = ",".join(SourceRow.model_fields)
 
 
 @dataclass(slots=True)
@@ -145,7 +143,7 @@ def load_retained_representation(
         )
         source_raw = _one(
             db,
-            f"SELECT {_SOURCE_COLUMNS} FROM sources WHERE source_id=?",
+            f"SELECT {SOURCE_COLUMNS} FROM sources WHERE source_id=?",
             revision_raw["source_id"],
             budget,
             ctx,
