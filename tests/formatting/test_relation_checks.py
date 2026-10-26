@@ -5,13 +5,13 @@ from tychora.configuration.registry import Registry
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.graph import (
     AssertionPage,
-    EligibilityView,
     GraphBatchReceipt,
     GraphBudget,
     GraphCandidates,
     GraphGenerationSpec,
     GraphManifest,
     GraphPath,
+    LegacyEligibilityView,
 )
 from tychora.contracts.identity import digest
 from tychora.contracts.relationships import RelationshipAssertion
@@ -45,7 +45,7 @@ class Graph:
 
     def expand(
         self,
-        view: EligibilityView,
+        view: LegacyEligibilityView,
         seed_unit_ids: tuple[str, ...],
         limits: GraphBudget,
         ctx: ExecutionContext,
@@ -54,7 +54,7 @@ class Graph:
 
     def structural_context(
         self,
-        view: EligibilityView,
+        view: LegacyEligibilityView,
         seed_unit_ids: tuple[str, ...],
         limits: GraphBudget,
         ctx: ExecutionContext,
@@ -63,7 +63,7 @@ class Graph:
 
     def get_assertions(
         self,
-        view: EligibilityView,
+        view: LegacyEligibilityView,
         selected_unit_ids: tuple[str, ...],
         predicates: tuple[str, ...],
         limits: GraphBudget,
@@ -91,8 +91,8 @@ class Graph:
         )
 
 
-def _view(eligible: frozenset[str]) -> EligibilityView:
-    return EligibilityView(
+def _view(eligible: frozenset[str]) -> LegacyEligibilityView:
+    return LegacyEligibilityView(
         snapshot_id="snapshot",
         policy_epoch=0,
         scope_digest=digest("scope"),

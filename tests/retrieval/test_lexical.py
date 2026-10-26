@@ -4,7 +4,7 @@ import sqlite3
 
 from tychora.adapters.sqlite.lexical import LexicalIndex
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.graph import EligibilityView
+from tychora.contracts.graph import LegacyEligibilityView
 from tychora.contracts.identity import digest
 from tychora.ports.execution import ExecutionContext
 from tychora.retrieval.lexical_query import lexical_expression
@@ -38,7 +38,7 @@ def test_explicit_phrase_retains_internal_stopwords_for_adjacency():
 
 
 def _view(*, chunks, batches=("old",), sources=(), proxies=(), assets=()):
-    return EligibilityView(
+    return LegacyEligibilityView(
         snapshot_id="snapshot",
         policy_epoch=0,
         scope_digest=digest("scope"),

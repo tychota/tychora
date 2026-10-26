@@ -2,6 +2,7 @@
 
 from .artifacts import SqliteArtifactRepository, artifact_ref
 from .batches import SqliteBatchRepository
+from .eligibility import SqliteEligibilityRepository
 from .families import SqliteFamilyRepository, family_from_row
 from .representations import SqliteRepresentationRepository
 from .snapshots import SqliteSnapshotRepository
@@ -11,6 +12,7 @@ from .workspace import SqliteWorkspaceRepository
 __all__ = [
     "SqliteArtifactRepository",
     "SqliteBatchRepository",
+    "SqliteEligibilityRepository",
     "SqliteFamilyRepository",
     "SqliteRepresentationRepository",
     "SqliteSnapshotRepository",

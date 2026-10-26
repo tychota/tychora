@@ -20,7 +20,7 @@ from tychora.contracts.candidates import ChannelCandidates
 from tychora.contracts.corpus import ExtractionBundle, ReviewTarget
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit, Geometry
-from tychora.contracts.graph import EligibilityView
+from tychora.contracts.graph import LegacyEligibilityView
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.indexing import RepresentationFacts
 from tychora.contracts.publication import (
@@ -160,7 +160,7 @@ class CorpusStore(PolicyRepository):
         return policy_epoch(self, workspace_id)
 
     def lookup_identifiers(
-        self, namespaced: tuple[str, ...], view: EligibilityView, limit: int
+        self, namespaced: tuple[str, ...], view: LegacyEligibilityView, limit: int
     ) -> ChannelCandidates:
         from .lexical import lookup_identifiers
 

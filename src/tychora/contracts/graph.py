@@ -185,7 +185,7 @@ class GraphBatchReceipt(Contract):
     assertion_count: NonNegativeInt
 
 
-class EligibilityView(Contract):
+class LegacyEligibilityView(Contract):
     """Pinned request eligibility; graph bindings are absent together when disabled."""
 
     snapshot_id: Identifier

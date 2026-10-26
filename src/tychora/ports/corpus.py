@@ -6,7 +6,7 @@ from typing import Protocol
 from tychora.contracts.candidates import ChannelCandidates
 from tychora.contracts.corpus import AllowedUsesOverride, ExtractionBundle, ReviewTarget
 from tychora.contracts.evidence import EvidenceUnit
-from tychora.contracts.graph import EligibilityView
+from tychora.contracts.graph import LegacyEligibilityView
 from tychora.contracts.indexing import RepresentationFacts
 
 
@@ -42,5 +42,5 @@ class CorpusStore(Protocol):
         actor: str,
     ) -> int: ...
     def lookup_identifiers(
-        self, namespaced: tuple[str, ...], view: EligibilityView, limit: int
+        self, namespaced: tuple[str, ...], view: LegacyEligibilityView, limit: int
     ) -> ChannelCandidates: ...

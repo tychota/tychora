@@ -20,7 +20,7 @@ from tychora.contracts.corpus import (
 )
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import AnchorRange, EvidenceUnit
-from tychora.contracts.graph import EligibilityView
+from tychora.contracts.graph import LegacyEligibilityView
 from tychora.contracts.identity import chunk_id as derive_chunk_id
 from tychora.contracts.indexing import PreparedExtraction
 from tychora.contracts.requests import PassageInput, QueryRequest, QuestionInput
@@ -366,7 +366,7 @@ def matches_from_channels(
     channels: Mapping[str, tuple[ChannelCandidate, ...]],
     chunks: Mapping[str, ChunkRow],
     prepared: PreparedExtraction,
-    view: EligibilityView,
+    view: LegacyEligibilityView,
     *,
     weights: Mapping[str, float] = DEFAULT_WEIGHTS,
 ) -> tuple[RerankMatch, ...]:
@@ -447,7 +447,7 @@ def _dependencies(
 def ranking_input(
     candidate: FusedCandidate,
     units: Mapping[str, EvidenceUnit],
-    view: EligibilityView,
+    view: LegacyEligibilityView,
     counter: TokenCounter,
     budget: int = 1200,
     *,

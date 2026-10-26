@@ -13,7 +13,6 @@ from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit, TextLocator
 from tychora.contracts.graph import (
-    EligibilityView,
     GraphAssertionBinding,
     GraphBudget,
     GraphBuildInput,
@@ -23,6 +22,7 @@ from tychora.contracts.graph import (
     GraphPredicatePolicy,
     GraphTraversalPolicy,
     GraphUnitBinding,
+    LegacyEligibilityView,
 )
 from tychora.contracts.identity import digest
 from tychora.contracts.relationships import (
@@ -152,7 +152,7 @@ def graph_fixture(tmp_path):
 
         @staticmethod
         def view(*, context, candidates, structural, blocked=frozenset()):
-            return EligibilityView(
+            return LegacyEligibilityView(
                 snapshot_id="snapshot",
                 policy_epoch=0,
                 scope_digest=digest("scope"),

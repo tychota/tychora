@@ -20,7 +20,7 @@ from tychora.contracts.evidence import (
     Segment,
     TextLocator,
 )
-from tychora.contracts.graph import EligibilityView, GraphPath
+from tychora.contracts.graph import GraphPath, LegacyEligibilityView
 from tychora.contracts.identity import digest
 from tychora.indexing.representations import project_code_excerpt_locator
 from tychora.ingestion.tables import continuation_context_allowed
@@ -214,7 +214,7 @@ def _code_context(
     item: RankedEvidenceItem,
     matched_unit_id: str,
     matched_citation: Citation,
-    view: EligibilityView,
+    view: LegacyEligibilityView,
     counter: TokenCounter,
     remaining: int,
 ) -> tuple[tuple[Excerpt, ...], tuple[Citation, ...]]:
@@ -296,7 +296,7 @@ def _continuation_context(
     item: RankedEvidenceItem,
     unit_id: str,
     matched_citation: Citation,
-    view: EligibilityView,
+    view: LegacyEligibilityView,
     config: ResolvedConfig,
     counter: TokenCounter,
     remaining: int,
@@ -424,7 +424,7 @@ def _same_section(first, second) -> bool:
 def _neighbor_context(
     item: RankedEvidenceItem,
     unit_id: str,
-    view: EligibilityView,
+    view: LegacyEligibilityView,
     counter: TokenCounter,
     remaining: int,
 ) -> tuple[tuple[Excerpt, ...], tuple[Citation, ...]]:
@@ -502,7 +502,7 @@ def _expand_to_line(
     unit_id: str,
     start: int,
     end: int,
-    view: EligibilityView,
+    view: LegacyEligibilityView,
     counter: TokenCounter,
     ceiling: int,
 ) -> tuple[int, int]:
@@ -533,7 +533,7 @@ def _segment(
     end: int,
     config: ResolvedConfig,
     counter: TokenCounter,
-    view: EligibilityView,
+    view: LegacyEligibilityView,
     continuation_paths: tuple[GraphPath, ...],
     historical_kind_roles: Mapping[str, str],
     segment_ceiling: int,
@@ -649,7 +649,7 @@ def _segment(
 def _coalesce_boundary_matches(
     options: list[tuple[int, int, Segment]],
     ranked: RankedEvidence,
-    view: EligibilityView,
+    view: LegacyEligibilityView,
     counter: TokenCounter,
     segment_ceiling: int,
 ) -> list[tuple[int, int, Segment]]:
@@ -811,7 +811,7 @@ def _coalesce_boundary_matches(
 
 def assemble_segments(
     ranked: RankedEvidence,
-    view: EligibilityView,
+    view: LegacyEligibilityView,
     config: ResolvedConfig,
     counter: TokenCounter,
     *,

@@ -1,6 +1,6 @@
 """Complete synthetic eligibility views for retrieval unit tests."""
 
-from tychora.contracts.graph import EligibilityView
+from tychora.contracts.graph import LegacyEligibilityView
 from tychora.contracts.identity import digest
 
 
@@ -11,9 +11,9 @@ def eligibility_view(
     structural_unit_ids: frozenset[str] = frozenset(),
     chunk_ids: frozenset[str] = frozenset(),
     graph_generation_id: str | None = None,
-) -> EligibilityView:
+) -> LegacyEligibilityView:
     graph_bound = graph_generation_id is not None
-    return EligibilityView(
+    return LegacyEligibilityView(
         snapshot_id="synthetic-snapshot",
         policy_epoch=0,
         scope_digest=digest("synthetic-scope"),

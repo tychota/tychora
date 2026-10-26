@@ -5,12 +5,12 @@ from typing import Literal, Protocol
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.graph import (
     AssertionPage,
-    EligibilityView,
     GraphBatchReceipt,
     GraphBudget,
     GraphCandidates,
     GraphGenerationSpec,
     GraphManifest,
+    LegacyEligibilityView,
 )
 from tychora.contracts.relationships import RelationshipAssertion
 from tychora.ports.execution import ExecutionContext
@@ -37,7 +37,7 @@ class GraphStore(Protocol):
 
     def expand(
         self,
-        view: EligibilityView,
+        view: LegacyEligibilityView,
         seed_unit_ids: tuple[str, ...],
         limits: GraphBudget,
         ctx: ExecutionContext,
@@ -45,7 +45,7 @@ class GraphStore(Protocol):
 
     def structural_context(
         self,
-        view: EligibilityView,
+        view: LegacyEligibilityView,
         seed_unit_ids: tuple[str, ...],
         limits: GraphBudget,
         ctx: ExecutionContext,
@@ -53,7 +53,7 @@ class GraphStore(Protocol):
 
     def get_assertions(
         self,
-        view: EligibilityView,
+        view: LegacyEligibilityView,
         selected_unit_ids: tuple[str, ...],
         predicates: tuple[str, ...],
         limits: GraphBudget,

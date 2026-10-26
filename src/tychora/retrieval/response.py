@@ -23,7 +23,7 @@ from tychora.contracts.evidence import (
     StructuredRecord,
     VisualEvidence,
 )
-from tychora.contracts.graph import EligibilityView, GraphBudget
+from tychora.contracts.graph import GraphBudget, LegacyEligibilityView
 from tychora.contracts.identity import digest
 from tychora.contracts.requests import (
     BudgetContract,
@@ -490,7 +490,7 @@ class ResponseAssembler:
 
 def inspect_relations(
     graph: GraphStore,
-    view: EligibilityView,
+    view: LegacyEligibilityView,
     selected_unit_ids: tuple[str, ...],
     predicates: tuple[str, ...],
     ctx: ExecutionContext,

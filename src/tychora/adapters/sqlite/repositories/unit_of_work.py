@@ -8,6 +8,7 @@ from tychora.contracts.errors import TychoraError
 from tychora.ports.repositories import (
     ArtifactRepository,
     BatchRepository,
+    EligibilityRepository,
     FamilyRepository,
     ReadTransaction,
     RepresentationRepository,
@@ -18,6 +19,7 @@ from tychora.ports.repositories import (
 
 from .artifacts import SqliteArtifactRepository
 from .batches import SqliteBatchRepository
+from .eligibility import SqliteEligibilityRepository
 from .families import SqliteFamilyRepository
 from .representations import SqliteRepresentationRepository
 from .snapshots import SqliteSnapshotRepository
@@ -72,6 +74,7 @@ class SqliteTransaction:
     batches: BatchRepository
     snapshots: SnapshotRepository
     representations: RepresentationRepository
+    eligibility: EligibilityRepository
 
     def __init__(self, db: sqlite3.Connection, *, writable: bool) -> None:
         self.workspace = SqliteWorkspaceRepository(db, writable=writable)
@@ -80,6 +83,7 @@ class SqliteTransaction:
         self.batches = SqliteBatchRepository(db, writable=writable)
         self.snapshots = SqliteSnapshotRepository(db, writable=writable)
         self.representations = SqliteRepresentationRepository(db, writable=writable)
+        self.eligibility = SqliteEligibilityRepository(db)
 
 
 class SqliteUnitOfWork:

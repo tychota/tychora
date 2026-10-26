@@ -31,7 +31,7 @@ from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.candidates import CandidateKey, ChannelCandidates
 from tychora.contracts.embeddings import EmbeddingCapabilities
 from tychora.contracts.evidence import QueryResult
-from tychora.contracts.graph import EligibilityView
+from tychora.contracts.graph import LegacyEligibilityView
 from tychora.contracts.identity import digest
 from tychora.contracts.indexing import FamilySpec
 from tychora.contracts.requests import QueryRequest, RequestScope, SourceInput
@@ -308,7 +308,7 @@ class EngineSession:
         cached_result = self.caches.get_result
 
         def measured_lexical(
-            view: EligibilityView,
+            view: LegacyEligibilityView,
             query: str,
             candidate_limit: int,
             ctx: ExecutionContext,
@@ -337,7 +337,7 @@ class EngineSession:
             )
 
         def measured_revalidate(
-            view: EligibilityView, stage: Literal["provider", "delivery"]
+            view: LegacyEligibilityView, stage: Literal["provider", "delivery"]
         ) -> None:
             self._bump(policy_revalidations=1)
             self._time("policy_revalidation", revalidate, view, stage)

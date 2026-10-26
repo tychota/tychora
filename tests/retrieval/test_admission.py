@@ -6,11 +6,11 @@ from tychora.configuration.models import ResolvedConfig
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.graph import (
     AssertionPage,
-    EligibilityView,
     GraphBatchReceipt,
     GraphBudget,
     GraphGenerationSpec,
     GraphManifest,
+    LegacyEligibilityView,
 )
 from tychora.contracts.relationships import RelationshipAssertion
 from tychora.ports.execution import ExecutionContext
@@ -89,7 +89,7 @@ def _config(
     )
 
 
-def _view(*seeds: str) -> EligibilityView:
+def _view(*seeds: str) -> LegacyEligibilityView:
     view = eligibility_view(
         context_unit_ids=frozenset(seeds), graph_generation_id="generation"
     )
@@ -122,7 +122,7 @@ class _TraversalGraph:
 
     def get_assertions(
         self,
-        view: EligibilityView,
+        view: LegacyEligibilityView,
         selected_unit_ids: tuple[str, ...],
         predicates: tuple[str, ...],
         limits: GraphBudget,
