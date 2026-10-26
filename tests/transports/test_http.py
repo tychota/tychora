@@ -174,7 +174,8 @@ async def test_revision_cursor_skips_hidden_first_and_is_scope_bound(tmp_path):
                 )
                 owner.db.execute(
                     "INSERT INTO sources SELECT ?,collection_id,'other-visible',"
-                    "source_type,registration_json,access_floor,withdrawn_at,created_at "
+                    "source_type,registration_json,access_floor,withdrawn_at,"
+                    "allowed_uses_override,created_at "
                     "FROM sources WHERE source_id=?",
                     ("00000000-0000-4000-8000-000000000099", source_id),
                 )
@@ -1797,7 +1798,8 @@ async def test_source_and_revision_history_use_bounded_database_pages(tmp_path):
                     owner.db.execute(
                         "INSERT INTO sources "
                         "SELECT ?,collection_id,?,source_type,registration_json,"
-                        "access_floor,withdrawn_at,created_at FROM sources WHERE source_id=?",
+                        "access_floor,withdrawn_at,allowed_uses_override,created_at "
+                        "FROM sources WHERE source_id=?",
                         (
                             f"00000000-0000-4000-8000-{number + 10:012d}",
                             f"synthetic-{number}",

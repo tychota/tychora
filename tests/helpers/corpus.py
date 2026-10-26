@@ -164,3 +164,19 @@ def seed_bundle(
         if text
         else (),
     )
+
+
+def raw_review(db, kind: str, target_id: str, state: str = "rejected") -> int:
+    """Append a review event and its current state directly, without an epoch bump."""
+    cursor = db.execute(
+        f"INSERT INTO review_events({kind}_id,state,actor_id,created_at) "
+        "VALUES (?,?,'reviewer','2026-01-01T00:00:00Z')",
+        (target_id, state),
+    )
+    db.execute(
+        "INSERT INTO review_current(target_kind,target_id,state,review_event_id) "
+        "VALUES (?,?,?,?) ON CONFLICT(target_kind,target_id) DO UPDATE SET "
+        "state=excluded.state,review_event_id=excluded.review_event_id",
+        (kind, target_id, state, cursor.lastrowid),
+    )
+    return cursor.lastrowid

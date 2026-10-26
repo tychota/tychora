@@ -12,6 +12,7 @@ import pytest
 import pytest_asyncio
 from PIL import Image
 
+from tests.helpers.corpus import raw_review
 from tests.retrieval.graph_fixture import assertion, sealed_graph, unit
 from tests.typed_json import json_array, json_object, json_string
 from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
@@ -195,10 +196,7 @@ async def test_native_overlap_denies_child_slice_and_allows_disjoint_parent_rang
             "FROM locators WHERE unit_id=?",
             (uid,),
         )
-        owner.db.execute(
-            "INSERT INTO review_events(unit_id,state,actor_id,created_at) "
-            "VALUES ('rejected-child','rejected','reviewer','2026-01-01T00:00:00Z')"
-        )
+        raw_review(owner.db, "unit", "rejected-child")
 
     await owner.run_write(add_rejected_child, ExecutionContext())
     service = InspectionService(owner)
@@ -315,10 +313,7 @@ async def test_retained_docling_source_parts_denies_rejected_child_overlap(publi
             "FROM locators WHERE unit_id=?",
             (locator(6), uid),
         )
-        owner.db.execute(
-            "INSERT INTO review_events(unit_id,state,actor_id,created_at) "
-            "VALUES ('doc-child','rejected','reviewer','2026-01-01T00:00:00Z')"
-        )
+        raw_review(owner.db, "unit", "doc-child")
 
     await owner.run_write(install_parts, ExecutionContext())
     service = InspectionService(owner)
@@ -754,10 +749,7 @@ async def test_full_original_cannot_expose_rejected_source_unit(published):
         ExecutionContext(),
     )
     await owner.run_write(
-        lambda: owner.db.execute(
-            "INSERT INTO review_events(unit_id,state,actor_id,created_at) VALUES (?,'rejected','reviewer','2026-01-01T00:00:00Z')",
-            (uid,),
-        ),
+        lambda: raw_review(owner.db, "unit", uid),
         ExecutionContext(),
     )
     with pytest.raises(TychoraError) as denied:
@@ -822,7 +814,7 @@ async def test_source_discovery_preserves_unextracted_source_and_revision_stages
     def stage():
         owner.db.execute(
             "INSERT INTO sources SELECT 'awaiting',collection_id,'awaiting.txt',"
-            "source_type,registration_json,access_floor,NULL,created_at "
+            "source_type,registration_json,access_floor,NULL,NULL,created_at "
             "FROM sources LIMIT 1"
         )
         owner.db.execute(

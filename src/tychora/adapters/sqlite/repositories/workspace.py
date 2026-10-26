@@ -61,6 +61,14 @@ class SqliteWorkspaceRepository:
             "RETURNING lexical_statistics_epoch"
         ).fetchone()[0]
 
+    def bump_policy_epoch(self) -> int:
+        """Advance the policy epoch once and return the new value."""
+        require_write(self._db, self._writable)
+        self._row()
+        return self._db.execute(
+            "UPDATE workspaces SET policy_epoch=policy_epoch+1 RETURNING policy_epoch"
+        ).fetchone()[0]
+
     def collection_ids(self) -> frozenset[str]:
         """Return every collection of the workspace."""
         return frozenset(

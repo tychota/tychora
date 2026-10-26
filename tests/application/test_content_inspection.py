@@ -4,6 +4,7 @@ import pytest
 
 from tests.application.test_inspection import Counter
 from tests.application.test_inspection import published as published_fixture
+from tests.helpers.corpus import raw_review
 from tychora.application.inspection import InspectionService
 from tychora.application.sources import SourceService
 from tychora.contracts import SourceInput, operations
@@ -188,10 +189,7 @@ async def restricted_windows(owner, uid):
             "FROM locators WHERE unit_id=?",
             (uid,),
         )
-        owner.db.execute(
-            "INSERT INTO review_events(unit_id,state,actor_id,created_at) "
-            "VALUES ('rejected-child','rejected','reviewer','2026-01-01T00:00:00Z')"
-        )
+        raw_review(owner.db, "unit", "rejected-child")
         extraction = owner.db.execute(
             "SELECT extraction_id FROM evidence_units WHERE unit_id=?", (uid,)
         ).fetchone()[0]
@@ -244,10 +242,7 @@ async def test_excluded_overlap_cannot_hide_later_disjoint_windows(published):
     ] == [(12, 22)]
     # A rejected parent cannot be revived by requesting a locally disjoint range.
     await owner.run_write(
-        lambda: owner.db.execute(
-            "INSERT INTO review_events(unit_id,state,actor_id,created_at) VALUES (?,'rejected','reviewer','2026-01-01T00:00:00Z')",
-            (uid,),
-        ),
+        lambda: raw_review(owner.db, "unit", uid),
         ExecutionContext(),
     )
     denied = await service.extraction_windows(request, scope, ExecutionContext())

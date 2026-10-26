@@ -96,6 +96,10 @@ class WorkspaceRepository(Protocol):
         """Advance the lexical statistics epoch once and return the new value."""
         ...
 
+    def bump_policy_epoch(self) -> int:
+        """Advance the policy epoch once and return the new value."""
+        ...
+
     def collection_ids(self) -> frozenset[str]:
         """Return every collection of the workspace."""
         ...
@@ -176,6 +180,7 @@ class VectorRecordRow(Contract):
     record_id: Identifier
     chunk_id: Identifier | None
     asset_id: Identifier | None
+    group_id: Identifier | None = None
     input_sha: Sha256
     row_index: NonNegativeInt
 

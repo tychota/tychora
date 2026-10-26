@@ -55,8 +55,8 @@ SPEC_REASONS = {
 
 # Reasons that classify existing storage, owner and endpoint failures.
 CLASSIFIED_REASONS = {
-    "NOT_FOUND": {"workspace.absent", "snapshot.absent"},
-    "FORBIDDEN_SCOPE": {"scope.whole_workspace"},
+    "NOT_FOUND": {"workspace.absent", "snapshot.absent", "source.absent"},
+    "FORBIDDEN_SCOPE": {"scope.whole_workspace", "scope.capability_missing"},
     "JOB_INTERRUPTED": {"job.orphaned"},
     "WORKSPACE_BUSY": {"owner.absent", "family.claimed", "storage.busy"},
     "PROFILE_INCOMPATIBLE": {"workspace.schema_mismatch"},
@@ -75,6 +75,7 @@ CLASSIFIED_REASONS = {
         "kind.section_levels_invalid",
         "kind.unknown",
         "tokens.atomic_limit",
+        "policy.use_unknown",
     },
 }
 

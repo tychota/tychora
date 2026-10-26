@@ -42,6 +42,7 @@ CREATE TABLE sources (
   registration_json TEXT NOT NULL CHECK(json_valid(registration_json)),
   access_floor INTEGER NOT NULL CHECK(access_floor BETWEEN 0 AND 3),
   withdrawn_at TEXT,
+  allowed_uses_override TEXT CHECK(allowed_uses_override IS NULL OR json_valid(allowed_uses_override)),
   created_at TEXT NOT NULL,
   UNIQUE(collection_id, source_key)
 ) STRICT;
@@ -258,6 +259,14 @@ CREATE INDEX review_revision_latest ON review_events(revision_id,review_event_id
 CREATE INDEX review_unit_latest ON review_events(unit_id,review_event_id DESC);
 CREATE INDEX review_asset_latest ON review_events(asset_id,review_event_id DESC);
 
+CREATE TABLE review_current (
+  target_kind TEXT NOT NULL CHECK(target_kind IN ('revision','unit','asset')),
+  target_id TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('unreviewed','needs_review','accepted','rejected')),
+  review_event_id INTEGER NOT NULL REFERENCES review_events(review_event_id),
+  PRIMARY KEY(target_kind,target_id)
+) STRICT, WITHOUT ROWID;
+
 CREATE TABLE assertion_decisions (
   decision_id INTEGER PRIMARY KEY,
   assertion_id TEXT NOT NULL,
@@ -309,7 +318,9 @@ CREATE TABLE vector_records (
   asset_id TEXT REFERENCES assets(asset_id),
   input_sha TEXT NOT NULL,
   row_index INTEGER NOT NULL CHECK(row_index>=0),
+  group_id TEXT,
   CHECK((chunk_id IS NOT NULL)+(asset_id IS NOT NULL)=1),
+  CHECK((chunk_id IS NULL)=(group_id IS NULL)),
   UNIQUE(batch_id,chunk_id),
   UNIQUE(batch_id,asset_id),
   UNIQUE(batch_id,row_index)
@@ -514,6 +525,8 @@ CREATE INDEX batches_family_extraction ON index_batches(family_id,extraction_id,
 CREATE INDEX vector_chunk ON vector_records(chunk_id,batch_id);
 CREATE INDEX vector_asset ON vector_records(asset_id,batch_id);
 CREATE INDEX queries_expiration ON query_runs(expires_at);
+CREATE INDEX representation_dependencies_dependency ON representation_dependencies(dependency_id,owner_id);
+CREATE INDEX units_declared_review ON evidence_units(declared_review_state,extraction_id);
 
 CREATE VIEW snapshot_members AS
   SELECT sp.snapshot_id, m.source_id, m.revision_id, m.extraction_id, m.is_default

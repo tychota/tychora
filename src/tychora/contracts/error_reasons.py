@@ -223,6 +223,12 @@ _ENTRIES = (
         "The snapshot was collected or never published; query the active snapshot.",
     ),
     Reason(
+        "NOT_FOUND",
+        "source.absent",
+        False,
+        "List the collection's sources and use one of their identifiers.",
+    ),
+    Reason(
         "WORKSPACE_BUSY",
         "storage.busy",
         True,
@@ -239,6 +245,12 @@ _ENTRIES = (
         "scope.whole_workspace",
         False,
         "Run the operation with a grant that covers every collection of the workspace.",
+    ),
+    Reason(
+        "FORBIDDEN_SCOPE",
+        "scope.capability_missing",
+        False,
+        "Ask the workspace owner for the capability this operation needs.",
     ),
     Reason(
         "INVALID_REQUEST",
@@ -277,6 +289,12 @@ _ENTRIES = (
         "filter.unknown_field",
         False,
         "List the filterable fields with `tychora inspect facets`.",
+    ),
+    Reason(
+        "INVALID_REQUEST",
+        "policy.use_unknown",
+        False,
+        "Use only the uses the profile's modes define (compose, audit, lookup).",
     ),
     Reason(
         "INVALID_REQUEST",

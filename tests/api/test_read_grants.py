@@ -2,6 +2,7 @@
 
 import pytest
 
+from tests.helpers.corpus import raw_review
 from tychora import AsyncTychora, Tychora
 from tychora.contracts.errors import TychoraError
 from tychora.ports.execution import ExecutionContext
@@ -147,10 +148,7 @@ def test_retained_citation_after_same_edition_refresh(tmp_path):
         assert kb.inspect({"subject": "diagnostics", "id": xid}).records
 
         owner.run_write_sync(
-            lambda: owner.db.execute(
-                "INSERT INTO review_events(unit_id,state,actor_id,created_at) VALUES (?,'rejected','reviewer','2026-01-01T00:00:00Z')",
-                (uid,),
-            ),
+            lambda: raw_review(owner.db, "unit", uid),
             ExecutionContext(),
         )
         with pytest.raises(TychoraError) as rejected:

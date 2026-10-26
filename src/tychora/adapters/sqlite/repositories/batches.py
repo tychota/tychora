@@ -34,7 +34,7 @@ _IMMUTABLE_COLUMNS = (
     "entry_ids_sha,receipt_json,vectors_sha"
 )
 _LEXICAL_COLUMNS = "batch_id,chunk_id,identifiers,title,headings,body,context"
-_VECTOR_COLUMNS = "record_id,batch_id,chunk_id,asset_id,input_sha,row_index"
+_VECTOR_COLUMNS = "record_id,batch_id,chunk_id,asset_id,input_sha,row_index,group_id"
 _REMOVED_IDS = (
     "SELECT batch_id FROM index_batches WHERE state='removed' "
     "AND batch_id IN (SELECT value FROM json_each(?))"
@@ -224,6 +224,7 @@ class SqliteBatchRepository:
                 r.asset_id,
                 r.input_sha,
                 r.row_index,
+                r.group_id,
             )
             self._insert_once("vector_records", _VECTOR_COLUMNS, 1, values)
 

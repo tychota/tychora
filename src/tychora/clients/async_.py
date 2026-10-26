@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Self
 
 from tychora.api import LocalWorkspace
 from tychora.clients.sync import _context, _parsed
+from tychora.contracts.corpus import AllowedUsesOverride
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.operations import (
     DiscoverRequest,
@@ -60,6 +61,20 @@ class _AsyncSources:
         ws = self.kb._open()
         return await ws.services.source_jobs.sync_async(
             source_id, ws.scope, idempotency_key
+        )
+
+    @_admitted
+    async def set_allowed_uses(
+        self, source_id: str, override: AllowedUsesOverride
+    ) -> None:
+        """Narrow the uses a source grants (``never_generate``, ``reference_only`` or a use list)."""
+        ws = self.kb._open()
+        ctx = _context()
+        await ws.bridge.acall(
+            ws.services.source_jobs.sources.set_allowed_uses(
+                source_id, override, ws.scope, ctx
+            ),
+            ctx,
         )
 
     @_admitted
