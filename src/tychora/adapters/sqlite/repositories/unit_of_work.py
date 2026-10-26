@@ -1,7 +1,7 @@
 """Read and write transactions over one SQLite connection."""
 
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 from tychora.contracts.errors import TychoraError
@@ -38,11 +38,14 @@ def _busy(error: sqlite3.Error) -> bool:
 
 
 @contextmanager
-def typed_storage_errors() -> Iterator[None]:
+def typed_storage_errors(
+    diagnose: Callable[[Exception], TychoraError] | None = None,
+) -> Iterator[None]:
     """Report a SQLite failure as a typed error.
 
     A busy or locked database is a retryable ``WORKSPACE_BUSY``; any other
-    failure is an unexpected ``INTEGRITY_ERROR``.
+    failure is an unexpected ``INTEGRITY_ERROR``, built by ``diagnose`` when
+    the caller gives one.
     """
     try:
         yield
@@ -51,6 +54,8 @@ def typed_storage_errors() -> Iterator[None]:
             raise TychoraError(
                 "WORKSPACE_BUSY", "Workspace database is busy", reason="storage.busy"
             ) from error
+        if diagnose is not None:
+            raise diagnose(error) from None
         raise TychoraError(
             "INTEGRITY_ERROR",
             f"Storage operation failed: {type(error).__name__}",
