@@ -7,6 +7,7 @@ import threading
 
 import pytest
 
+from tychora.adapters.sqlite.connection import open_read_connection
 from tychora.application.owner import WorkspaceOwner
 from tychora.application.runtime import READ_BOUND, READ_THREAD_PREFIX, ReadPool
 from tychora.configuration.resolve import resolve_config
@@ -58,10 +59,57 @@ async def test_read_connection_refuses_writes(owner):
         "INTEGRITY_ERROR",
         "invariant.unexpected",
     )
+    assert error.value.diagnostic_id
     assert (
         await owner.run_read(lambda tx: tx.workspace.policy_epoch(), ExecutionContext())
         == 0
     )
+
+
+@pytest.mark.asyncio
+async def test_read_task_cannot_reach_the_writer_connection(owner, caplog):
+    with caplog.at_level(logging.ERROR), pytest.raises(TychoraError) as error:
+        await owner.run_read(
+            lambda tx: owner.db.execute("SELECT 1"), ExecutionContext()
+        )
+    assert (error.value.code, error.value.reason) == (
+        "INTEGRITY_ERROR",
+        "invariant.unexpected",
+    )
+    assert error.value.diagnostic_id
+    assert error.value.diagnostic_id in caplog.text
+    assert "ProgrammingError" in caplog.text
+
+
+def test_read_connection_is_query_only_on_a_wal_database(tmp_path):
+    path = tmp_path / "wal.sqlite3"
+    writer = sqlite3.connect(path)
+    try:
+        writer.execute("PRAGMA journal_mode=WAL")
+        writer.execute("CREATE TABLE t (x)")
+        writer.commit()
+        db = open_read_connection(path)
+        try:
+            assert db.execute("PRAGMA query_only").fetchone()[0] == 1
+            with pytest.raises(sqlite3.OperationalError, match="readonly"):
+                db.execute("CREATE TEMP TABLE scratch (x)")
+        finally:
+            db.close()
+    finally:
+        writer.close()
+
+
+def test_read_connection_refuses_a_database_not_in_wal_mode(tmp_path):
+    path = tmp_path / "rollback.sqlite3"
+    writer = sqlite3.connect(path)
+    try:
+        writer.execute("CREATE TABLE t (x)")
+        writer.commit()
+    finally:
+        writer.close()
+    with pytest.raises(TychoraError) as error:
+        open_read_connection(path)
+    assert error.value.reason == "invariant.unexpected"
 
 
 @pytest.mark.asyncio

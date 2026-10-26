@@ -143,28 +143,34 @@ def _required_slots(config: ResolvedConfig) -> frozenset[str]:
     return frozenset(slots)
 
 
+def _read_defect(error: Exception) -> TychoraError:
+    """Log ``error`` with its traceback under a fresh diagnostic ID and type it."""
+    diagnostic = uuid4().hex
+    _LOG.error("Unexpected read failure [%s]", diagnostic, exc_info=error)
+    return TychoraError(
+        "INTEGRITY_ERROR",
+        f"Unexpected read failure; report diagnostic {diagnostic}.",
+        reason="invariant.unexpected",
+        diagnostic_id=diagnostic,
+    )
+
+
 @contextmanager
 def read_boundary() -> Iterator[None]:
     """Let only typed errors leave a read task.
 
-    SQLite failures become their typed storage errors; any other exception is
-    a defect, logged with its traceback under a fresh diagnostic ID that the
-    caller receives with ``INTEGRITY_ERROR`` reason ``invariant.unexpected``.
+    A busy database stays a retryable ``storage.busy``. Any other SQLite
+    failure or exception is a defect, logged with its traceback under a fresh
+    diagnostic ID that the caller receives with ``INTEGRITY_ERROR`` reason
+    ``invariant.unexpected``.
     """
     try:
-        with typed_storage_errors():
+        with typed_storage_errors(_read_defect):
             yield
     except TychoraError:
         raise
     except Exception as error:  # noqa: BLE001 - every defect leaves typed, with a diagnostic
-        diagnostic = uuid4().hex
-        _LOG.error("Unexpected read failure [%s]", diagnostic, exc_info=error)
-        raise TychoraError(
-            "INTEGRITY_ERROR",
-            f"Unexpected read failure; report diagnostic {diagnostic}.",
-            reason="invariant.unexpected",
-            diagnostic_id=diagnostic,
-        ) from None
+        raise _read_defect(error) from None
 
 
 class WorkspaceOwner:
@@ -415,7 +421,10 @@ class WorkspaceOwner:
     ) -> T:
         """Run ``call`` in one deferred read transaction on a read-pool connection.
 
-        The transaction sees one WAL snapshot and rolls back on exit.
+        The transaction sees one WAL snapshot and rolls back on exit. ``call``
+        must return materialised values, never cursors or repositories: read
+        connections are not bound to their thread, so nothing may use them
+        once the task ends.
         """
         ctx.checkpoint()
         reads = self._reads
@@ -424,8 +433,13 @@ class WorkspaceOwner:
 
         def task() -> T:
             ctx.checkpoint()
-            with read_boundary(), SqliteUnitOfWork(reads.connection()).read() as tx:
-                return call(tx)
+            with read_boundary():
+                db = reads.connection()
+                if db.in_transaction:
+                    # Never join a transaction an earlier task left open.
+                    db.rollback()
+                with SqliteUnitOfWork(db).read() as tx:
+                    return call(tx)
 
         return await drain_result(reads.submit(task), ctx)
 
