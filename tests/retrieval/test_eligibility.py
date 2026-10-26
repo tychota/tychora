@@ -931,8 +931,8 @@ async def test_owner_runner_retries_after_canonical_withdrawal_and_releases_pin(
     from tychora.retrieval.eligibility import run_pinned_eligibility
 
     with prepared(tmp_path) as (owner, scope):
-        bundle = await owner.run_blocking(lambda: install(owner), ExecutionContext())
-        await owner.run_blocking(
+        bundle = await owner.run_write(lambda: install(owner), ExecutionContext())
+        await owner.run_write(
             lambda: _register_config_artifact(owner.db, owner.artifacts, owner.config),
             ExecutionContext(),
         )
@@ -967,7 +967,7 @@ async def test_owner_runner_retries_after_canonical_withdrawal_and_releases_pin(
         async def operation(attempt):
             if not calls:
                 calls.append("withdraw")
-                await owner.run_blocking(
+                await owner.run_write(
                     lambda: owner.store.withdraw_source(bundle.source.source_id), ctx
                 )
             if not attempt.view.revision_ids:
@@ -1009,8 +1009,8 @@ async def test_owner_runner_releases_pin_after_cancellation(tmp_path):
     from tychora.retrieval.eligibility import run_pinned_eligibility
 
     with prepared(tmp_path) as (owner, scope):
-        bundle = await owner.run_blocking(lambda: install(owner), ExecutionContext())
-        await owner.run_blocking(
+        bundle = await owner.run_write(lambda: install(owner), ExecutionContext())
+        await owner.run_write(
             lambda: _register_config_artifact(owner.db, owner.artifacts, owner.config),
             ExecutionContext(),
         )
@@ -1069,8 +1069,8 @@ async def test_owner_provider_denied_grant_never_dispatches(tmp_path):
     from tychora.retrieval.eligibility import run_pinned_eligibility
 
     with prepared(tmp_path) as (owner, scope):
-        bundle = await owner.run_blocking(lambda: install(owner), ExecutionContext())
-        await owner.run_blocking(
+        bundle = await owner.run_write(lambda: install(owner), ExecutionContext())
+        await owner.run_write(
             lambda: _register_config_artifact(owner.db, owner.artifacts, owner.config),
             ExecutionContext(),
         )
@@ -1277,8 +1277,8 @@ async def test_retired_original_is_not_reopened_for_range_ownership(tmp_path):
     from tychora.ports.execution import ExecutionContext
 
     with prepared(tmp_path) as (owner, _scope):
-        bundle = await owner.run_blocking(lambda: install(owner), ExecutionContext())
-        await owner.run_blocking(
+        bundle = await owner.run_write(lambda: install(owner), ExecutionContext())
+        await owner.run_write(
             lambda: _register_config_artifact(owner.db, owner.artifacts, owner.config),
             ExecutionContext(),
         )
@@ -1304,7 +1304,7 @@ async def test_retired_original_is_not_reopened_for_range_ownership(tmp_path):
             owner.db.commit()
             return owner.store.read_eligibility_facts(snapshot)
 
-        facts = await owner.run_blocking(retire_and_read, ExecutionContext())
+        facts = await owner.run_write(retire_and_read, ExecutionContext())
         assert facts.units[0].dependency_ids == frozenset(
             {bundle.revision.revision_id, bundle.units[0].unit_id}
         )

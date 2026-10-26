@@ -184,7 +184,7 @@ class SourceJobScheduler:
             scoped = JobService(self.jobs.owner, self.jobs.repository, scope)
             status = await scoped.get(job_id, ExecutionContext())
             if status.operation not in {"add", "sync"}:
-                await self.jobs.owner.run_blocking(
+                await self.jobs.owner.run_write(
                     lambda: self.jobs.repository.authorize(
                         job_id, self.jobs.owner.scope.narrow(scope), write=True
                     ),
@@ -205,7 +205,7 @@ class SourceJobScheduler:
                     "REPLAY_UNAVAILABLE",
                     "Retained source input is unavailable for retry.",
                 )
-            capture = await self.jobs.owner.run_blocking(
+            capture = await self.jobs.owner.run_write(
                 lambda: self.sources._committed_capture(capture_ref),
                 ExecutionContext(),
             )
@@ -227,7 +227,7 @@ class SourceJobScheduler:
                         value["data"] = b64encode(payload).decode("ascii")
                 return SourceInput.from_mapping(value)
 
-            source = await self.jobs.owner.run_blocking(
+            source = await self.jobs.owner.run_write(
                 retained_source, ExecutionContext()
             )
 
@@ -250,7 +250,7 @@ class SourceJobScheduler:
                     )
                 require_active_collection(row[2])
 
-            await self.jobs.owner.run_blocking(admit_retry, ExecutionContext())
+            await self.jobs.owner.run_write(admit_retry, ExecutionContext())
             if status.state == "running":
                 status = await scoped.recover(job_id, ExecutionContext())
             if status.state in {"failed", "interrupted"}:

@@ -100,21 +100,19 @@ def test_source_process_death_reconciles_exact_job_and_snapshot(tmp_path, point)
     root = tmp_path / "victim"
     setup_corpus(root)
     with WorkspaceOwner.open(root / "data", _config(root), _scope()) as owner:
-        before = owner.run_blocking_sync(
+        before = owner.run_write_sync(
             owner.store.active_snapshot_id, ExecutionContext()
         )
     _kill_test_child(root, point, "tests.acceptance.source_crash_probe")
     with WorkspaceOwner.open(root / "data", _config(root), _scope()) as owner:
-        after = owner.run_blocking_sync(
-            owner.store.active_snapshot_id, ExecutionContext()
-        )
-        job_id = owner.run_blocking_sync(
+        after = owner.run_write_sync(owner.store.active_snapshot_id, ExecutionContext())
+        job_id = owner.run_write_sync(
             lambda: owner.db.execute(
                 "SELECT job_id FROM jobs WHERE idempotency_key='crash-retry-key'"
             ).fetchone()[0],
             ExecutionContext(),
         )
-        jobs = owner.run_blocking_sync(
+        jobs = owner.run_write_sync(
             lambda: JobRepository(
                 owner.db,
                 artifacts=owner.artifacts,
@@ -125,29 +123,27 @@ def test_source_process_death_reconciles_exact_job_and_snapshot(tmp_path, point)
         )
         if point in {"mid_extraction", "artifact_before_sql"}:
             assert after == before
-            assert owner.run_blocking_sync(
+            assert owner.run_write_sync(
                 lambda: jobs.recover(job_id).state, ExecutionContext()
             ) in {"failed", "interrupted"}
-            owner.run_blocking_sync(lambda: jobs.retry(job_id), ExecutionContext())
+            owner.run_write_sync(lambda: jobs.retry(job_id), ExecutionContext())
             completed = asyncio.run(
                 service(owner, root).add(source(), _scope(), "crash-retry-key")
             )
             assert completed.state == "succeeded" and completed.id == job_id
             assert (
-                owner.run_blocking_sync(
-                    owner.store.active_snapshot_id, ExecutionContext()
-                )
+                owner.run_write_sync(owner.store.active_snapshot_id, ExecutionContext())
                 != before
             )
         else:
             assert after != before
-            recovered = owner.run_blocking_sync(
+            recovered = owner.run_write_sync(
                 lambda: jobs.recover(job_id), ExecutionContext()
             )
             assert recovered.state == "succeeded"
             assert recovered.result_snapshot_id == after
             assert (
-                owner.run_blocking_sync(
+                owner.run_write_sync(
                     lambda: jobs.retry(job_id).result_snapshot_id,
                     ExecutionContext(),
                 )
@@ -186,7 +182,7 @@ def test_original_removal_death_reconciles_tombstone_and_payload(tmp_path, point
     with Tychora.open(root / "knowledge", token_counter=_Counter()) as kb:
         owner = kb._workspace.owner
         tombstones = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     "SELECT COUNT(*) FROM original_payload_tombstones WHERE revision_id=?",
                     (revision,),
@@ -196,7 +192,7 @@ def test_original_removal_death_reconciles_tombstone_and_payload(tmp_path, point
         )
         assert tombstones >= 1
         counts = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: RemovalService(
                     owner, kb._workspace.services.jobs.repository
                 ).reconcile_pending_deletions(),
@@ -206,7 +202,7 @@ def test_original_removal_death_reconciles_tombstone_and_payload(tmp_path, point
         assert counts["pending_payloads"] == 0
         assert (
             kb._workspace.bridge.call(
-                owner.run_blocking(
+                owner.run_write(
                     lambda: owner.db.execute(
                         "SELECT payload_state FROM artifacts WHERE artifact_sha=?",
                         (sha,),
@@ -329,7 +325,7 @@ def test_canonical_graph_seal_death_preserves_prior_snapshot_then_retries(tmp_pa
     root = tmp_path / "victim"
     setup_corpus(root, graph=True)
     with WorkspaceOwner.open(root / "data", _config(root), _scope()) as owner:
-        before = owner.run_blocking_sync(
+        before = owner.run_write_sync(
             owner.store.active_snapshot_id, ExecutionContext()
         )
     prior_generations = {
@@ -349,11 +345,11 @@ def test_canonical_graph_seal_death_preserves_prior_snapshot_then_retries(tmp_pa
     assert len(staged) == 1
     with WorkspaceOwner.open(root / "data", _config(root), _scope()) as owner:
         assert (
-            owner.run_blocking_sync(owner.store.active_snapshot_id, ExecutionContext())
+            owner.run_write_sync(owner.store.active_snapshot_id, ExecutionContext())
             == before
         )
         assert (
-            owner.run_blocking_sync(
+            owner.run_write_sync(
                 lambda: owner.db.execute(
                     "SELECT COUNT(*) FROM index_batches WHERE receipt_json LIKE ?",
                     (f"%{next(iter(staged))}%",),
@@ -362,13 +358,13 @@ def test_canonical_graph_seal_death_preserves_prior_snapshot_then_retries(tmp_pa
             )
             == 0
         )
-        job_id = owner.run_blocking_sync(
+        job_id = owner.run_write_sync(
             lambda: owner.db.execute(
                 "SELECT job_id FROM jobs WHERE idempotency_key='crash-retry-key'"
             ).fetchone()[0],
             ExecutionContext(),
         )
-        jobs = owner.run_blocking_sync(
+        jobs = owner.run_write_sync(
             lambda: JobRepository(
                 owner.db,
                 artifacts=owner.artifacts,
@@ -377,19 +373,19 @@ def test_canonical_graph_seal_death_preserves_prior_snapshot_then_retries(tmp_pa
             ),
             ExecutionContext(),
         )
-        owner.run_blocking_sync(lambda: jobs.recover(job_id), ExecutionContext())
-        owner.run_blocking_sync(lambda: jobs.retry(job_id), ExecutionContext())
+        owner.run_write_sync(lambda: jobs.recover(job_id), ExecutionContext())
+        owner.run_write_sync(lambda: jobs.retry(job_id), ExecutionContext())
         completed = asyncio.run(
             service(owner, root).add(source(), _scope(), "crash-retry-key")
         )
         assert completed.state == "succeeded" and completed.id == job_id
-        snapshot = owner.run_blocking_sync(
+        snapshot = owner.run_write_sync(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
         assert snapshot.snapshot_id != before
         graph_slot = next(
             slot
-            for slot in owner.run_blocking_sync(
+            for slot in owner.run_write_sync(
                 lambda: owner.store.snapshot_slots(snapshot), ExecutionContext()
             )
             if slot.slot == "graph"

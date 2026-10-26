@@ -42,7 +42,7 @@ def test_cli_evaluates_explicit_local_gold_directory(tmp_path, monkeypatch):
         assert status.state == "succeeded", status.error_code
         owner = kb._workspace.owner
         source_id, revision_id, unit_id = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     "SELECT s.source_id,r.revision_id,u.unit_id FROM evidence_units u "
                     "JOIN extractions e USING(extraction_id) JOIN revisions r USING(revision_id) "

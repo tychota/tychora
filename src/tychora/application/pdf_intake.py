@@ -342,11 +342,11 @@ class PdfIntakeService:
             self._write(record)
             return self._status(record)
 
-        return await self.owner.run_blocking(prepare, ctx)
+        return await self.owner.run_write(prepare, ctx)
 
     @_operation
     async def inspect(self, intake_id, scope, ctx):
-        return await self.owner.run_blocking(
+        return await self.owner.run_write(
             lambda: self._status(self._authorized(intake_id, scope, current=False)), ctx
         )
 
@@ -367,7 +367,7 @@ class PdfIntakeService:
                 )
             return min(record["byte_ceiling"], self.byte_ceiling)
 
-        return await self.owner.run_blocking(check, ctx)
+        return await self.owner.run_write(check, ctx)
 
     @_operation
     async def receive(self, intake_id, chunks, scope, ctx):
@@ -403,7 +403,7 @@ class PdfIntakeService:
             return seconds
 
         try:
-            record, fd = await self.owner.run_blocking(begin, ctx)
+            record, fd = await self.owner.run_write(begin, ctx)
             iterator = aiter(chunks)
             while True:
                 try:
@@ -433,7 +433,7 @@ class PdfIntakeService:
                         view = view[written:]
                     hasher.update(chunk)
 
-                await self.owner.run_blocking(write, ctx)
+                await self.owner.run_write(write, ctx)
 
             def finish():
                 nonlocal fd
@@ -469,7 +469,7 @@ class PdfIntakeService:
                 self._write(record)
                 return self._status(record)
 
-            return await self.owner.run_blocking(finish, ctx)
+            return await self.owner.run_write(finish, ctx)
         except BaseException as error:
 
             def cleanup():
@@ -485,7 +485,7 @@ class PdfIntakeService:
                 finally:
                     self._unlink(record)
 
-            await self.owner.run_blocking(cleanup, ExecutionContext())
+            await self.owner.run_write(cleanup, ExecutionContext())
             if isinstance(error, TimeoutError):
                 raise TychoraError(
                     "DEADLINE_EXCEEDED", "PDF upload idle deadline exceeded."
@@ -510,7 +510,7 @@ class PdfIntakeService:
                 self._unlink(record)
             return self._status(record)
 
-        return await self.owner.run_blocking(abort, ctx)
+        return await self.owner.run_write(abort, ctx)
 
     def _verified_original(self, record):
         """Return a no-follow fd only after checking the reserved inode and hash."""
@@ -666,7 +666,7 @@ class PdfIntakeService:
                 self._unlink(record)
                 raise
 
-        return await self.owner.run_blocking(analyse, ctx)
+        return await self.owner.run_write(analyse, ctx)
 
     def _source(self, record):
         from tychora.contracts.requests import SourceInput
@@ -842,7 +842,7 @@ class PdfIntakeService:
             return record, self._acquired(record, scope)
 
         try:
-            record, acquired = await self.owner.run_blocking(promote, ctx)
+            record, acquired = await self.owner.run_write(promote, ctx)
             if acquired is None:
                 status = await services.jobs_for_scope(scope).get(
                     record["job"]["id"], ctx
@@ -867,7 +867,7 @@ class PdfIntakeService:
                 self._write(current)
                 self._unlink(current)
 
-            await self.owner.run_blocking(committed, ctx)
+            await self.owner.run_write(committed, ctx)
             return handle
         finally:
 
@@ -882,7 +882,7 @@ class PdfIntakeService:
                         self._binding_users.pop(binding, None)
                         self._bindings.pop(binding, None)
 
-            await self.owner.run_blocking(release, ExecutionContext())
+            await self.owner.run_write(release, ExecutionContext())
 
 
 def _analysis_child(path, limits, sender):

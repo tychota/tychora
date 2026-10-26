@@ -134,7 +134,7 @@ def test_sqlite_resolver_finds_the_marker_unit(tmp_path):
             return units, text, resolver.source_ids("default", "absent")
 
         units, text, missing = kb._workspace.bridge.call(
-            owner.run_blocking(resolve, ExecutionContext())
+            owner.run_write(resolve, ExecutionContext())
         )
     assert len(units) == 1
     assert "zx00001q" in text
@@ -143,7 +143,7 @@ def test_sqlite_resolver_finds_the_marker_unit(tmp_path):
 
 def _on_owner(kb, work):
     owner = kb._workspace.owner
-    return kb._workspace.bridge.call(owner.run_blocking(work, ExecutionContext()))
+    return kb._workspace.bridge.call(owner.run_write(work, ExecutionContext()))
 
 
 def _add_edition(kb, key: str, text: str, edition: str) -> str:

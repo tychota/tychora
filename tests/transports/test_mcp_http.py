@@ -471,7 +471,7 @@ async def test_mounted_http_reader_auth_and_sdk_client(tmp_path):
                             )
 
                         binary = b"%PDF-1.7\x00\xff\xfe synthetic original"
-                        await owner.run_blocking(
+                        await owner.run_write(
                             lambda: replace_original(binary, "application/pdf"),
                             ExecutionContext(),
                         )
@@ -521,7 +521,7 @@ async def test_mounted_http_reader_auth_and_sdk_client(tmp_path):
                             mcp_binary.structured_content["result"]["payload"]
                             == http_binary.json()["payload"]
                         )
-                        await owner.run_blocking(
+                        await owner.run_write(
                             lambda: replace_original(
                                 b"x" * (4 * 1024 * 1024 + 256), "text/plain"
                             ),

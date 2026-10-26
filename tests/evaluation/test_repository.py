@@ -28,9 +28,7 @@ def test_register_dataset_retains_each_case_and_rejects_changed_version(
         )
         return dataset
 
-    dataset = kb._workspace.bridge.call(
-        owner.run_blocking(register, ExecutionContext())
-    )
+    dataset = kb._workspace.bridge.call(owner.run_write(register, ExecutionContext()))
     assert dataset.version_sha
 
     def other_principal():
@@ -44,4 +42,4 @@ def test_register_dataset_retains_each_case_and_rejects_changed_version(
             )
         assert denied.value.code == "FORBIDDEN_SCOPE"
 
-    kb._workspace.bridge.call(owner.run_blocking(other_principal, ExecutionContext()))
+    kb._workspace.bridge.call(owner.run_write(other_principal, ExecutionContext()))

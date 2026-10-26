@@ -150,7 +150,7 @@ async def test_visual_producer_reads_retained_zero_text_original(tmp_path):
         def __init__(self):
             self.db = db
 
-        async def run_blocking(self, call, ctx):
+        async def run_write(self, call, ctx, priority="background"):
             ctx.checkpoint()
             return call()
 

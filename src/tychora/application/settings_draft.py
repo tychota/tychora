@@ -192,7 +192,7 @@ class SettingsDraftService:
     async def fields(
         self, scope: RequestScope, ctx: ExecutionContext
     ) -> SettingsFieldView:
-        return await self.owner.run_blocking(lambda: self._fields(scope), ctx)
+        return await self.owner.run_write(lambda: self._fields(scope), ctx)
 
     def _draft(self, patch, scope):
         authorize_workspace(self.owner, scope)
@@ -268,9 +268,7 @@ class SettingsDraftService:
     async def preview(
         self, patch: SettingsPatch, scope: RequestScope, ctx: ExecutionContext
     ) -> SettingsPreview:
-        return (await self.owner.run_blocking(lambda: self._draft(patch, scope), ctx))[
-            2
-        ]
+        return (await self.owner.run_write(lambda: self._draft(patch, scope), ctx))[2]
 
     async def apply(
         self, patch: SettingsPatch, scope: RequestScope, ctx: ExecutionContext
@@ -282,7 +280,7 @@ class SettingsDraftService:
             self.settings.runtime.release(activation=True)
 
     async def _apply_admitted(self, patch, scope, ctx):
-        raw, candidate, preview = await self.owner.run_blocking(
+        raw, candidate, preview = await self.owner.run_write(
             lambda: self._draft(patch, scope), ctx
         )
         if not preview.activation_allowed:

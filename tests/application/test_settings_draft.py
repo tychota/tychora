@@ -41,7 +41,7 @@ async def test_ast_patch_preview_apply_inherit_and_stale(tmp_path):
                 "changes": [{"path": "limits.limit", "action": "set", "value": 12}],
             }
             before = owner.config
-            epoch = await owner.run_blocking(
+            epoch = await owner.run_write(
                 lambda: owner.db.execute(
                     "SELECT policy_epoch FROM workspaces"
                 ).fetchone()[0],
@@ -53,7 +53,7 @@ async def test_ast_patch_preview_apply_inherit_and_stale(tmp_path):
             assert preview.json()["rebuild_queued"] is False
             assert path.read_text() == original and owner.config is before
             assert (
-                await owner.run_blocking(
+                await owner.run_write(
                     lambda: owner.db.execute(
                         "SELECT policy_epoch FROM workspaces"
                     ).fetchone()[0],
@@ -528,7 +528,7 @@ async def _assert_settings_workspace_searchable(client):
 
 
 async def _retained_settings_state(owner):
-    return await owner.run_blocking(
+    return await owner.run_write(
         lambda: (
             owner.store.policy_epoch(owner.workspace_id),
             owner.store.resolve_snapshot(None),
@@ -567,7 +567,7 @@ async def test_populated_settings_reject_edits_that_strand_pinned_queries(
                 "/v1/settings", json={"profile": "local", "workspace_toml": rotated}
             )
             assert changed.status_code == 200, changed.text
-            retained = await owner.run_blocking(
+            retained = await owner.run_write(
                 lambda: owner.store.retained_config(owner.store.resolve_snapshot(None)),
                 ExecutionContext(),
             )
@@ -634,7 +634,7 @@ async def test_settings_compatibility_uses_snapshot_origin_after_offline_tighten
             await _populate_settings_workspace(client, app)
             await _assert_settings_workspace_searchable(client)
             _, snapshot, families = await _retained_settings_state(owner)
-            origin = await owner.run_blocking(
+            origin = await owner.run_write(
                 lambda: owner.store.retained_config(snapshot), ExecutionContext()
             )
             assert not origin.values.offline

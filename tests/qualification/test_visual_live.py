@@ -84,7 +84,7 @@ async def test_live_synthetic_diagram_and_distinctly_phrased_text_query(tmp_path
         upload_providers=frozenset({"voyage"}),
     )
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
-        bundle, asset, ref, image = await owner.run_blocking(
+        bundle, asset, ref, image = await owner.run_write(
             lambda: _install(
                 owner,
                 caption="A blue rectangle points toward a red rectangle.",

@@ -56,7 +56,7 @@ def assert_source_parts(result):
         assert ranges[0][0] == 0 and ranges[-1][1] == len(unit.text)
         assert all(a[1] == b[0] for a, b in pairwise(ranges))
     assert (
-        result.owner.run_blocking_sync(
+        result.owner.run_write_sync(
             lambda: result.store.hydrate(tuple(u.unit_id for u in result.bundle.units)),
             result.ctx,
         )
@@ -128,7 +128,7 @@ def test_numbered_descendants_persist_all_overlap_owners(document_record_case, f
     }
     assert child.unit_id in article.attributes["overlapping_owner_ids"]
     assert_source_parts(result)
-    rows = result.owner.run_blocking_sync(
+    rows = result.owner.run_write_sync(
         lambda: result.owner.db.execute(
             "SELECT u.attributes_json FROM identifiers i JOIN evidence_units u ON u.unit_id=i.unit_id WHERE i.namespace='provision' AND i.normalized_value='4.1'"
         ).fetchall(),
@@ -151,7 +151,7 @@ def test_numbered_descendants_persist_all_overlap_owners(document_record_case, f
             sdk = stream.read()
         return replay_document(manifest, sdk, result.parsed.raw_document_ref)
 
-    replayed = result.owner.run_blocking_sync(replay, result.ctx)
+    replayed = result.owner.run_write_sync(replay, result.ctx)
     assert (
         normalize(replayed, result.bundle.revision.revision_id, result.registry)
         == result.bundle
@@ -184,10 +184,10 @@ def test_grouped_source_replay_and_retry(document_record_case, format):
         return replay_document(manifest, sdk, result.parsed.raw_document_ref)
 
     result.source.unlink()
-    replayed = result.owner.run_blocking_sync(replay, result.ctx)
+    replayed = result.owner.run_write_sync(replay, result.ctx)
     bundle = normalize(replayed, result.bundle.revision.revision_id, result.registry)
     assert bundle == result.bundle
-    result.owner.run_blocking_sync(
+    result.owner.run_write_sync(
         lambda: result.store.commit_extraction(bundle), result.ctx
     )
     assert bundle.revision == result.bundle.revision

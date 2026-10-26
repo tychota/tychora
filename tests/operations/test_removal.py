@@ -45,7 +45,7 @@ def _original_sha(kb: Tychora, revision: str) -> str:
 
     owner = kb._workspace.owner
     return kb._workspace.bridge.call(
-        owner.run_blocking(
+        owner.run_write(
             lambda: owner.db.execute(
                 "SELECT original_sha FROM revisions WHERE revision_id=?", (revision,)
             ).fetchone()[0],
@@ -176,7 +176,7 @@ def test_oversized_removal_plan_fails_before_tombstone_or_job(tmp_path, monkeypa
         assert error.value.code == "INVALID_REQUEST"
         owner = kb._workspace.owner
         count = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     "SELECT COUNT(*) FROM original_payload_tombstones WHERE revision_id=?",
                     (revision,),
@@ -219,7 +219,7 @@ def test_repository_file_binding_is_tombstoned_and_released(tmp_path):
         revision = kb.sources.revisions(source).revisions[0].revision_id
         owner = kb._workspace.owner
         file_sha = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     "SELECT artifact_sha FROM revision_artifacts "
                     "WHERE revision_id=? AND role='source_file' AND source_ref='notes.txt'",
@@ -249,7 +249,7 @@ def test_repository_file_binding_is_tombstoned_and_released(tmp_path):
             }
         )
         state = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     "SELECT a.payload_state, COUNT(t.revision_id) FROM artifacts a "
                     "LEFT JOIN original_payload_tombstones t ON t.artifact_sha=a.artifact_sha "
@@ -289,7 +289,7 @@ def test_reopen_interrupts_persisted_running_removal_after_committed_effect(
             job_id = removed.job.id
         owner = kb._workspace.owner
         kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     "UPDATE jobs SET state='running',error_code=NULL WHERE job_id=?",
                     (job_id,),
@@ -357,7 +357,7 @@ def test_unshared_original_is_tombstoned_and_physically_deleted(tmp_path):
         source, revision = _add(kb, "one-record")
         db = kb._workspace.owner.db
         sha = kb._workspace.bridge.call(
-            kb._workspace.owner.run_blocking(
+            kb._workspace.owner.run_write(
                 lambda: db.execute(
                     "SELECT original_sha FROM revisions WHERE revision_id=?",
                     (revision,),
@@ -379,7 +379,7 @@ def test_unshared_original_is_tombstoned_and_physically_deleted(tmp_path):
         assert result.deleted_payloads == 1
         assert not (kb._workspace.owner.path / "artifacts" / sha).exists()
         state = kb._workspace.bridge.call(
-            kb._workspace.owner.run_blocking(
+            kb._workspace.owner.run_write(
                 lambda: db.execute(
                     "SELECT payload_state FROM artifacts WHERE artifact_sha=?", (sha,)
                 ).fetchone()[0],
@@ -399,7 +399,7 @@ def test_pinned_original_remains_pending_until_owner_reconciliation(tmp_path):
         source, revision = _add(kb, "leased-record")
         owner = kb._workspace.owner
         sha = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     "SELECT original_sha FROM revisions WHERE revision_id=?",
                     (revision,),
@@ -420,7 +420,7 @@ def test_pinned_original_remains_pending_until_owner_reconciliation(tmp_path):
             assert result.pending_payloads == 1
             assert (owner.path / "artifacts" / sha).exists()
         counts = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: RemovalService(
                     owner, kb._workspace.services.jobs.repository
                 ).reconcile_pending_deletions(),
@@ -439,7 +439,7 @@ def test_crash_after_unlink_reconciles_pending_absent(tmp_path, monkeypatch):
         source, revision = _add(kb, "crash-record")
         owner = kb._workspace.owner
         sha = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     "SELECT original_sha FROM revisions WHERE revision_id=?",
                     (revision,),
@@ -467,7 +467,7 @@ def test_crash_after_unlink_reconciles_pending_absent(tmp_path, monkeypatch):
         assert not (owner.path / "artifacts" / sha).exists()
         monkeypatch.setattr(owner.artifacts, "unlink_registered", unlink)
         counts = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: RemovalService(
                     owner, kb._workspace.services.jobs.repository
                 ).reconcile_pending_deletions(),
@@ -506,7 +506,7 @@ def test_interruption_between_unlink_and_directory_fsync_resumes(tmp_path, monke
             )
         monkeypatch.setattr(owner.artifacts, "unlink_registered", unlink)
         counts = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: RemovalService(
                     owner, kb._workspace.services.jobs.repository
                 ).reconcile_pending_deletions(),
@@ -581,7 +581,7 @@ def test_interruption_after_tombstone_before_unlink_resumes(tmp_path, monkeypatc
         assert (owner.path / "artifacts" / sha).exists()
         monkeypatch.setattr(owner.artifacts, "unlink_registered", unlink)
         counts = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: RemovalService(
                     owner, kb._workspace.services.jobs.repository
                 ).reconcile_pending_deletions(),
@@ -601,7 +601,7 @@ def test_snapshot_lease_defers_original_deletion(tmp_path):
         owner = kb._workspace.owner
         kb.management.run({"operation": "remove", "source_ids": [source]})
         snapshot = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 owner.store.active_snapshot_id,
                 ExecutionContext(),
             )
@@ -618,7 +618,7 @@ def test_snapshot_lease_defers_original_deletion(tmp_path):
             )
             assert result.pending_payloads == 1
         counts = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: RemovalService(
                     owner, kb._workspace.services.jobs.repository
                 ).reconcile_pending_deletions(),
@@ -720,7 +720,7 @@ def test_derived_extraction_reference_keeps_original_bytes(tmp_path):
         sha = _original_sha(kb, revision)
         owner = kb._workspace.owner
         kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     "UPDATE extractions SET document_artifact_sha=? WHERE revision_id=?",
                     (sha, revision),

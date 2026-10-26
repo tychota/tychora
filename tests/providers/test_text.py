@@ -654,7 +654,7 @@ async def test_source_free_query_has_a_separate_canonical_collection_route(tmp_p
         policy_epoch=0,
     )
     with WorkspaceOwner.open(tmp_path / "data", settings, scope) as owner:
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "INSERT INTO collections "
                 "(collection_id,workspace_id,slug,title,access_floor,policy_json) "
@@ -671,18 +671,18 @@ async def test_source_free_query_has_a_separate_canonical_collection_route(tmp_p
             ExecutionContext(),
         )
 
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.upload_policy.authorize_query(scope, "voyage", authorization),
             ExecutionContext(),
         )
         with pytest.raises(TychoraError) as canonical:
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: owner.upload_policy.authorize(scope, "voyage", frozenset(), 0),
                 ExecutionContext(),
             )
         assert canonical.value.code == "FORBIDDEN_SCOPE"
 
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "UPDATE workspaces SET policy_epoch=1 WHERE workspace_id=?",
                 (owner.workspace_id,),
@@ -690,7 +690,7 @@ async def test_source_free_query_has_a_separate_canonical_collection_route(tmp_p
             ExecutionContext(),
         )
         with pytest.raises(TychoraError) as stale:
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: owner.upload_policy.authorize_query(
                     scope, "voyage", authorization
                 ),
@@ -716,7 +716,7 @@ async def test_query_retry_reauthorizes_after_backoff_with_real_owner(tmp_path):
         upload_providers=frozenset({"voyage"}),
     )
     with WorkspaceOwner.open(tmp_path / "data", settings, scope) as owner:
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "INSERT INTO collections "
                 "(collection_id,workspace_id,slug,title,access_floor,policy_json) "
@@ -756,7 +756,7 @@ async def test_query_retry_reauthorizes_after_backoff_with_real_owner(tmp_path):
         ctx = ExecutionContext()
 
         def change_epoch(attempt):
-            owner.run_blocking_sync(
+            owner.run_write_sync(
                 lambda: owner.db.execute(
                     "UPDATE workspaces SET policy_epoch=1 WHERE workspace_id=?",
                     (owner.workspace_id,),
@@ -774,7 +774,7 @@ async def test_query_retry_reauthorizes_after_backoff_with_real_owner(tmp_path):
             authorize_document=lambda payload_sha, dependencies, ctx: None,
             query_binding=binding,
             authorize_query=lambda query_authorization, attempt_ctx: (
-                owner.run_blocking_sync(
+                owner.run_write_sync(
                     lambda: owner.upload_policy.authorize_query(
                         scope, "voyage", query_authorization
                     ),
@@ -809,7 +809,7 @@ async def test_owner_admits_query_cache_miss_but_offline_hit_bypasses_remote_lan
         upload_providers=frozenset({"voyage"}),
     )
     with WorkspaceOwner.open(tmp_path / "data", settings, scope) as owner:
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "INSERT INTO collections "
                 "(collection_id,workspace_id,slug,title,access_floor,policy_json) "
@@ -855,7 +855,7 @@ async def test_owner_admits_query_cache_miss_but_offline_hit_bypasses_remote_lan
 
         def authorize(authorization, attempt_ctx):
             authorizations.append(authorization)
-            owner.run_blocking_sync(
+            owner.run_write_sync(
                 lambda: owner.upload_policy.authorize_query(
                     scope, "voyage", authorization
                 ),
@@ -924,7 +924,7 @@ async def test_owner_closes_registered_generic_provider_runtime(tmp_path):
     with WorkspaceOwner.open(
         tmp_path / "data", settings, RequestScope(principal_id="principal-a")
     ) as owner:
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.register_runtime(Runtime()), ExecutionContext()
         )
         assert closed == []

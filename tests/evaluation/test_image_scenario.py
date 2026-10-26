@@ -63,7 +63,7 @@ async def test_declared_png_proxy_enters_visual_query_and_evaluation(tmp_path):
     )
     with WorkspaceOwner.open(tmp_path / "workspace", config, scope) as owner:
         ctx = ExecutionContext()
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) "
                 "VALUES (?,?,?,?,0,?)",
@@ -81,14 +81,14 @@ async def test_declared_png_proxy_enters_visual_query_and_evaluation(tmp_path):
         bundle = seed_bundle(text, source_key="violet.txt")
         for ref in bundle.artifacts:
             with reader().open_verified(ref) as stream:
-                await owner.run_blocking(
+                await owner.run_write(
                     lambda stream=stream, ref=ref: owner.artifacts.put_stream(
                         stream, ref.media_type
                     ),
                     ctx,
                 )
         png = _image_bytes((80, 20, 120))
-        image_ref = await owner.run_blocking(
+        image_ref = await owner.run_write(
             lambda: owner.artifacts.put_stream(BytesIO(png), "image/png"), ctx
         )
         asset = AssetRow(
@@ -109,14 +109,14 @@ async def test_declared_png_proxy_enters_visual_query_and_evaluation(tmp_path):
             ),
             caption=text,
         )
-        derivation = await owner.run_blocking(
+        derivation = await owner.run_write(
             lambda: owner.artifacts.put_stream(
                 BytesIO(canonical_bytes({"algorithm": "synthetic-caption-copy@1"})),
                 "application/json",
             ),
             ctx,
         )
-        created_at = await owner.run_blocking(
+        created_at = await owner.run_write(
             lambda: owner.db.execute("SELECT created_at FROM workspaces").fetchone()[0],
             ctx,
         )
@@ -213,7 +213,7 @@ async def test_declared_png_proxy_enters_visual_query_and_evaluation(tmp_path):
             visual_embedder=embedder,
             image_index=image_index,
         )
-        config_ref = await owner.run_blocking(
+        config_ref = await owner.run_write(
             lambda: owner.artifacts.put_stream(
                 BytesIO(
                     canonical_bytes(
@@ -239,29 +239,27 @@ async def test_declared_png_proxy_enters_visual_query_and_evaluation(tmp_path):
                 bundle, owner.store.active_snapshot_id(), job, ctx
             )
 
-        prepared = await owner.run_blocking(prepare, ctx)
+        prepared = await owner.run_write(prepare, ctx)
         visual_records = await owner.embed_visual_assets(
             embedder, prepared.visual_inputs, ctx, scope=scope
         )
-        plan = await owner.run_blocking(
+        plan = await owner.run_write(
             lambda: coordinator.finalize(prepared, (), ctx, visual_records), ctx
         )
-        snapshot_id = await owner.run_blocking(
+        snapshot_id = await owner.run_write(
             lambda: owner.store.publish_snapshot(plan), ctx
         )
-        snapshot = await owner.run_blocking(
+        snapshot = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ctx
         )
-        slots = await owner.run_blocking(
-            lambda: owner.store.snapshot_slots(snapshot), ctx
-        )
+        slots = await owner.run_write(lambda: owner.store.snapshot_slots(snapshot), ctx)
         image_slot = next(slot for slot in slots if slot.slot == "image")
         assert image_slot.batches[0].expected_count == 1
         image_receipt = image_slot.batches[0].receipt
         assert isinstance(image_receipt, BatchReceipt)
         assert image_receipt.count == 1
         assert len(transport.calls) == 1
-        retained_proxy = await owner.run_blocking(
+        retained_proxy = await owner.run_write(
             lambda: owner.db.execute(
                 "SELECT asset_id,origin_type,derivation_sha FROM asset_proxies "
                 "WHERE proxy_unit_id=?",
@@ -319,7 +317,7 @@ async def test_declared_png_proxy_enters_visual_query_and_evaluation(tmp_path):
                 "case_count": 1,
             }
         )
-        jobs = await owner.run_blocking(
+        jobs = await owner.run_write(
             lambda: JobRepository(
                 owner.db, artifacts=owner.artifacts, workspace_id=owner.workspace_id
             ),

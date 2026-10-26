@@ -452,7 +452,7 @@ async def test_runner_persists_each_variant_and_repetition(tmp_path):
                 )
             )
 
-        await owner.run_blocking(seed, ExecutionContext())
+        await owner.run_write(seed, ExecutionContext())
 
         class LocalQuery:
             counter = type(
@@ -496,7 +496,7 @@ async def test_runner_persists_each_variant_and_repetition(tmp_path):
                     byte_count=8,
                 )
 
-        jobs = await owner.run_blocking(
+        jobs = await owner.run_write(
             lambda: JobRepository(
                 owner.db, artifacts=owner.artifacts, workspace_id=owner.workspace_id
             ),
@@ -533,12 +533,12 @@ async def test_runner_persists_each_variant_and_repetition(tmp_path):
             assert {r["repetition"] for r in stored["cases"]["one"]["runs"]} == {0, 1}
             assert stored["report"]["aggregate"]["metrics"]
 
-        await owner.run_blocking(inspect, ExecutionContext())
+        await owner.run_write(inspect, ExecutionContext())
 
         class PolicyChangingQuery(LocalQuery):
             async def search(self, query, grant, ctx):
                 delivered = await super().search(query, grant, ctx)
-                await owner.run_blocking(
+                await owner.run_write(
                     lambda: owner.db.execute(
                         "UPDATE workspaces SET policy_epoch=policy_epoch+1"
                     ),
@@ -552,7 +552,7 @@ async def test_runner_persists_each_variant_and_repetition(tmp_path):
         with pytest.raises(TychoraError, match="epochs changed"):
             await changed.run(request, scope, ExecutionContext())
         assert (
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: owner.db.execute(
                     "SELECT COUNT(*) FROM evaluation_runs"
                 ).fetchone()[0],

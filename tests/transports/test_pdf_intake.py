@@ -267,7 +267,7 @@ async def test_receipt_inode_replacement_and_expiry_fail_without_census(tmp_path
                 record["expires"] = time.time() - 1
                 app.state.pdf_intakes._write(record)
 
-            await kb._workspace.owner.run_blocking(expire, ExecutionContext())
+            await kb._workspace.owner.run_write(expire, ExecutionContext())
             response = await client.get(f"/v1/pdf-intakes/{receipt}")
             assert response.json()["state"] == "expired"
             assert response.json()["analysis"] is None
@@ -351,7 +351,7 @@ async def test_restart_aborts_incomplete_receive(tmp_path):
                 service._write(record)
                 (service.directory / (receipt + ".pdf")).write_bytes(b"partial")
 
-            await kb._workspace.owner.run_blocking(interrupted, ExecutionContext())
+            await kb._workspace.owner.run_write(interrupted, ExecutionContext())
     with Tychora.open(workspace, token_counter=Counter()) as kb:
         app = app_for(kb)
         async with client_for(app) as client:

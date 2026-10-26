@@ -113,7 +113,7 @@ async def create(root: Path, models: Path) -> None:
     )
     data = root / "data"
     with WorkspaceOwner.open(data, config, scope) as owner:
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) "
                 "VALUES (?,?,?,?,0,?)",
@@ -168,15 +168,15 @@ async def create(root: Path, models: Path) -> None:
             scope,
         )
         assert result.state == "succeeded", result
-        snapshot = await owner.run_blocking(
+        snapshot = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
-        slots = await owner.run_blocking(
+        slots = await owner.run_write(
             lambda: owner.store.snapshot_slots(snapshot), ExecutionContext()
         )
         assert {slot.slot for slot in slots} >= {"text", "graph"}
         backup = root / "canonical-backup"
-        admin = await owner.run_blocking(
+        admin = await owner.run_write(
             lambda: _whole_workspace_scope(owner, scope), ExecutionContext()
         )
         owner.scope = (

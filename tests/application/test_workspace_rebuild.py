@@ -24,7 +24,7 @@ def _read(kb, sql: str, *parameters):
     def read():
         return owner.db.execute(sql, parameters).fetchall()
 
-    return kb._workspace.bridge.call(owner.run_blocking(read, ExecutionContext()))
+    return kb._workspace.bridge.call(owner.run_write(read, ExecutionContext()))
 
 
 def _revision_and_source(kb, key: str) -> tuple[str, str]:
@@ -68,7 +68,7 @@ def old(tmp_path):
         _, gamma_source = _revision_and_source(kb, "gamma")
         owner = kb._workspace.owner
         kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.store.record_review(
                     ReviewTarget(revision_id=alpha_revision), "accepted", "reviewer"
                 ),

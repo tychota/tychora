@@ -127,7 +127,7 @@ def pdf_case(execution, rich_capture):
         proxies, regions = plan_pdf_ocr(owner, parsed, ctx)
         return parsed, proxies, regions
 
-    parsed, proxies, regions = owner.run_blocking_sync(make, ctx)
+    parsed, proxies, regions = owner.run_write_sync(make, ctx)
 
     def plan(**updates):
         return DocumentCompositionPlan(
@@ -159,7 +159,7 @@ def pdf_case(execution, rich_capture):
         owner=owner,
         scope=scope,
         ctx=ctx,
-        run=lambda action: owner.run_blocking_sync(action, ctx),
+        run=lambda action: owner.run_write_sync(action, ctx),
     )
 
 
@@ -303,7 +303,7 @@ async def test_new_source_extraction_selects_strategy(pdf_case, monkeypatch):
         for ref in bundle.artifacts
         if ref.sha256 == bundle.extraction.document_artifact_sha
     )
-    root = json.loads(await case.owner.run_blocking(lambda: case.read(ref), case.ctx))
+    root = json.loads(await case.owner.run_write(lambda: case.read(ref), case.ctx))
     assert root["data"]["plan"]["input_strategy"] == "pdf-streamed-images@1"
 
 
@@ -945,7 +945,7 @@ def test_streamed_complete_raw_replay_commit_backup_restore_and_inspection(
     assert {ref.sha256 for ref in result.bundle.artifacts} <= required
     RestoreService().import_backup(archive, destination, case.scope, ExecutionContext())
     with WorkspaceOwner.open(destination, case.owner.config, case.scope) as restored:
-        rows = restored.run_blocking_sync(
+        rows = restored.run_write_sync(
             lambda: restored.store.hydrate(
                 tuple(u.unit_id for u in result.bundle.units)
             ),
@@ -1032,4 +1032,4 @@ async def test_retained_source_reuse_preserves_stored_plan_strategy(pdf_case, st
         if strategy is None:
             assert "input_strategy" not in plan
 
-    await case.owner.run_blocking(reuse, case.ctx)
+    await case.owner.run_write(reuse, case.ctx)

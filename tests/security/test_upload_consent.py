@@ -42,7 +42,7 @@ def _dispatch(kb, collection_id, scope=None, *, policy_epoch=None):
     owner = kb._workspace.owner
     sent = []
     epoch = kb._workspace.bridge.call(
-        owner.run_blocking(
+        owner.run_write(
             lambda: owner.db.execute(
                 "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
                 (owner.workspace_id,),
@@ -82,7 +82,7 @@ def test_default_owner_grant_refreshes_future_calls_and_revoke_is_current(
             _dispatch(kb, collection)
         assert denied.value.code == "FORBIDDEN_SCOPE"
         epoch_before = kb._workspace.bridge.call(
-            kb._workspace.owner.run_blocking(
+            kb._workspace.owner.run_write(
                 lambda: kb._workspace.owner.db.execute(
                     "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
                     (kb._workspace.owner.workspace_id,),
@@ -103,7 +103,7 @@ def test_default_owner_grant_refreshes_future_calls_and_revoke_is_current(
         stale_scope = kb._workspace.scope
         assert _dispatch(kb, collection) == ("mock", ["mock"])
         old_epoch = kb._workspace.bridge.call(
-            kb._workspace.owner.run_blocking(
+            kb._workspace.owner.run_write(
                 lambda: kb._workspace.owner.db.execute(
                     "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
                     (kb._workspace.owner.workspace_id,),
@@ -171,7 +171,7 @@ def test_explicit_provider_scope_uses_collection_policy_without_owner_set(tmp_pa
         kb.management.run(_request("grant"))
         owner = kb._workspace.owner
         kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     "UPDATE collections SET policy_json=? WHERE collection_id=?",
                     (
@@ -248,7 +248,7 @@ async def test_public_revoke_blocks_actual_queued_provider_admission(tmp_path):
     with Tychora.open(workspace, config=config, providers=ProviderBindings()) as kb:
         owner = kb._workspace.owner
         scope = kb._workspace.scope
-        epoch = await owner.run_blocking(
+        epoch = await owner.run_write(
             lambda: owner.db.execute(
                 "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
                 (owner.workspace_id,),
@@ -354,7 +354,7 @@ def test_owner_union_from_grant_a_does_not_authorize_collection_b(tmp_path):
             return owner.scope
 
         kb._workspace.scope = kb._workspace.bridge.call(
-            owner.run_blocking(add_b, ExecutionContext())
+            owner.run_write(add_b, ExecutionContext())
         )
         assert _dispatch(kb, collection_a) == ("mock", ["mock"])
         with pytest.raises(TychoraError) as denied:
@@ -437,7 +437,7 @@ def test_legacy_collection_only_policy_does_not_create_owner_authority(tmp_path)
         collection_id = str(kb.default_collection_id)
         owner = kb._workspace.owner
         kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     "UPDATE collections SET policy_json=? WHERE collection_id=?",
                     (

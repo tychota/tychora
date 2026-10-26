@@ -572,7 +572,7 @@ async def test_standard_factory_dispatches_with_verified_local_tokenizer(
             owner.store.commit_extraction(bundle)
             return bundle
 
-        bundle = await owner.run_blocking(install, ExecutionContext())
+        bundle = await owner.run_write(install, ExecutionContext())
         unit = bundle.units[0]
         deps = frozenset({unit.unit_id, bundle.revision.revision_id})
         span = RankingSpan(
@@ -679,7 +679,7 @@ async def test_owner_rerank_dispatches_only_attested_exact_text(tmp_path: Path):
             owner.store.commit_extraction(bundle)
             return bundle
 
-        bundle = await owner.run_blocking(install, ExecutionContext())
+        bundle = await owner.run_write(install, ExecutionContext())
         unit = bundle.units[0]
         deps = frozenset({unit.unit_id, bundle.revision.revision_id})
         span = RankingSpan(
@@ -765,7 +765,7 @@ async def test_owner_rerank_dispatches_only_attested_exact_text(tmp_path: Path):
         assert len(transport.calls) == 4
 
         transport.responses = [RawVoyageResponse(429, b"{}")]
-        transport.on_call = lambda: owner.run_blocking_sync(
+        transport.on_call = lambda: owner.run_write_sync(
             lambda: owner.store.withdraw_source(bundle.source.source_id), ctx
         )
         with pytest.raises(TychoraError) as changed:

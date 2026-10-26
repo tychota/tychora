@@ -94,7 +94,7 @@ def test_run_discovery_paginates_in_sql_and_definition_reads_one_id(tmp_path):
             )
             owner.db.set_trace_callback(statements.append)
 
-        kb._workspace.bridge.call(owner.run_blocking(seed, ExecutionContext()))
+        kb._workspace.bridge.call(owner.run_write(seed, ExecutionContext()))
         try:
             first = kb.discover(DiscoverRequest(subject="runs", limit=1))
             assert len(first.definitions) == 1
@@ -118,7 +118,7 @@ def test_run_discovery_paginates_in_sql_and_definition_reads_one_id(tmp_path):
             assert hidden.value.code == "NOT_FOUND"
         finally:
             kb._workspace.bridge.call(
-                owner.run_blocking(
+                owner.run_write(
                     lambda: owner.db.set_trace_callback(None), ExecutionContext()
                 )
             )
@@ -179,11 +179,11 @@ def test_legacy_scope_digest_matches_exact_projection_only(tmp_path):
             )
 
         kb._workspace.bridge.call(
-            owner.run_blocking(lambda: set_digest(exact), ExecutionContext())
+            owner.run_write(lambda: set_digest(exact), ExecutionContext())
         )
         assert kb.inspect({"subject": "runs", "id": run_id}).id == run_id
         kb._workspace.bridge.call(
-            owner.run_blocking(lambda: set_digest(mismatch), ExecutionContext())
+            owner.run_write(lambda: set_digest(mismatch), ExecutionContext())
         )
         with pytest.raises(TychoraError) as denied:
             kb.inspect({"subject": "runs", "id": run_id})

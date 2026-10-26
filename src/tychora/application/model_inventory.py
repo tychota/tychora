@@ -56,7 +56,7 @@ class ModelInventoryService:
             authorize_workspace(self.owner, scope)
             return self._plan(selections)
 
-        return await self.owner.run_blocking(read, ctx)
+        return await self.owner.run_write(read, ctx)
 
     async def catalog(self, scope: RequestScope, ctx: ExecutionContext) -> ModelCatalog:
         def read():
@@ -130,7 +130,7 @@ class ModelInventoryService:
                 offline=self.owner.config.values.offline,
             )
 
-        return await self.owner.run_blocking(read, ctx)
+        return await self.owner.run_write(read, ctx)
 
     def _read_receipt(self, ref, deadline, remaining):
         """Hash the bounded receipt bytes once; do not use an unbounded CAS reader."""
@@ -248,4 +248,4 @@ class ModelInventoryService:
                 }
             )
 
-        return await self.owner.run_blocking(read, ctx)
+        return await self.owner.run_write(read, ctx)

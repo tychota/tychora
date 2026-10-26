@@ -101,7 +101,7 @@ def setup_corpus(
 
     async def create() -> None:
         with WorkspaceOwner.open(root / "data", config, scope) as owner:
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: owner.db.execute(
                     "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,?)",
                     (
@@ -181,7 +181,7 @@ class EngineSession:
         self.caches = QueryCaches()
         self.counts = BenchmarkTelemetry()
         self.index = ChromaVectorIndex(root / "vectors")
-        snapshot = self.owner.run_blocking_sync(
+        snapshot = self.owner.run_write_sync(
             lambda: self.owner.store.resolve_snapshot(None), ExecutionContext()
         )
         slot = snapshot.family("text")
@@ -202,7 +202,7 @@ class EngineSession:
             text_embedder=RecordingEmbedder(RecordingCounter()),
             text_index=self.index,
         )
-        self.reuse_matches = self.owner.run_blocking_sync(
+        self.reuse_matches = self.owner.run_write_sync(
             lambda: coordinator._retained_vector_spec(slot, "text") == retained_spec,
             ExecutionContext(),
         )

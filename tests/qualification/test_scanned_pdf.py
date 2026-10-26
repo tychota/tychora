@@ -155,7 +155,7 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
                 "pdf_processing": policy,
             }
         )
-        capture = owner.run_blocking_sync(
+        capture = owner.run_write_sync(
             lambda: Acquirer(owner.artifacts, config).capture(source, ctx), ctx
         )
         sid = identity.source_id(UUID(collection.collection_id), "synthetic.pdf")
@@ -166,7 +166,7 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
             collection=collection,
             workspace=WorkspaceRow(
                 workspace_id=owner.workspace_id,
-                created_at=owner.run_blocking_sync(
+                created_at=owner.run_write_sync(
                     lambda: owner.db.execute(
                         "SELECT created_at FROM workspaces"
                     ).fetchone()[0],
@@ -204,7 +204,7 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
             assert error.value.code == "INDEX_INCOMPLETE"
             assert accepted == [1]
             assert (
-                owner.run_blocking_sync(
+                owner.run_write_sync(
                     lambda: owner.db.execute(
                         "SELECT count(*) FROM extractions"
                     ).fetchone()[0],
@@ -352,8 +352,8 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
                 assert retained.convert("RGB").tobytes() == clean.tobytes()
 
         if mode != "native":
-            owner.run_blocking_sync(verify_clean_raster, ctx)
-        composed = owner.run_blocking_sync(compose, ctx)
+            owner.run_write_sync(verify_clean_raster, ctx)
+        composed = owner.run_write_sync(compose, ctx)
         assert parser.retention_budget is not None
         assert parser.retention_budget.retained_bytes == sum(
             ref.size_bytes
@@ -392,7 +392,7 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
                 DeclaredPayloads(refs, read, 512 * 1024 * 1024),
             )
 
-        replayed = owner.run_blocking_sync(replay, ctx)
+        replayed = owner.run_write_sync(replay, ctx)
         assert replayed.bundle == composed.bundle
 
         def verify_restore_boundary():
@@ -401,7 +401,7 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
             owner.store.commit_extraction(composed.bundle)
             _validate_retained_documents(owner.db, owner.artifacts, config)
 
-        owner.run_blocking_sync(verify_restore_boundary, ctx)
+        owner.run_write_sync(verify_restore_boundary, ctx)
 
         def verify_selected_responses():
             from types import SimpleNamespace
@@ -462,4 +462,4 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
                 canonical_bytes(inspection.model_dump(mode="json"))
             )
 
-        owner.run_blocking_sync(verify_selected_responses, ctx)
+        owner.run_write_sync(verify_selected_responses, ctx)

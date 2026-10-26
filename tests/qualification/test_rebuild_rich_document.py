@@ -21,13 +21,13 @@ def _query(kb, sql: str):
     def read():
         return owner.db.execute(sql).fetchall()
 
-    return kb._workspace.bridge.call(owner.run_blocking(read, ExecutionContext()))
+    return kb._workspace.bridge.call(owner.run_write(read, ExecutionContext()))
 
 
 def _asset_state(kb, asset_id: str) -> str:
     owner = kb._workspace.owner
     return kb._workspace.bridge.call(
-        owner.run_blocking(
+        owner.run_write(
             lambda: owner.store.review_state(ReviewTarget(asset_id=asset_id)),
             ExecutionContext(),
         )
@@ -74,7 +74,7 @@ def test_rebuild_keeps_asset_ids_and_a_rejected_asset(tmp_path, monkeypatch):
         rejected = asset_ids[0]
         owner = kb._workspace.owner
         kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.store.record_review(
                     ReviewTarget(asset_id=rejected), "rejected", "reviewer"
                 ),

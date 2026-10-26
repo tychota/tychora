@@ -569,7 +569,7 @@ class DoclingParser:
                 limits=self._limits(ctx),
                 batch_collector=self._accept_batch,
             )
-            return self.owner.run_blocking_sync(
+            return self.owner.run_write_sync(
                 lambda: self._finish_pdf(original, config, registry, kind, inventory),
                 ctx,
             )
@@ -585,7 +585,7 @@ class DoclingParser:
     async def aextract(
         self, original: ArtifactRef, config: ResolvedConfig, ctx: ExecutionContext
     ) -> ExtractionArtifact:
-        registry, kind, inventory, image = await self.owner.run_blocking(
+        registry, kind, inventory, image = await self.owner.run_write(
             lambda: self._prepare(original, config, ctx), ctx
         )
         if self.policy is not None:
@@ -596,7 +596,7 @@ class DoclingParser:
                 limits=self._limits(ctx),
                 batch_collector=self._accept_batch,
             )
-            return await self.owner.run_blocking(
+            return await self.owner.run_write(
                 lambda: self._finish_pdf(original, config, registry, kind, inventory),
                 ctx,
             )

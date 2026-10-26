@@ -238,10 +238,10 @@ class SourceService:
                     )
             return self._jobs, self._acquirer
 
-        return await self.owner.run_blocking(initialize, ctx)
+        return await self.owner.run_write(initialize, ctx)
 
     async def _config_ref(self, ctx: ExecutionContext):
-        return await self.owner.run_blocking(self._ensure_registry_artifact, ctx)
+        return await self.owner.run_write(self._ensure_registry_artifact, ctx)
 
     def _ensure_registry_artifact(self) -> ArtifactRef:
         """Return the retained registry artifact, writing it only when absent."""
@@ -416,7 +416,7 @@ class SourceService:
         ctx: ExecutionContext | None = None,
     ) -> tuple[JobHandle, SourceInput]:
         context = ctx or ExecutionContext()
-        source = await self.owner.run_blocking(
+        source = await self.owner.run_write(
             lambda: self._source_for_sync(source_id_value, scope), context
         )
         return (
@@ -433,7 +433,7 @@ class SourceService:
         ctx: ExecutionContext | None = None,
     ) -> JobHandle:
         context = ctx or ExecutionContext()
-        source = await self.owner.run_blocking(
+        source = await self.owner.run_write(
             lambda: self._source_for_sync(source_id_value, scope), context
         )
         return await self._run("sync", source, scope, idempotency_key, context)
@@ -519,7 +519,7 @@ class SourceService:
                     "FORBIDDEN_SCOPE", "Trusted PDF intake service is unavailable."
                 )
             intakes = self.owner.pdf_intakes
-            await self.owner.run_blocking(
+            await self.owner.run_write(
                 lambda: intakes.validate_acquired(acquired, scope), ctx
             )
         if source.root.vision:
@@ -605,7 +605,7 @@ class SourceService:
                 jobs.capture(handle.id, capture.manifest_ref)
             return handle
 
-        return await self.owner.run_blocking(accept, ctx)
+        return await self.owner.run_write(accept, ctx)
 
     async def execute_accepted(
         self,
@@ -652,7 +652,7 @@ class SourceService:
                 id=status.id, operation=status.operation, state=status.state
             )
 
-        handle = await self.owner.run_blocking(validated, context)
+        handle = await self.owner.run_write(validated, context)
         if handle.state != "queued":
             return handle
         operation = handle.operation
@@ -667,34 +667,34 @@ class SourceService:
                 cancelled=context.cancelled,
             )
         ctx = context
-        await self.owner.run_blocking(lambda: jobs.start(handle.id), ctx)
+        await self.owner.run_write(lambda: jobs.start(handle.id), ctx)
         try:
             # Keep the accepted request digest in caller form while capture and
             # registration share the canonical immutable facet binding.
-            captured_source = await self.owner.run_blocking(
+            captured_source = await self.owner.run_write(
                 lambda: self._canonical_source(source), ctx
             )
-            await self.owner.run_blocking(lambda: jobs.stage(handle.id, "acquire"), ctx)
-            captured_ref = await self.owner.run_blocking(
+            await self.owner.run_write(lambda: jobs.stage(handle.id, "acquire"), ctx)
+            captured_ref = await self.owner.run_write(
                 lambda: jobs.get(handle.id).captured_inputs, ctx
             )
             if captured_ref is None:
-                capture = await self.owner.run_blocking(
+                capture = await self.owner.run_write(
                     lambda: acquirer.capture(captured_source, ctx), ctx
                 )
-                await self.owner.run_blocking(
+                await self.owner.run_write(
                     lambda: jobs.capture(handle.id, capture.manifest_ref), ctx
                 )
             else:
-                capture = await self.owner.run_blocking(
+                capture = await self.owner.run_write(
                     lambda: self._committed_capture(captured_ref), ctx
                 )
             if isinstance(captured_source.root, UploadSource):
-                await self.owner.run_blocking(
+                await self.owner.run_write(
                     lambda: self._validate_upload_capture(captured_source, capture), ctx
                 )
-            await self.owner.run_blocking(lambda: jobs.stage(handle.id, "parse"), ctx)
-            registration = await self.owner.run_blocking(
+            await self.owner.run_write(lambda: jobs.stage(handle.id, "parse"), ctx)
+            registration = await self.owner.run_write(
                 lambda: self._registration(
                     captured_source,
                     capture,
@@ -703,11 +703,9 @@ class SourceService:
                 ),
                 ctx,
             )
-            base = await self.owner.run_blocking(
-                self.owner.store.active_snapshot_id, ctx
-            )
-            watermark = await self.owner.run_blocking(self._decision_watermark, ctx)
-            committed = await self.owner.run_blocking(
+            base = await self.owner.run_write(self.owner.store.active_snapshot_id, ctx)
+            watermark = await self.owner.run_write(self._decision_watermark, ctx)
+            committed = await self.owner.run_write(
                 lambda: self._completed_plan(
                     jobs, handle, capture, config_ref, base, watermark
                 ),
@@ -723,12 +721,12 @@ class SourceService:
                 and source.root.pdf_processing is None
             ):
                 selected_base = base
-                can_reuse = await self.owner.run_blocking(
+                can_reuse = await self.owner.run_write(
                     lambda: self._selected_revision(selected_base, registration, ctx),
                     ctx,
                 )
                 if can_reuse:
-                    plan = await self.owner.run_blocking(
+                    plan = await self.owner.run_write(
                         lambda: self.coordinator.reuse_existing(
                             registration.source.source_id,
                             registration.revision.revision_id,
@@ -749,7 +747,7 @@ class SourceService:
             bundle = (
                 None
                 if source.root.vision
-                else await self.owner.run_blocking(
+                else await self.owner.run_write(
                     lambda: self._retained_bundle(registration, ctx), ctx
                 )
             )
@@ -761,7 +759,7 @@ class SourceService:
                     )
                 finally:
                     _pdf_job_id.reset(token)
-            bundle = await self.owner.run_blocking(
+            bundle = await self.owner.run_write(
                 lambda: self._bind_source_metadata(bundle), ctx
             )
             attempt = _Attempt(bundle, handle, jobs, capture, config_ref, granted)
@@ -779,7 +777,7 @@ class SourceService:
                 "WORKSPACE_BUSY", "Publication base changed repeatedly", retryable=True
             )
         except TychoraError as error:
-            recovered = await self.owner.run_blocking(
+            recovered = await self.owner.run_write(
                 lambda: (
                     jobs.recover(handle.id)
                     if PublicationReceipts(self.owner.store).lookup(handle.id)
@@ -790,7 +788,7 @@ class SourceService:
             if recovered is not None and recovered.state == "succeeded":
                 return JobHandle(id=handle.id, operation=operation, state="succeeded")
             failure = error
-            await self.owner.run_blocking(
+            await self.owner.run_write(
                 lambda: (
                     jobs.fail(handle.id, failure)
                     if jobs.get(handle.id).state in {"queued", "running"}
@@ -800,7 +798,7 @@ class SourceService:
             )
             raise
         except asyncio.CancelledError:
-            await self.owner.run_blocking(
+            await self.owner.run_write(
                 lambda: (
                     jobs.fail(handle.id, TychoraError("CANCELLED", "Job was cancelled"))
                     if jobs.get(handle.id).state in {"queued", "running"}
@@ -811,7 +809,7 @@ class SourceService:
             raise
         except Exception as error:
             try:
-                await self.owner.run_blocking(
+                await self.owner.run_write(
                     lambda: self._reconcile_unexpected(jobs, handle.id),
                     ExecutionContext(),
                 )
@@ -861,12 +859,12 @@ class SourceService:
             leases.enter_context(store.leases.pin(frozenset(prepared.reused_batch_ids)))
             return base, prepared
 
-        base, prepared = await self.owner.run_blocking(prepare, ctx)
+        base, prepared = await self.owner.run_write(prepare, ctx)
         records = await self._text_records(
             prepared, attempt.scope, previous[0], previous[1], ctx
         )
         visual_records = await self._visual_records(prepared, attempt.scope, ctx)
-        await self.owner.run_blocking(
+        await self.owner.run_write(
             lambda: attempt.jobs.stage(attempt.handle.id, "project"), ctx
         )
 
@@ -875,10 +873,8 @@ class SourceService:
             leases.enter_context(store.leases.pin(_plan_batch_ids(plan)))
             return plan
 
-        plan = await self.owner.run_blocking(finalize, ctx)
-        await self.owner.run_blocking(
-            lambda: self._checkpoint(attempt, base, plan), ctx
-        )
+        plan = await self.owner.run_write(finalize, ctx)
+        await self.owner.run_write(lambda: self._checkpoint(attempt, base, plan), ctx)
         try:
             await self._publish(plan, attempt.jobs, attempt.handle, ctx)
         except TychoraError as error:
@@ -924,9 +920,7 @@ class SourceService:
                 return False
             if error.reason not in _STALE_CHECKPOINT_REASONS:
                 raise
-            await self.owner.run_blocking(
-                lambda: jobs.discard_step(handle.id, step), ctx
-            )
+            await self.owner.run_write(lambda: jobs.discard_step(handle.id, step), ctx)
             return False
         return True
 
@@ -943,11 +937,11 @@ class SourceService:
                 self.owner.store.publication_context = None
 
         async with self.owner.comparison_admission.mutation(ctx):
-            snapshot_id = await self.owner.run_blocking(activate, ctx)
-            await self.owner.run_blocking(
+            snapshot_id = await self.owner.run_write(activate, ctx)
+            await self.owner.run_write(
                 lambda: jobs.complete(handle.id, result_snapshot_id=snapshot_id), ctx
             )
-            await self.owner.run_blocking(
+            await self.owner.run_write(
                 self._collect_after_publication, ExecutionContext()
             )
         return snapshot_id
@@ -988,7 +982,7 @@ class SourceService:
             raise TychoraError(
                 "CAPABILITY_MISSING", "Configured text provider is unavailable"
             )
-        epoch = await self.owner.run_blocking(self.owner.policy_epoch, ctx)
+        epoch = await self.owner.run_write(self.owner.policy_epoch, ctx)
         records = []
         # Every batch is authorized independently against the same policy epoch.
         for batch in upload_batches(prepared.text_groups):
@@ -1802,7 +1796,7 @@ class SourceService:
         scope: RequestScope,
     ) -> ExtractionBundle:
         if isinstance(registration, NativeRegistration):
-            return await self.owner.run_blocking(
+            return await self.owner.run_write(
                 lambda: normalize(
                     NativeParser(self.owner.artifacts, registration).extract(
                         capture.original_ref, self.owner.config, ctx
@@ -1840,7 +1834,7 @@ class SourceService:
             if parsed.pdf_processing is not None:
                 from tychora.adapters.docling.ocr_evidence import plan_pdf_ocr
 
-                initial_proxies, pixel_regions = await self.owner.run_blocking(
+                initial_proxies, pixel_regions = await self.owner.run_write(
                     lambda: plan_pdf_ocr(self.owner, parsed, ctx, budget=pdf_budget),
                     ctx,
                 )
@@ -1862,7 +1856,7 @@ class SourceService:
                     proxies.append(proxy)
                 if gap is not None:
                     gaps.append(gap)
-            return await self.owner.run_blocking(
+            return await self.owner.run_write(
                 lambda: (
                     compose_document(
                         parsed,
@@ -1900,7 +1894,7 @@ class SourceService:
                 ) as stream:
                     return cache.get(stream.read(), identity, options)
 
-            syntax = await self.owner.run_blocking(read_cached, ctx)
+            syntax = await self.owner.run_write(read_cached, ctx)
             if syntax is None:
                 syntax = await self.owner.run_parser(
                     partial(
@@ -1911,11 +1905,11 @@ class SourceService:
                     (captured.artifact_ref,),
                     ctx,
                 )
-                await self.owner.run_blocking(
+                await self.owner.run_write(
                     partial(cache.put, syntax, identity, options), ctx
                 )
             files.append(CapturedSyntax(captured=captured, syntax=syntax))
-        return await self.owner.run_blocking(
+        return await self.owner.run_write(
             lambda: normalize_code(
                 retain_code_extraction(
                     registration,
@@ -1963,7 +1957,7 @@ class SourceService:
 
         schema = dict(selected.task_schema)
         response_schema(schema, frozenset())
-        region, proof = await self.owner.run_blocking(
+        region, proof = await self.owner.run_write(
             lambda: derive_selected_region(
                 self.owner,
                 parsed,
@@ -2008,7 +2002,7 @@ class SourceService:
             captured = CapturedSourceRegistration(
                 source=registration.source, kind_id=registration.revision.kind_id
             )
-            epoch = await self.owner.run_blocking(self.owner.policy_epoch, ctx)
+            epoch = await self.owner.run_write(self.owner.policy_epoch, ctx)
 
             def ensure_registration() -> None:
                 row = self.owner.db.execute(
@@ -2020,7 +2014,7 @@ class SourceService:
                         captured, scope, policy_epoch=epoch
                     )
 
-            await self.owner.run_blocking(ensure_registration, ctx)
+            await self.owner.run_write(ensure_registration, ctx)
             authorization = CapturedRegionAuthorization(
                 registration=captured,
                 revision=registration.revision,
@@ -2028,7 +2022,7 @@ class SourceService:
                 region=region,
             )
             if self.vision_credential is None:
-                await self.owner.run_blocking(
+                await self.owner.run_write(
                     lambda: self.owner.upload_policy.authorize_captured(
                         scope, "anthropic", authorization, epoch
                     ),
@@ -2052,7 +2046,7 @@ class SourceService:
                 if error.code == "CAPABILITY_MISSING":
                     return None, gap("provider_unavailable")
                 raise
-            observation = await self.owner.run_blocking(
+            observation = await self.owner.run_write(
                 lambda: retain_remote_observation(
                     self.owner,
                     region,

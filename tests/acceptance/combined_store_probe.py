@@ -44,7 +44,7 @@ def run(root: Path, *, isolated_setup: bool = True) -> dict:
     else:
         setup_corpus(root, graph=True, graph_vector=True)
     with WorkspaceOwner.open(root / "data", _config(root), _scope()) as owner:
-        before = owner.run_blocking_sync(
+        before = owner.run_write_sync(
             owner.store.active_snapshot_id, ExecutionContext()
         )
     _kill_test_child(
@@ -52,13 +52,13 @@ def run(root: Path, *, isolated_setup: bool = True) -> dict:
     )
     findings: dict = {"prior_snapshot": before}
     with WorkspaceOwner.open(root / "data", _config(root), _scope()) as owner:
-        snapshot = owner.run_blocking_sync(
+        snapshot = owner.run_write_sync(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
         findings["after_snapshot"] = snapshot.snapshot_id
         slot = next(
             slot
-            for slot in owner.run_blocking_sync(
+            for slot in owner.run_write_sync(
                 lambda: owner.store.snapshot_slots(snapshot), ExecutionContext()
             )
             if slot.slot == "text"
@@ -75,13 +75,13 @@ def run(root: Path, *, isolated_setup: bool = True) -> dict:
             findings["prior_vector_ready"] = index.verify_batch(receipt).ready
         except Exception as error:  # noqa: BLE001 - diagnostic records native failure
             findings["prior_vector_error"] = type(error).__name__ + ": " + str(error)
-        job_id = owner.run_blocking_sync(
+        job_id = owner.run_write_sync(
             lambda: owner.db.execute(
                 "SELECT job_id FROM jobs WHERE idempotency_key='crash-retry-key'"
             ).fetchone()[0],
             ExecutionContext(),
         )
-        jobs = owner.run_blocking_sync(
+        jobs = owner.run_write_sync(
             lambda: JobRepository(
                 owner.db,
                 artifacts=owner.artifacts,
@@ -90,8 +90,8 @@ def run(root: Path, *, isolated_setup: bool = True) -> dict:
             ),
             ExecutionContext(),
         )
-        owner.run_blocking_sync(lambda: jobs.recover(job_id), ExecutionContext())
-        owner.run_blocking_sync(lambda: jobs.retry(job_id), ExecutionContext())
+        owner.run_write_sync(lambda: jobs.recover(job_id), ExecutionContext())
+        owner.run_write_sync(lambda: jobs.retry(job_id), ExecutionContext())
         try:
             completed = asyncio.run(
                 service(owner, root).add(source(), _scope(), "crash-retry-key")

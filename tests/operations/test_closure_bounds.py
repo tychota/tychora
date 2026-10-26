@@ -61,7 +61,7 @@ def workspace(copied, monkeypatch):
 
 def _on_owner(kb, call):
     owner = kb._workspace.owner
-    return owner.run_blocking_sync(call, ExecutionContext())
+    return owner.run_write_sync(call, ExecutionContext())
 
 
 def _mark_rooted_pending(kb) -> str:

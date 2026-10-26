@@ -95,7 +95,7 @@ class MaintenanceService:
         if operation.operation in {"export", "import", "rebuild", "migrate"}:
             from .workspace_authority import authorize_workspace
 
-            await self.owner.run_blocking(
+            await self.owner.run_write(
                 lambda: authorize_workspace(self.owner, grant), ctx
             )
         if isinstance(operation, EvaluateMaintenance):
@@ -104,7 +104,7 @@ class MaintenanceService:
             return await self._gc(operation, grant, ctx)
         if isinstance(operation, HealthMaintenance):
             recovery = RecoveryService(self.owner)
-            report = await self.owner.run_blocking(
+            report = await self.owner.run_write(
                 lambda: self._workspace_recovery(
                     grant,
                     lambda: (
@@ -146,7 +146,7 @@ class MaintenanceService:
                 )
             recovery = RecoveryService(self.owner)
             async with self.owner.comparison_admission.mutation(ctx):
-                report = await self.owner.run_blocking(
+                report = await self.owner.run_write(
                     lambda: self._workspace_recovery(
                         grant,
                         lambda: recovery._rebuild_native_on_owner(
@@ -223,7 +223,7 @@ class MaintenanceService:
                 raise TychoraError(
                     "INVALID_REQUEST", "Migration target must be an integer"
                 ) from None
-            handle = await self.owner.run_blocking(
+            handle = await self.owner.run_write(
                 lambda: self._migrate_on_owner(target, grant, key, ctx), ctx
             )
             return MaintenanceResult(
@@ -247,7 +247,7 @@ class MaintenanceService:
             raise TychoraError(
                 "CAPABILITY_MISSING", "Evaluation service is unavailable"
             )
-        snapshot_id = await self.owner.run_blocking(
+        snapshot_id = await self.owner.run_write(
             self.owner.store.active_snapshot_id, ctx
         )
         if snapshot_id is None:
@@ -289,7 +289,7 @@ class MaintenanceService:
             return summary, collector.reclaim()
 
         async with self.owner.comparison_admission.mutation(ctx):
-            summary, counts = await self.owner.run_blocking(collect, ctx)
+            summary, counts = await self.owner.run_write(collect, ctx)
         return MaintenanceResult(
             plan=MaintenancePlan(
                 operation="gc",
@@ -304,7 +304,7 @@ class MaintenanceService:
         )
 
     def migrate(self, target_version: int, scope: RequestScope, ctx: ExecutionContext):
-        return self.owner.run_blocking_sync(
+        return self.owner.run_write_sync(
             lambda: self._migrate_on_owner(target_version, scope, None, ctx), ctx
         )
 

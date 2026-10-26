@@ -40,7 +40,7 @@ def test_selected_crop_comes_from_retained_original(document_record_case):
             }
         ),
     )
-    region, proof = case.owner.run_blocking_sync(
+    region, proof = case.owner.run_write_sync(
         lambda: derive_selected_region(case.owner, parsed, selected), case.ctx
     )
     assert proof.capture == parsed.registration.capture
@@ -50,7 +50,7 @@ def test_selected_crop_comes_from_retained_original(document_record_case):
         assert image.size == (4, 2)
         assert image.convert("RGB").getpixel((1, 0)) == (0, 0, 255)
     with pytest.raises(TychoraError) as stale:
-        case.owner.run_blocking_sync(
+        case.owner.run_write_sync(
             lambda: derive_selected_region(
                 case.owner,
                 parsed,
@@ -113,13 +113,13 @@ def test_supplied_new_parser_root_requires_retained_revision(document_record_cas
         ),
     )
     with pytest.raises(TychoraError) as unretained:
-        case.owner.run_blocking_sync(
+        case.owner.run_write_sync(
             lambda: derive_selected_region(case.owner, parsed_b, selected),
             ExecutionContext(),
         )
     assert unretained.value.code == "INVALID_REQUEST"
     compose_ctx = ExecutionContext()
-    composed_b = case.owner.run_blocking_sync(
+    composed_b = case.owner.run_write_sync(
         lambda: compose_document(
             parsed_b,
             case.registry,
@@ -131,11 +131,11 @@ def test_supplied_new_parser_root_requires_retained_revision(document_record_cas
         ),
         compose_ctx,
     )
-    case.owner.run_blocking_sync(
+    case.owner.run_write_sync(
         lambda: case.owner.store.commit_extraction(composed_b.bundle),
         ExecutionContext(),
     )
-    region, _ = case.owner.run_blocking_sync(
+    region, _ = case.owner.run_write_sync(
         lambda: derive_selected_region(case.owner, parsed_b, selected),
         ExecutionContext(),
     )
@@ -165,13 +165,13 @@ def test_incomplete_vision_diagnostic_changes_identity_and_replays(
     assert "vision_gaps" not in semantic_data
     gap = VisionCapabilityGap(selection_sha256="a" * 64, reason="provider_failure")
     incomplete = ordinary.model_copy(update={"vision_gaps": (gap,)})
-    base = case.owner.run_blocking_sync(
+    base = case.owner.run_write_sync(
         lambda: compose_document(
             parsed, case.registry, ordinary, case.owner.artifacts, case.ctx
         ),
         case.ctx,
     )
-    result = case.owner.run_blocking_sync(
+    result = case.owner.run_write_sync(
         lambda: compose_document(
             parsed, case.registry, incomplete, case.owner.artifacts, case.ctx
         ),

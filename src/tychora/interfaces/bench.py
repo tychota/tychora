@@ -155,7 +155,7 @@ class TychoraBenchClient:
                 )
             return publication_footprint(owner.db, snapshot_id)
 
-        return owner.run_blocking_sync(read, ExecutionContext())
+        return owner.run_write_sync(read, ExecutionContext())
 
 
 def _commit() -> str:

@@ -486,7 +486,7 @@ class OwnerRerankAccess:
         if get_ident() == self.owner._thread_id:
             ctx.checkpoint()
             return call()
-        return self.owner.run_blocking_sync(call, ctx)
+        return self.owner.run_write_sync(call, ctx)
 
     async def prepare(
         self,
@@ -504,8 +504,10 @@ class OwnerRerankAccess:
                 raise TychoraError(
                     "INVALID_REQUEST", "Rerank candidate count is invalid."
                 )
-            dependencies = await self.owner.run_blocking(
-                lambda: self._prepare_canonical(representations, ctx), ctx
+            dependencies = await self.owner.run_write(
+                lambda: self._prepare_canonical(representations, ctx),
+                ctx,
+                "interactive",
             )
             body_sha = sha256(
                 build_rerank_body(model, query, representations)
@@ -644,7 +646,7 @@ async def create_reranker(
 
     if owner.config.values.offline:
         raise TychoraError("CAPABILITY_MISSING", "Reranker is unavailable.")
-    counter = await owner.run_blocking(verified_counter, ctx)
+    counter = await owner.run_write(verified_counter, ctx)
     return await _create_injected_reranker(
         owner, runtime=runtime, scope=scope, counter=counter, ctx=ctx
     )
@@ -683,7 +685,7 @@ async def _create_injected_reranker(
         owner.register_runtime(runtime)
         return reranker
 
-    return await owner.run_blocking(create, ctx)
+    return await owner.run_write(create, ctx)
 
 
 async def rank_with_owner(
@@ -825,4 +827,4 @@ async def prepare_rerank_facts(
             )
         return MappingProxyType(output)
 
-    return await owner.run_blocking(load, ctx)
+    return await owner.run_write(load, ctx, "interactive")

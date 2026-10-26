@@ -78,7 +78,7 @@ class OwnerVisualAccess:
         if get_ident() == self.owner._thread_id:
             ctx.checkpoint()
             return call()
-        return self.owner.run_blocking_sync(call, ctx)
+        return self.owner.run_write_sync(call, ctx)
 
     def read_scope(self, items: tuple[VisualInput, ...], ctx: ExecutionContext) -> None:
         self._on_owner(lambda: self._resolve(items), ctx)
@@ -332,4 +332,4 @@ async def create_visual_embedder(
         owner.register_runtime(runtime)
         return embedder
 
-    return await owner.run_blocking(create, ctx)
+    return await owner.run_write(create, ctx)

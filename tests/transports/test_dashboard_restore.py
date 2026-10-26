@@ -29,7 +29,7 @@ async def test_missing_restore_archive_is_typed_and_authorized_before_path_looku
         original = (owner.path / "workspace.toml").read_bytes()
 
         async def identity():
-            return await owner.run_blocking(
+            return await owner.run_write(
                 lambda: (
                     owner.store.policy_epoch(owner.workspace_id),
                     owner.store.active_snapshot_id(),

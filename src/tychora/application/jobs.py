@@ -63,7 +63,7 @@ class JobService:
             self.repository.authorize(job_id, scope, write=write)
             return result
 
-        return await self.owner.run_blocking(authorized, ctx)
+        return await self.owner.run_write(authorized, ctx)
 
     async def accept(
         self,
@@ -73,7 +73,7 @@ class JobService:
         effective_config: ArtifactRef,
         ctx: ExecutionContext,
     ) -> JobHandle:
-        return await self.owner.run_blocking(
+        return await self.owner.run_write(
             lambda: self.repository.accept(
                 operation,
                 self.owner.scope.narrow(self.scope),
@@ -120,7 +120,7 @@ class JobService:
                 next_cursor=last if len(rows) == 1000 else None,
             )
 
-        return await self.owner.run_blocking(read, ctx)
+        return await self.owner.run_write(read, ctx)
 
     async def get(self, job_id: str, ctx: ExecutionContext) -> JobStatus:
         return await self._call(job_id, lambda: self.repository.get(job_id), ctx)

@@ -56,7 +56,7 @@ def test_real_retained_text_locator_rejects_wrong_identity_and_binding(tmp_path)
 
         def assess(value):
             return kb._workspace.bridge.call(
-                owner.run_blocking(
+                owner.run_write(
                     lambda: verify_result_locators(owner, value), ExecutionContext()
                 )
             )
@@ -157,7 +157,7 @@ def test_a_full_budget_releases_the_least_recently_used_binding(tmp_path, monkey
             return outcomes, cache, rows
 
         outcomes, cache, rows = kb._workspace.bridge.call(
-            owner.run_blocking(assess, ExecutionContext())
+            owner.run_write(assess, ExecutionContext())
         )
     assert all(item.valid == item.total > 0 for item in outcomes)
     assert cache.binding_count == 3
@@ -211,7 +211,7 @@ def test_selected_bindings_are_bounded_and_reused_without_snapshot_rehydration(
                 owner.db.set_trace_callback(None)
 
         first, second, reused, cache = kb._workspace.bridge.call(
-            owner.run_blocking(assess_twice, ExecutionContext())
+            owner.run_write(assess_twice, ExecutionContext())
         )
         assert first.valid == first.total > 0
         assert second == first
@@ -253,7 +253,7 @@ def test_selected_text_budget_rejects_before_materialization(tmp_path, monkeypat
                 owner.db.set_trace_callback(None)
 
         with pytest.raises(TychoraError) as error:
-            kb._workspace.bridge.call(owner.run_blocking(assess, ExecutionContext()))
+            kb._workspace.bridge.call(owner.run_write(assess, ExecutionContext()))
         assert error.value.code == "LIMIT_EXCEEDED"
         assert any("SUM(" in sql and "FROM evidence_units" in sql for sql in commands)
         assert not any("SELECT u.* FROM evidence_units" in sql for sql in commands)
@@ -304,7 +304,7 @@ def test_mismatched_retained_locator_artifact_fails_before_hydration(
                 (json.dumps(details), locator_id),
             )
 
-        kb._workspace.bridge.call(owner.run_blocking(corrupt, ExecutionContext()))
+        kb._workspace.bridge.call(owner.run_write(corrupt, ExecutionContext()))
         hydrated = []
 
         def unexpected_hydration(*args):
@@ -318,7 +318,7 @@ def test_mismatched_retained_locator_artifact_fails_before_hydration(
         )
         with pytest.raises(TychoraError) as error:
             kb._workspace.bridge.call(
-                owner.run_blocking(
+                owner.run_write(
                     lambda: verify_result_locators(owner, result), ExecutionContext()
                 )
             )
@@ -448,7 +448,7 @@ def test_code_citations_bind_only_the_cited_file_within_budget(tmp_path, monkeyp
             return verify_result_locators(owner, result, cache=cache), cache
 
         assessment, cache = kb._workspace.bridge.call(
-            owner.run_blocking(assess, ExecutionContext())
+            owner.run_write(assess, ExecutionContext())
         )
     assert assessment.total > 0
     assert assessment.valid == assessment.total
@@ -468,16 +468,14 @@ def test_one_code_file_above_the_budget_is_still_refused(tmp_path, monkeypatch):
             member = owner.store.resolve_snapshot(result.snapshot_id).members[0]
             return binding_footprint(owner.db, member, "target.py")[0]
 
-        rows = kb._workspace.bridge.call(
-            owner.run_blocking(file_rows, ExecutionContext())
-        )
+        rows = kb._workspace.bridge.call(owner.run_write(file_rows, ExecutionContext()))
         fits = kb._workspace.bridge.call(
-            owner.run_blocking(lambda: assess(rows), ExecutionContext())
+            owner.run_write(lambda: assess(rows), ExecutionContext())
         )
         assert fits.valid == fits.total > 0
         with pytest.raises(TychoraError) as error:
             kb._workspace.bridge.call(
-                owner.run_blocking(lambda: assess(rows - 1), ExecutionContext())
+                owner.run_write(lambda: assess(rows - 1), ExecutionContext())
             )
     assert error.value.code == "LIMIT_EXCEEDED"
     assert error.value.reason == "evaluation.binding_budget"
@@ -511,7 +509,7 @@ def test_mixed_whole_and_file_bindings_never_exceed_the_budget(tmp_path, monkeyp
             return observed, assessment, whole + 2 * single
 
         observed, assessment, budget = kb._workspace.bridge.call(
-            owner.run_blocking(assess, ExecutionContext())
+            owner.run_write(assess, ExecutionContext())
         )
     for rows_used, bytes_used, held in observed:
         assert (rows_used, bytes_used) == held
@@ -541,7 +539,7 @@ def test_tampered_code_locator_in_the_cited_file_is_invalid(tmp_path):
 
         def assess(value):
             return kb._workspace.bridge.call(
-                owner.run_blocking(
+                owner.run_write(
                     lambda: verify_result_locators(owner, value), ExecutionContext()
                 )
             )

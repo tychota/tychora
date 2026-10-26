@@ -95,7 +95,7 @@ def test_public_global_facet_requires_explicit_include_and_binding(tmp_path):
         } == {"cobalt local project", "cobalt global reference"}
         owner = kb._workspace.owner
         rows = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     "SELECT s.source_key,r.metadata_json,ra.role,ra.artifact_sha "
                     "FROM sources s JOIN revisions r USING(source_id) "
@@ -111,7 +111,7 @@ def test_public_global_facet_requires_explicit_include_and_binding(tmp_path):
         assert global_row[2] == "global_facet_binding"
         assert len(global_row[3]) == 64
         local_id = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     "SELECT revision_id FROM revisions r JOIN sources s USING(source_id) "
                     "WHERE s.source_key='local.txt'"
@@ -132,7 +132,7 @@ def test_public_global_facet_requires_explicit_include_and_binding(tmp_path):
         narrowed = kb.scope.model_copy(update={"collection_ids": frozenset()})
         assert not kb.search({**base, "include_global": True}, scope=narrowed).segments
         labels = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     "SELECT s.source_key,s.source_id,r.revision_id,u.unit_id "
                     "FROM evidence_units u JOIN extractions e USING(extraction_id) "
@@ -233,7 +233,7 @@ def test_global_binding_backup_restore_requires_exact_artifact(tmp_path):
         assert kb.jobs.wait(job.id, timeout=scaled(10)).state == "succeeded"
         owner = kb._workspace.owner
         marker_sha = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     "SELECT artifact_sha FROM revision_artifacts "
                     "WHERE role='global_facet_binding'"
@@ -281,7 +281,7 @@ def test_legacy_global_revision_without_binding_fails_closed(tmp_path):
             owner.db.commit()
 
         kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 remove_binding,
                 ExecutionContext(),
             )
@@ -311,7 +311,7 @@ def test_legacy_metadata_facet_cannot_be_silently_backfilled(tmp_path):
             owner.db.commit()
 
         kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 remove_facet,
                 ExecutionContext(),
             )

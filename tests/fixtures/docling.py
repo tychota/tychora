@@ -88,7 +88,7 @@ def rich_capture(execution, document_kind):
     )
     source_key = "rich." + execution.format
     source_path = Path(__file__).parents[1] / "fixtures/documents" / source_key
-    captured = owner.run_blocking_sync(
+    captured = owner.run_write_sync(
         lambda: Acquirer(owner.artifacts, execution.config).capture(
             SourceInput.model_validate(
                 {
@@ -122,7 +122,7 @@ def rich_capture(execution, document_kind):
         capture=captured,
         workspace=WorkspaceRow(
             workspace_id=owner.workspace_id,
-            created_at=owner.run_blocking_sync(
+            created_at=owner.run_write_sync(
                 lambda: owner.db.execute(
                     "SELECT created_at FROM workspaces"
                 ).fetchone()[0],
@@ -175,7 +175,7 @@ def retain_export(execution, rich_capture, export):
         Path("/nonexistent-explicit-model-bundle"),
     )
     payload = identity.canonical_bytes(export)
-    artifact = execution.owner.run_blocking_sync(
+    artifact = execution.owner.run_write_sync(
         lambda: parser._retain(
             (
                 (
@@ -309,7 +309,7 @@ def document_record_case(tmp_path_factory):
                 slug="synthetic",
                 title="Synthetic documents",
             )
-            captured = owner.run_blocking_sync(
+            captured = owner.run_write_sync(
                 lambda: Acquirer(owner.artifacts, config).capture(
                     SourceInput.model_validate(
                         {
@@ -351,7 +351,7 @@ def document_record_case(tmp_path_factory):
                 "capture": captured,
                 "workspace": WorkspaceRow(
                     workspace_id=owner.workspace_id,
-                    created_at=owner.run_blocking_sync(
+                    created_at=owner.run_write_sync(
                         lambda: owner.db.execute(
                             "SELECT created_at FROM workspaces"
                         ).fetchone()[0],
@@ -373,7 +373,7 @@ def document_record_case(tmp_path_factory):
                 from tychora.ingestion.native import NativeParser
 
                 native_registration = NativeRegistration.model_validate(fields)
-                parsed = owner.run_blocking_sync(
+                parsed = owner.run_write_sync(
                     lambda: NativeParser(owner.artifacts, native_registration).extract(
                         captured.original_ref, config, ctx
                     ),
@@ -390,9 +390,7 @@ def document_record_case(tmp_path_factory):
                 normalize(parsed, revision.revision_id, registry) if commit else None
             )
             if bundle is not None:
-                owner.run_blocking_sync(
-                    lambda: owner.store.commit_extraction(bundle), ctx
-                )
+                owner.run_write_sync(lambda: owner.store.commit_extraction(bundle), ctx)
             result = SimpleNamespace(
                 parsed=parsed,
                 bundle=bundle,

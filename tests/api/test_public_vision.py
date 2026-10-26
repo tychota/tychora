@@ -202,7 +202,7 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
         assert failed_calls >= 1
         assert (
             kb._workspace.bridge.call(
-                kb._workspace.owner.run_blocking(
+                kb._workspace.owner.run_write(
                     lambda: kb._workspace.owner.db.execute(
                         "SELECT count(*) FROM asset_proxies"
                     ).fetchone()[0],
@@ -288,7 +288,7 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
         assert len(sent) == failed_calls + 1
         assert all(item[:2] == (4, 2) for item in sent)
         rows = kb._workspace.bridge.call(
-            kb._workspace.owner.run_blocking(
+            kb._workspace.owner.run_write(
                 lambda: kb._workspace.owner.db.execute(
                     "SELECT count(*) FROM asset_proxies"
                 ).fetchone()[0],
@@ -351,7 +351,7 @@ def test_configured_public_add_uses_only_selected_crop_after_grant(
         assert kb.jobs.wait(variant.id, timeout=JOB_WAIT).state == "succeeded"
         assert len(sent) == failed_calls + 2
         count = kb._workspace.bridge.call(
-            kb._workspace.owner.run_blocking(
+            kb._workspace.owner.run_write(
                 lambda: kb._workspace.owner.db.execute(
                     "SELECT count(*) FROM extractions"
                 ).fetchone()[0],
@@ -516,7 +516,7 @@ def test_offline_cli_selected_ocr_uses_local_models_without_remote_call(
     assert json.loads(result.stdout)["state"] == "succeeded"
     with Tychora.open(workspace, token_counter=Counter()) as kb:
         count = kb._workspace.bridge.call(
-            kb._workspace.owner.run_blocking(
+            kb._workspace.owner.run_write(
                 lambda: kb._workspace.owner.db.execute(
                     "SELECT count(*) FROM asset_proxies"
                 ).fetchone()[0],
@@ -525,7 +525,7 @@ def test_offline_cli_selected_ocr_uses_local_models_without_remote_call(
         )
         assert count == 1
         proxy_id = kb._workspace.bridge.call(
-            kb._workspace.owner.run_blocking(
+            kb._workspace.owner.run_write(
                 lambda: kb._workspace.owner.db.execute(
                     "SELECT proxy_unit_id FROM asset_proxies LIMIT 1"
                 ).fetchone()[0],
@@ -770,7 +770,7 @@ def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_targ
         wait_for_pdf_job(kb, accepted.id, "succeeded")
         assert len(prompts) == 1
         proxy_id = kb._workspace.bridge.call(
-            kb._workspace.owner.run_blocking(
+            kb._workspace.owner.run_write(
                 lambda: kb._workspace.owner.db.execute(
                     "SELECT proxy_unit_id FROM asset_proxies ORDER BY rowid DESC LIMIT 1"
                 ).fetchone()[0],
@@ -844,7 +844,7 @@ def test_public_pdf_crop_binds_verified_native_context_and_rejects_invented_targ
         wait_for_pdf_job(kb, refused.id, "failed")
         assert len(prompts) == 3
         count = kb._workspace.bridge.call(
-            kb._workspace.owner.run_blocking(
+            kb._workspace.owner.run_write(
                 lambda: kb._workspace.owner.db.execute(
                     "SELECT count(*) FROM asset_proxies"
                 ).fetchone()[0],
@@ -987,7 +987,7 @@ def test_first_selected_add_retains_original_and_reports_incomplete_vision(
         assert kb.sources.selections(sid, revision, extraction.extraction_id).candidates
         assert (
             kb._workspace.bridge.call(
-                kb._workspace.owner.run_blocking(
+                kb._workspace.owner.run_write(
                     lambda: kb._workspace.owner.db.execute(
                         "SELECT count(*) FROM asset_proxies"
                     ).fetchone()[0],
@@ -1049,7 +1049,7 @@ def test_first_selected_add_retains_original_and_reports_incomplete_vision(
                 return stream.read()
 
         payload = reopened._workspace.bridge.call(
-            reopened._workspace.owner.run_blocking(diagnostic_bytes, ExecutionContext())
+            reopened._workspace.owner.run_write(diagnostic_bytes, ExecutionContext())
         )
         diagnostic = VisionCapabilityDiagnostics.model_validate_json(payload)
         assert len(diagnostic.gaps) == 1

@@ -258,7 +258,7 @@ async def test_cancelled_public_original_inspection_keeps_payload_pinned(
         sid = source_id(kb.default_collection_id, "leased-original")
         revision = (await kb.sources.revisions(sid)).revisions[0].revision_id
         owner = kb._workspace.owner
-        sha = await owner.run_blocking(
+        sha = await owner.run_write(
             lambda: owner.db.execute(
                 "SELECT original_sha FROM revisions WHERE revision_id=?", (revision,)
             ).fetchone()[0],
@@ -312,7 +312,7 @@ async def test_cancelled_public_original_inspection_keeps_payload_pinned(
             }
         )
         assert purged.job is not None and purged.job.state == "succeeded"
-        counts = await owner.run_blocking(
+        counts = await owner.run_write(
             lambda: RemovalService(
                 owner, kb._workspace.services.jobs.repository
             ).reconcile_pending_deletions(),

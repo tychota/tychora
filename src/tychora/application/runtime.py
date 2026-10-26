@@ -11,6 +11,7 @@ import secrets
 import stat
 import time
 import weakref
+from collections import deque
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import contextmanager
@@ -18,20 +19,38 @@ from dataclasses import dataclass
 from multiprocessing.connection import Connection
 from pathlib import Path
 from threading import Lock
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from tychora.contracts.errors import TychoraError
 from tychora.ports.execution import ExecutionContext
 
+type Priority = Literal["interactive", "background"]
+
+WRITER_THREAD_PREFIX = "tychora-writer"
+CPU_THREAD_PREFIX = "tychora-cpu"
+INTERACTIVE_BOUND = 256
+BACKGROUND_BOUND = 64
+CPU_WORKERS = 2
+
+
+def queue_full() -> TychoraError:
+    """The refusal for work beyond a lane's queue bound or after it closed."""
+    return TychoraError(
+        "WORKSPACE_BUSY",
+        "Workspace queue is full or closing; retry shortly",
+        retryable=True,
+        reason="queue.full",
+    )
+
 
 class BoundedWorker:
     """A finite submission queue in front of a fixed-size thread pool."""
 
-    def __init__(self, workers: int = 1, queued: int = 32) -> None:
-        self._pool = ThreadPoolExecutor(
-            max_workers=workers, thread_name_prefix="tychora"
-        )
+    def __init__(
+        self, workers: int = 1, queued: int = 32, *, name: str = "tychora"
+    ) -> None:
+        self._pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix=name)
         # The garbage collector clears this reference before it finalizes an
         # abandoned owner; by then the pool's threads exit without new work.
         self._pool_alive = weakref.ref(self._pool)
@@ -43,11 +62,7 @@ class BoundedWorker:
     def submit[T](self, call: Callable[[], T]) -> Future[T]:
         with self._lock:
             if self._closed or self._pending >= self._bound:
-                raise TychoraError(
-                    "WORKSPACE_BUSY",
-                    "Workspace queue is full or closing; retry shortly",
-                    retryable=True,
-                )
+                raise queue_full()
             self._pending += 1
             try:
                 future = self._pool.submit(call)
@@ -81,6 +96,62 @@ class BoundedWorker:
                 final.result()
         finally:
             self._pool.shutdown(wait=True)
+
+
+class PriorityWorker(BoundedWorker):
+    """One thread that runs queued interactive calls before queued background calls.
+
+    Each submission queues its call under its priority and schedules one pool
+    slot; a slot runs the oldest interactive call, else the oldest background
+    call, so the order is decided when the thread is free, not at submission.
+    A running call is never preempted.
+    """
+
+    def __init__(
+        self,
+        *,
+        interactive: int = INTERACTIVE_BOUND,
+        background: int = BACKGROUND_BOUND,
+    ) -> None:
+        super().__init__(workers=1, queued=0, name=WRITER_THREAD_PREFIX)
+        self._bounds: dict[str, int] = {
+            "interactive": interactive,
+            "background": background,
+        }
+        self._queues: dict[str, deque[tuple[Future[Any], Callable[[], Any]]]] = {
+            "interactive": deque(),
+            "background": deque(),
+        }
+
+    def submit[T](
+        self, call: Callable[[], T], priority: Priority = "background"
+    ) -> Future[T]:
+        """Queue ``call`` under ``priority``; refuse it when that queue is full."""
+        future: Future[T] = Future()
+        with self._lock:
+            queue = self._queues[priority]
+            if self._closed or len(queue) >= self._bounds[priority]:
+                raise queue_full()
+            queue.append((future, call))
+            try:
+                self._pool.submit(self._run_next)
+            except BaseException:
+                queue.pop()
+                raise
+        return future
+
+    def _run_next(self) -> None:
+        with self._lock:
+            queue = self._queues["interactive"] or self._queues["background"]
+            future, call = queue.popleft()
+        if not future.set_running_or_notify_cancel():
+            return
+        try:
+            result = call()
+        except BaseException as error:  # noqa: BLE001 - the future carries the failure to its waiter
+            future.set_exception(error)
+        else:
+            future.set_result(result)
 
 
 async def drain_result[T](future: Future[T], ctx: ExecutionContext) -> T:

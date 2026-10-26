@@ -164,7 +164,7 @@ async def test_published_decisions_and_hidden_parent_support_are_excluded(tmp_pa
     )
     with WorkspaceOwner.open(tmp_path / "workspace", config, scope) as owner:
         ctx = ExecutionContext()
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) "
                 'VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
@@ -177,7 +177,7 @@ async def test_published_decisions_and_hidden_parent_support_are_excluded(tmp_pa
             (a, b, hidden, c),
             (allowed, rejected, needs_parent),
             root,
-        ) = await owner.run_blocking(lambda: _declared_bundle(owner), ctx)
+        ) = await owner.run_write(lambda: _declared_bundle(owner), ctx)
         graphs = {}
 
         def graph_factory(build):
@@ -199,7 +199,7 @@ async def test_published_decisions_and_hidden_parent_support_are_excluded(tmp_pa
             counter=SyntheticCounter(),
             graph_factory=graph_factory,
         )
-        config_ref = await owner.run_blocking(
+        config_ref = await owner.run_write(
             lambda: owner.artifacts.put_stream(
                 BytesIO(
                     canonical_bytes(
@@ -235,19 +235,17 @@ async def test_published_decisions_and_hidden_parent_support_are_excluded(tmp_pa
             )
             return prepared
 
-        prepared = await owner.run_blocking(prepare, ctx)
-        plan = await owner.run_blocking(
+        prepared = await owner.run_write(prepare, ctx)
+        plan = await owner.run_write(
             lambda: coordinator.finalize(prepared, (), ctx), ctx
         )
-        snapshot_id = await owner.run_blocking(
+        snapshot_id = await owner.run_write(
             lambda: owner.store.publish_snapshot(plan), ctx
         )
-        snapshot = await owner.run_blocking(
+        snapshot = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ctx
         )
-        slots = await owner.run_blocking(
-            lambda: owner.store.snapshot_slots(snapshot), ctx
-        )
+        slots = await owner.run_write(lambda: owner.store.snapshot_slots(snapshot), ctx)
         slot = next(slot for slot in slots if slot.slot == "graph")
         graph_batch = slot.batches[0]
         assert isinstance(graph_batch.receipt, GraphBatchReceipt)
@@ -315,7 +313,7 @@ async def test_published_decisions_and_hidden_parent_support_are_excluded(tmp_pa
         )
         assert not (await query.search(exact, scope, ctx)).result.relations
 
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.store.record_review(
                 ReviewTarget(unit_id=hidden.unit_id), "rejected", "synthetic-reviewer"
             ),
@@ -372,7 +370,7 @@ async def test_published_decisions_and_hidden_parent_support_are_excluded(tmp_pa
                 "case_count": 2,
             }
         )
-        jobs = await owner.run_blocking(
+        jobs = await owner.run_write(
             lambda: JobRepository(
                 owner.db, artifacts=owner.artifacts, workspace_id=owner.workspace_id
             ),

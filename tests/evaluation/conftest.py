@@ -99,7 +99,7 @@ def integrity_corpus(tmp_path: Path):
             }
 
         labels = kb._workspace.bridge.call(
-            owner.run_blocking(canonical_labels, ExecutionContext())
+            owner.run_write(canonical_labels, ExecutionContext())
         )
         assert all(len(rows) == 1 for rows in labels.values())
         cases = []
