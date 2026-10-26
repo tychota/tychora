@@ -4,10 +4,10 @@ from collections.abc import Sequence
 
 from tychora.configuration.models import ResolvedConfig
 from tychora.contracts.graph import (
-    EligibilityView,
     GraphBudget,
     GraphCandidate,
     GraphCandidates,
+    LegacyEligibilityView,
 )
 from tychora.ports.execution import ExecutionContext
 from tychora.ports.graph import GraphStore
@@ -33,7 +33,7 @@ def _merge(previous: GraphCandidate, addition: GraphCandidate) -> GraphCandidate
 
 
 def augment(
-    view: EligibilityView,
+    view: LegacyEligibilityView,
     fused: Sequence[FusedCandidate],
     config: ResolvedConfig,
     graph: GraphStore,

@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Iterator, Mapping
-from typing import Literal, Protocol
+from typing import Literal, NamedTuple, Protocol
 
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import (
@@ -372,6 +372,141 @@ class RepresentationRepository(Protocol):
         ...
 
 
+class MemberRow(NamedTuple):
+    """One snapshot member and the policy facts its revision is judged on."""
+
+    source_id: str
+    revision_id: str
+    extraction_id: str
+    is_default: bool
+    kind_id: str
+    definition_hash: str
+    collection_id: str
+    collection_policy_json: str
+    collection_floor: int
+    source_floor: int
+    withdrawn: bool
+    allowed_uses_override: str | None
+    access_rank: int
+    allowed_uses_json: str
+    review_state: str
+    published_on: str | None
+    effective_from: str | None
+    effective_until: str | None
+    edition_key: str
+    workspace_id: str
+
+
+class ReviewRow(NamedTuple):
+    """A unit or asset whose review state may exclude it, with that state."""
+
+    target_id: str
+    kind: Literal["unit", "asset"]
+    state: str
+    proxy: bool
+
+
+class UnitFlags(NamedTuple):
+    """A unit's extraction, citability and proxy status."""
+
+    unit_id: str
+    extraction_id: str
+    citable: bool
+    proxy: bool
+
+
+class FacetValue(NamedTuple):
+    """One facet value of a revision or unit, as its typed value."""
+
+    owner_id: str
+    facet_key: str
+    value: str | float | int
+
+
+class OwnerFact(Contract):
+    """One unit, asset, chunk or vector record with what admitting it reads."""
+
+    owner_id: Identifier
+    kind: Literal["unit", "asset", "chunk", "record"]
+    extraction_id: Identifier
+    dependency_ids: frozenset[Identifier]
+    unit_id: Identifier | None = None
+    chunk_id: Identifier | None = None
+    asset_id: Identifier | None = None
+    proxy: bool = False
+    citable: bool = False
+    batch_id: Identifier | None = None
+    source_owner_ids: frozenset[Identifier] = frozenset()
+
+
+class EligibilityRepository(Protocol):
+    """The store-side reads that compile and apply a revision-level view."""
+
+    def members(
+        self, snapshot_id: str, extraction_ids: tuple[str, ...] = ()
+    ) -> tuple[MemberRow, ...]:
+        """One row per member of the snapshot; with ``extraction_ids``, per listed extraction instead."""
+        ...
+
+    def kind_definitions(
+        self, kind_ids: tuple[str, ...]
+    ) -> tuple[tuple[str, str, str], ...]:
+        """``(kind_id, definition_hash, definition_json)`` of each listed kind."""
+        ...
+
+    def batches(self, snapshot_id: str) -> tuple[tuple[str, str, str | None], ...]:
+        """``(slot, batch_id, extraction_id)`` of every batch the snapshot serves."""
+        ...
+
+    def review_rows(
+        self, extraction_ids: tuple[str, ...], excluded_states: tuple[str, ...]
+    ) -> tuple[ReviewRow, ...]:
+        """Reviewed units and assets, proxy units, and units or assets declared in ``excluded_states``."""
+        ...
+
+    def unit_flags(self, extraction_ids: tuple[str, ...]) -> tuple[UnitFlags, ...]:
+        """Every unit of these extractions; read only for filters and graph scopes."""
+        ...
+
+    def dependents(
+        self, owner_ids: tuple[str, ...]
+    ) -> Mapping[str, Literal["unit", "asset"]]:
+        """The listed units and assets with every unit or asset depending on them, transitively."""
+        ...
+
+    def revision_facets(
+        self, revision_ids: tuple[str, ...], facet_keys: tuple[str, ...]
+    ) -> tuple[FacetValue, ...]:
+        """Revision-level values of the listed facets."""
+        ...
+
+    def unit_facets(
+        self, extraction_ids: tuple[str, ...], facet_keys: tuple[str, ...]
+    ) -> tuple[FacetValue, ...]:
+        """Unit-level values of the listed facets for units of these extractions."""
+        ...
+
+    def revision_metadata(
+        self, revision_ids: tuple[str, ...]
+    ) -> tuple[tuple[str, str, str], ...]:
+        """``(revision_id, metadata_json, metadata_sha)`` of each listed revision."""
+        ...
+
+    def global_facet_markers(
+        self, revision_ids: tuple[str, ...]
+    ) -> tuple[tuple[str, str, ArtifactRef | None], ...]:
+        """``(revision_id, source_ref, artifact)`` of each global-facet binding row."""
+        ...
+
+    def owner_facts(self, owner_ids: tuple[str, ...]) -> tuple[OwnerFact, ...]:
+        """Facts of the listed units, assets, chunks and vector records; unknown IDs are skipped.
+
+        A known owner without a persisted dependency set is refused with
+        ``INTEGRITY_ERROR`` reason ``canonical.facts_missing``.
+        """
+        ...
+
+
 class ReadTransaction(Protocol):
     """Repositories bound to one read transaction; writes through them are refused."""
 
@@ -381,6 +516,7 @@ class ReadTransaction(Protocol):
     batches: BatchRepository
     snapshots: SnapshotRepository
     representations: RepresentationRepository
+    eligibility: EligibilityRepository
 
 
 class WriteTransaction(ReadTransaction, Protocol):

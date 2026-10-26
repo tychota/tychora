@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import AnchorRange
-from tychora.contracts.graph import EligibilityView
+from tychora.contracts.graph import LegacyEligibilityView
 from tychora.contracts.indexing import PreparedExtraction
 from tychora.retrieval.rerank import RankedEvidenceItem, RerankMatch
 
@@ -14,7 +14,7 @@ def permitted_ranges(
     unit_id: str,
     start: int,
     end: int,
-    view: EligibilityView,
+    view: LegacyEligibilityView,
 ) -> tuple[tuple[int, int], ...]:
     """Intersect a source range with every canonical owner and current grant."""
     try:

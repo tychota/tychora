@@ -24,7 +24,7 @@ from tychora.application.reranking import (
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.candidates import ChannelCandidate
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.graph import EligibilityView
+from tychora.contracts.graph import LegacyEligibilityView
 from tychora.contracts.identity import digest
 from tychora.contracts.requests import QueryRequest, QuestionInput
 from tychora.indexing.representations import prepare_extraction
@@ -343,7 +343,7 @@ async def _owner_case(tmp_path: Path, *, upload: bool = True):
             for rank, bundle in enumerate(bundles, 1)
         )
         admission = Admission(candidates, (), {}, {}, (), {}, 62)
-        view = EligibilityView(
+        view = LegacyEligibilityView(
             snapshot_id="synthetic-snapshot",
             policy_epoch=epoch,
             scope_digest=digest("synthetic-scope"),

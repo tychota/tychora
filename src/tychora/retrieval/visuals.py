@@ -26,7 +26,7 @@ from tychora.contracts.evidence import (
     Segment,
     VisualEvidence,
 )
-from tychora.contracts.graph import EligibilityView
+from tychora.contracts.graph import LegacyEligibilityView
 from tychora.retrieval.fusion import FusedCandidate
 
 
@@ -36,7 +36,7 @@ class AssetCandidate:
 
     candidate: FusedCandidate
     rows: ExtractionBundle | RetainedRepresentationRows
-    view: EligibilityView
+    view: LegacyEligibilityView
     dependency_ids: frozenset[str]
     native_multimodal: bool = False
 

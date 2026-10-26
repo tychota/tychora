@@ -8,7 +8,7 @@ from typing import cast
 from tychora.configuration.registry import Registry
 from tychora.contracts.candidates import ChannelCandidates
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.graph import EligibilityView
+from tychora.contracts.graph import LegacyEligibilityView
 from tychora.contracts.requests import PassageInput, QueryRequest, QuestionInput
 from tychora.ports.corpus import CorpusStore
 from tychora.ports.execution import ExecutionContext
@@ -77,7 +77,7 @@ def extract_identifiers(text: str, registry: Registry) -> tuple[str, ...]:
 def retrieve_exact_lexical(
     store: CorpusStore,
     lexical: LexicalIndex,
-    view: EligibilityView,
+    view: LegacyEligibilityView,
     request: QueryRequest,
     registry: Registry,
     candidate_limit: int,

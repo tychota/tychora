@@ -8,7 +8,7 @@ from tychora.configuration.registry import Registry
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.candidates import ChannelCandidates
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.graph import EligibilityView
+from tychora.contracts.graph import LegacyEligibilityView
 from tychora.contracts.identity import digest
 from tychora.contracts.requests import QueryRequest
 from tychora.ports.execution import ExecutionContext
@@ -20,7 +20,7 @@ from tychora.retrieval.lexical_query import (
 
 
 def _view(sources):
-    return EligibilityView(
+    return LegacyEligibilityView(
         snapshot_id="snapshot",
         policy_epoch=3,
         scope_digest=digest("scope"),
@@ -59,7 +59,7 @@ def _store():
 class ForbiddenLexical:
     def search(
         self,
-        view: EligibilityView,
+        view: LegacyEligibilityView,
         query: str,
         candidate_limit: int,
         ctx: ExecutionContext,

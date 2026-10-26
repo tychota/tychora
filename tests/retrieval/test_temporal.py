@@ -5,7 +5,7 @@ from datetime import date
 from hashlib import sha256
 
 from tychora.contracts.identity import canonical_bytes
-from tychora.retrieval.eligibility import RevisionFact, select_temporal_revisions
+from tychora.retrieval.selection import RevisionFact, select_temporal_revisions
 
 
 def _revision(

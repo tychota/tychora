@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from tychora.contracts.graph import EligibilityView
+from tychora.contracts.graph import LegacyEligibilityView
 
 
-def eligible_cache_key(view: EligibilityView) -> tuple[str, int, str, str, str]:
+def eligible_cache_key(view: LegacyEligibilityView) -> tuple[str, int, str, str, str]:
     """Separate eligibility by snapshot, current policy, caller and mode/request."""
     return (
         view.snapshot_id,
@@ -18,103 +18,9 @@ def eligible_cache_key(view: EligibilityView) -> tuple[str, int, str, str, str]:
 
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass, field, replace
-from datetime import date
-from types import MappingProxyType
-from typing import Literal
-
-
-@dataclass(frozen=True)
-class RevisionFact:
-    """Detached selected edition and current canonical authorization facts."""
-
-    source_id: str
-    revision_id: str
-    extraction_id: str
-    collection_id: str
-    kind_id: str
-    access_rank: int
-    source_floor: int
-    collection_floor: int
-    allowed_uses: frozenset[str]
-    review_state: str
-    withdrawn: bool
-    published_on: str | None
-    effective_from: str | None
-    effective_until: str | None
-    is_default: bool
-    kind_allowed_uses: frozenset[str] | None = None
-    global_facets: frozenset[str] = frozenset()
-    collection_archived: bool = False
-
-
-def _parsed_date(value: str | None) -> date | None:
-    if value is None:
-        return None
-    return date.fromisoformat(value)
-
-
-def select_temporal_revisions(
-    revisions: tuple[RevisionFact, ...],
-    *,
-    explicit_ids: tuple[str, ...] = (),
-    selector: Literal["current", "all"] = "current",
-    as_of: date | None = None,
-    cutoff: date | None = None,
-    unknown_dates: Literal["strict", "permissive"] = "strict",
-) -> tuple[frozenset[str], tuple[str, ...]]:
-    """Select retained editions after independently applying both date constraints."""
-    selected: set[str] = set()
-    warnings: list[str] = []
-    grouped: dict[str, list[RevisionFact]] = {}
-    explicit = set(explicit_ids)
-    for revision in revisions:
-        if explicit and revision.revision_id not in explicit:
-            continue
-        grouped.setdefault(revision.source_id, []).append(revision)
-    for source, editions in grouped.items():
-        known: list[tuple[date, RevisionFact]] = []
-        unknown: list[RevisionFact] = []
-        for edition in editions:
-            start = _parsed_date(edition.effective_from)
-            end = _parsed_date(edition.effective_until)
-            published = _parsed_date(edition.published_on)
-            if as_of is not None and end is not None and as_of >= end:
-                continue
-            if cutoff is not None and published is not None and published > cutoff:
-                continue
-            missing = (
-                as_of is not None
-                and start is None
-                or cutoff is not None
-                and published is None
-            )
-            if missing:
-                if unknown_dates == "permissive":
-                    unknown.append(edition)
-                continue
-            if as_of is not None and start is not None and as_of < start:
-                continue
-            known.append((start or published or date.min, edition))
-        if explicit or selector == "all":
-            selected.update(item.revision_id for _, item in known)
-            selected.update(item.revision_id for item in unknown)
-        elif as_of is not None or cutoff is not None:
-            if known:
-                latest = max(key for key, _ in known)
-                winners = [item for key, item in known if key == latest]
-                selected.update(item.revision_id for item in winners)
-                if len(known) > 1:
-                    warnings.append(
-                        f"Overlapping retained editions for source {source}"
-                    )
-            selected.update(item.revision_id for item in unknown)
-        else:
-            selected.update(item.revision_id for _, item in known if item.is_default)
-    return frozenset(selected), tuple(warnings)
-
-
 from hashlib import sha256
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
 from tychora.configuration.indexed_representation import pinned_runtime_compatible
@@ -136,6 +42,7 @@ from tychora.contracts.requests import (
     canonical_scope_projection,
 )
 from tychora.ports.execution import ExecutionContext
+from tychora.retrieval.selection import RevisionFact, select_temporal_revisions
 
 if TYPE_CHECKING:
     from tychora.application.owner import WorkspaceOwner
@@ -371,7 +278,7 @@ class EligibilityCompiler:
         config: ResolvedConfig,
         *,
         members: tuple[SnapshotMember, ...] | None = None,
-    ) -> EligibilityView:
+    ) -> LegacyEligibilityView:
         facts = self.reader.read_eligibility_facts(snapshot, members)
         return self._compile(snapshot, scope, request, config, facts)[0]
 
@@ -440,7 +347,7 @@ class EligibilityCompiler:
         request: QueryRequest,
         config: ResolvedConfig,
         facts: EligibilityFacts,
-    ) -> tuple[EligibilityView, tuple[str, ...]]:
+    ) -> tuple[LegacyEligibilityView, tuple[str, ...]]:
         self._workspace_ids[snapshot.snapshot_id] = snapshot.workspace_id
         registry = self.reader.registry
         limits = config.values.limits
@@ -687,7 +594,7 @@ class EligibilityCompiler:
             if graph_binding is not None
             else {}
         )
-        view = EligibilityView(
+        view = LegacyEligibilityView(
             snapshot_id=snapshot.snapshot_id,
             policy_epoch=facts.policy_epoch,
             scope_digest=digest(
@@ -720,7 +627,7 @@ class EligibilityCompiler:
         return view, warnings
 
     def revalidate_epoch(
-        self, view: EligibilityView, stage: Literal["provider", "delivery"]
+        self, view: LegacyEligibilityView, stage: Literal["provider", "delivery"]
     ) -> None:
         if stage not in ("provider", "delivery"):
             raise ValueError("Unknown eligibility boundary")
@@ -740,7 +647,7 @@ from contextlib import AbstractContextManager
 
 
 def _dependency_lookup(
-    view: EligibilityView, facts: EligibilityFacts
+    view: LegacyEligibilityView, facts: EligibilityFacts
 ) -> dict[str, frozenset[str]]:
     lookup = {
         item.unit_id: item.dependency_ids
@@ -777,7 +684,7 @@ def _dependency_lookup(
 class EligibilityAttempt:
     """One compiled attempt whose external calls require a fresh policy epoch."""
 
-    view: EligibilityView
+    view: LegacyEligibilityView
     compiler: EligibilityCompiler
     dependencies: Mapping[str, frozenset[str]] = field(default_factory=dict)
     warnings: tuple[str, ...] = ()

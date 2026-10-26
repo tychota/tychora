@@ -2,13 +2,13 @@
 
 from types import SimpleNamespace
 
-from tychora.contracts.graph import EligibilityView
+from tychora.contracts.graph import LegacyEligibilityView
 from tychora.contracts.identity import digest
 from tychora.retrieval.eligibility import eligible_cache_key
 
 
-def _view(policy: str) -> EligibilityView:
-    return EligibilityView(
+def _view(policy: str) -> LegacyEligibilityView:
+    return LegacyEligibilityView(
         snapshot_id="snapshot",
         policy_epoch=7,
         scope_digest=digest("scope"),

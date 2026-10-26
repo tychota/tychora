@@ -9,7 +9,6 @@ from tychora.adapters.ladybug.generation import LadybugGraphStore
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.evidence import EvidenceUnit, TextLocator
 from tychora.contracts.graph import (
-    EligibilityView,
     GraphAssertionBinding,
     GraphBudget,
     GraphBuildInput,
@@ -19,6 +18,7 @@ from tychora.contracts.graph import (
     GraphPredicatePolicy,
     GraphTraversalPolicy,
     GraphUnitBinding,
+    LegacyEligibilityView,
 )
 from tychora.contracts.identity import digest
 from tychora.contracts.relationships import (
@@ -98,8 +98,8 @@ class GraphCase:
         candidates: set[str],
         structural: set[str] | None = None,
         blocked: set[str] | None = None,
-    ) -> EligibilityView:
-        return EligibilityView(
+    ) -> LegacyEligibilityView:
+        return LegacyEligibilityView(
             snapshot_id="snapshot",
             policy_epoch=0,
             scope_digest=digest("scope"),

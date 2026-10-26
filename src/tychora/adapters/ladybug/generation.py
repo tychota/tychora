@@ -15,7 +15,6 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.graph import (
     AssertionPage,
-    EligibilityView,
     GraphAssertionBinding,
     GraphBatchReceipt,
     GraphBudget,
@@ -25,6 +24,7 @@ from tychora.contracts.graph import (
     GraphManifest,
     GraphTraversalPolicy,
     GraphUnitBinding,
+    LegacyEligibilityView,
     graph_assertion_binding_json,
     graph_manifest_digest,
     graph_proof_digest,
@@ -75,7 +75,7 @@ class LadybugGraphStore:
 
     def expand(
         self,
-        view: EligibilityView,
+        view: LegacyEligibilityView,
         seed_unit_ids: tuple[str, ...],
         limits: GraphBudget,
         ctx: ExecutionContext,
@@ -88,7 +88,7 @@ class LadybugGraphStore:
 
     def structural_context(
         self,
-        view: EligibilityView,
+        view: LegacyEligibilityView,
         seed_unit_ids: tuple[str, ...],
         limits: GraphBudget,
         ctx: ExecutionContext,
@@ -101,7 +101,7 @@ class LadybugGraphStore:
 
     def get_assertions(
         self,
-        view: EligibilityView,
+        view: LegacyEligibilityView,
         selected_unit_ids: tuple[str, ...],
         predicates: tuple[str, ...],
         limits: GraphBudget,

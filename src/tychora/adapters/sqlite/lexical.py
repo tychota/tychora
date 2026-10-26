@@ -7,7 +7,7 @@ from typing import Literal
 
 from tychora.contracts.candidates import ChannelCandidate, ChannelCandidates
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.graph import EligibilityView
+from tychora.contracts.graph import LegacyEligibilityView
 from tychora.ports.execution import ExecutionContext
 from tychora.retrieval.lexical_query import lexical_expression, normalize_identifier
 
@@ -22,7 +22,7 @@ class LexicalIndex:
 
     def search(
         self,
-        view: EligibilityView,
+        view: LegacyEligibilityView,
         query: str,
         candidate_limit: int,
         ctx: ExecutionContext,
@@ -145,7 +145,7 @@ def _rank(
 
 
 def lookup_identifiers(
-    store, namespaced: tuple[str, ...], view: EligibilityView, limit: int
+    store, namespaced: tuple[str, ...], view: LegacyEligibilityView, limit: int
 ) -> ChannelCandidates:
     """Equality lookup restricted to original candidate units in the pinned snapshot."""
     if len(namespaced) > 16 or not 1 <= limit <= 32:
