@@ -171,6 +171,13 @@ def _after(cursor: str | None, subject: str) -> str | None:
         raise TychoraError("INVALID_REQUEST", "Invalid discovery cursor.") from None
 
 
+def _page_cursor(owner, subject: str, rows: list, scope: RequestScope, limit: int):
+    """Cursor for the last kept row when the fetched rows overflow the page."""
+    if len(rows) > limit and rows[:limit]:
+        return _scoped_cursor(owner, subject, rows[limit - 1][0], scope, limit)
+    return None
+
+
 def _scoped_cursor(
     owner, subject: str, key: str, scope: RequestScope, limit: int
 ) -> str:
@@ -684,9 +691,7 @@ class DiscoveryService:
                     self._extraction_coverage(extraction, kind, granted)
                     for (extraction,) in page
                 ),
-                next_cursor=_scoped_cursor(owner, subject, page[-1][0], granted, limit)
-                if len(rows) > limit and page
-                else None,
+                next_cursor=_page_cursor(owner, subject, rows, granted, limit),
             )
 
         return owner.run_write_sync(read, ExecutionContext())
@@ -736,9 +741,7 @@ class DiscoveryService:
                     )
                     for family, channel, state in page
                 ),
-                next_cursor=_scoped_cursor(owner, subject, page[-1][0], granted, limit)
-                if len(rows) > limit and page
-                else None,
+                next_cursor=_page_cursor(owner, subject, rows, granted, limit),
             )
 
         return owner.run_write_sync(read, ExecutionContext())

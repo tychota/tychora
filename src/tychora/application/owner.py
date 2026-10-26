@@ -638,18 +638,10 @@ class WorkspaceOwner:
             ctx,
         )
 
-    async def run_provider[T](
-        self,
-        provider: str,
-        call: Callable[[], T],
-        ctx: ExecutionContext,
-        *,
-        scope: RequestScope,
-        dependencies: frozenset[str],
-        policy_epoch: int,
-    ) -> T:
-        """Run an already-injected provider after fresh queued authorization."""
-        ctx.checkpoint()
+    def _authorized_provider_lane(
+        self, provider: str, scope: RequestScope
+    ) -> BoundedWorker:
+        """Return the provider lane after checking the scope may use it."""
         granted = self.scope.narrow(scope)
         if (
             self.config.values.offline
@@ -667,6 +659,21 @@ class WorkspaceOwner:
             if lane is None:
                 lane = BoundedWorker(workers=2)
                 self._providers[provider] = lane
+            return lane
+
+    async def run_provider[T](
+        self,
+        provider: str,
+        call: Callable[[], T],
+        ctx: ExecutionContext,
+        *,
+        scope: RequestScope,
+        dependencies: frozenset[str],
+        policy_epoch: int,
+    ) -> T:
+        """Run an already-injected provider after fresh queued authorization."""
+        ctx.checkpoint()
+        lane = self._authorized_provider_lane(provider, scope)
 
         def invoke() -> T:
             ctx.checkpoint()
@@ -750,23 +757,7 @@ class WorkspaceOwner:
     ) -> T:
         """Construct/call a provider only after fresh captured-pixel authorization."""
         ctx.checkpoint()
-        granted = self.scope.narrow(scope)
-        if (
-            self.config.values.offline
-            or provider not in granted.upload_providers
-            or (
-                self.managed_default_owner
-                and provider not in enabled_upload_providers(self.config)
-            )
-        ):
-            _deny()
-        with self._admission:
-            if self._closing:
-                raise workspace_closing()
-            lane = self._providers.get(provider)
-            if lane is None:
-                lane = BoundedWorker(workers=2)
-                self._providers[provider] = lane
+        lane = self._authorized_provider_lane(provider, scope)
 
         def invoke() -> T:
             ctx.checkpoint()
@@ -791,23 +782,7 @@ class WorkspaceOwner:
     ) -> T:
         """Run a query upload miss after fresh bounded-lane authorization."""
         ctx.checkpoint()
-        granted = self.scope.narrow(scope)
-        if (
-            self.config.values.offline
-            or provider not in granted.upload_providers
-            or (
-                self.managed_default_owner
-                and provider not in enabled_upload_providers(self.config)
-            )
-        ):
-            _deny()
-        with self._admission:
-            if self._closing:
-                raise workspace_closing()
-            lane = self._providers.get(provider)
-            if lane is None:
-                lane = BoundedWorker(workers=2)
-                self._providers[provider] = lane
+        lane = self._authorized_provider_lane(provider, scope)
 
         def invoke() -> T:
             ctx.checkpoint()

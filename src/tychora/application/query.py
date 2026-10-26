@@ -1111,23 +1111,9 @@ class QueryService:
                 scope=scope,
             )
         )
-        mapping = await self.owner.run_write(
-            lambda: self._vector_owners(attempt, "unit"), ctx, "interactive"
+        mapping, page = await self._search_vector_index(
+            index, attempt, "unit", query_vector.values, ctx
         )
-        payload = struct.pack(
-            "<" + "f" * len(query_vector.values), *query_vector.values
-        )
-        page = await self.owner.run_write(
-            lambda: index.search(
-                payload, mapping, 80, WorkLimits(deadline=ctx.deadline), ctx
-            ),
-            ctx,
-            "interactive",
-        )
-        if page.missing_record_ids or not page.coverage_complete or page.truncated:
-            raise TychoraError(
-                "INDEX_INCOMPLETE", "Text vector coverage is incomplete."
-            )
         return await self.owner.run_write(
             lambda: self._text_window_candidates(page, mapping, attempt),
             ctx,
@@ -1181,6 +1167,33 @@ class QueryService:
                 )
             )
         return tuple(output)
+
+    async def _search_vector_index(
+        self,
+        index,
+        attempt: EligibilityAttempt,
+        kind: str,
+        values,
+        ctx: ExecutionContext,
+    ):
+        """Search the pinned vector scope and refuse incomplete coverage."""
+        label = "Text" if kind == "unit" else "Visual"
+        mapping = await self.owner.run_write(
+            lambda: self._vector_owners(attempt, kind), ctx, "interactive"
+        )
+        payload = struct.pack("<" + "f" * len(values), *values)
+        page = await self.owner.run_write(
+            lambda: index.search(
+                payload, mapping, 80, WorkLimits(deadline=ctx.deadline), ctx
+            ),
+            ctx,
+            "interactive",
+        )
+        if page.missing_record_ids or not page.coverage_complete or page.truncated:
+            raise TychoraError(
+                "INDEX_INCOMPLETE", f"{label} vector coverage is incomplete."
+            )
+        return mapping, page
 
     def _vector_owners(
         self, attempt: EligibilityAttempt, kind: str
@@ -1249,21 +1262,9 @@ class QueryService:
         vector = await attempt.owner_provider(
             lambda: self.owner.embed_visual_query(current, query, ctx, scope=scope)
         )
-        mapping = await self.owner.run_write(
-            lambda: self._vector_owners(attempt, "asset"), ctx, "interactive"
+        mapping, page = await self._search_vector_index(
+            index, attempt, "asset", vector.values, ctx
         )
-        payload = struct.pack("<" + "f" * len(vector.values), *vector.values)
-        page = await self.owner.run_write(
-            lambda: index.search(
-                payload, mapping, 80, WorkLimits(deadline=ctx.deadline), ctx
-            ),
-            ctx,
-            "interactive",
-        )
-        if page.missing_record_ids or not page.coverage_complete or page.truncated:
-            raise TychoraError(
-                "INDEX_INCOMPLETE", "Visual vector coverage is incomplete."
-            )
         allowed = set(mapping.values())
         if any(item.key not in allowed for item in page.candidates):
             raise TychoraError(
