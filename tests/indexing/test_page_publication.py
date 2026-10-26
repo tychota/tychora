@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.helpers.publication import members_of
+from tests.helpers.publication import members_of, slots_of
 from tests.indexing.test_publication import ProjectedCorpus, make_projected_corpus
 from tychora.adapters.sqlite.repositories import SqliteSnapshotRepository
 from tychora.contracts.errors import TychoraError
@@ -175,7 +175,7 @@ def test_crash_inside_activation_keeps_the_previous_snapshot(projected, point):
     f = projected
     active = f.store.active_snapshot_id()
     before = f.store.resolve_snapshot(active)
-    before_slots = f.store.snapshot_slots(before)
+    before_slots = slots_of(f.store, before)
     _, _, plan = f.prepare_revision("crash during activation", source_key="crash.md")
     with (
         patch.object(
@@ -187,7 +187,7 @@ def test_crash_inside_activation_keeps_the_previous_snapshot(projected, point):
     assert f.store.active_snapshot_id() == active
     # The view carries no corpus-wide statistics epoch, so it is unchanged.
     assert f.store.resolve_snapshot(None) == before
-    assert f.store.snapshot_slots(before) == before_slots
+    assert slots_of(f.store, before) == before_slots
     new_pages = [page.page_id for page in plan.new_pages]
     assert (
         f.store.db.execute(
@@ -239,7 +239,7 @@ def test_retained_slots_rebuild_the_published_batches(projected):
     _, _, plan = f.prepare_revision("retained slot text", source_key="slot.md")
     snapshot_id = f.store.publish_snapshot(plan)
     view = f.store.resolve_snapshot(snapshot_id)
-    slots = {slot.slot: slot for slot in f.store.snapshot_slots(view)}
+    slots = {slot.slot: slot for slot in slots_of(f.store, view)}
     assert set(slots) == {item.slot for item in plan.families}
     for batch in plan.new_batches:
         retained = next(
@@ -277,17 +277,19 @@ def test_second_query_on_a_snapshot_reads_no_manifest_and_no_lexical_body(projec
             second = f.store.read_eligibility_facts(view)
     finally:
         f.store.db.set_trace_callback(None)
-    assert set(opened) <= {view.config_sha}
+    assert not opened
     assert not any(
         "FROM lexical_records" in sql and "body" in sql for sql in statements
     )
-    assert second.slots == first.slots
+    assert (second.batches, second.lexical_chunks) == (
+        first.batches,
+        first.lexical_chunks,
+    )
     fresh_id = f.add_revision("a later activation", source_key="later.md")
     fresh = f.store.read_eligibility_facts(f.store.resolve_snapshot(fresh_id))
 
     def lexical(facts):
-        slot = next(slot for slot in facts.slots if slot.slot == "lexical")
-        return {batch.batch_id for batch in slot.batches}
+        return {batch for slot, batch, _ in facts.batches if slot == "lexical"}
 
     assert lexical(fresh) - lexical(first)
 
@@ -467,7 +469,7 @@ def test_text_batch_without_complete_groups_is_refused_when_loaded(projected):
     )
     f.store.db.commit()
     with pytest.raises(TychoraError) as error:
-        f.store.snapshot_slots(view)
+        slots_of(f.store, view)
     assert (error.value.code, error.value.reason) == (
         "INDEX_INCOMPLETE",
         "batch.missing",
@@ -484,19 +486,11 @@ def _batch_inputs(store, snapshot_id):
     )
 
 
-def test_a_query_after_an_add_loads_only_the_new_batches(projected):
+def test_a_query_after_an_add_opens_no_batch_input(projected):
     f = projected
-    first = f.store.resolve_snapshot(None)
-    f.store.read_eligibility_facts(first)
     second = f.store.resolve_snapshot(
         f.add_revision("one more source", source_key="more.md")
     )
-    before = _batch_inputs(f.store, first.snapshot_id)
-    new = {
-        sha
-        for batch_id, sha in _batch_inputs(f.store, second.snapshot_id).items()
-        if batch_id not in before
-    }
     opened = []
     original = f.store.artifacts.open_verified
 
@@ -506,56 +500,21 @@ def test_a_query_after_an_add_loads_only_the_new_batches(projected):
 
     with patch.object(f.store.artifacts, "open_verified", spy):
         f.store.read_eligibility_facts(second)
-    assert new
-    assert set(opened) - {second.config_sha} == new
+    assert not set(opened) & set(_batch_inputs(f.store, second.snapshot_id).values())
+    assert not opened
 
 
-def test_snapshots_sharing_batches_share_loaded_batches(projected):
-    f = projected
-    first = f.store.resolve_snapshot(None)
-    second = f.store.resolve_snapshot(
-        f.add_revision("a shared neighbour", source_key="shared.md")
-    )
-
-    def loaded(view):
-        return {b.batch_id: b for s in f.store.snapshot_slots(view) for b in s.batches}
-
-    earlier, later = loaded(first), loaded(second)
-    shared = earlier.keys() & later.keys()
-    assert shared
-    assert all(earlier[key] is later[key] for key in shared)
-
-
-def test_the_batch_cache_evicts_the_least_recently_used_batch_over_its_cap(projected):
-    from tychora.adapters.sqlite.retained_slots import RetainedBatchCache
-
-    f = projected
-    batches = [
-        batch
-        for slot in f.store.snapshot_slots(f.store.resolve_snapshot(None), fresh=True)
-        for batch in slot.batches
-    ]
-    assert len(batches) >= 2
-    cache = RetainedBatchCache(max_records=1)
-    cache.put(batches[0])
-    cache.put(batches[1])
-    assert cache.get(batches[0].batch_id) is None
-    assert cache.get(batches[1].batch_id) is batches[1]
-
-
-def test_fresh_slots_detect_sql_drift_after_a_cached_load(projected):
+def test_fresh_slots_detect_sql_drift(projected):
     f = projected
     view = f.store.resolve_snapshot(None)
-    cached = f.store.snapshot_slots(view)
     f.store.db.execute(
         "UPDATE vector_records SET input_sha=? WHERE batch_id IN "
         "(SELECT batch_id FROM snapshot_batches WHERE snapshot_id=? AND slot='text')",
         ("0" * 64, view.snapshot_id),
     )
     f.store.db.commit()
-    assert f.store.snapshot_slots(view) == cached
     with pytest.raises(TychoraError, match="Vector SQL differs"):
-        f.store.snapshot_slots(view, fresh=True)
+        slots_of(f.store, view)
 
 
 def _health_service(f):
@@ -570,12 +529,9 @@ def test_native_recovery_streams_batches_without_loading_every_slot(projected):
     from tychora.ports.execution import ExecutionContext
 
     f = projected
-    with patch.object(
-        f.store, "snapshot_slots", side_effect=AssertionError("loads every slot")
-    ):
-        snapshot_id, records, _generations, _skipped = _health_service(
-            f
-        )._verify_native_on_owner(ExecutionContext())
+    snapshot_id, records, _generations, _skipped = _health_service(
+        f
+    )._verify_native_on_owner(ExecutionContext())
     assert snapshot_id == f.store.active_snapshot_id()
     assert records > 0
 
@@ -643,12 +599,28 @@ def _refused_eligibility(f, view, message):
     )
 
 
-def test_text_group_with_tampered_context_key_is_refused(projected):
+def test_eligibility_vectors_are_the_records_the_snapshot_binds(projected):
     f = projected
-    view = f.store.resolve_snapshot(None)
-    f.store.db.execute("UPDATE chunks SET context_group_key='tampered'")
-    f.store.db.commit()
-    _refused_eligibility(f, view, "Text group omits or adds represented owners")
+    first = f.store.resolve_snapshot(None)
+    second = f.store.resolve_snapshot(
+        f.add_revision("a later vector", source_key="later-vector.md")
+    )
+
+    def bound(view):
+        return {
+            record.record_id
+            for slot in slots_of(f.store, view)
+            if slot.slot in {"text", "image"}
+            for batch in slot.batches
+            for record in batch.vector_records
+        }
+
+    def read(view):
+        return {item.record_id for item in f.store.read_eligibility_facts(view).vectors}
+
+    assert bound(second) - bound(first)
+    assert read(first) == bound(first)
+    assert read(second) == bound(second)
 
 
 def test_revision_metadata_differing_from_its_digest_is_refused(projected):

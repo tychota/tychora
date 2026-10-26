@@ -3,7 +3,7 @@ from contextlib import contextmanager
 
 import pytest
 
-from tests.helpers.corpus import COLLECTION, reader, seed_bundle
+from tests.helpers.corpus import COLLECTION, commit_with_facts, reader, seed_bundle
 from tychora.application.owner import WorkspaceOwner
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.base import FrozenJsonMap
@@ -52,7 +52,7 @@ def install(owner):
             ),
         }
     )
-    owner.store.commit_extraction(bundle)
+    commit_with_facts(owner.store, bundle)
     return bundle
 
 

@@ -1,6 +1,7 @@
 """Build a one-member lexical publication plan with production planning code."""
 
 from io import BytesIO
+from typing import NamedTuple
 
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.contracts.base import FrozenJsonMap
@@ -16,6 +17,7 @@ from tychora.contracts.publication import (
     LexicalRecord,
     NewBatch,
     PublicationPlan,
+    RetainedBatch,
     SnapshotMember,
     SnapshotView,
     snapshot_root_document,
@@ -173,4 +175,27 @@ def members_of(store: CorpusStore, view: SnapshotView) -> tuple[SnapshotMember, 
         found = tuple(tx.snapshots.all_members(view.snapshot_id))
     return tuple(
         sorted(found, key=lambda m: (m.source_id, m.revision_id, m.extraction_id))
+    )
+
+
+class Slot(NamedTuple):
+    """One slot of a published snapshot with its batch contents, for assertions."""
+
+    slot: str
+    family: IndexFamily
+    required: bool
+    batches: tuple[RetainedBatch, ...]
+
+
+def slots_of(store: CorpusStore, view: SnapshotView) -> tuple[Slot, ...]:
+    """Every slot of ``view`` with its batches, read fresh like native recovery."""
+    loaded = tuple(store.iter_snapshot_batches(view))
+    return tuple(
+        Slot(
+            item.slot,
+            item.family,
+            item.required,
+            tuple(batch for owner, batch in loaded if owner.slot == item.slot),
+        )
+        for item in view.families
     )

@@ -73,9 +73,6 @@ class SnapshotGc:
                     include_unpublished=include_unpublished,
                 )
             self.owner.catalog.discard(report.snapshots)
-            store.batch_cache.discard(
-                tuple(row.batch_id for row in report.orphan_batches)
-            )
             dropped, deferred = self._drop_native(report.orphan_batches, ctx)
             with store.uow.write() as tx:
                 released = tx.batches.purge(dropped)

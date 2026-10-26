@@ -5,13 +5,15 @@ import struct
 from collections.abc import Iterator
 from dataclasses import dataclass
 from io import BytesIO
+from typing import Any
 from unittest.mock import patch
 from uuid import UUID, uuid5
 
 import pytest
 
 from tests.helpers.corpus import COLLECTION, reader, registry, seed_bundle
-from tests.helpers.publication import lexical_plan, members_of
+from tests.helpers.publication import lexical_plan, members_of, slots_of
+from tests.typed_json import json_object
 from tychora.adapters.chroma.index import ChromaVectorIndex
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
@@ -29,7 +31,7 @@ from tychora.contracts.identity import (
     vector_record_id,
 )
 from tychora.contracts.indexing import FamilySpec
-from tychora.contracts.publication import PublicationPlan
+from tychora.contracts.publication import PublicationPlan, receipt_count
 from tychora.contracts.requests import RequestScope
 from tychora.contracts.vectors import BatchReceipt
 from tychora.evaluation.runner import ComparisonAdmission
@@ -369,7 +371,7 @@ def test_native_health_reads_ready_vector_bytes_and_rejects_deleted_entry(
 
     f = projected_corpus
     view = f.store.resolve_snapshot(None)
-    slot = next(slot for slot in f.store.snapshot_slots(view) if slot.slot == "text")
+    slot = next(slot for slot in slots_of(f.store, view) if slot.slot == "text")
     assert isinstance(slot.batches[0].receipt, BatchReceipt)
     service = RecoveryService(SimpleNamespace(store=f.store, db=f.store.db))
     before = service._verify_native_on_owner(ExecutionContext())
@@ -385,8 +387,8 @@ def test_read_only_chroma_family_open_does_not_create_missing_collection(
 ):
     slot = next(
         slot
-        for slot in projected_corpus.store.snapshot_slots(
-            projected_corpus.store.resolve_snapshot(None)
+        for slot in slots_of(
+            projected_corpus.store, projected_corpus.store.resolve_snapshot(None)
         )
         if slot.slot == "text"
     )
@@ -427,12 +429,14 @@ def test_semantic_recovery_uses_exact_retained_capability_order(projected_corpus
     f = projected_corpus
     view = f.store.resolve_snapshot(None)
     family = next(
-        slot.family for slot in f.store.snapshot_slots(view) if slot.slot == "text"
+        slot.family for slot in slots_of(f.store, view) if slot.slot == "text"
     )
     config = f.store.retained_config_sha(f.config.sha256)
     origin_sha = family.config_json["effective_config_sha"]
     for modes in (["document", "query"], ["query", "document"]):
-        capabilities = dict(family.config_json["capabilities"])
+        capabilities: dict[str, Any] = dict(
+            json_object(family.config_json, "capabilities")
+        )
         capabilities["input_types"] = modes
         semantic_sha = digest(
             "text-family-config-v1",
@@ -442,13 +446,13 @@ def test_semantic_recovery_uses_exact_retained_capability_order(projected_corpus
         )
         creation_uuid = str(uuid5(UUID(view.workspace_id), "text:" + semantic_sha))
         identity = family_id(view.workspace_id, semantic_sha, creation_uuid)
-        spec = dict(family.config_json["spec"])
+        spec = dict(json_object(family.config_json, "spec"))
         spec.update(
             family_id=identity,
             config_sha=semantic_sha,
             creation_uuid=creation_uuid,
         )
-        family_json = dict(family.config_json)
+        family_json: dict[str, Any] = dict(family.config_json)
         family_json.update(spec=spec, capabilities=capabilities)
         retained = family.model_copy(
             update={"family_id": identity, "config_json": FrozenJsonMap(family_json)}
@@ -487,7 +491,7 @@ def test_identical_source_reuses_canonical_and_native_batches(
     new = f.store.resolve_snapshot(None)
     assert new_id != old.snapshot_id
     assert members_of(f.store, new) == members_of(f.store, old)
-    assert f.store.snapshot_slots(new) == f.store.snapshot_slots(old)
+    assert slots_of(f.store, new) == slots_of(f.store, old)
     assert (f.embedder.calls, f.vector.upserts) == before
 
 
@@ -500,7 +504,7 @@ def test_native_recovery_replays_retained_vector_bytes_and_preserves_seal(
 
     f = projected_corpus
     view = f.store.resolve_snapshot(None)
-    slot = next(slot for slot in f.store.snapshot_slots(view) if slot.slot == "text")
+    slot = next(slot for slot in slots_of(f.store, view) if slot.slot == "text")
     batch = slot.batches[0]
     before_seal = f.store.db.execute(
         "SELECT receipt_json FROM index_batches WHERE batch_id=?", (batch.batch_id,)
@@ -574,15 +578,17 @@ def test_native_recovery_rejects_independent_family_identity_corruption(
     f = projected_corpus
     slot = next(
         slot
-        for slot in f.store.snapshot_slots(f.store.resolve_snapshot(None))
+        for slot in slots_of(f.store, f.store.resolve_snapshot(None))
         if slot.slot == "text"
     )
     family, batch = slot.family, slot.batches[0]
-    config_json = dict(family.config_json)
+    config_json: dict[str, Any] = dict(family.config_json)
     if alteration == "semantic_family":
-        config_json["spec"] = dict(config_json["spec"], family_id="0" * 64)
+        config_json["spec"] = dict(json_object(config_json["spec"]), family_id="0" * 64)
     elif alteration == "semantic_config":
-        config_json["spec"] = dict(config_json["spec"], config_sha="0" * 64)
+        config_json["spec"] = dict(
+            json_object(config_json["spec"]), config_sha="0" * 64
+        )
     elif alteration == "physical_config":
         family = family.model_copy(update={"config_sha": "0" * 64})
     else:
@@ -605,7 +611,7 @@ def test_native_recovery_rejects_backend_handle_namespace_corruption(
     f = projected_corpus
     slot = next(
         slot
-        for slot in f.store.snapshot_slots(f.store.resolve_snapshot(None))
+        for slot in slots_of(f.store, f.store.resolve_snapshot(None))
         if slot.slot == "text"
     )
 
@@ -632,7 +638,7 @@ def test_native_recovery_requires_retained_semantic_capabilities(projected_corpu
     f = projected_corpus
     snapshot = f.store.resolve_snapshot(None)
     family = next(
-        slot.family for slot in f.store.snapshot_slots(snapshot) if slot.slot == "text"
+        slot.family for slot in slots_of(f.store, snapshot) if slot.slot == "text"
     )
     origin = f.store.retained_config_sha(family.config_json["effective_config_sha"])
     missing = family.model_copy(
@@ -647,8 +653,10 @@ def test_native_recovery_requires_retained_semantic_capabilities(projected_corpu
     with pytest.raises(TychoraError) as absent:
         verify_semantic_vector_family(missing, origin, snapshot.workspace_id)
     assert absent.value.code == "CAPABILITY_MISSING"
-    altered_json = dict(family.config_json)
-    altered_json["capabilities"] = dict(altered_json["capabilities"], endpoint="forged")
+    altered_json: dict[str, Any] = dict(family.config_json)
+    altered_json["capabilities"] = dict(
+        json_object(altered_json["capabilities"]), endpoint="forged"
+    )
     with pytest.raises(TychoraError, match="semantic proof differs"):
         verify_semantic_vector_family(
             family.model_copy(update={"config_json": altered_json}),
@@ -668,9 +676,7 @@ def test_native_recovery_rejects_sql_drift_before_native_write(
     f = projected_corpus
     snapshot = f.store.resolve_snapshot(None)
     # Loading the slots first caches the batch; recovery must still read SQL.
-    slot = next(
-        slot for slot in f.store.snapshot_slots(snapshot) if slot.slot == "text"
-    )
+    slot = next(slot for slot in slots_of(f.store, snapshot) if slot.slot == "text")
     batch = slot.batches[0]
     db = f.store.db
     db.execute(
@@ -758,9 +764,7 @@ def test_rebuild_restores_a_pruned_vector_batch(projected_corpus, tmp_path):
     f = projected_corpus
     oldest = f.store.resolve_snapshot(None)
     old_batch = next(
-        slot.batches[0]
-        for slot in f.store.snapshot_slots(oldest)
-        if slot.slot == "text"
+        slot.batches[0] for slot in slots_of(f.store, oldest) if slot.slot == "text"
     )
     f.add_revision("second version")
     f.add_revision("third version")
@@ -943,8 +947,9 @@ def test_missing_vector_batch_artifact_reports_cache_absent(projected_corpus):
 
     f = projected_corpus
     view = f.store.resolve_snapshot(None)
-    slot = next(slot for slot in f.store.snapshot_slots(view) if slot.slot == "text")
+    slot = next(slot for slot in slots_of(f.store, view) if slot.slot == "text")
     batch = slot.batches[0]
+    assert batch.vectors is not None
     missing = batch.model_copy(
         update={
             "vectors": batch.vectors.model_copy(
@@ -988,9 +993,7 @@ def test_readding_content_revives_a_released_vector_batch(projected_corpus, stat
 
 def _text_slot_batch(f):
     slot = next(
-        s
-        for s in f.store.snapshot_slots(f.store.resolve_snapshot(None))
-        if s.slot == "text"
+        s for s in slots_of(f.store, f.store.resolve_snapshot(None)) if s.slot == "text"
     )
     return slot, slot.batches[0]
 
@@ -1121,7 +1124,7 @@ def test_text_batches_record_revision_extraction_and_unit_in_chroma(projected_co
     f = projected_corpus
     slot = next(
         slot
-        for slot in f.store.snapshot_slots(f.store.resolve_snapshot(None))
+        for slot in slots_of(f.store, f.store.resolve_snapshot(None))
         if slot.slot == "text"
     )
     batch = slot.batches[0]
@@ -1154,7 +1157,7 @@ def test_native_rebuild_restores_owner_metadata(projected_corpus, tmp_path):
     f = projected_corpus
     slot = next(
         slot
-        for slot in f.store.snapshot_slots(f.store.resolve_snapshot(None))
+        for slot in slots_of(f.store, f.store.resolve_snapshot(None))
         if slot.slot == "text"
     )
     batch = slot.batches[0]
@@ -1189,7 +1192,7 @@ def test_native_rebuild_rejects_owner_rows_that_differ_from_the_batch(
     f = projected_corpus
     slot = next(
         slot
-        for slot in f.store.snapshot_slots(f.store.resolve_snapshot(None))
+        for slot in slots_of(f.store, f.store.resolve_snapshot(None))
         if slot.slot == "text"
     )
     batch = slot.batches[0]
@@ -1248,19 +1251,19 @@ def test_native_health_covers_more_than_128_batches(projected_corpus, tmp_path):
     report = RecoveryService(owner)._verify_native_on_owner(ExecutionContext())
     snapshot = f.store.resolve_snapshot(None)
     expected = sum(
-        slot.batches[i].receipt.count
-        for slot in f.store.snapshot_slots(snapshot)
+        receipt_count(slot.batches[i].receipt)
+        for slot in slots_of(f.store, snapshot)
         if slot.slot in {"text", "image"}
         for i in range(len(slot.batches))
     )
     batches = sum(
         len(slot.batches)
-        for slot in f.store.snapshot_slots(snapshot)
+        for slot in slots_of(f.store, snapshot)
         if slot.slot in {"text", "image", "graph"}
     )
     graphs = sum(
         len(slot.batches)
-        for slot in f.store.snapshot_slots(snapshot)
+        for slot in slots_of(f.store, snapshot)
         if slot.slot == "graph"
     )
     assert batches > 128

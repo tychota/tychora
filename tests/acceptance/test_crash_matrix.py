@@ -17,6 +17,7 @@ import pytest
 from tests.acceptance.graph_crash_probe import fixture as graph_fixture
 from tests.acceptance.source_crash_probe import service, source
 from tests.acceptance.vector_crash_probe import family
+from tests.helpers.publication import slots_of
 from tests.helpers.timing import scaled
 from tests.operations.test_removal import _add, _Counter, _original_sha
 from tests.performance.engine_probe import _config, _scope, setup_corpus
@@ -386,7 +387,7 @@ def test_canonical_graph_seal_death_preserves_prior_snapshot_then_retries(tmp_pa
         graph_slot = next(
             slot
             for slot in owner.run_write_sync(
-                lambda: owner.store.snapshot_slots(snapshot), ExecutionContext()
+                lambda: slots_of(owner.store, snapshot), ExecutionContext()
             )
             if slot.slot == "graph"
         )

@@ -4,9 +4,16 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
-from tychora.adapters.sqlite.repositories import SqliteWorkspaceRepository, artifact_ref
+from tychora.adapters.sqlite.policy import overridden_uses
+from tychora.adapters.sqlite.repositories import (
+    SqliteBatchRepository,
+    SqliteRepresentationRepository,
+    SqliteWorkspaceRepository,
+    artifact_ref,
+)
+from tychora.adapters.sqlite.repositories.errors import facts_missing
 from tychora.adapters.sqlite.retained_bindings import SOURCE_COLUMNS, BindingScope
 from tychora.application.collection_policy import collection_is_active
 from tychora.configuration.global_facets import (
@@ -36,18 +43,9 @@ from tychora.contracts.corpus import (
 )
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit
+from tychora.contracts.graph import GraphBatchReceipt
 from tychora.contracts.identity import digest
-from tychora.contracts.publication import (
-    RetainedBatch,
-    RetainedSlot,
-    SnapshotMember,
-    SnapshotView,
-)
-from tychora.indexing.representations import (
-    ChunkSpan,
-    prepare_extraction,
-    representation_facts,
-)
+from tychora.contracts.publication import SnapshotMember, SnapshotView
 from tychora.retrieval.eligibility import (
     AssetFact,
     ChunkFact,
@@ -58,7 +56,7 @@ from tychora.retrieval.eligibility import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Iterator
+    from collections.abc import Iterable, Iterator, Mapping
 
     from .corpus import CorpusStore
 
@@ -259,111 +257,83 @@ def retained_rows(
     )
 
 
-class _Owners(NamedTuple):
-    """Selected chunks, their document order and selected assets, by ID."""
+def _persisted(db, owner_ids: tuple[str, ...]) -> dict[str, frozenset[str]]:
+    """The stored dependency set of every owner; any absent set is refused."""
+    found = SqliteRepresentationRepository(db).dependencies(owner_ids)
+    if len(found) != len(set(owner_ids)) or not all(found.values()):
+        raise facts_missing()
+    return dict(found)
 
-    chunks: dict[str, ChunkFact]
-    order: dict[str, tuple[int, int, str, str]]
-    assets: dict[str, AssetFact]
 
-
-def _require_text_ownership(batch: RetainedBatch, owners: _Owners) -> dict[str, list]:
-    """Check every text record is grouped over a selected chunk; return groups.
-
-    The retained slot loader already checked the groups against the batch input.
-    """
-    if any(
-        binding.group_id is None
-        or not binding.dependency_ids
-        or binding.chunk_id not in owners.chunks
-        for binding in batch.vector_records
-    ):
-        raise TychoraError(
-            "INDEX_INCOMPLETE",
-            "Text batch needs rebuilt group ownership",
-            reason="batch.missing",
+def _unit_facets(db, unit_id: str) -> tuple[tuple[str, object], ...]:
+    """A unit's facet values, each as its one typed value."""
+    return tuple(
+        (key, text if text is not None else boolean if boolean is not None else number)
+        for key, text, number, boolean in db.execute(
+            "SELECT facet_key,text_value,number_value,boolean_value FROM facet_values "
+            "WHERE unit_id=?",
+            (unit_id,),
         )
-    groups: dict[str, list] = defaultdict(list)
-    for binding in batch.vector_records:
-        groups[binding.group_id or ""].append(binding)
-    return groups
-
-
-def _group_vector_facts(
-    batch: RetainedBatch, group_id: str, bindings: list, owners: _Owners
-) -> list[VectorFact]:
-    """Check one context group's bindings and return its vector facts."""
-    ordered = sorted(bindings, key=lambda binding: owners.order[binding.chunk_id])
-    first = owners.chunks[ordered[0].chunk_id]
-    if any(
-        owners.chunks[item.chunk_id].context_group_key != first.context_group_key
-        or owners.order[item.chunk_id][3] != batch.extraction_id
-        or item.input_sha != ordered[0].input_sha
-        or item.dependency_ids != ordered[0].dependency_ids
-        for item in ordered
-    ):
-        raise _integrity("Text group binding differs from selected extraction")
-    expected_group = digest(
-        "context-group-input-v1",
-        batch.extraction_id,
-        first.context_group_key,
-        [item.chunk_id for item in ordered],
-        ordered[0].input_sha,
     )
-    dependencies = frozenset(
-        dep for item in ordered for dep in owners.chunks[item.chunk_id].dependency_ids
-    )
-    if group_id != expected_group or dependencies != ordered[0].dependency_ids:
-        raise _integrity("Text group omits or adds represented owners")
-    return [
-        VectorFact(item.record_id, chunk_id=item.chunk_id, dependency_ids=dependencies)
-        for item in ordered
-    ]
 
 
-def _text_vector_facts(batch: RetainedBatch, owners: _Owners) -> list[VectorFact]:
-    """Check a text batch's group ownership and return its vector facts."""
-    groups = _require_text_ownership(batch, owners)
-    return [
-        fact
-        for group_id, bindings in groups.items()
-        for fact in _group_vector_facts(batch, group_id, bindings, owners)
-    ]
-
-
-def _image_vector_facts(batch: RetainedBatch, owners: _Owners) -> list[VectorFact]:
-    """Bind each image vector to its canonical asset."""
-    facts = []
-    for binding in batch.vector_records:
-        asset = owners.assets.get(binding.asset_id or "")
-        if asset is None:
-            raise _integrity("Image vector has no canonical asset")
-        facts.append(
-            VectorFact(
-                binding.record_id,
-                asset_id=asset.asset_id,
-                dependency_ids=asset.dependency_ids,
-            )
-        )
-    return facts
+_SNAPSHOT_BATCHES = (
+    "SELECT sb.slot,sb.batch_id,b.extraction_id FROM snapshot_batches sb "
+    "JOIN index_batches b ON b.batch_id=sb.batch_id WHERE sb.snapshot_id=? "
+    "ORDER BY sb.slot,sb.batch_id"
+)
+_LEXICAL_CHUNKS = (
+    "SELECT r.chunk_id,b.extraction_id FROM snapshot_batches sb "
+    "JOIN index_batches b ON b.batch_id=sb.batch_id "
+    "JOIN lexical_records r ON r.batch_id=sb.batch_id "
+    "WHERE sb.snapshot_id=? AND sb.slot='lexical'"
+)
+_VECTOR_ROWS = (
+    "SELECT v.record_id,v.chunk_id,v.asset_id,v.group_id,b.extraction_id "
+    "FROM snapshot_batches sb JOIN index_batches b ON b.batch_id=sb.batch_id "
+    "JOIN vector_records v ON v.batch_id=sb.batch_id "
+    "WHERE sb.snapshot_id=? AND sb.slot IN ('text','image')"
+)
 
 
 def _vector_facts(
-    slots: tuple[RetainedSlot, ...],
-    selected: set[str],
-    owners: _Owners,
+    db, snapshot_id: str, selected: set[str], assets: Mapping[str, AssetFact]
 ) -> tuple[VectorFact, ...]:
-    """Vector facts of the selected extractions' text and image batches."""
-    facts: list[VectorFact] = []
-    for slot in slots:
-        for batch in slot.batches:
-            if batch.extraction_id not in selected:
-                continue
-            if slot.slot == "text":
-                facts.extend(_text_vector_facts(batch, owners))
-            elif slot.slot == "image":
-                facts.extend(_image_vector_facts(batch, owners))
+    """Each selected vector record with its context group's or asset's set."""
+    rows = [
+        row for row in db.execute(_VECTOR_ROWS, (snapshot_id,)) if row[4] in selected
+    ]
+    groups = _persisted(db, tuple({row[3] for row in rows if row[3] is not None}))
+    facts = []
+    for record_id, chunk_id, asset_id, group_id, _ in rows:
+        if group_id is not None:
+            dependencies = groups[group_id]
+        elif asset_id in assets:
+            dependencies = assets[asset_id].dependency_ids
+        else:
+            raise _integrity("Image vector has no canonical asset")
+        facts.append(
+            VectorFact(
+                record_id,
+                chunk_id=chunk_id,
+                asset_id=asset_id,
+                dependency_ids=dependencies,
+            )
+        )
     return tuple(facts)
+
+
+def _graph_receipt(db, batches) -> GraphBatchReceipt | None:
+    """The receipt of the snapshot's graph root batch, if it binds one."""
+    graph = [batch for slot, batch, _ in batches if slot == "graph"]
+    if not graph:
+        return None
+    if len(graph) != 1:
+        raise _integrity("Snapshot binds more than one graph generation")
+    receipt = SqliteBatchRepository(db, writable=False).receipt(graph[0])
+    if not isinstance(receipt, GraphBatchReceipt):
+        raise _integrity("Graph batch receipt is unavailable", "canonical.row_invalid")
+    return receipt
 
 
 def all_members(store: CorpusStore, snapshot_id: str) -> Iterator[SnapshotMember]:
@@ -391,12 +361,12 @@ def read_eligibility_facts(
         revision_facets: list[tuple[str, str, object]] = []
         historical: dict[str, object] = {}
         selected_extractions: set[str] = set()
-        chunk_order: dict[str, tuple[int, int, str, str]] = {}
         for member in members:
             row = db.execute(
                 "SELECT r.kind_id,r.access_rank,r.allowed_uses_json,r.published_on,"
                 "r.effective_from,r.effective_until,c.collection_id,c.access_floor,"
-                "s.access_floor,s.withdrawn_at,c.workspace_id,k.definition_json,k.definition_hash,r.metadata_json,r.metadata_sha,c.policy_json "
+                "s.access_floor,s.withdrawn_at,c.workspace_id,k.definition_json,k.definition_hash,r.metadata_json,r.metadata_sha,c.policy_json,"
+                "s.allowed_uses_override "
                 "FROM revisions r JOIN sources s USING(source_id) "
                 "JOIN collections c USING(collection_id) JOIN kinds k USING(kind_id) "
                 "JOIN extractions e USING(revision_id) "
@@ -470,7 +440,9 @@ def read_eligibility_facts(
                     access_rank=row[1],
                     source_floor=row[8],
                     collection_floor=row[7],
-                    allowed_uses=frozenset(json.loads(row[2])),
+                    allowed_uses=overridden_uses(
+                        frozenset(json.loads(row[2])), row[16]
+                    ),
                     review_state=store.review_state(
                         ReviewTarget(revision_id=member.revision_id)
                     ),
@@ -496,39 +468,31 @@ def read_eligibility_facts(
                 )
                 revision_facets.append((member.revision_id, key, value))
             unit_rows = db.execute(
-                "SELECT unit_id,unit_type,citable FROM evidence_units WHERE extraction_id=?",
+                "SELECT u.unit_id,u.unit_type,u.citable,p.asset_id FROM evidence_units u "
+                "LEFT JOIN asset_proxies p ON p.proxy_unit_id=u.unit_id "
+                "WHERE u.extraction_id=?",
                 (member.extraction_id,),
             ).fetchall()
             chunk_rows = db.execute(
-                "SELECT chunk_id,unit_id,context_group_key,char_start,char_end FROM chunks WHERE extraction_id=?",
+                "SELECT chunk_id,unit_id,context_group_key FROM chunks WHERE extraction_id=?",
                 (member.extraction_id,),
             ).fetchall()
-            retained = retained_rows(store, member)
-            dependencies = representation_facts(
-                retained,
-                prepare_extraction(retained),
+            asset_ids = tuple(
+                row[0]
+                for row in db.execute(
+                    "SELECT asset_id FROM assets WHERE extraction_id=?",
+                    (member.extraction_id,),
+                )
+            )
+            dependencies = _persisted(
+                db,
                 (
-                    ChunkSpan(chunk, uid, start, end)
-                    for chunk, uid, _, start, end in chunk_rows
+                    *(row[0] for row in unit_rows),
+                    *(row[0] for row in chunk_rows),
+                    *asset_ids,
                 ),
-            ).dependency_map()
-            proxy_assets = {p.proxy_unit_id: p.asset_id for p in retained.proxies}
-            for uid, unit_type, citable in unit_rows:
-                facets = []
-                for key, text, number, boolean in db.execute(
-                    "SELECT facet_key,text_value,number_value,boolean_value FROM facet_values WHERE unit_id=?",
-                    (uid,),
-                ):
-                    facets.append(
-                        (
-                            key,
-                            text
-                            if text is not None
-                            else boolean
-                            if boolean is not None
-                            else number,
-                        )
-                    )
+            )
+            for uid, unit_type, citable, proxy_asset in unit_rows:
                 unit_facts.append(
                     UnitFact(
                         uid,
@@ -538,8 +502,8 @@ def read_eligibility_facts(
                         store.review_state(ReviewTarget(unit_id=uid)),
                         bool(citable),
                         dependencies[uid],
-                        proxy_asset_id=proxy_assets.get(uid),
-                        facets=tuple(facets),
+                        proxy_asset_id=proxy_asset,
+                        facets=_unit_facets(db, uid),
                     )
                 )
             source_asset_owners: dict[str, set[str]] = defaultdict(set)
@@ -549,10 +513,7 @@ def read_eligibility_facts(
                 (member.extraction_id,),
             ):
                 source_asset_owners[aid].add(uid)
-            for (aid,) in db.execute(
-                "SELECT asset_id FROM assets WHERE extraction_id=?",
-                (member.extraction_id,),
-            ):
+            for aid in asset_ids:
                 asset_facts.append(
                     AssetFact(
                         aid,
@@ -562,45 +523,32 @@ def read_eligibility_facts(
                         source_owner_ids=frozenset(source_asset_owners.get(aid, ())),
                     )
                 )
-            unit_ordinals = {
-                uid: ordinal
-                for uid, ordinal in db.execute(
-                    "SELECT unit_id,ordinal FROM evidence_units WHERE extraction_id=?",
-                    (member.extraction_id,),
-                )
-            }
-            for chunk_id, uid, group, start, _end in chunk_rows:
-                chunk_facts.append(
-                    ChunkFact(chunk_id, uid, dependencies[chunk_id], group)
-                )
-                chunk_order[chunk_id] = (
-                    unit_ordinals[uid],
-                    start,
-                    chunk_id,
-                    member.extraction_id,
-                )
-        chunks_by_id = {item.chunk_id: item for item in chunk_facts}
-        assets_by_id = {item.asset_id: item for item in asset_facts}
-        slots = store.snapshot_slots(snapshot)
-        owners = _Owners(chunks_by_id, chunk_order, assets_by_id)
-        vectors = _vector_facts(slots, selected_extractions, owners)
-        decisions = tuple(
-            (assertion, decision)
-            for assertion, decision in db.execute(
-                "SELECT assertion_id,MAX(decision_id) FROM assertion_decisions GROUP BY assertion_id"
+            chunk_facts.extend(
+                ChunkFact(chunk_id, uid, dependencies[chunk_id], group)
+                for chunk_id, uid, group in chunk_rows
             )
-        )
+        assets_by_id = {item.asset_id: item for item in asset_facts}
+        batches = tuple(db.execute(_SNAPSHOT_BATCHES, (snapshot.snapshot_id,)))
         result = EligibilityFacts(
             policy_epoch=policy_epoch_value,
             revisions=tuple(revision_facts),
             units=tuple(unit_facts),
             chunks=tuple(chunk_facts),
             assets=tuple(asset_facts),
-            vectors=vectors,
-            slots=slots,
-            assertion_decisions=decisions,
+            vectors=_vector_facts(
+                db, snapshot.snapshot_id, selected_extractions, assets_by_id
+            ),
+            assertion_decisions=tuple(
+                db.execute(
+                    "SELECT assertion_id,MAX(decision_id) FROM assertion_decisions "
+                    "GROUP BY assertion_id"
+                )
+            ),
             revision_facets=tuple(revision_facets),
             historical_definitions=tuple(sorted(historical.items())),
+            batches=batches,
+            lexical_chunks=tuple(db.execute(_LEXICAL_CHUNKS, (snapshot.snapshot_id,))),
+            graph_receipt=_graph_receipt(db, batches),
         )
         db.commit()
         return result

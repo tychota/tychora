@@ -53,6 +53,17 @@ def _listed_uses(override: object, known: frozenset[str]) -> frozenset[str]:
     return uses
 
 
+def overridden_uses(uses: frozenset[str], stored: str | None) -> frozenset[str]:
+    """A revision's uses narrowed by its source's stored override, if any.
+
+    ``stored`` is the JSON list ``set_allowed_uses_override`` writes, or
+    ``None`` when the source has no override; an override only narrows.
+    """
+    if stored is None:
+        return uses
+    return uses & frozenset(json.loads(stored))
+
+
 class PolicyRepository:
     db: sqlite3.Connection
     artifacts: ArtifactReader

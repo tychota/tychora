@@ -5,7 +5,7 @@ from hashlib import sha256
 
 import pytest
 
-from tests.helpers.publication import members_of
+from tests.helpers.publication import members_of, slots_of
 from tests.indexing.test_publication import RecordingCounter, RecordingEmbedder
 from tests.performance.engine_probe import Counter
 from tests.providers.test_visual import CharacterCounter, RecordingRawTransport, _limits
@@ -200,7 +200,7 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
         slots = await owner.run_write(
-            lambda: owner.store.snapshot_slots(snapshot), ExecutionContext()
+            lambda: slots_of(owner.store, snapshot), ExecutionContext()
         )
         assert {slot.slot for slot in slots} >= {"text", "image"}
         assert (
@@ -327,7 +327,7 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
         )
         assert source_embedder.calls == old_embed_calls + 1
         refreshed_slots = await owner.run_write(
-            lambda: owner.store.snapshot_slots(refreshed), ExecutionContext()
+            lambda: slots_of(owner.store, refreshed), ExecutionContext()
         )
         for slot_name, earlier in (("text", old_text), ("image", old_image)):
             current = next(slot for slot in refreshed_slots if slot.slot == slot_name)

@@ -7,6 +7,7 @@ import pytest
 
 from tests.evaluation.conftest import SyntheticCounter
 from tests.helpers.corpus import reader, seed_bundle
+from tests.helpers.publication import slots_of
 from tests.providers.test_visual import (
     CharacterCounter,
     RecordingRawTransport,
@@ -252,7 +253,7 @@ async def test_declared_png_proxy_enters_visual_query_and_evaluation(tmp_path):
         snapshot = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ctx
         )
-        slots = await owner.run_write(lambda: owner.store.snapshot_slots(snapshot), ctx)
+        slots = await owner.run_write(lambda: slots_of(owner.store, snapshot), ctx)
         image_slot = next(slot for slot in slots if slot.slot == "image")
         assert image_slot.batches[0].expected_count == 1
         image_receipt = image_slot.batches[0].receipt

@@ -66,6 +66,7 @@ CLASSIFIED_REASONS = {
         "runtime.path_unsafe",
         "closure.limit_exceeded",
         "backup.manifest_limit",
+        "canonical.facts_missing",
     },
     "CAPABILITY_MISSING": {"storage.version_unsupported", "native.unavailable"},
     "LIMIT_EXCEEDED": {"evaluation.binding_budget"},

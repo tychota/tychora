@@ -11,6 +11,7 @@ from pathlib import Path
 
 from tests.acceptance.source_crash_probe import service, source
 from tests.acceptance.test_crash_matrix import _kill_test_child
+from tests.helpers.publication import slots_of
 from tests.performance.engine_probe import _config, _scope, setup_corpus
 from tychora.adapters.chroma.index import ChromaVectorIndex
 from tychora.adapters.sqlite.jobs import JobRepository
@@ -59,7 +60,7 @@ def run(root: Path, *, isolated_setup: bool = True) -> dict:
         slot = next(
             slot
             for slot in owner.run_write_sync(
-                lambda: owner.store.snapshot_slots(snapshot), ExecutionContext()
+                lambda: slots_of(owner.store, snapshot), ExecutionContext()
             )
             if slot.slot == "text"
         )
