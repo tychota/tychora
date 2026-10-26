@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.helpers.publication import members_of
 from tests.indexing.test_publication import ProjectedCorpus, make_projected_corpus
 from tychora.adapters.sqlite.repositories import SqliteSnapshotRepository
 from tychora.contracts.errors import TychoraError
@@ -166,7 +167,7 @@ def test_resolve_snapshot_never_reads_the_root_manifest(projected):
         with f.store.pin_snapshot(snapshot_id):
             pass
     assert opened == []
-    assert view.member_count == len(view.members)
+    assert view.member_count == len(members_of(f.store, view))
 
 
 @pytest.mark.parametrize("point", ["insert_page", "insert_snapshot", "set_active"])
@@ -184,11 +185,8 @@ def test_crash_inside_activation_keeps_the_previous_snapshot(projected, point):
     ):
         f.store.publish_snapshot(plan)
     assert f.store.active_snapshot_id() == active
-    # Writing the new lexical batch moves only the corpus-wide statistics epoch.
-    after = f.store.resolve_snapshot(None)
-    assert after == before.model_copy(
-        update={"lexical_statistics_epoch": after.lexical_statistics_epoch}
-    )
+    # The view carries no corpus-wide statistics epoch, so it is unchanged.
+    assert f.store.resolve_snapshot(None) == before
     assert f.store.snapshot_slots(before) == before_slots
     new_pages = [page.page_id for page in plan.new_pages]
     assert (

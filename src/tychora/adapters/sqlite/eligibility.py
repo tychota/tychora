@@ -37,7 +37,12 @@ from tychora.contracts.corpus import (
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.identity import digest
-from tychora.contracts.publication import RetainedBatch, RetainedSlot, SnapshotView
+from tychora.contracts.publication import (
+    RetainedBatch,
+    RetainedSlot,
+    SnapshotMember,
+    SnapshotView,
+)
 from tychora.indexing.representations import (
     ChunkSpan,
     prepare_extraction,
@@ -53,6 +58,8 @@ from tychora.retrieval.eligibility import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
+
     from .corpus import CorpusStore
 
 
@@ -358,8 +365,19 @@ def _vector_facts(
     return tuple(facts)
 
 
+def all_members(store: CorpusStore, snapshot_id: str) -> Iterator[SnapshotMember]:
+    """Every member of the snapshot, page by page, inside the open read."""
+    cursor = None
+    with store.uow.read() as tx:
+        while True:
+            page, cursor = tx.snapshots.members(snapshot_id, after=cursor)
+            yield from page
+            if cursor is None:
+                return
+
+
 def read_eligibility_facts(
-    store: CorpusStore, snapshot: SnapshotView
+    store: CorpusStore, snapshot: SnapshotView, members: Iterable[SnapshotMember]
 ) -> EligibilityFacts:
     """Detach one same-epoch policy observation; release the read before dispatch."""
     db = store.db
@@ -378,7 +396,7 @@ def read_eligibility_facts(
         historical: dict[str, object] = {}
         selected_extractions: set[str] = set()
         chunk_order: dict[str, tuple[int, int, str, str]] = {}
-        for member in snapshot.members:
+        for member in members:
             row = db.execute(
                 "SELECT r.kind_id,r.access_rank,r.allowed_uses_json,r.published_on,"
                 "r.effective_from,r.effective_until,c.collection_id,c.access_floor,"

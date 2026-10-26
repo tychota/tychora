@@ -104,6 +104,13 @@ def _revision(**changes):
     return fact.__class__(**{**fact.__dict__, **changes})
 
 
+_FIXTURE_MEMBERS = (
+    SnapshotMember(
+        source_id="source", revision_id="revision", extraction_id="extraction"
+    ),
+)
+
+
 class _FixtureView(SnapshotView):
     """A synthetic snapshot carrying the retained slots its reader returns."""
 
@@ -255,13 +262,25 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
             SlotFamily(slot=item.slot, family=item.family, required=item.required)
             for item in slots
         ),
-        members=(
-            SnapshotMember(
-                source_id="source", revision_id="revision", extraction_id="extraction"
-            ),
-        ),
         fixture_slots=tuple(slots),
     )
+
+
+def _serve_synthetic(owner, snapshot, members):
+    """Serve a synthetic snapshot from the owner's catalog, read with ``members``."""
+    real_get = owner.catalog.get
+    real_read = owner.store.read_eligibility_facts
+
+    def get(tx, snapshot_id):
+        if snapshot_id == snapshot.snapshot_id:
+            return snapshot
+        return real_get(tx, snapshot_id)
+
+    def read(view, given=None):
+        return real_read(view, members if given is None else given)
+
+    owner.catalog.get = get
+    owner.store.read_eligibility_facts = read
 
 
 def _register_config_artifact(db, artifacts, config):
@@ -345,7 +364,9 @@ class _Reader:
             Callable[[str | None], AbstractContextManager[SnapshotView]] | None
         ) = None
 
-    def read_eligibility_facts(self, snapshot: SnapshotView) -> EligibilityFacts:
+    def read_eligibility_facts(
+        self, snapshot: SnapshotView, members=None
+    ) -> EligibilityFacts:
         slots = snapshot.fixture_slots if isinstance(snapshot, _FixtureView) else ()
         return replace(self.facts, slots=slots)
 
@@ -475,7 +496,7 @@ def test_sqlite_reader_detaches_current_floor_and_epoch(tmp_path, config):
     )
     _register_config_artifact(db, store.artifacts, config)
     snapshot = _snapshot(config, chunks=())
-    first = store.read_eligibility_facts(snapshot)
+    first = store.read_eligibility_facts(snapshot, _FIXTURE_MEMBERS)
     assert first.policy_epoch == 0
     assert first.revisions[0].source_floor == 0
     db.execute("UPDATE sources SET access_floor=3 WHERE source_id='source'")
@@ -483,7 +504,7 @@ def test_sqlite_reader_detaches_current_floor_and_epoch(tmp_path, config):
         "UPDATE workspaces SET policy_epoch=policy_epoch+1 WHERE workspace_id='workspace'"
     )
     db.commit()
-    second = store.read_eligibility_facts(snapshot)
+    second = store.read_eligibility_facts(snapshot, _FIXTURE_MEMBERS)
     assert second.policy_epoch == 1
     assert second.revisions[0].source_floor == 3
     assert store.policy_epoch(snapshot.workspace_id) == 1
@@ -923,10 +944,8 @@ def test_attempt_dependency_lookup_carries_complete_group_leaves(config, scope):
 async def test_owner_runner_retries_after_canonical_withdrawal_and_releases_pin(
     tmp_path,
 ):
-    from contextlib import contextmanager
 
     from tests.runtime.test_upload_policy import install, prepared
-    from tychora.contracts.publication import SnapshotMember
     from tychora.ports.execution import ExecutionContext
     from tychora.retrieval.eligibility import run_pinned_eligibility
 
@@ -940,31 +959,22 @@ async def test_owner_runner_retries_after_canonical_withdrawal_and_releases_pin(
             update={
                 "snapshot_id": "synthetic-pin",
                 "workspace_id": owner.workspace_id,
-                "members": (
-                    SnapshotMember(
-                        source_id=bundle.source.source_id,
-                        revision_id=bundle.revision.revision_id,
-                        extraction_id=bundle.extraction.extraction_id,
-                    ),
-                ),
             }
         )
-        pins = []
-
-        @contextmanager
-        def pin_snapshot(selector):
-            assert selector == "synthetic-pin"
-            pins.append("enter")
-            try:
-                yield snapshot
-            finally:
-                pins.append("exit")
-
-        owner.store.pin_snapshot = pin_snapshot
+        members = (
+            SnapshotMember(
+                source_id=bundle.source.source_id,
+                revision_id=bundle.revision.revision_id,
+                extraction_id=bundle.extraction.extraction_id,
+            ),
+        )
+        _serve_synthetic(owner, snapshot, members)
         ctx = ExecutionContext()
         calls = []
+        pins = []
 
         async def operation(attempt):
+            pins.append(owner.store.leases.is_pinned("synthetic-pin"))
             if not calls:
                 calls.append("withdraw")
                 await owner.run_write(
@@ -995,16 +1005,15 @@ async def test_owner_runner_retries_after_canonical_withdrawal_and_releases_pin(
         )
         assert result == "excluded"
         assert calls == ["withdraw"]
-        assert pins == ["enter", "exit"]
+        assert pins == [True, True]
+        assert not owner.store.leases.is_pinned("synthetic-pin")
 
 
 @pytest.mark.asyncio
 async def test_owner_runner_releases_pin_after_cancellation(tmp_path):
     import asyncio
-    from contextlib import contextmanager
 
     from tests.runtime.test_upload_policy import install, prepared
-    from tychora.contracts.publication import SnapshotMember
     from tychora.ports.execution import ExecutionContext
     from tychora.retrieval.eligibility import run_pinned_eligibility
 
@@ -1018,30 +1027,20 @@ async def test_owner_runner_releases_pin_after_cancellation(tmp_path):
             update={
                 "snapshot_id": "synthetic-pin",
                 "workspace_id": owner.workspace_id,
-                "members": (
-                    SnapshotMember(
-                        source_id=bundle.source.source_id,
-                        revision_id=bundle.revision.revision_id,
-                        extraction_id=bundle.extraction.extraction_id,
-                    ),
-                ),
             }
         )
-        pins = []
-
-        @contextmanager
-        def pin_snapshot(selector):
-            pins.append("enter")
-            try:
-                yield snapshot
-            finally:
-                pins.append("exit")
-
-        owner.store.pin_snapshot = pin_snapshot
+        members = (
+            SnapshotMember(
+                source_id=bundle.source.source_id,
+                revision_id=bundle.revision.revision_id,
+                extraction_id=bundle.extraction.extraction_id,
+            ),
+        )
+        _serve_synthetic(owner, snapshot, members)
         ctx = ExecutionContext()
 
         async def operation(attempt):
-            assert pins == ["enter"]
+            assert owner.store.leases.is_pinned("synthetic-pin")
             ctx.cancelled.set()
             raise asyncio.CancelledError
 
@@ -1056,15 +1055,13 @@ async def test_owner_runner_releases_pin_after_cancellation(tmp_path):
                 owner=owner,
                 ctx=ctx,
             )
-        assert pins == ["enter", "exit"]
+        assert not owner.store.leases.is_pinned("synthetic-pin")
 
 
 @pytest.mark.asyncio
 async def test_owner_provider_denied_grant_never_dispatches(tmp_path):
-    from contextlib import contextmanager
 
     from tests.runtime.test_upload_policy import install, prepared
-    from tychora.contracts.publication import SnapshotMember
     from tychora.ports.execution import ExecutionContext
     from tychora.retrieval.eligibility import run_pinned_eligibility
 
@@ -1078,21 +1075,16 @@ async def test_owner_provider_denied_grant_never_dispatches(tmp_path):
             update={
                 "snapshot_id": "synthetic-pin",
                 "workspace_id": owner.workspace_id,
-                "members": (
-                    SnapshotMember(
-                        source_id=bundle.source.source_id,
-                        revision_id=bundle.revision.revision_id,
-                        extraction_id=bundle.extraction.extraction_id,
-                    ),
-                ),
             }
         )
-
-        @contextmanager
-        def pin_snapshot(selector):
-            yield snapshot
-
-        owner.store.pin_snapshot = pin_snapshot
+        members = (
+            SnapshotMember(
+                source_id=bundle.source.source_id,
+                revision_id=bundle.revision.revision_id,
+                extraction_id=bundle.extraction.extraction_id,
+            ),
+        )
+        _serve_synthetic(owner, snapshot, members)
         denied_scope = scope.model_copy(update={"upload_providers": frozenset()})
         invoked = []
         ctx = ExecutionContext()
@@ -1273,7 +1265,6 @@ def test_vector_fact_outside_selected_receipt_is_not_eligible(config, scope):
 @pytest.mark.asyncio
 async def test_retired_original_is_not_reopened_for_range_ownership(tmp_path):
     from tests.runtime.test_upload_policy import install, prepared
-    from tychora.contracts.publication import SnapshotMember
     from tychora.ports.execution import ExecutionContext
 
     with prepared(tmp_path) as (owner, _scope):
@@ -1285,14 +1276,14 @@ async def test_retired_original_is_not_reopened_for_range_ownership(tmp_path):
         snapshot = _snapshot(owner.config, chunks=()).model_copy(
             update={
                 "workspace_id": owner.workspace_id,
-                "members": (
-                    SnapshotMember(
-                        source_id=bundle.source.source_id,
-                        revision_id=bundle.revision.revision_id,
-                        extraction_id=bundle.extraction.extraction_id,
-                    ),
-                ),
             }
+        )
+        members = (
+            SnapshotMember(
+                source_id=bundle.source.source_id,
+                revision_id=bundle.revision.revision_id,
+                extraction_id=bundle.extraction.extraction_id,
+            ),
         )
 
         def retire_and_read():
@@ -1302,7 +1293,7 @@ async def test_retired_original_is_not_reopened_for_range_ownership(tmp_path):
                 (bundle.revision.original_sha,),
             )
             owner.db.commit()
-            return owner.store.read_eligibility_facts(snapshot)
+            return owner.store.read_eligibility_facts(snapshot, members)
 
         facts = await owner.run_write(retire_and_read, ExecutionContext())
         assert facts.units[0].dependency_ids == frozenset(

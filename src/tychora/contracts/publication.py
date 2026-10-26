@@ -310,7 +310,10 @@ def publication_plan_document(plan: PublicationPlan) -> dict[str, JsonValue]:
 
 
 class SnapshotView(Contract):
-    """A published snapshot as read back from SQL rows."""
+    """A published snapshot as read back from SQL rows, without its members.
+
+    Members are read in pages through ``SnapshotRepository.members``.
+    """
 
     snapshot_id: Identifier
     workspace_id: Identifier
@@ -320,8 +323,6 @@ class SnapshotView(Contract):
     member_count: NonNegativeInt
     page_ids: tuple[Identifier, ...]
     families: tuple[SlotFamily, ...]
-    members: tuple[SnapshotMember, ...]
-    lexical_statistics_epoch: NonNegativeInt = 0
 
     def family(self, slot: str) -> SlotFamily | None:
         """Return the family serving ``slot``, or ``None`` when the slot is absent."""

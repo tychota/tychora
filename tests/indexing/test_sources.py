@@ -13,6 +13,7 @@ import pytest
 from PIL import Image
 
 from tests.code.conftest import make_repo
+from tests.helpers.publication import members_of
 from tests.indexing.test_publication import RecordingCounter, RecordingEmbedder
 from tests.providers.test_visual import CharacterCounter, RecordingRawTransport, _limits
 from tychora.adapters.chroma.index import ChromaVectorIndex
@@ -116,6 +117,12 @@ class _NoVisualAccess:
         raise AssertionError("Empty image batch must not admit visual operation")
 
 
+async def _members(owner, view):
+    return await owner.run_write(
+        lambda: members_of(owner.store, view), ExecutionContext()
+    )
+
+
 async def _slots(owner, view):
     """Read a snapshot's retained slots on the owner thread."""
     return await owner.run_write(
@@ -175,12 +182,16 @@ async def test_add_and_sync_native_source_reuse_canonical_extraction(tmp_path):
         first_view = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
-        second = await service.sync(first_view.members[0].source_id, scope)
+        second = await service.sync(
+            (await _members(owner, first_view))[0].source_id, scope
+        )
         second_view = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
         assert first.id != second.id
-        assert first_view.members == second_view.members
+        assert (await _members(owner, first_view)) == (
+            await _members(owner, second_view)
+        )
         assert first_view.snapshot_id != second_view.snapshot_id
         assert (
             await owner.run_write(
@@ -514,11 +525,11 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
             slot for slot in (await _slots(owner, view)) if slot.slot == "graph"
         )
         graph_batch = graph_slot.batches[0]
-        assert graph_slot.required and len(view.members) == 2
+        assert graph_slot.required and len(await _members(owner, view)) == 2
         assert graph_batch.graph_manifest is not None
         assert {
             m.extraction_id for m in graph_batch.graph_manifest.spec.memberships
-        } == {m.extraction_id for m in view.members}
+        } == {m.extraction_id for m in (await _members(owner, view))}
 
         original_publish = owner.store.publish_snapshot
 
@@ -562,7 +573,7 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
         resumed = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
-        assert len(resumed.members) == 3
+        assert len(await _members(owner, resumed)) == 3
         assert resumed.snapshot_id != view.snapshot_id
 
         fourth = SourceInput.from_mapping(
@@ -628,7 +639,7 @@ async def test_graph_generation_attests_selected_membership(tmp_path, monkeypatc
                     "unselected-observation",
                     owner.db.execute(
                         "SELECT original_sha FROM revisions WHERE revision_id=?",
-                        (resumed.members[0].revision_id,),
+                        (members_of(owner.store, resumed)[0].revision_id,),
                     ).fetchone()[0],
                     "unselected-observation",
                     "recorded",
@@ -849,7 +860,7 @@ async def test_relocated_file_with_identical_bytes_reuses_immutable_registration
         after = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
-        assert before.members == after.members
+        assert (await _members(owner, before)) == (await _members(owner, after))
         assert await _slots(owner, before) == await _slots(owner, after)
         assert (
             await owner.run_write(
@@ -929,7 +940,7 @@ async def test_reselects_retained_extraction_after_intervening_revision(
         changed = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
-        assert changed.members != original.members
+        assert (await _members(owner, changed)) != (await _members(owner, original))
 
         async def parser_must_not_run(*_args):
             raise AssertionError("Retained extraction should replay without parsing")
@@ -939,7 +950,7 @@ async def test_reselects_retained_extraction_after_intervening_revision(
         restored = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
-        assert restored.members == original.members
+        assert (await _members(owner, restored)) == (await _members(owner, original))
         assert (
             await owner.run_write(
                 lambda: owner.db.execute("SELECT COUNT(*) FROM extractions").fetchone()[
@@ -1061,7 +1072,7 @@ async def test_png_source_uses_owner_authorized_visual_provider(tmp_path, monkey
             assert metadata["extraction_id"] == image.batches[0].extraction_id
             assert metadata["revision_id"] == revision_id
         before_calls = len(transport.calls)
-        await service.sync(view.members[0].source_id, scope)
+        await service.sync((await _members(owner, view))[0].source_id, scope)
         assert len(transport.calls) == before_calls
         changed_stream = BytesIO()
         Image.new("RGB", (256, 256), (60, 40, 20)).save(changed_stream, format="PNG")
@@ -1078,7 +1089,7 @@ async def test_png_source_uses_owner_authorized_visual_provider(tmp_path, monkey
         restored = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
-        assert restored.members == view.members
+        assert (await _members(owner, restored)) == (await _members(owner, view))
 
 
 @pytest.mark.asyncio
@@ -1217,12 +1228,12 @@ async def test_repository_source_uses_spawned_language_adapters(tmp_path, monkey
         view = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
-        assert len(view.members) == 1
+        assert len(await _members(owner, view)) == 1
         assert (
             await owner.run_write(
                 lambda: owner.db.execute(
                     "SELECT COUNT(*) FROM evidence_units WHERE extraction_id=?",
-                    (view.members[0].extraction_id,),
+                    (members_of(owner.store, view)[0].extraction_id,),
                 ).fetchone()[0],
                 ExecutionContext(),
             )
@@ -1234,7 +1245,7 @@ async def test_repository_source_uses_spawned_language_adapters(tmp_path, monkey
         changed = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
-        assert changed.members != view.members
+        assert (await _members(owner, changed)) != (await _members(owner, view))
         (repository / "module.py").write_bytes(original_bytes)
 
         async def parser_must_not_run(*_args):
@@ -1245,7 +1256,7 @@ async def test_repository_source_uses_spawned_language_adapters(tmp_path, monkey
         restored = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
-        assert restored.members == view.members
+        assert (await _members(owner, restored)) == (await _members(owner, view))
 
 
 @pytest.mark.asyncio

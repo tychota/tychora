@@ -5,6 +5,7 @@ from hashlib import sha256
 
 import pytest
 
+from tests.helpers.publication import members_of
 from tests.indexing.test_publication import RecordingCounter, RecordingEmbedder
 from tests.performance.engine_probe import Counter
 from tests.providers.test_visual import CharacterCounter, RecordingRawTransport, _limits
@@ -315,7 +316,15 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
         refreshed = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
-        assert len(refreshed.members) == 2
+        assert refreshed.member_count == 2
+        assert (
+            len(
+                await owner.run_write(
+                    lambda: members_of(owner.store, refreshed), ExecutionContext()
+                )
+            )
+            == 2
+        )
         assert source_embedder.calls == old_embed_calls + 1
         refreshed_slots = await owner.run_write(
             lambda: owner.store.snapshot_slots(refreshed), ExecutionContext()

@@ -123,7 +123,7 @@ from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.graph import GraphBatchReceipt, graph_manifest_digest
 from tychora.contracts.identity import JsonValue, canonical_bytes, digest
-from tychora.contracts.publication import RetainedSlot, SnapshotView
+from tychora.contracts.publication import RetainedSlot, SnapshotMember, SnapshotView
 from tychora.contracts.requests import (
     AndFilter,
     EqFilter,
@@ -140,6 +140,7 @@ from tychora.ports.execution import ExecutionContext
 if TYPE_CHECKING:
     from tychora.application.owner import WorkspaceOwner
     from tychora.configuration.models import ResolvedConfig
+    from tychora.ports.repositories import ReadTransaction
 
 
 @dataclass(frozen=True)
@@ -197,7 +198,11 @@ class EligibilityFacts:
 class EligibilityReader(Protocol):
     registry: Registry
 
-    def read_eligibility_facts(self, snapshot: SnapshotView) -> EligibilityFacts: ...
+    def read_eligibility_facts(
+        self,
+        snapshot: SnapshotView,
+        members: tuple[SnapshotMember, ...] | None = None,
+    ) -> EligibilityFacts: ...
 
     def retained_config(self, snapshot: SnapshotView) -> ResolvedConfig: ...
 
@@ -362,8 +367,10 @@ class EligibilityCompiler:
         scope: RequestScope,
         request: QueryRequest,
         config: ResolvedConfig,
+        *,
+        members: tuple[SnapshotMember, ...] | None = None,
     ) -> EligibilityView:
-        facts = self.reader.read_eligibility_facts(snapshot)
+        facts = self.reader.read_eligibility_facts(snapshot, members)
         return self._compile(snapshot, scope, request, config, facts)[0]
 
     def compile_attempt(
@@ -373,9 +380,10 @@ class EligibilityCompiler:
         request: QueryRequest,
         config: ResolvedConfig,
         *,
+        members: tuple[SnapshotMember, ...] | None = None,
         _retained_inspection: bool = False,
     ) -> EligibilityAttempt:
-        facts = self.reader.read_eligibility_facts(snapshot)
+        facts = self.reader.read_eligibility_facts(snapshot, members)
         if _retained_inspection:
             # Exact retained inspection alone: these detached facts are never cached
             # or reused by query/graph/vector admission.
@@ -750,7 +758,6 @@ class EligibilityCompiler:
             )
 
 
-import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractContextManager
 
@@ -799,6 +806,7 @@ class EligibilityAttempt:
     warnings: tuple[str, ...] = ()
     owner: WorkspaceOwner | None = None
     ctx: ExecutionContext | None = None
+    snapshot: SnapshotView | None = None
     historical_kind_roles: Mapping[str, str] = field(
         default_factory=lambda: MappingProxyType({})
     )
@@ -847,21 +855,27 @@ async def run_pinned_eligibility[T](
         )
     if owner is not None:
         scope = owner.scope.narrow(scope)
-    pin = compiler.reader.pin_snapshot(selector)
-    entered = False
+    if owner is not None and ctx is not None:
+        catalog = owner.catalog
 
-    def enter() -> SnapshotView:
-        nonlocal entered
-        snapshot = pin.__enter__()
-        entered = True
-        return snapshot
+        def resolve(tx: ReadTransaction) -> SnapshotView:
+            snapshot_id = selector or tx.snapshots.active_id()
+            if snapshot_id is None:
+                raise TychoraError(
+                    "NOT_FOUND",
+                    "No published snapshot is available",
+                    reason="snapshot.absent",
+                )
+            return catalog.get(tx, snapshot_id)
 
-    try:
-        snapshot = (
-            await owner.run_write(enter, ctx, "interactive")
-            if owner is not None and ctx is not None
-            else enter()
-        )
+        resolved: SnapshotView | None = await owner.run_read(resolve, ctx)
+        pin = owner.store.leases.pin(frozenset({resolved.snapshot_id}))
+    else:
+        pin = compiler.reader.pin_snapshot(selector)
+        resolved = None
+    with pin as pinned:
+        snapshot = resolved or pinned
+        assert snapshot is not None
         for attempt_number in range(2):
             compiled = (
                 await owner.run_write(
@@ -872,7 +886,7 @@ async def run_pinned_eligibility[T](
                 if owner is not None and ctx is not None
                 else compiler.compile_attempt(snapshot, scope, request, config)
             )
-            attempt = replace(compiled, owner=owner, ctx=ctx)
+            attempt = replace(compiled, owner=owner, ctx=ctx, snapshot=snapshot)
             completed_operation = False
             try:
                 result = await operation(attempt)
@@ -899,20 +913,3 @@ async def run_pinned_eligibility[T](
                 continue
             return result
         raise AssertionError("Unreachable eligibility retry state")
-    finally:
-        if entered:
-            if owner is not None:
-                cleanup = asyncio.create_task(
-                    owner.run_write(
-                        lambda: pin.__exit__(None, None, None),
-                        ExecutionContext(),
-                        "interactive",
-                    )
-                )
-                try:
-                    await asyncio.shield(cleanup)
-                except asyncio.CancelledError:
-                    await cleanup
-                    raise
-            else:
-                pin.__exit__(None, None, None)

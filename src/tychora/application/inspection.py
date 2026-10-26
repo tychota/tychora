@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
@@ -31,7 +32,7 @@ from tychora.contracts.operations import (
     RelationRequest,
     RelationResult,
 )
-from tychora.contracts.publication import SnapshotMember
+from tychora.contracts.publication import SnapshotMember, SnapshotView
 from tychora.contracts.requests import (
     QueryRequest,
     RequestScope,
@@ -42,6 +43,8 @@ from tychora.ports.execution import ExecutionContext
 from tychora.retrieval.eligibility import EligibilityCompiler
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from tychora.application.owner import WorkspaceOwner
     from tychora.ports.graph import GraphStore
 
@@ -69,6 +72,14 @@ def _ranges(request: InspectRequest, length: int) -> tuple[CodepointRange, ...]:
     return selected
 
 
+@dataclass(frozen=True)
+class RetainedPin:
+    """A pinned active snapshot narrowed to the retained members one read covers."""
+
+    view: SnapshotView
+    members: tuple[SnapshotMember, ...]
+
+
 class InspectionService:
     def __init__(self, owner: WorkspaceOwner, graph: GraphStore | None = None) -> None:
         self.owner = owner
@@ -77,7 +88,12 @@ class InspectionService:
         # Opaque continuations never disclose excluded row IDs or positions.
         self._content_cursors: dict[str, tuple[str, int]] = {}
 
-    def _attempt(self, snapshot, scope: RequestScope):
+    def _attempt(
+        self,
+        snapshot: SnapshotView,
+        scope: RequestScope,
+        members: tuple[SnapshotMember, ...] | None = None,
+    ):
         preferred = (
             self.owner.config.values.mode or self.owner.config.values.default_mode
         )
@@ -111,7 +127,12 @@ class InspectionService:
             }
         )
         return self.compiler.compile_attempt(
-            snapshot, scope, query, self.owner.config, _retained_inspection=True
+            snapshot,
+            scope,
+            query,
+            self.owner.config,
+            members=members,
+            _retained_inspection=True,
         )
 
     def _artifact(
@@ -209,9 +230,9 @@ class InspectionService:
             ),
         )
 
-    def _inspect_diagnostics(self, request, snapshot, attempt):
+    def _inspect_diagnostics(self, request, pin, attempt):
         member = next(
-            (item for item in snapshot.members if item.extraction_id == request.id),
+            (item for item in pin.members if item.extraction_id == request.id),
             None,
         )
         if member is None:
@@ -365,7 +386,7 @@ class InspectionService:
             ),
         )
 
-    def _inspect_evidence(self, request, snapshot, attempt, *, prepared=None):
+    def _inspect_evidence(self, request, pin, attempt, *, prepared=None):
         owner = self.owner
         row = owner.db.execute(
             "SELECT e.extraction_id,x.revision_id FROM evidence_units e "
@@ -378,7 +399,7 @@ class InspectionService:
         member = next(
             (
                 item
-                for item in snapshot.members
+                for item in pin.members
                 if item.extraction_id == extraction and item.revision_id == revision
             ),
             None,
@@ -573,7 +594,7 @@ class InspectionService:
             ),
         )
 
-    def _inspect_revision(self, request, snapshot, attempt):
+    def _inspect_revision(self, request, pin, attempt):
         if request.id not in attempt.view.revision_ids:
             _deny()
         row = self.owner.db.execute(
@@ -586,7 +607,7 @@ class InspectionService:
         if request.original or request.view == "original":
             selected_extractions = tuple(
                 item.extraction_id
-                for item in snapshot.members
+                for item in pin.members
                 if item.revision_id == request.id
             )
             readable = attempt.view.context_unit_ids | attempt.view.structural_unit_ids
@@ -631,7 +652,7 @@ class InspectionService:
         )
 
     @contextmanager
-    def _pin_retained(self, request: InspectRequest):
+    def _pin_retained(self, request: InspectRequest) -> Iterator[RetainedPin]:
         """Resolve explicit canonical identity without borrowing old permissions.
 
         This inspection-only view has no native projections. Its members come
@@ -685,15 +706,17 @@ class InspectionService:
             membership = digest(
                 "retained-inspection-v1", [m.model_dump(mode="json") for m in members]
             )
-            yield active.model_copy(
-                update={
-                    "snapshot_id": membership,
-                    "membership_sha": membership,
-                    "members": members,
-                    "member_count": len(members),
-                    "page_ids": (),
-                    "families": (),
-                }
+            yield RetainedPin(
+                view=active.model_copy(
+                    update={
+                        "snapshot_id": membership,
+                        "membership_sha": membership,
+                        "member_count": len(members),
+                        "page_ids": (),
+                        "families": (),
+                    }
+                ),
+                members=members,
             )
 
     def _inspect_sync(
@@ -737,17 +760,17 @@ class InspectionService:
                 ).fetchone()
             ):
                 raise TychoraError("ORIGINAL_REMOVED", "Original payload was removed.")
-        with self._pin_retained(request) as snapshot:
+        with self._pin_retained(request) as pin:
             ctx.checkpoint()
-            attempt = self._attempt(snapshot, granted)
+            attempt = self._attempt(pin.view, granted, pin.members)
             if request.subject == "evidence":
-                result = self._inspect_evidence(request, snapshot, attempt)
+                result = self._inspect_evidence(request, pin, attempt)
             elif request.subject == "assets":
                 result = self._inspect_asset(request, attempt)
             elif request.subject == "revisions":
-                result = self._inspect_revision(request, snapshot, attempt)
+                result = self._inspect_revision(request, pin, attempt)
             elif request.subject == "diagnostics":
-                result = self._inspect_diagnostics(request, snapshot, attempt)
+                result = self._inspect_diagnostics(request, pin, attempt)
             else:
                 raise TychoraError(
                     "INVALID_REQUEST", "Inspection subject is unavailable."

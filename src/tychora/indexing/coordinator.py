@@ -1559,16 +1559,21 @@ class ProjectionCoordinator:
                 reason="batch.missing",
             )
 
-    @staticmethod
     def _snapshot_members(
-        base: SnapshotView | None, page: MembershipPage
+        self, base: SnapshotView | None, page: MembershipPage
     ) -> tuple[SnapshotMember, ...]:
         """The members of the planned snapshot: the base outside the page's bucket."""
-        kept = [
-            m
-            for m in (base.members if base else ())
-            if bucket_of(m.source_id) != page.bucket
-        ]
+        kept: list[SnapshotMember] = []
+        if base is not None:
+            cursor = None
+            with self.store.uow.read() as tx:
+                while True:
+                    rows, cursor = tx.snapshots.members(base.snapshot_id, after=cursor)
+                    kept.extend(
+                        m for m in rows if bucket_of(m.source_id) != page.bucket
+                    )
+                    if cursor is None:
+                        break
         added = [
             SnapshotMember(
                 source_id=m.source_id,

@@ -1024,7 +1024,7 @@ class DiscoveryService:
         assert self.owner is not None
         owner = self.owner
         with owner.store.pin_snapshot(None) as snapshot:
-            if extraction not in {item.extraction_id for item in snapshot.members}:
+            if owner.store.snapshot_member(snapshot.snapshot_id, extraction) is None:
                 return FrozenJsonMap(
                     {"rates": [], "unsupported_references": 0, "scope_limited": True}
                 )

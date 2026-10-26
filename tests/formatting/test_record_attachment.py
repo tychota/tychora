@@ -30,7 +30,9 @@ class RecordOnlyReader:
     def __init__(self, registry: Registry):
         self.registry = registry
 
-    def read_eligibility_facts(self, snapshot: SnapshotView) -> EligibilityFacts:
+    def read_eligibility_facts(
+        self, snapshot: SnapshotView, members=None
+    ) -> EligibilityFacts:
         raise AssertionError(
             "record preparation must use the supplied eligibility view"
         )

@@ -6,6 +6,8 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from tests.evaluation.conftest import SyntheticCounter
+from tests.helpers.owner import on_owner
+from tests.helpers.publication import members_of
 from tests.helpers.timing import scaled
 from tychora import Tychora
 from tychora.contracts.identity import canonical_bytes
@@ -31,6 +33,10 @@ def _source(text, *, source_key="dated.txt", **metadata):
     }
 
 
+def _members(owner, view):
+    return on_owner(owner, lambda: members_of(owner.store, view))
+
+
 def _add(kb, value):
     job = kb.sources.add(value)
     status = kb.jobs.wait(job.id, timeout=scaled(10))
@@ -48,7 +54,7 @@ def test_republishing_identical_older_edition_makes_it_default(tmp_path):
                 lambda: owner.store.resolve_snapshot(None), ExecutionContext()
             )
         )
-        first_revision = original_snapshot.members[0].revision_id
+        first_revision = _members(owner, original_snapshot)[0].revision_id
         _add(kb, second)
         second_snapshot = kb._workspace.bridge.call(
             owner.run_write(
@@ -57,7 +63,7 @@ def test_republishing_identical_older_edition_makes_it_default(tmp_path):
         )
         second_revision = next(
             member.revision_id
-            for member in second_snapshot.members
+            for member in _members(owner, second_snapshot)
             if member.is_default
         )
         _add(kb, first)
@@ -71,19 +77,23 @@ def test_republishing_identical_older_edition_makes_it_default(tmp_path):
                 ExecutionContext(),
             )
         )
-        assert {member.revision_id for member in current.members} == {
+        assert {member.revision_id for member in _members(owner, current)} == {
             first_revision,
             second_revision,
         }
         assert {
-            member.revision_id for member in current.members if member.is_default
-        } == {first_revision}
-        assert {
-            member.revision_id for member in retained_first.members if member.is_default
+            member.revision_id
+            for member in _members(owner, current)
+            if member.is_default
         } == {first_revision}
         assert {
             member.revision_id
-            for member in retained_second.members
+            for member in _members(owner, retained_first)
+            if member.is_default
+        } == {first_revision}
+        assert {
+            member.revision_id
+            for member in _members(owner, retained_second)
             if member.is_default
         } == {second_revision}
         assert current.families == second_snapshot.families
@@ -157,14 +167,16 @@ def test_public_source_dates_editions_and_review_filter(tmp_path):
                 ExecutionContext(),
             )
         )
-        assert [member.revision_id for member in retained_old.members] == [old_id]
-        assert {member.revision_id for member in current_snapshot.members} == {
+        assert [member.revision_id for member in _members(owner, retained_old)] == [
+            old_id
+        ]
+        assert {member.revision_id for member in _members(owner, current_snapshot)} == {
             old_id,
             new_id,
         }
         assert {
             member.revision_id
-            for member in current_snapshot.members
+            for member in _members(owner, current_snapshot)
             if member.is_default
         } == {new_id}
         assert any("old edition" in s.text for s in old.segments)
