@@ -83,6 +83,7 @@ from .runtime import (
     drain_result,
     parser_process,
     private_directory,
+    workspace_closing,
 )
 
 if TYPE_CHECKING:
@@ -352,7 +353,7 @@ class WorkspaceOwner:
         return _sync_result(self._write_future(call, ctx, priority), ctx)
 
     async def run_cpu[T](self, call: Callable[[], T], ctx: ExecutionContext) -> T:
-        """Run pure CPU work (tokenising, measuring, decoding) off the writer."""
+        """Run CPU-bound work off the writer (may read local files)."""
         ctx.checkpoint()
 
         def checked() -> T:
@@ -578,11 +579,7 @@ class WorkspaceOwner:
             _deny()
         with self._admission:
             if self._closing:
-                raise TychoraError(
-                    "WORKSPACE_BUSY",
-                    "Workspace is closing; retry shortly",
-                    retryable=True,
-                )
+                raise workspace_closing()
             lane = self._providers.get(provider)
             if lane is None:
                 lane = BoundedWorker(workers=2)
@@ -634,11 +631,7 @@ class WorkspaceOwner:
         ctx.checkpoint()
         with self._admission:
             if self._closing:
-                raise TychoraError(
-                    "WORKSPACE_BUSY",
-                    "Workspace is closing; retry shortly",
-                    retryable=True,
-                )
+                raise workspace_closing()
             if self._local_text is None:
                 self._local_text = BoundedWorker(workers=2)
             lane = self._local_text
@@ -686,11 +679,7 @@ class WorkspaceOwner:
             _deny()
         with self._admission:
             if self._closing:
-                raise TychoraError(
-                    "WORKSPACE_BUSY",
-                    "Workspace is closing; retry shortly",
-                    retryable=True,
-                )
+                raise workspace_closing()
             lane = self._providers.get(provider)
             if lane is None:
                 lane = BoundedWorker(workers=2)
@@ -731,11 +720,7 @@ class WorkspaceOwner:
             _deny()
         with self._admission:
             if self._closing:
-                raise TychoraError(
-                    "WORKSPACE_BUSY",
-                    "Workspace is closing; retry shortly",
-                    retryable=True,
-                )
+                raise workspace_closing()
             lane = self._providers.get(provider)
             if lane is None:
                 lane = BoundedWorker(workers=2)
@@ -781,7 +766,9 @@ class WorkspaceOwner:
     ) -> EmbeddingRecord:
         """Check current read scope on hits; dispatch misses through the owner lane."""
         embedder._access.binding(self, scope)
-        probe = await self.run_write(lambda: embedder.probe_query(query, ctx), ctx)
+        probe = await self.run_write(
+            lambda: embedder.probe_query(query, ctx), ctx, "interactive"
+        )
         _, _, operation_sha = embedder._access.operation(query, "query")
         self._check_embedding_probe(
             probe.workspace_id,
@@ -831,7 +818,11 @@ class WorkspaceOwner:
     ) -> EmbeddingRecord | tuple[EmbeddingRecord, ...]:
         access = embedder._access
         items, ids, operation_sha = access.operation(operation, mode)
-        await self.run_write(lambda: access.authorize(operation, mode, ctx), ctx)
+        await self.run_write(
+            lambda: access.authorize(operation, mode, ctx),
+            ctx,
+            "interactive" if mode == "query" else "background",
+        )
 
         def invoke() -> EmbeddingRecord | tuple[EmbeddingRecord, ...]:
             with access.admitted():

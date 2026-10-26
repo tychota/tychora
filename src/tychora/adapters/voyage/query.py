@@ -62,6 +62,7 @@ class VoyageTextQueryProvider:
                     scope, self.capabilities.provider, authorization
                 ),
                 execution,
+                "interactive",
             )
 
         return VoyageTextEmbedder(
