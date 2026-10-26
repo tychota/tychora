@@ -11,10 +11,13 @@ from tests.evaluation.conftest import (
     add_repository,
     code_profile_config,
 )
+from tests.helpers.owner import on_owner, owner_row, owner_rows
 from tests.helpers.publication import members_of
 from tests.helpers.timing import scaled
 from tychora import Tychora
+from tychora.adapters.sqlite.repositories import snapshots as snapshot_rows
 from tychora.adapters.sqlite.retained_bindings import binding_footprint, binding_key
+from tychora.application.snapshot_gc import SnapshotGc
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import CodeLocator, ImageLocator, VisualEvidence
 from tychora.evaluation.provenance import (
@@ -165,6 +168,39 @@ def test_a_full_budget_releases_the_least_recently_used_binding(tmp_path, monkey
     assert all(item.valid == item.total > 0 for item in outcomes)
     assert cache.binding_count == 3
     assert cache.rows_used == rows[0] <= max(rows)
+
+
+def test_a_collected_snapshot_is_refused_not_reported_invalid(tmp_path, monkeypatch):
+    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+        first, _second = _two_text_sources(kb)
+        owner = kb._workspace.owner
+        for key in ("third", "fourth"):
+            handle = kb.sources.add(
+                {
+                    "type": "text",
+                    "source_key": key,
+                    "collection_id": "default",
+                    "kind": "manual@1",
+                    "format": "text",
+                    "text": f"The {key} note.",
+                    "metadata": {"title": key, "publisher": "Example", "edition": "1"},
+                }
+            )
+            assert kb.jobs.wait(handle.id, timeout=scaled(10)).state == "succeeded"
+        monkeypatch.setattr(snapshot_rows, "RETAINED_SNAPSHOTS", 0)
+        owner_rows(owner, "DELETE FROM query_runs")
+        on_owner(owner, lambda: SnapshotGc(owner).collect(ExecutionContext()))
+        assert (
+            owner_row(
+                owner,
+                "SELECT 1 FROM snapshots WHERE snapshot_id=?",
+                (first.snapshot_id,),
+            )
+            is None
+        )
+        with pytest.raises(TychoraError) as error:
+            on_owner(owner, lambda: verify_result_locators(owner, first))
+    assert (error.value.code, error.value.reason) == ("NOT_FOUND", "snapshot.absent")
 
 
 @pytest.mark.slow

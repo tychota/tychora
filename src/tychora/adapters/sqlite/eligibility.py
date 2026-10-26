@@ -367,13 +367,8 @@ def _vector_facts(
 
 def all_members(store: CorpusStore, snapshot_id: str) -> Iterator[SnapshotMember]:
     """Every member of the snapshot, page by page, inside the open read."""
-    cursor = None
     with store.uow.read() as tx:
-        while True:
-            page, cursor = tx.snapshots.members(snapshot_id, after=cursor)
-            yield from page
-            if cursor is None:
-                return
+        yield from tx.snapshots.all_members(snapshot_id)
 
 
 def read_eligibility_facts(

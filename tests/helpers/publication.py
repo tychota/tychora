@@ -30,7 +30,6 @@ from tychora.contracts.snapshots import (
 )
 from tychora.indexing.planning import member_count_after, next_page
 from tychora.ports.artifacts import Artifacts
-from tychora.ports.repositories import Cursor
 
 
 def lexical_family(
@@ -169,12 +168,9 @@ def lexical_plan(
 
 
 def members_of(store: CorpusStore, view: SnapshotView) -> tuple[SnapshotMember, ...]:
-    """Every member of a published snapshot, read page by page."""
-    found: list[SnapshotMember] = []
-    cursor: Cursor | None = None
+    """Every member of a published snapshot in source, revision and extraction order."""
     with store.uow.read() as tx:
-        while True:
-            page, cursor = tx.snapshots.members(view.snapshot_id, after=cursor)
-            found.extend(page)
-            if cursor is None:
-                return tuple(found)
+        found = tuple(tx.snapshots.all_members(view.snapshot_id))
+    return tuple(
+        sorted(found, key=lambda m: (m.source_id, m.revision_id, m.extraction_id))
+    )

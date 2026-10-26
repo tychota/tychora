@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import Literal, Protocol
 
 from tychora.contracts.artifacts import ArtifactRef
@@ -276,7 +276,17 @@ class SnapshotRepository(Protocol):
         ...
 
     def member(self, snapshot_id: str, extraction_id: str) -> SnapshotMember | None:
-        """Return the member that selects this extraction, or ``None``."""
+        """Return the member that selects this extraction, or ``None``.
+
+        A snapshot that was collected or never published is refused.
+        """
+        ...
+
+    def all_members(self, snapshot_id: str) -> Iterator[SnapshotMember]:
+        """Yield every member, page by page in bucket order, in linear time.
+
+        A collected snapshot or a member count that differs from the row is refused.
+        """
         ...
 
     def members(

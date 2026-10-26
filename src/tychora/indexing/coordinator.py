@@ -1565,15 +1565,12 @@ class ProjectionCoordinator:
         """The members of the planned snapshot: the base outside the page's bucket."""
         kept: list[SnapshotMember] = []
         if base is not None:
-            cursor = None
             with self.store.uow.read() as tx:
-                while True:
-                    rows, cursor = tx.snapshots.members(base.snapshot_id, after=cursor)
-                    kept.extend(
-                        m for m in rows if bucket_of(m.source_id) != page.bucket
-                    )
-                    if cursor is None:
-                        break
+                kept.extend(
+                    m
+                    for m in tx.snapshots.all_members(base.snapshot_id)
+                    if bucket_of(m.source_id) != page.bucket
+                )
         added = [
             SnapshotMember(
                 source_id=m.source_id,

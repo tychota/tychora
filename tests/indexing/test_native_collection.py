@@ -7,8 +7,8 @@ import pytest
 from tests.indexing.test_publication import ProjectedCorpus, make_projected_corpus
 from tychora.adapters.sqlite.repositories import snapshots as snapshot_rows
 from tychora.application.snapshot_gc import SnapshotGc
-from tychora.retrieval.catalog import SnapshotCatalog
 from tychora.ports.execution import ExecutionContext
+from tychora.retrieval.catalog import SnapshotCatalog
 
 
 @pytest.fixture
