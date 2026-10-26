@@ -55,6 +55,7 @@ from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.code import CapturedSyntax, CodeRegistration
 from tychora.contracts.composition import DocumentCompositionPlan, VisionCapabilityGap
 from tychora.contracts.corpus import (
+    AllowedUsesOverride,
     CollectionRow,
     FacetRow,
     RevisionArtifactRow,
@@ -437,6 +438,28 @@ class SourceService:
             lambda: self._source_for_sync(source_id_value, scope), context
         )
         return await self._run("sync", source, scope, idempotency_key, context)
+
+    async def set_allowed_uses(
+        self,
+        source_id: str,
+        override: AllowedUsesOverride,
+        scope: RequestScope,
+        ctx: ExecutionContext,
+    ) -> None:
+        """Narrow the uses a source's revisions grant; ``None`` restores them."""
+        granted = self.owner.scope.narrow(scope)
+        if "manage" not in granted.capabilities:
+            raise TychoraError(
+                "FORBIDDEN_SCOPE",
+                "Changing allowed uses requires the manage capability",
+                reason="scope.capability_missing",
+            )
+        await self.owner.run_write(
+            lambda: self.owner.store.set_allowed_uses_override(
+                source_id, override, collection_ids=granted.collection_ids
+            ),
+            ctx,
+        )
 
     def _source_for_sync(
         self, source_id_value: str, scope: RequestScope

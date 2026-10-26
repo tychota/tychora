@@ -81,6 +81,7 @@ def _retained_heads(db, member) -> tuple[dict, dict, dict]:
         0
     ]
     source.pop("withdrawn_at")
+    source.pop("allowed_uses_override")
     source["registration_json"] = json.loads(source["registration_json"])
     revision = _rows(
         db, "SELECT * FROM revisions WHERE revision_id=?", (member.revision_id,)

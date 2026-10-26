@@ -94,8 +94,8 @@ its `context_level`.
 
 ## Workspaces created before this format
 
-Workspaces created before write-time structure (phase 3), including those
-created with current `main`, are refused on open with `PROFILE_INCOMPATIBLE`,
+Workspaces created before the query path (phase 4), including those created
+with write-time structure (phase 3) and with current `main`, are refused on open with `PROFILE_INCOMPATIBLE`,
 reason `workspace.format_old`. Recreate them from their retained originals:
 
 ```bash

@@ -1,16 +1,29 @@
 """Append-only policy observations with transactional workspace epochs."""
 
+import json
 import sqlite3
 from contextlib import contextmanager
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING, cast
 
 from tychora.adapters.files.assertions import iter_verified_assertions
-from tychora.adapters.sqlite.repositories import artifact_ref
-from tychora.contracts.corpus import ReviewTarget
+from tychora.adapters.sqlite.repositories import (
+    SqliteWorkspaceRepository,
+    artifact_ref,
+)
+from tychora.contracts.base import FrozenJsonMap
+from tychora.contracts.corpus import AllowedUsesOverride, ReviewTarget
 from tychora.contracts.errors import TychoraError
 from tychora.ports.artifacts import ArtifactReader
 
 from .validation import fail
+
+if TYPE_CHECKING:
+    from tychora.configuration.registry import Registry
+
+_TARGET_KINDS = {"revision_id": "revision", "unit_id": "unit", "asset_id": "asset"}
+_GENERATION_USE = "compose"
+_REFERENCE_USE = "lookup"
 
 
 def now() -> str:
@@ -20,6 +33,7 @@ def now() -> str:
 class PolicyRepository:
     db: sqlite3.Connection
     artifacts: ArtifactReader
+    registry: "Registry"
 
     @contextmanager
     def _write(self):
@@ -64,10 +78,10 @@ class PolicyRepository:
         return column, identifier, row
 
     def _bump(self, workspace_id: str) -> None:
-        self.db.execute(
-            "UPDATE workspaces SET policy_epoch=policy_epoch+1 WHERE workspace_id=?",
-            (workspace_id,),
-        )
+        workspace = SqliteWorkspaceRepository(self.db, writable=True)
+        if workspace.workspace_id() != workspace_id:
+            fail("Policy subject belongs to another workspace")
+        workspace.bump_policy_epoch()
 
     def review_state(self, target: ReviewTarget) -> str:
         column, identifier, (rid, _, _, declared) = self._subject(target)
@@ -76,11 +90,11 @@ class PolicyRepository:
             and self.review_state(ReviewTarget(revision_id=rid)) == "rejected"
         ):
             return "rejected"
-        event = self.db.execute(
-            f"SELECT state FROM review_events WHERE {column}=? ORDER BY review_event_id DESC LIMIT 1",
-            (identifier,),
+        current = self.db.execute(
+            "SELECT state FROM review_current WHERE target_kind=? AND target_id=?",
+            (_TARGET_KINDS[column], identifier),
         ).fetchone()
-        return event[0] if event else declared
+        return current[0] if current else declared
 
     def record_review(
         self,
@@ -114,10 +128,16 @@ class PolicyRepository:
                     else decided_at.astimezone(UTC).isoformat(),
                 ),
             )
-            self._bump(workspace)
             event_id = cursor.lastrowid
             if event_id is None:
                 fail("SQLite did not return the inserted policy event identity")
+            self.db.execute(
+                "INSERT INTO review_current(target_kind,target_id,state,review_event_id) "
+                "VALUES (?,?,?,?) ON CONFLICT(target_kind,target_id) DO UPDATE SET "
+                "state=excluded.state,review_event_id=excluded.review_event_id",
+                (_TARGET_KINDS[column], identifier, state, event_id),
+            )
+            self._bump(workspace)
             return event_id
 
     def raise_access_floor(self, target: ReviewTarget, rank: int) -> None:
@@ -151,6 +171,69 @@ class PolicyRepository:
                     (now(), source_id),
                 )
                 self._bump(row[0])
+
+    def set_allowed_uses_override(
+        self,
+        source_id: str,
+        override: AllowedUsesOverride,
+        *,
+        collection_ids: frozenset[str] | None = None,
+    ) -> None:
+        """Narrow the uses a source's revisions grant; ``None`` removes the override.
+
+        ``never_generate`` drops the generation use, ``reference_only`` keeps
+        lookup only, and a tuple keeps those uses. The stored value is the
+        narrowed list; eligibility intersects it with each revision's uses. A
+        source outside ``collection_ids``, when given, reads as absent.
+        """
+        with self._write():
+            row = self.db.execute(
+                "SELECT c.workspace_id,s.collection_id FROM sources s "
+                "JOIN collections c USING(collection_id) WHERE s.source_id=?",
+                (source_id,),
+            ).fetchone()
+            if row is None or (
+                collection_ids is not None and row[1] not in collection_ids
+            ):
+                raise TychoraError(
+                    "NOT_FOUND", "Source is unavailable", reason="source.absent"
+                )
+            stored = self._narrowed_uses(override)
+            self.db.execute(
+                "UPDATE sources SET allowed_uses_override=? WHERE source_id=?",
+                (
+                    None
+                    if stored is None
+                    else json.dumps(stored, separators=(",", ":")),
+                    source_id,
+                ),
+            )
+            self._bump(row[0])
+
+    def _narrowed_uses(self, override: AllowedUsesOverride) -> list[str] | None:
+        """The sorted uses an override keeps, or ``None`` for no override."""
+        known = self._known_uses()
+        if override is None:
+            return None
+        if override == "never_generate":
+            return sorted(known - {_GENERATION_USE})
+        if override == "reference_only":
+            return sorted(known & {_REFERENCE_USE})
+        if isinstance(override, tuple) and set(override) <= known:
+            return sorted(set(override))
+        raise TychoraError(
+            "INVALID_REQUEST",
+            "Allowed-use override names an unknown use",
+            reason="policy.use_unknown",
+        )
+
+    def _known_uses(self) -> frozenset[str]:
+        """Every use a mode of the active registry defines."""
+        return frozenset(
+            use
+            for mode in cast(dict[str, FrozenJsonMap], self.registry.modes).values()
+            for use in cast(tuple[str, ...], mode["allowed_uses"])
+        )
 
     def _assertion_owners(self, artifact_sha: str) -> frozenset[str]:
         rows = self.db.execute(

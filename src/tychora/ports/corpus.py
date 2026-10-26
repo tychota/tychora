@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Protocol
 
 from tychora.contracts.candidates import ChannelCandidates
-from tychora.contracts.corpus import ExtractionBundle, ReviewTarget
+from tychora.contracts.corpus import AllowedUsesOverride, ExtractionBundle, ReviewTarget
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.graph import EligibilityView
 from tychora.contracts.indexing import RepresentationFacts
@@ -23,6 +23,16 @@ class CorpusStore(Protocol):
         *,
         decided_at: datetime | None = None,
     ) -> int: ...
+    def set_allowed_uses_override(
+        self,
+        source_id: str,
+        override: AllowedUsesOverride,
+        *,
+        collection_ids: frozenset[str] | None = None,
+    ) -> None:
+        """Store a source's narrowed uses and bump the policy epoch in one transaction."""
+        ...
+
     def record_assertion_decision(
         self,
         assertion_id: str,

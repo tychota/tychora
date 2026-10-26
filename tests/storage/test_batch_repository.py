@@ -89,6 +89,7 @@ def test_write_vectors_is_idempotent_and_refuses_a_different_row(seeded_batch):
         record_id="r" * 64,
         chunk_id=entries[0],
         asset_id=None,
+        group_id="g" * 64,
         input_sha="a" * 64,
         row_index=0,
     )
@@ -220,6 +221,7 @@ def test_rows_for_an_unknown_batch_are_refused(seeded_batch, write):
                         record_id="r" * 64,
                         chunk_id=entries[0],
                         asset_id=None,
+                        group_id="g" * 64,
                         input_sha="a" * 64,
                         row_index=0,
                     ),
@@ -302,6 +304,7 @@ def test_rows_for_a_ready_batch_are_refused(seeded_batch, write):
                         record_id="r" * 64,
                         chunk_id=entries[0],
                         asset_id=None,
+                        group_id="g" * 64,
                         input_sha="a" * 64,
                         row_index=0,
                     ),

@@ -293,7 +293,7 @@ async def test_proxy_upload_requires_all_registered_dependencies(tmp_path, case)
                         (owner.workspace_id,),
                     )
                     owner.db.execute(
-                        "INSERT INTO sources SELECT 'hidden-source','hidden','hidden.md',source_type,registration_json,0,NULL,created_at FROM sources LIMIT 1"
+                        "INSERT INTO sources SELECT 'hidden-source','hidden','hidden.md',source_type,registration_json,0,NULL,NULL,created_at FROM sources LIMIT 1"
                     )
                     owner.db.execute(
                         "INSERT INTO revisions SELECT 'hidden-revision','hidden-source',kind_id,original_sha,edition_key,metadata_sha,title,published_on,effective_from,effective_until,access_rank,declared_review_state,allowed_uses_json,metadata_json,captured_at FROM revisions LIMIT 1"

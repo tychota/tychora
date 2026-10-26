@@ -30,7 +30,7 @@ def test_canonical_schema_integrity(tmp_path):
         r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='view'")
     }
     assert views == {"snapshot_members", "snapshot_batches"}
-    assert len({n for n in names if not n.startswith("lexical_fts")}) == 44
+    assert len({n for n in names if not n.startswith("lexical_fts")}) == 45
     assert "lexical_fts" in names
     assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
@@ -503,6 +503,7 @@ MAIN_FORMAT_TWO_CHECKSUMS = (
     "9190a384d3d9588241a481fe2eb20eff1b9013d338a61ecfb6e5743dabdbf214",  # 7047fb9
     "793f03cc454083123ce003d41294a389723fc82ba9e0deab0638cd04e8cce404",  # 482452c
     "2415f138aa1778f80ea655acaf59eeaf7d7c7dc28fa3d983d78222875127c4f1",  # 61902c1
+    "be4274cd06d8e3fd0e9d566d99e6b78b7ac7c2a0dadb1e1677c2b671d8e32166",  # 4224cc1
 )
 
 

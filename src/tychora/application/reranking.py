@@ -52,6 +52,9 @@ if TYPE_CHECKING:
     from tychora.retrieval.eligibility import EligibilityAttempt
     from tychora.retrieval.rerank import RerankFacts
 
+# Representation columns only: withdrawal and use overrides are policy state.
+_SOURCE_COLUMNS = ",".join(SourceRow.model_fields)
+
 
 @dataclass(slots=True)
 class RetainedReadBudget:
@@ -142,7 +145,7 @@ def load_retained_representation(
         )
         source_raw = _one(
             db,
-            "SELECT * FROM sources WHERE source_id=?",
+            f"SELECT {_SOURCE_COLUMNS} FROM sources WHERE source_id=?",
             revision_raw["source_id"],
             budget,
             ctx,
@@ -266,7 +269,6 @@ def load_retained_representation(
             row["citable"] = bool(row["citable"])
             row["locators"] = locators_by_unit.get(row["unit_id"], [])
             units.append(EvidenceUnit.model_validate_json(canonical_bytes(row)))
-        source_raw.pop("withdrawn_at")
         source_raw["registration_json"] = json.loads(source_raw["registration_json"])
         revision_raw["allowed_uses_json"] = json.loads(
             revision_raw["allowed_uses_json"]

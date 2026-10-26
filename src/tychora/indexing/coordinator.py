@@ -645,6 +645,7 @@ class ProjectionCoordinator:
                 record_id=b.record_id,
                 chunk_id=b.chunk_id,
                 asset_id=b.asset_id,
+                group_id=b.group_id,
                 input_sha=b.input_sha,
                 row_index=b.row_index,
             )

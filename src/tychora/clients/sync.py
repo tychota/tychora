@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
 from tychora.api import LocalWorkspace
+from tychora.contracts.corpus import AllowedUsesOverride
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.operations import (
     DiscoverRequest,
@@ -70,6 +71,16 @@ class _Sources:
         """Capture a registered source again and ingest what changed; returns the job handle."""
         ws = self.kb._open()
         return ws.services.source_jobs.sync(source_id, ws.scope, idempotency_key)
+
+    @_admitted
+    def set_allowed_uses(self, source_id: str, override: AllowedUsesOverride) -> None:
+        """Narrow the uses a source grants (``never_generate``, ``reference_only`` or a use list)."""
+        ws = self.kb._open()
+        ws.bridge.call(
+            ws.services.source_jobs.sources.set_allowed_uses(
+                source_id, override, ws.scope, _context()
+            )
+        )
 
     @_admitted
     def revisions(self, source_id: str, *, cursor: str | None = None, limit: int = 20):
