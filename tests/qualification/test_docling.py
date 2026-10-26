@@ -31,9 +31,7 @@ def test_real_docling_retains_document_and_locators(
     assert bundle.assets
     assert len(bundle.units) == len(artifact.units)
     owner = execution.owner
-    owner.run_blocking_sync(
-        lambda: owner.store.commit_extraction(bundle), execution.ctx
-    )
+    owner.run_write_sync(lambda: owner.store.commit_extraction(bundle), execution.ctx)
 
     from tychora.adapters.files.references import required_refs
     from tychora.ingestion.documents import replay_document
@@ -42,10 +40,10 @@ def test_real_docling_retains_document_and_locators(
         with owner.artifacts.open_verified(ref) as stream:
             return stream.read()
 
-    manifest = owner.run_blocking_sync(
+    manifest = owner.run_write_sync(
         lambda: retained_bytes(artifact.raw_document_ref), execution.ctx
     )
-    document = owner.run_blocking_sync(
+    document = owner.run_write_sync(
         lambda: retained_bytes(artifact.docling_json_ref), execution.ctx
     )
     replayed = replay_document(manifest, document, artifact.raw_document_ref)

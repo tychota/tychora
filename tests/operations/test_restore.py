@@ -95,7 +95,7 @@ def test_deep_health_verifies_retained_original_payload_bytes(tmp_path):
             owner.db.commit()
             return ref
 
-        ref = owner.run_blocking_sync(register, ExecutionContext())
+        ref = owner.run_write_sync(register, ExecutionContext())
         (owner.path / "artifacts" / ref.sha256).write_bytes(b"tampered")
         assert (
             client.management.run(
@@ -188,7 +188,7 @@ def test_restore_preserves_identity_and_marks_native_pending(tmp_path):
             owner.db.commit()
             return original
 
-        original = owner.run_blocking_sync(seed, ExecutionContext())
+        original = owner.run_write_sync(seed, ExecutionContext())
         workspace_id = owner.workspace_id
         BackupService(owner).export(backup, scope, ctx=ExecutionContext())
     receipt = RestoreService(config=config).import_backup(
@@ -255,7 +255,7 @@ def test_restored_pending_deletion_is_suspended_before_owner_reconciliation(tmp_
             owner.db.commit()
             return ref
 
-        ref = owner.run_blocking_sync(seed, ExecutionContext())
+        ref = owner.run_write_sync(seed, ExecutionContext())
         with owner.artifacts.pin_payloads(frozenset({ref.sha256})):
             BackupService(owner).export(backup, scope, ctx=ExecutionContext())
     RestoreService(config=config).import_backup(
@@ -272,7 +272,7 @@ def test_restored_pending_deletion_is_suspended_before_owner_reconciliation(tmp_
             )
             return RemovalService(owner, jobs).reconcile_pending_deletions()
 
-        owner.run_blocking_sync(reconcile, ExecutionContext())
+        owner.run_write_sync(reconcile, ExecutionContext())
         BackupService(owner).export(
             tmp_path / "backup-while-suspended", scope, ctx=ExecutionContext()
         )
@@ -410,7 +410,7 @@ def test_local_owner_restore_factory_needs_no_source_or_control_workspace(tmp_pa
     )
     source = tmp_path / "source"
     with WorkspaceOwner.open(source, config, scope) as owner:
-        owner.run_blocking_sync(
+        owner.run_write_sync(
             lambda: owner.db.execute(
                 "INSERT INTO collections (collection_id,workspace_id,slug,title,policy_json) VALUES (?,?,?,?,?)",
                 (collection_id, owner.workspace_id, "custom", "Custom", "{}"),
@@ -533,20 +533,20 @@ def test_restore_loads_verified_active_snapshot_profile_without_settings(tmp_pat
     with Tychora.open(source, config=config, token_counter=Counter()) as kb:
         job = kb.sources.add(source_input, idempotency_key="retained-key")
         assert kb.jobs.wait(job.id).state == "succeeded"
-        original_sha = kb._workspace.owner.run_blocking_sync(
+        original_sha = kb._workspace.owner.run_write_sync(
             lambda: kb._workspace.owner.db.execute(
                 "SELECT original_sha FROM revisions"
             ).fetchone()[0],
             ExecutionContext(),
         )
-        kb._workspace.owner.run_blocking_sync(
+        kb._workspace.owner.run_write_sync(
             lambda: kb._workspace.services.jobs.repository.expire_diagnostics(
                 datetime.now(UTC) + timedelta(days=1)
             ),
             ExecutionContext(),
         )
         assert (
-            kb._workspace.owner.run_blocking_sync(
+            kb._workspace.owner.run_write_sync(
                 lambda: kb._workspace.owner.db.execute(
                     "SELECT COUNT(*) FROM job_events WHERE job_id=?", (job.id,)
                 ).fetchone()[0],
@@ -800,7 +800,7 @@ def test_archived_v2_collection_and_active_v1_survive_backup_restore(tmp_path):
             )
             ws.owner.db.commit()
 
-        ws.bridge.call(ws.owner.run_blocking(grant_retained_policy, ExecutionContext()))
+        ws.bridge.call(ws.owner.run_write(grant_retained_policy, ExecutionContext()))
         BackupService(ws.owner).export(
             tmp_path / "backup", kb.scope, ctx=ExecutionContext()
         )

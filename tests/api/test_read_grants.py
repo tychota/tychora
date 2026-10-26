@@ -117,7 +117,7 @@ def test_retained_citation_after_same_edition_refresh(tmp_path):
         before = kb.evidence.get(uid)
         assert before.evidence is not None
         xid = before.evidence.extraction_id
-        rid = kb._workspace.owner.run_blocking_sync(
+        rid = kb._workspace.owner.run_write_sync(
             lambda: kb._workspace.owner.db.execute(
                 "SELECT revision_id FROM extractions WHERE extraction_id=?", (xid,)
             ).fetchone()[0],
@@ -133,7 +133,7 @@ def test_retained_citation_after_same_edition_refresh(tmp_path):
         )
         # Retention must not rely on old published membership rows.
         owner = kb._workspace.owner
-        owner.run_blocking_sync(
+        owner.run_write_sync(
             lambda: owner.db.execute(
                 "DELETE FROM page_members WHERE extraction_id=?", (xid,)
             ),
@@ -146,7 +146,7 @@ def test_retained_citation_after_same_edition_refresh(tmp_path):
         )
         assert kb.inspect({"subject": "diagnostics", "id": xid}).records
 
-        owner.run_blocking_sync(
+        owner.run_write_sync(
             lambda: owner.db.execute(
                 "INSERT INTO review_events(unit_id,state,actor_id,created_at) VALUES (?,'rejected','reviewer','2026-01-01T00:00:00Z')",
                 (uid,),
@@ -159,7 +159,7 @@ def test_retained_citation_after_same_edition_refresh(tmp_path):
         with pytest.raises(TychoraError) as rejected_original:
             kb.inspect({"subject": "revisions", "id": rid, "original": True})
         assert rejected_original.value.code == "FORBIDDEN_SCOPE"
-        owner.run_blocking_sync(
+        owner.run_write_sync(
             lambda: owner.db.execute(
                 "UPDATE sources SET withdrawn_at='2026-01-01T00:00:00Z'"
             ),

@@ -57,7 +57,7 @@ class VoyageTextQueryProvider:
         def authorize_query(
             authorization: QueryUploadAuthorization, execution: ExecutionContext
         ) -> None:
-            owner.run_blocking_sync(
+            owner.run_write_sync(
                 lambda: owner.upload_policy.authorize_query(
                     scope, self.capabilities.provider, authorization
                 ),

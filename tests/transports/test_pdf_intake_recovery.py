@@ -40,7 +40,7 @@ async def test_receive_rejects_expiry_between_chunks(tmp_path, next_chunk):
                 record["expires"] = time.time() - 1
                 service._write(record)
 
-            await kb._workspace.owner.run_blocking(expire, ExecutionContext())
+            await kb._workspace.owner.run_write(expire, ExecutionContext())
             yield next_chunk
             pytest.fail("Expired upload consumed another frame")
 

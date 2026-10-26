@@ -62,7 +62,7 @@ async def _published(tmp_path: Path, before_add=None):
         uses=frozenset({"lookup", "compose"}),
     )
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,?)",
                 (
@@ -104,7 +104,7 @@ async def _published(tmp_path: Path, before_add=None):
             ),
             scope,
         )
-        uid = await owner.run_blocking(
+        uid = await owner.run_write(
             lambda: owner.db.execute(
                 "SELECT unit_id FROM evidence_units ORDER BY ordinal LIMIT 1"
             ).fetchone()[0],
@@ -200,7 +200,7 @@ async def test_native_overlap_denies_child_slice_and_allows_disjoint_parent_rang
             "VALUES ('rejected-child','rejected','reviewer','2026-01-01T00:00:00Z')"
         )
 
-    await owner.run_blocking(add_rejected_child, ExecutionContext())
+    await owner.run_write(add_rejected_child, ExecutionContext())
     service = InspectionService(owner)
     with pytest.raises(TychoraError) as denied:
         await service.inspect(
@@ -320,7 +320,7 @@ async def test_retained_docling_source_parts_denies_rejected_child_overlap(publi
             "VALUES ('doc-child','rejected','reviewer','2026-01-01T00:00:00Z')"
         )
 
-    await owner.run_blocking(install_parts, ExecutionContext())
+    await owner.run_write(install_parts, ExecutionContext())
     service = InspectionService(owner)
     with pytest.raises(TychoraError) as denied:
         await service.inspect(
@@ -573,7 +573,7 @@ async def test_ready_native_relation_inspection_stops_at_100_edges(
 @pytest.mark.asyncio
 async def test_removed_original_binding_blocks_read_even_while_hash_exists(published):
     owner, scope, _ = published
-    revision, sha, job = await owner.run_blocking(
+    revision, sha, job = await owner.run_write(
         lambda: owner.db.execute(
             "SELECT r.revision_id,r.original_sha,j.job_id FROM revisions r CROSS JOIN jobs j LIMIT 1"
         ).fetchone(),
@@ -584,7 +584,7 @@ async def test_removed_original_binding_blocks_read_even_while_hash_exists(publi
     assert (
         await service.inspect(request, scope, ExecutionContext())
     ).payload == b"Exact source evidence."
-    await owner.run_blocking(
+    await owner.run_write(
         lambda: owner.db.execute(
             "INSERT INTO original_payload_tombstones VALUES (?,?,?,?)",
             (revision, sha, job, "2026-01-01T00:00:00Z"),
@@ -668,9 +668,7 @@ async def test_registered_zero_text_asset_and_unregistered_paths(published, hist
         )
         return payload, revision, ref.sha256
 
-    payload, revision, sha = await owner.run_blocking(
-        register_image, ExecutionContext()
-    )
+    payload, revision, sha = await owner.run_write(register_image, ExecutionContext())
     if historical:
         service = SourceService(
             owner,
@@ -725,7 +723,7 @@ async def test_registered_zero_text_asset_and_unregistered_paths(published, hist
         ExecutionContext(),
     )
     assert original.payload == b"Exact source evidence."
-    await owner.run_blocking(
+    await owner.run_write(
         lambda: owner.db.execute(
             "INSERT INTO original_payload_tombstones VALUES (?,?,?,?)",
             (
@@ -749,13 +747,13 @@ async def test_registered_zero_text_asset_and_unregistered_paths(published, hist
 @pytest.mark.asyncio
 async def test_full_original_cannot_expose_rejected_source_unit(published):
     owner, scope, uid = published
-    revision = await owner.run_blocking(
+    revision = await owner.run_write(
         lambda: owner.db.execute(
             "SELECT revision_id FROM revisions LIMIT 1"
         ).fetchone()[0],
         ExecutionContext(),
     )
-    await owner.run_blocking(
+    await owner.run_write(
         lambda: owner.db.execute(
             "INSERT INTO review_events(unit_id,state,actor_id,created_at) VALUES (?,'rejected','reviewer','2026-01-01T00:00:00Z')",
             (uid,),
@@ -840,7 +838,7 @@ async def test_source_discovery_preserves_unextracted_source_and_revision_stages
             "created_at FROM extractions LIMIT 1"
         )
 
-    await owner.run_blocking(stage, ExecutionContext())
+    await owner.run_write(stage, ExecutionContext())
     discovery = DiscoveryService(owner.config, owner.store.registry, owner)
     result = await asyncio.to_thread(
         discovery.discover,
@@ -886,7 +884,7 @@ async def test_source_discovery_preserves_unextracted_source_and_revision_stages
 @pytest.mark.asyncio(loop_scope="module")
 async def test_job_inspection_uses_durable_authorization(published_shared):
     owner, scope, _ = published_shared
-    job = await owner.run_blocking(
+    job = await owner.run_write(
         lambda: owner.db.execute("SELECT job_id FROM jobs LIMIT 1").fetchone()[0],
         ExecutionContext(),
     )
@@ -930,7 +928,7 @@ async def test_metadata_only_run_remains_inspectable_without_replay(published):
             ),
         )
 
-    await owner.run_blocking(insert_run, ExecutionContext())
+    await owner.run_write(insert_run, ExecutionContext())
     result = await InspectionService(owner).inspect(
         InspectRequest(subject="runs", id="run-inspect"), scope, ExecutionContext()
     )
@@ -962,7 +960,7 @@ async def test_metadata_only_run_remains_inspectable_without_replay(published):
 @pytest.mark.asyncio(loop_scope="module")
 async def test_diagnostic_summary_is_scope_limited(published_shared):
     owner, scope, _ = published_shared
-    extraction = await owner.run_blocking(
+    extraction = await owner.run_write(
         lambda: owner.db.execute(
             "SELECT extraction_id FROM extractions LIMIT 1"
         ).fetchone()[0],

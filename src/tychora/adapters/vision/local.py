@@ -168,7 +168,7 @@ class LocalOcrProvider:
                 BytesIO(region.image), region.media_type
             )
 
-        image_ref = self.owner.run_blocking_sync(retain_region, ctx)
+        image_ref = self.owner.run_write_sync(retain_region, ctx)
         if image_ref != region.image_ref:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Local OCR region differs from retained artifact"

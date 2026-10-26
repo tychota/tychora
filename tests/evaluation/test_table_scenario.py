@@ -137,7 +137,7 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
     )
     with WorkspaceOwner.open(tmp_path / "workspace", config, scope) as owner:
         context = ExecutionContext()
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) "
                 'VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
@@ -148,7 +148,7 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
         metadata = FrozenJsonMap(
             {"title": "Synthetic table", "publisher": "Example", "edition": "1"}
         )
-        captured = await owner.run_blocking(
+        captured = await owner.run_write(
             lambda: Acquirer(owner.artifacts, config).capture(
                 SourceInput.from_mapping(
                     {
@@ -166,7 +166,7 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
         )
         sid = source_id(UUID(COLLECTION), "split.pdf")
         metadata_sha = digest("metadata-v1", metadata)
-        created_at = await owner.run_blocking(
+        created_at = await owner.run_write(
             lambda: owner.db.execute("SELECT created_at FROM workspaces").fetchone()[0],
             context,
         )
@@ -249,7 +249,7 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
         assert isinstance(kind, FrozenJsonMap)
         parser = DoclingParser(owner, registration, tmp_path)
         encoded = canonical_bytes(export)
-        parsed = await owner.run_blocking(
+        parsed = await owner.run_write(
             lambda: parser._retain(
                 (
                     (
@@ -265,7 +265,7 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
             ),
             context,
         )
-        result = await owner.run_blocking(
+        result = await owner.run_write(
             lambda: compose_document(
                 parsed,
                 registry,
@@ -285,7 +285,7 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
         assert (
             result.assertions and result.assertions[0].predicate == "continues_table@1"
         )
-        config_ref = await owner.run_blocking(
+        config_ref = await owner.run_write(
             lambda: owner.artifacts.put_stream(
                 io.BytesIO(
                     canonical_bytes(
@@ -318,7 +318,7 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
             )
             return owner.store.publish_snapshot(plan)
 
-        snapshot_id = await owner.run_blocking(publish, context)
+        snapshot_id = await owner.run_write(publish, context)
         query = QueryService(owner, output_counter=SyntheticCounter())
         delivered = await query.search(
             QueryRequest.from_mapping(
@@ -353,7 +353,7 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
             for segment in delivered.result.segments
             for unit_id in segment.matched_unit_ids
         }
-        lexical_hits = await owner.run_blocking(
+        lexical_hits = await owner.run_write(
             lambda: {
                 unit_id
                 for (unit_id,) in owner.db.execute(
@@ -388,7 +388,7 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
             for locator in citation.locators
             if locator.type == "document"
         )
-        verified = await owner.run_blocking(
+        verified = await owner.run_write(
             lambda: verify_result_locators(owner, delivered.result), context
         )
         assert verified.valid == verified.total and verified.total > 0
@@ -427,7 +427,7 @@ async def test_parser_shaped_split_table_composes_without_model_download(tmp_pat
                 "case_count": 1,
             }
         )
-        jobs = await owner.run_blocking(
+        jobs = await owner.run_write(
             lambda: JobRepository(
                 owner.db, artifacts=owner.artifacts, workspace_id=owner.workspace_id
             ),

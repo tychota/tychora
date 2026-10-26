@@ -32,7 +32,7 @@ def _footprint(kb, snapshot_id=None):
             owner.db, snapshot_id or owner.store.active_snapshot_id()
         )
 
-    return owner.run_blocking_sync(read, ExecutionContext())
+    return owner.run_write_sync(read, ExecutionContext())
 
 
 def test_footprint_counts_root_and_new_page(tmp_path):

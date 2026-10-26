@@ -200,7 +200,7 @@ def register_routes(app: FastAPI) -> None:
         return JSONResponse(
             {
                 "managed_workspace_owner": request.state.managed_workspace_owner,
-                "policy_epoch": await owner.run_blocking(
+                "policy_epoch": await owner.run_write(
                     owner.policy_epoch, ExecutionContext()
                 ),
                 "schema_version": "1",

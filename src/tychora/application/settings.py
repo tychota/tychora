@@ -99,7 +99,7 @@ class SettingsService:
         owner = self.owner
         from .workspace_authority import authorize_workspace
 
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: authorize_workspace(owner, scope), ExecutionContext()
         )
         await self.runtime.aclose_retired()
@@ -198,7 +198,7 @@ class SettingsService:
                     owner.config, owner.store = previous_config, previous_store
                 return store, prepared
 
-            store, candidate_services = await owner.run_blocking(
+            store, candidate_services = await owner.run_write(
                 prepare, ExecutionContext()
             )
             if not await previous_services.source_jobs.is_idle_async():
@@ -221,7 +221,7 @@ class SettingsService:
                     )
                     owner.db.commit()
 
-                await owner.run_blocking(bump, ExecutionContext())
+                await owner.run_write(bump, ExecutionContext())
             os.replace(candidate_path, path)
             replaced = True
             directory_fd = os.open(owner.path, os.O_RDONLY | os.O_DIRECTORY)
@@ -234,7 +234,7 @@ class SettingsService:
             from .workspace_authority import refresh_managed_owner
 
             if not await _complete_committed(
-                owner.run_blocking(
+                owner.run_write(
                     lambda: refresh_managed_owner(owner), ExecutionContext()
                 )
             ):
@@ -268,7 +268,7 @@ class SettingsService:
                     policy = resolve_graph_traversal_policy(
                         owner.config, Registry.from_config(owner.config)
                     )
-                    await owner.run_blocking(
+                    await owner.run_write(
                         lambda: graph.set_traversal_policy(policy), ExecutionContext()
                     )
             if replaced and self.runtime.services is not candidate_services:

@@ -82,7 +82,7 @@ def test_code_gold_set_runs_offline_with_valid_locators(tmp_path):
                 "WHERE sr.record_type='code_symbol'"
             ).fetchall()
 
-        rows = kb._workspace.bridge.call(owner.run_blocking(labels, ExecutionContext()))
+        rows = kb._workspace.bridge.call(owner.run_write(labels, ExecutionContext()))
         source_id, revision_id = rows[0][:2]
         definitions: dict[tuple[str, str], list[str]] = {}
         for _, _, data in rows:
@@ -98,7 +98,7 @@ def test_code_gold_set_runs_offline_with_valid_locators(tmp_path):
         write_dataset(tmp_path / "gold", cases)
         kb.evaluations.register_dataset(tmp_path / "gold")
         snapshot = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.store.resolve_snapshot(None), ExecutionContext()
             )
         )

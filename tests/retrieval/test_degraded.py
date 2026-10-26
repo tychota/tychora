@@ -331,7 +331,7 @@ async def _owner_case(tmp_path: Path, *, upload: bool = True):
             ).fetchone()[0]
             return tuple(bundles), epoch
 
-        bundles, epoch = await owner.run_blocking(install, ExecutionContext())
+        bundles, epoch = await owner.run_write(install, ExecutionContext())
         candidates = tuple(
             FusedCandidate(
                 ("unit", bundle.units[0].unit_id),

@@ -268,7 +268,7 @@ def test_multimodal_accounting_requires_explicit_verified_bundle(tmp_path):
 @pytest.mark.asyncio
 async def test_visual_input_contains_exact_pixels_and_context(visual_case):
     owner, scope = visual_case
-    bundle, asset, ref, image = await owner.run_blocking(
+    bundle, asset, ref, image = await owner.run_write(
         lambda: _install(owner), ExecutionContext()
     )
     item = _descriptor(bundle, asset, ref, image)
@@ -306,7 +306,7 @@ async def test_visual_input_contains_exact_pixels_and_context(visual_case):
 @pytest.mark.asyncio
 async def test_image_only_query_and_text_query_share_visual_space(visual_case):
     owner, scope = visual_case
-    bundle, asset, ref, image = await owner.run_blocking(
+    bundle, asset, ref, image = await owner.run_write(
         lambda: _install(owner), ExecutionContext()
     )
     item = _descriptor(bundle, asset, ref, image, context="")
@@ -336,7 +336,7 @@ async def test_image_only_query_and_text_query_share_visual_space(visual_case):
 @pytest.mark.asyncio
 async def test_forged_descriptor_and_omitted_caption_dependency_are_denied(visual_case):
     owner, scope = visual_case
-    bundle, asset, ref, image = await owner.run_blocking(
+    bundle, asset, ref, image = await owner.run_write(
         lambda: _install(owner, separate_caption=True), ExecutionContext()
     )
     transport = RecordingRawTransport()
@@ -378,7 +378,7 @@ async def test_forged_descriptor_and_omitted_caption_dependency_are_denied(visua
 @pytest.mark.asyncio
 async def test_complete_smaller_batches_preserve_order_and_request_count(visual_case):
     owner, scope = visual_case
-    bundle, asset, ref, image = await owner.run_blocking(
+    bundle, asset, ref, image = await owner.run_write(
         lambda: _install(owner), ExecutionContext()
     )
     captioned = _descriptor(bundle, asset, ref, image)
@@ -401,7 +401,7 @@ async def test_cached_hit_checks_current_visibility_and_offline_miss_is_denied(
     visual_case,
 ):
     owner, scope = visual_case
-    bundle, asset, ref, image = await owner.run_blocking(
+    bundle, asset, ref, image = await owner.run_write(
         lambda: _install(owner), ExecutionContext()
     )
     item = _descriptor(bundle, asset, ref, image)
@@ -423,7 +423,7 @@ async def test_cached_hit_checks_current_visibility_and_offline_miss_is_denied(
     assert missing.value.code == "FORBIDDEN_SCOPE"
     assert len(transport.calls) == 1
 
-    await owner.run_blocking(
+    await owner.run_write(
         lambda: owner.db.execute(
             "UPDATE collections SET access_floor=3 WHERE collection_id=?",
             (COLLECTION,),
@@ -439,13 +439,13 @@ async def test_cached_hit_checks_current_visibility_and_offline_miss_is_denied(
 @pytest.mark.asyncio
 async def test_retry_checks_policy_epoch_before_second_wire_attempt(visual_case):
     owner, scope = visual_case
-    await owner.run_blocking(lambda: _install(owner), ExecutionContext())
+    await owner.run_write(lambda: _install(owner), ExecutionContext())
     transport = RecordingRawTransport()
     transport.responses.append(RawVoyageResponse(503, b'{"error":"synthetic"}'))
     provider, ctx = await _provider(owner, scope, transport)
 
     def advance_epoch(_attempt):
-        owner.run_blocking_sync(
+        owner.run_write_sync(
             lambda: owner.db.execute(
                 "UPDATE workspaces SET policy_epoch=1 WHERE workspace_id=?",
                 (owner.workspace_id,),
@@ -477,7 +477,7 @@ async def test_raw_response_mapping_rejects_invalid_index_dimension_or_values(
     visual_case, response
 ):
     owner, scope = visual_case
-    await owner.run_blocking(lambda: _install(owner), ExecutionContext())
+    await owner.run_write(lambda: _install(owner), ExecutionContext())
     transport = RecordingRawTransport()
     transport.responses.append(RawVoyageResponse(200, json.dumps(response).encode()))
     provider, ctx = await _provider(owner, scope, transport)
@@ -496,7 +496,7 @@ async def test_oversized_declared_source_geometry_fails_before_decode(
     from PIL import PngImagePlugin
 
     owner, scope = visual_case
-    bundle, asset, ref, image = await owner.run_blocking(
+    bundle, asset, ref, image = await owner.run_write(
         lambda: _install(owner), ExecutionContext()
     )
     item = _descriptor(bundle, asset, ref, image)
@@ -529,7 +529,7 @@ async def test_oversized_declared_source_geometry_fails_before_decode(
 @pytest.mark.asyncio
 async def test_mismatched_pixel_hash_and_missing_source_link_cannot_upload(visual_case):
     owner, scope = visual_case
-    bundle, asset, ref, image = await owner.run_blocking(
+    bundle, asset, ref, image = await owner.run_write(
         lambda: _install(owner), ExecutionContext()
     )
     transport = RecordingRawTransport()
@@ -551,7 +551,7 @@ async def test_mismatched_pixel_hash_and_missing_source_link_cannot_upload(visua
     assert pixels.value.code == "INTEGRITY_ERROR"
     assert transport.calls == []
 
-    await owner.run_blocking(
+    await owner.run_write(
         lambda: owner.db.execute(
             "DELETE FROM unit_assets WHERE asset_id=? AND role='source'",
             (asset.asset_id,),
@@ -567,7 +567,7 @@ async def test_mismatched_pixel_hash_and_missing_source_link_cannot_upload(visua
 @pytest.mark.asyncio
 async def test_model_copy_cannot_forge_visual_input_identity(visual_case):
     owner, scope = visual_case
-    bundle, asset, ref, image = await owner.run_blocking(
+    bundle, asset, ref, image = await owner.run_write(
         lambda: _install(owner), ExecutionContext()
     )
     item = _descriptor(bundle, asset, ref, image)
@@ -587,7 +587,7 @@ async def test_model_copy_cannot_forge_visual_input_identity(visual_case):
 @pytest.mark.asyncio
 async def test_recomputed_visual_input_with_modified_locator_is_denied(visual_case):
     owner, scope = visual_case
-    bundle, asset, ref, image = await owner.run_blocking(
+    bundle, asset, ref, image = await owner.run_write(
         lambda: _install(owner), ExecutionContext()
     )
     item = _descriptor(bundle, asset, ref, image)
@@ -618,7 +618,7 @@ async def test_recomputed_visual_input_with_modified_locator_is_denied(visual_ca
 @pytest.mark.asyncio
 async def test_explicit_lanczos_resize_sends_recorded_pixels(visual_case):
     owner, scope = visual_case
-    bundle, asset, ref, image = await owner.run_blocking(
+    bundle, asset, ref, image = await owner.run_write(
         lambda: _install(owner), ExecutionContext()
     )
     with Image.open(BytesIO(image)) as opened:
@@ -654,10 +654,10 @@ async def test_explicit_lanczos_resize_sends_recorded_pixels(visual_case):
 @pytest.mark.asyncio
 async def test_missing_collection_upload_grant_blocks_miss(visual_case):
     owner, scope = visual_case
-    await owner.run_blocking(lambda: _install(owner), ExecutionContext())
+    await owner.run_write(lambda: _install(owner), ExecutionContext())
     transport = RecordingRawTransport()
     provider, ctx = await _provider(owner, scope, transport)
-    await owner.run_blocking(
+    await owner.run_write(
         lambda: owner.db.execute(
             "UPDATE collections SET policy_json=? WHERE collection_id=?",
             ('{"schema_version":1,"upload_providers":[]}', COLLECTION),
@@ -675,7 +675,7 @@ async def test_missing_collection_upload_grant_blocks_miss(visual_case):
 @pytest.mark.asyncio
 async def test_query_wire_hash_is_authorized_at_actual_attempt(visual_case):
     owner, scope = visual_case
-    await owner.run_blocking(lambda: _install(owner), ExecutionContext())
+    await owner.run_write(lambda: _install(owner), ExecutionContext())
     transport = RecordingRawTransport()
     provider, ctx = await _provider(owner, scope, transport)
     actual = owner.upload_policy.authorize_query
@@ -703,7 +703,7 @@ async def test_query_wire_hash_is_authorized_at_actual_attempt(visual_case):
 @pytest.mark.asyncio
 async def test_three_query_misses_observe_two_worker_provider_lane(visual_case):
     owner, scope = visual_case
-    await owner.run_blocking(lambda: _install(owner), ExecutionContext())
+    await owner.run_write(lambda: _install(owner), ExecutionContext())
     entered = []
     lock = Lock()
     two_entered = Event()

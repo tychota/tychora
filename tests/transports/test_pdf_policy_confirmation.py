@@ -244,7 +244,7 @@ async def test_pdf_composition_limit_is_durable_nonretryable_job_failure(
                 "LIMIT_EXCEEDED" if fault == "limit" else "INTEGRITY_ERROR"
             )
             assert status.captured_inputs is not None
-            retry_class = await kb._workspace.owner.run_blocking(
+            retry_class = await kb._workspace.owner.run_write(
                 lambda: kb._workspace.owner.db.execute(
                     "SELECT state FROM job_steps WHERE job_id=? AND step_key='__tychora__/retry'",
                     (status.id,),

@@ -72,8 +72,12 @@ from .collection_policy import require_active_collection
 from .consent import enabled_upload_providers, parse_upload_policy
 from .leases import LeaseSet
 from .runtime import (
+    CPU_THREAD_PREFIX,
+    CPU_WORKERS,
     BoundedWorker,
     ParserExecutionLimits,
+    Priority,
+    PriorityWorker,
     RuntimeIdentity,
     ServiceRuntime,
     drain_result,
@@ -125,7 +129,10 @@ class WorkspaceOwner:
         self._managed_scope_listeners = []
         self.leases = LeaseSet()
         self.comparison_admission = ComparisonAdmission()
-        self._worker = BoundedWorker()
+        self._worker = PriorityWorker()
+        self._cpu = BoundedWorker(
+            workers=CPU_WORKERS, queued=64, name=CPU_THREAD_PREFIX
+        )
         self._runtime = RuntimeIdentity(self.path)
         self.service_runtime: ServiceRuntime | None = None
         self.pdf_intakes: PdfIntakeService | None = None
@@ -156,6 +163,7 @@ class WorkspaceOwner:
                 with owner._admission:
                     owner._closing = True
                     owner._worker.stop_admission()
+                    owner._cpu.stop_admission()
                     owner._parsers.stop_admission()
                     for lane in owner._providers.values():
                         lane.stop_admission()
@@ -163,6 +171,7 @@ class WorkspaceOwner:
                         owner._local_text.stop_admission()
                 with ExitStack() as cleanup:
                     cleanup.callback(owner._worker.close, owner._close_storage)
+                    cleanup.callback(owner._cpu.close)
                     cleanup.callback(owner._parsers.close)
                     for lane in owner._providers.values():
                         cleanup.callback(lane.close)
@@ -312,8 +321,8 @@ class WorkspaceOwner:
             "INVALID_REQUEST", "Use the async owner/parser path on an event-loop thread"
         )
 
-    def _blocking_future[T](
-        self, call: Callable[[], T], ctx: ExecutionContext
+    def _write_future[T](
+        self, call: Callable[[], T], ctx: ExecutionContext, priority: Priority
     ) -> Future[T]:
         ctx.checkpoint()
 
@@ -321,14 +330,36 @@ class WorkspaceOwner:
             ctx.checkpoint()
             return call()
 
-        return self._worker.submit(checked)
+        return self._worker.submit(checked, priority)
 
-    async def run_blocking[T](self, call: Callable[[], T], ctx: ExecutionContext) -> T:
-        return await drain_result(self._blocking_future(call, ctx), ctx)
+    async def run_write[T](
+        self,
+        call: Callable[[], T],
+        ctx: ExecutionContext,
+        priority: Priority = "background",
+    ) -> T:
+        """Run ``call`` on the writer thread, which owns the connection and native handles."""
+        return await drain_result(self._write_future(call, ctx, priority), ctx)
 
-    def run_blocking_sync[T](self, call: Callable[[], T], ctx: ExecutionContext) -> T:
+    def run_write_sync[T](
+        self,
+        call: Callable[[], T],
+        ctx: ExecutionContext,
+        priority: Priority = "background",
+    ) -> T:
+        """Run ``call`` on the writer thread from a thread with no event loop."""
         self._sync_thread()
-        return _sync_result(self._blocking_future(call, ctx), ctx)
+        return _sync_result(self._write_future(call, ctx, priority), ctx)
+
+    async def run_cpu[T](self, call: Callable[[], T], ctx: ExecutionContext) -> T:
+        """Run pure CPU work (tokenising, measuring, decoding) off the writer."""
+        ctx.checkpoint()
+
+        def checked() -> T:
+            ctx.checkpoint()
+            return call()
+
+        return await drain_result(self._cpu.submit(checked), ctx)
 
     def _stage(
         self, refs: tuple[ArtifactRef, ...], ctx: ExecutionContext
@@ -583,7 +614,7 @@ class WorkspaceOwner:
                 "FORBIDDEN_SCOPE", "Document upload has no owner operation."
             )
         scope, policy_epoch = binding
-        self.run_blocking_sync(
+        self.run_write_sync(
             lambda: self.upload_policy.authorize(
                 scope, provider, dependencies, policy_epoch
             ),
@@ -623,7 +654,7 @@ class WorkspaceOwner:
             return call()
 
         result = await drain_result(lane.submit(invoke), ctx)
-        await self.run_blocking(
+        await self.run_write(
             lambda: self.upload_policy.authorize_local(
                 scope, dependencies, policy_epoch
             ),
@@ -715,7 +746,8 @@ class WorkspaceOwner:
             self._worker.submit(
                 lambda: self.upload_policy.authorize_query(
                     scope, provider, authorization
-                )
+                ),
+                "interactive",
             ).result()
             ctx.checkpoint()
             return call()
@@ -749,7 +781,7 @@ class WorkspaceOwner:
     ) -> EmbeddingRecord:
         """Check current read scope on hits; dispatch misses through the owner lane."""
         embedder._access.binding(self, scope)
-        probe = await self.run_blocking(lambda: embedder.probe_query(query, ctx), ctx)
+        probe = await self.run_write(lambda: embedder.probe_query(query, ctx), ctx)
         _, _, operation_sha = embedder._access.operation(query, "query")
         self._check_embedding_probe(
             probe.workspace_id,
@@ -799,7 +831,7 @@ class WorkspaceOwner:
     ) -> EmbeddingRecord | tuple[EmbeddingRecord, ...]:
         access = embedder._access
         items, ids, operation_sha = access.operation(operation, mode)
-        await self.run_blocking(lambda: access.authorize(operation, mode, ctx), ctx)
+        await self.run_write(lambda: access.authorize(operation, mode, ctx), ctx)
 
         def invoke() -> EmbeddingRecord | tuple[EmbeddingRecord, ...]:
             with access.admitted():

@@ -92,7 +92,7 @@ async def test_stdio_sdk_reads_authorized_binary_asset_resource(tmp_path, monkey
                 return row[0], stream.read()
 
         asset_id, asset_bytes = kb._workspace.bridge.call(
-            kb._workspace.owner.run_blocking(
+            kb._workspace.owner.run_write(
                 retained_asset,
                 ExecutionContext(),
             )

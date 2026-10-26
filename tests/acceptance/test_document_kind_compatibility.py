@@ -29,7 +29,7 @@ def legacy_workspace(tmp_path):
 
 
 async def identities(owner):
-    return await owner.run_blocking(
+    return await owner.run_write(
         lambda: {
             table: owner.db.execute(f"SELECT * FROM {table} ORDER BY 1").fetchall()
             for table in (
@@ -90,7 +90,7 @@ async def test_upgrade_reuses_legacy_extraction_and_adds_title_only_document(tmp
             assert baseline_query.status_code == 200, baseline_query.text
             assert baseline_query.json()["citations"]
             before = await identities(owner)
-            original_snapshot = await owner.run_blocking(
+            original_snapshot = await owner.run_write(
                 owner.store.active_snapshot_id, ExecutionContext()
             )
             candidate = (
@@ -104,7 +104,7 @@ async def test_upgrade_reuses_legacy_extraction_and_adds_title_only_document(tmp
             assert response.status_code == 200, response.text
             assert await identities(owner) == before
             assert (
-                await owner.run_blocking(
+                await owner.run_write(
                     owner.store.active_snapshot_id, ExecutionContext()
                 )
                 == original_snapshot
@@ -188,7 +188,7 @@ async def test_upgrade_reuses_legacy_extraction_and_adds_title_only_document(tmp
             reused = restored.sources.add(source)
             assert restored.jobs.wait(reused.id, timeout=5).state == "succeeded"
             restored_owner = restored._workspace.owner
-            return restored_owner.run_blocking_sync(
+            return restored_owner.run_write_sync(
                 lambda: {
                     table: restored_owner.db.execute(
                         f"SELECT * FROM {table} ORDER BY 1"
@@ -246,7 +246,7 @@ def retained_case(tmp_path):
             )
             return extraction, parsed.registration.capture
 
-        extraction, capture = owner.run_blocking_sync(retained, ExecutionContext())
+        extraction, capture = owner.run_write_sync(retained, ExecutionContext())
         yield kb, extraction, capture
 
 
@@ -272,7 +272,7 @@ def test_retained_config_lookup_uses_exact_capture_or_extraction_lineage(retaine
             )
         assert err.value.code == "INTEGRITY_ERROR"
 
-    owner.run_blocking_sync(verify, ExecutionContext())
+    owner.run_write_sync(verify, ExecutionContext())
 
 
 def test_retained_config_lookup_rejects_byte_budget_before_payload_read(retained_case):
@@ -292,7 +292,7 @@ def test_retained_config_lookup_rejects_byte_budget_before_payload_read(retained
             )
         assert err.value.code == "BUDGET_TOO_SMALL"
 
-    owner.run_blocking_sync(verify, ExecutionContext())
+    owner.run_write_sync(verify, ExecutionContext())
 
 
 def test_retained_config_lookup_rejects_65_distinct_exact_lineage_refs(retained_case):
@@ -318,7 +318,7 @@ def test_retained_config_lookup_rejects_65_distinct_exact_lineage_refs(retained_
             )
         assert err.value.code == "BUDGET_TOO_SMALL"
 
-    owner.run_blocking_sync(verify, ExecutionContext())
+    owner.run_write_sync(verify, ExecutionContext())
 
 
 def test_new_workspace_accepts_title_only_plain_text_with_exact_locators(tmp_path):
@@ -353,7 +353,7 @@ def test_new_workspace_accepts_title_only_plain_text_with_exact_locators(tmp_pat
                     assert loc.type == "text"
                     assert original[loc.char_start : loc.char_end] == unit.text
 
-        owner.run_blocking_sync(verify, ExecutionContext())
+        owner.run_write_sync(verify, ExecutionContext())
 
 
 def test_retained_config_lookup_verifies_recorded_config_hashes(retained_case):
@@ -387,4 +387,4 @@ def test_retained_config_lookup_verifies_recorded_config_hashes(retained_case):
             )
         assert err.value.code == "INTEGRITY_ERROR"
 
-    owner.run_blocking_sync(verify, ExecutionContext())
+    owner.run_write_sync(verify, ExecutionContext())

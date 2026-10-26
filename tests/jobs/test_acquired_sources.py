@@ -82,7 +82,7 @@ async def test_capture_precedes_parser_and_retry_uses_same_immutable_original(
                 ).fetchone()
                 assert row is not None
 
-            await kb._workspace.owner.run_blocking(durable, ctx)
+            await kb._workspace.owner.run_write(durable, ctx)
             seen.append(capture)
             registrations.append(registration)
             raise TychoraError(
@@ -186,7 +186,7 @@ async def test_capture_precedes_parser_and_retry_uses_same_immutable_original(
                     (registration.revision.revision_id, seen[0].original_sha),
                 )
 
-            await kb._workspace.owner.run_blocking(register, ExecutionContext())
+            await kb._workspace.owner.run_write(register, ExecutionContext())
             synced = await kb._workspace.services.source_jobs.sync_async(
                 registrations[0].source.source_id, kb.scope
             )
@@ -286,7 +286,7 @@ async def test_restart_reconciles_acceptance_before_response_even_after_ttl(
                     "SELECT job_id FROM jobs WHERE idempotency_key='restart'"
                 ).fetchone()[0]
 
-            job_id = await kb._workspace.owner.run_blocking(expire, ExecutionContext())
+            job_id = await kb._workspace.owner.run_write(expire, ExecutionContext())
             await kb._workspace.services.jobs.wait(job_id, ExecutionContext())
         await kb._workspace.services.source_jobs.aclose()
     with Tychora.open(workspace, token_counter=Counter()) as kb:
@@ -301,7 +301,7 @@ async def test_restart_reconciles_acceptance_before_response_even_after_ttl(
             )
             assert response.status_code == 202, response.text
             assert response.json()["id"] == job_id
-            count = await kb._workspace.owner.run_blocking(
+            count = await kb._workspace.owner.run_write(
                 lambda: kb._workspace.owner.db.execute(
                     "SELECT COUNT(*) FROM jobs"
                 ).fetchone()[0],

@@ -360,7 +360,7 @@ async def test_filter_change_retrieves_again_from_real_fts(tmp_path: Path) -> No
         uses=frozenset({"lookup", "compose"}),
     )
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 'INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
                 (collection, owner.workspace_id, "manuals", "Manuals"),
@@ -397,9 +397,7 @@ async def test_filter_change_retrieves_again_from_real_fts(tmp_path: Path) -> No
                 scope,
             )
 
-        await owner.run_blocking(
-            lambda: _assert_project_facets(owner), ExecutionContext()
-        )
+        await owner.run_write(lambda: _assert_project_facets(owner), ExecutionContext())
         service = QueryService(
             owner,
             output_counter=OutputTokenCounter(asset_path("TYCHORA_TEST_MODEL_CACHE")),
@@ -465,7 +463,7 @@ async def test_filter_change_retrieves_again_from_real_fts(tmp_path: Path) -> No
         warmed = await service.search(common, scope, ExecutionContext())
         removed_source = outputs[0].segments[0].source_id
         assert removed_source in {s.source_id for s in warmed.result.segments}
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.store.withdraw_source(removed_source), ExecutionContext()
         )
         after_withdrawal = await service.search(common, scope, ExecutionContext())
@@ -494,7 +492,7 @@ async def test_filter_change_retrieves_again_from_real_fts(tmp_path: Path) -> No
         assert remaining_source not in {
             segment.source_id for segment in during_history.result.segments
         }
-        states = await owner.run_blocking(
+        states = await owner.run_write(
             lambda: owner.db.execute(
                 "SELECT state FROM query_runs WHERE run_id=? OR "
                 "(principal_id=? AND state='superseded') ORDER BY created_at",
@@ -530,7 +528,7 @@ async def test_offline_degraded_retained_lexical_replay_does_not_require_reranke
         uses=frozenset({"lookup", "compose"}),
     )
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) "
                 'VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
@@ -609,7 +607,7 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
         upload_providers=frozenset({"voyage"}),
     )
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,?)",
                 (
@@ -656,9 +654,7 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
                 scope,
             )
 
-        await owner.run_blocking(
-            lambda: _assert_project_facets(owner), ExecutionContext()
-        )
+        await owner.run_write(lambda: _assert_project_facets(owner), ExecutionContext())
 
         class Transport:
             def __init__(self) -> None:
@@ -829,7 +825,7 @@ async def test_image_only_query_uses_registered_original_and_visual_channel(
     image = BytesIO()
     Image.new("RGB", (256, 256), (20, 40, 60)).save(image, format="PNG")
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,?)",
                 (
@@ -892,7 +888,7 @@ async def test_image_only_query_uses_registered_original_and_visual_channel(
             ),
             scope,
         )
-        asset_id = await owner.run_blocking(
+        asset_id = await owner.run_write(
             lambda: owner.db.execute("SELECT asset_id FROM assets").fetchone()[0],
             ExecutionContext(),
         )
@@ -947,7 +943,7 @@ async def test_vector_only_tail_window_reaches_reranker_and_delivery(
         upload_providers=frozenset({"voyage"}),
     )
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,?)",
                 (
@@ -994,7 +990,7 @@ async def test_vector_only_tail_window_reaches_reranker_and_delivery(
             scope,
         )
         assert handle.state == "succeeded"
-        record_id, chunk_id, unit_id, start, _end = await owner.run_blocking(
+        record_id, chunk_id, unit_id, start, _end = await owner.run_write(
             lambda: owner.db.execute(
                 "SELECT v.record_id,c.chunk_id,c.unit_id,c.char_start,c.char_end "
                 "FROM vector_records v JOIN chunks c USING(chunk_id) ORDER BY c.char_start DESC LIMIT 1"
@@ -1002,7 +998,7 @@ async def test_vector_only_tail_window_reaches_reranker_and_delivery(
             ExecutionContext(),
         )
         assert start > 0
-        prefix_record = await owner.run_blocking(
+        prefix_record = await owner.run_write(
             lambda: owner.db.execute(
                 "SELECT v.record_id FROM vector_records v JOIN chunks c USING(chunk_id) ORDER BY c.char_start LIMIT 1"
             ).fetchone()[0],

@@ -475,7 +475,7 @@ class RecoveryService:
     def reconcile(
         self, ctx: ExecutionContext, *, verify_payloads: bool = False
     ) -> RecoveryReport:
-        return self.owner.run_blocking_sync(
+        return self.owner.run_write_sync(
             lambda: self._reconcile_on_owner(ctx, verify_payloads=verify_payloads), ctx
         )
 
@@ -488,7 +488,7 @@ class RecoveryService:
         snapshot_id: str | None = None,
     ) -> RecoveryReport:
         """Rebuild retained native projections under the canonical owner."""
-        return self.owner.run_blocking_sync(
+        return self.owner.run_write_sync(
             lambda: self._rebuild_native_on_owner(scope, ctx, channels, snapshot_id),
             ctx,
         )
@@ -885,9 +885,7 @@ class RecoveryService:
     def resume_pending_deletions(
         self, scope: RequestScope, ctx: ExecutionContext
     ) -> RecoveryReport:
-        return self.owner.run_blocking_sync(
-            lambda: self._resume_on_owner(scope, ctx), ctx
-        )
+        return self.owner.run_write_sync(lambda: self._resume_on_owner(scope, ctx), ctx)
 
     def _resume_on_owner(
         self,

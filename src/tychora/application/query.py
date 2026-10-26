@@ -545,7 +545,7 @@ class QueryService:
                 # provider instance, credentials, scope and snapshot checks stay strict.
                 return read(retained)
 
-        request = await self.owner.run_blocking(retained_request, ctx)
+        request = await self.owner.run_write(retained_request, ctx, "interactive")
         return await self.search(request, granted, ctx)
 
     async def search(
@@ -558,8 +558,7 @@ class QueryService:
         ctx.checkpoint()
         preflight = getattr(self.counter, "ensure_available", None)
         if preflight is not None:
-            await asyncio.to_thread(preflight)
-            ctx.checkpoint()
+            await self.owner.run_cpu(preflight, ctx)
         if request.profile is not None and request.profile != self.owner.config.profile:
             raise TychoraError(
                 "INVALID_REQUEST", "Request profile differs from workspace."
@@ -582,10 +581,14 @@ class QueryService:
         async def operation(
             attempt: EligibilityAttempt,
         ) -> DeliveredResult:
-            await self.owner.run_blocking(
-                lambda: self._validate_provider_families(attempt.view.snapshot_id), ctx
+            await self.owner.run_write(
+                lambda: self._validate_provider_families(attempt.view.snapshot_id),
+                ctx,
+                "interactive",
             )
-            lexical_epoch = await self.owner.run_blocking(self._lexical_epoch, ctx)
+            lexical_epoch = await self.owner.run_write(
+                self._lexical_epoch, ctx, "interactive"
+            )
             key = result_cache_key(
                 request,
                 attempt.view.snapshot_id,
@@ -648,13 +651,14 @@ class QueryService:
                 )
                 self.history.record(delivered, metrics, retained)
 
-            await self.owner.run_blocking(record, ctx)
+            await self.owner.run_write(record, ctx, "interactive")
             return delivered
 
         async def supersede(delivered: DeliveredResult) -> None:
-            await self.owner.run_blocking(
+            await self.owner.run_write(
                 lambda: self.history.supersede(delivered.result.run_id),
                 ExecutionContext(),
+                "interactive",
             )
 
         return await run_pinned_eligibility(
@@ -697,7 +701,7 @@ class QueryService:
                 "INVALID_REQUEST", "Selected image channel cannot run for this query"
             )
         channels = (
-            await self.owner.run_blocking(
+            await self.owner.run_write(
                 lambda: retrieve_exact_lexical(
                     self.owner.store,
                     self.lexical,
@@ -708,6 +712,7 @@ class QueryService:
                     ctx,
                 ),
                 ctx,
+                "interactive",
             )
             if plan is None or plan.lexical
             else ()
@@ -721,7 +726,9 @@ class QueryService:
             None,
         )
         if lexical_epoch is None:
-            lexical_epoch = await self.owner.run_blocking(self._lexical_epoch, ctx)
+            lexical_epoch = await self.owner.run_write(
+                self._lexical_epoch, ctx, "interactive"
+            )
         assert lexical_epoch is not None
         incomplete: list[str] = [
             channel.channel for channel in channels if not channel.complete
@@ -790,11 +797,12 @@ class QueryService:
                 continue
             if channel == "visual":
                 try:
-                    linked = await self.owner.run_blocking(
+                    linked = await self.owner.run_write(
                         lambda selected=result: linked_visual_context(
                             self.owner.db, selected, view.source_unit_ids
                         ),
                         ctx,
+                        "interactive",
                     )
                 except TychoraError as error:
                     if (
@@ -816,23 +824,27 @@ class QueryService:
             completed.append(channel)
         fused = fuse(votes)
         graph_candidates = GraphCandidates()
+        graph = self.graph
         if (
             not request.exact_only
-            and self.graph is not None
+            and graph is not None
             and (plan is None or plan.graph_strategies)
         ):
             if plan is not None and view.graph_generation_id is None:
                 raise TychoraError(
                     "CAPABILITY_MISSING", "Pinned graph generation is unavailable"
                 )
-            graph_candidates = await asyncio.to_thread(
-                augment,
-                view,
-                fused,
-                self.owner.config,
-                self.graph,
+            graph_candidates = await self.owner.run_write(
+                lambda: augment(
+                    view,
+                    fused,
+                    self.owner.config,
+                    graph,
+                    ctx,
+                    plan.graph_strategies if plan is not None else None,
+                ),
                 ctx,
-                plan.graph_strategies if plan is not None else None,
+                "interactive",
             )
             graph_votes = tuple(
                 ChannelCandidate(key=("unit", item.unit_id), rank=rank)
@@ -842,8 +854,8 @@ class QueryService:
             if graph_votes:
                 votes["graph"] = graph_votes
                 fused = fuse(votes)
-        lanes = await self.owner.run_blocking(
-            lambda: self._candidate_lanes(fused, view), ctx
+        lanes = await self.owner.run_write(
+            lambda: self._candidate_lanes(fused, view), ctx, "interactive"
         )
         required = cast(tuple[str, ...], mode.get("required_lanes", ()))
         active = active_requirements(
@@ -979,26 +991,29 @@ class QueryService:
         if (
             not request.exact_only
             and check_settings.enabled
-            and self.graph is not None
+            and graph is not None
             and (plan is None or plan.graph_strategies)
         ):
-            checks = await asyncio.to_thread(
-                inspect_relations,
-                self.graph,
-                view,
-                tuple(
-                    dict.fromkeys(
-                        uid
-                        for segment in selection.segments
-                        for uid in segment.matched_unit_ids
-                    )
+            checks = await self.owner.run_write(
+                lambda: inspect_relations(
+                    graph,
+                    view,
+                    tuple(
+                        dict.fromkeys(
+                            uid
+                            for segment in selection.segments
+                            for uid in segment.matched_unit_ids
+                        )
+                    ),
+                    self.owner.config.values.retrieval.graph.predicates,
+                    ctx,
+                    expansion_inspected_rows=graph_candidates.inspected_rows,
+                    registry=self.registry,
+                    max_rows=self.owner.config.values.limits.graph_work_limit,
+                    max_assertions=check_settings.max_assertions,
                 ),
-                self.owner.config.values.retrieval.graph.predicates,
                 ctx,
-                expansion_inspected_rows=graph_candidates.inspected_rows,
-                registry=self.registry,
-                max_rows=self.owner.config.values.limits.graph_work_limit,
-                max_assertions=check_settings.max_assertions,
+                "interactive",
             )
         unavailable = tuple(incomplete)
         if ranked.failure is not None:
@@ -1096,26 +1111,27 @@ class QueryService:
                 scope=scope,
             )
         )
-        mapping = await self.owner.run_blocking(
-            lambda: self._vector_owners(attempt, "unit"), ctx
+        mapping = await self.owner.run_write(
+            lambda: self._vector_owners(attempt, "unit"), ctx, "interactive"
         )
         payload = struct.pack(
             "<" + "f" * len(query_vector.values), *query_vector.values
         )
-        page = await asyncio.to_thread(
-            index.search,
-            payload,
-            mapping,
-            80,
-            WorkLimits(deadline=ctx.deadline),
+        page = await self.owner.run_write(
+            lambda: index.search(
+                payload, mapping, 80, WorkLimits(deadline=ctx.deadline), ctx
+            ),
             ctx,
+            "interactive",
         )
         if page.missing_record_ids or not page.coverage_complete or page.truncated:
             raise TychoraError(
                 "INDEX_INCOMPLETE", "Text vector coverage is incomplete."
             )
-        return await self.owner.run_blocking(
-            lambda: self._text_window_candidates(page, mapping, attempt), ctx
+        return await self.owner.run_write(
+            lambda: self._text_window_candidates(page, mapping, attempt),
+            ctx,
+            "interactive",
         )
 
     def _text_window_candidates(self, page, mapping, attempt):
@@ -1221,9 +1237,10 @@ class QueryService:
         query: TextQuery | RegisteredImageQuery
         if isinstance(request.input, ImageInput):
             asset_ref = request.input.asset_ref
-            query = await self.owner.run_blocking(
+            query = await self.owner.run_write(
                 lambda: self._registered_image_query(asset_ref, attempt),
                 ctx,
+                "interactive",
             )
         elif isinstance(request.input, (QuestionInput, PassageInput)):
             query = TextQuery(text=request.input.text)
@@ -1232,17 +1249,16 @@ class QueryService:
         vector = await attempt.owner_provider(
             lambda: self.owner.embed_visual_query(current, query, ctx, scope=scope)
         )
-        mapping = await self.owner.run_blocking(
-            lambda: self._vector_owners(attempt, "asset"), ctx
+        mapping = await self.owner.run_write(
+            lambda: self._vector_owners(attempt, "asset"), ctx, "interactive"
         )
         payload = struct.pack("<" + "f" * len(vector.values), *vector.values)
-        page = await asyncio.to_thread(
-            index.search,
-            payload,
-            mapping,
-            80,
-            WorkLimits(deadline=ctx.deadline),
+        page = await self.owner.run_write(
+            lambda: index.search(
+                payload, mapping, 80, WorkLimits(deadline=ctx.deadline), ctx
+            ),
             ctx,
+            "interactive",
         )
         if page.missing_record_ids or not page.coverage_complete or page.truncated:
             raise TychoraError(

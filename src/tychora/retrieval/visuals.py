@@ -311,4 +311,4 @@ async def prepare_visual_candidates(
             )
         return tuple(output)
 
-    return await owner.run_blocking(load, ctx)
+    return await owner.run_write(load, ctx, "interactive")

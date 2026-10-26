@@ -49,7 +49,7 @@ def test_declared_code_definitions_and_graph_ablation(tmp_path, monkeypatch):
                 "WHERE sr.record_type='code_symbol' ORDER BY u.unit_id"
             ).fetchall()
 
-        rows = kb._workspace.bridge.call(owner.run_blocking(labels, ExecutionContext()))
+        rows = kb._workspace.bridge.call(owner.run_write(labels, ExecutionContext()))
         assert len(rows) == 7
         source_id, revision_id = rows[0][:2]
         by_path = {}
@@ -139,7 +139,7 @@ def test_declared_code_definitions_and_graph_ablation(tmp_path, monkeypatch):
                 }[item["case_id"]]
                 assert result.segments[0].citations[0].source_ref == expected_ref
             valid = kb._workspace.bridge.call(
-                owner.run_blocking(
+                owner.run_write(
                     lambda result=result: verify_result_locators(owner, result),
                     ExecutionContext(),
                 )
@@ -158,7 +158,7 @@ def test_declared_code_definitions_and_graph_ablation(tmp_path, monkeypatch):
                     }
                 )
                 rejected = kb._workspace.bridge.call(
-                    owner.run_blocking(
+                    owner.run_write(
                         lambda forged_result=forged_result: verify_result_locators(
                             owner, forged_result
                         ),
@@ -167,7 +167,7 @@ def test_declared_code_definitions_and_graph_ablation(tmp_path, monkeypatch):
                 )
                 assert rejected.valid < rejected.total
         snapshot = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.store.resolve_snapshot(None), ExecutionContext()
             )
         )
@@ -182,7 +182,7 @@ def test_declared_code_definitions_and_graph_ablation(tmp_path, monkeypatch):
 
         monkeypatch.setattr(query_module, "augment", observe)
         jobs = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: JobRepository(
                     owner.db,
                     artifacts=owner.artifacts,

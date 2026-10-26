@@ -533,7 +533,7 @@ async def test_generic_http_inspect_roundtrips_binary_original(tmp_path):
             )
             return revision_id
 
-        revision_id = await owner.run_blocking(install_binary, ExecutionContext())
+        revision_id = await owner.run_write(install_binary, ExecutionContext())
         http_app = create_app(
             owner,
             kb._workspace.services,
@@ -572,7 +572,7 @@ async def test_generic_http_inspect_roundtrips_binary_original(tmp_path):
     assert cli_data.pop("schema_version") == "1"
     assert InspectionResult.model_validate_json(json.dumps(cli_data)).payload == payload
     with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
-        source_id = await kb._workspace.owner.run_blocking(
+        source_id = await kb._workspace.owner.run_write(
             lambda: kb._workspace.owner.db.execute(
                 "SELECT source_id FROM revisions WHERE revision_id=?", (revision_id,)
             ).fetchone()[0],

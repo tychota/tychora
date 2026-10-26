@@ -70,7 +70,7 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
         upload_providers=frozenset({"voyage"}),
     )
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) "
                 "VALUES (?,?,?,?,0,?)",
@@ -195,10 +195,10 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
         assert text_transport.calls == 1
         assert len(visual_transport.calls) == 1
         assert any("amber" in segment.text for segment in delivered.result.segments)
-        snapshot = await owner.run_blocking(
+        snapshot = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
-        slots = await owner.run_blocking(
+        slots = await owner.run_write(
             lambda: owner.store.snapshot_slots(snapshot), ExecutionContext()
         )
         assert {slot.slot for slot in slots} >= {"text", "image"}
@@ -217,7 +217,7 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
                 ("amber.txt", "amber"),
             ).fetchall()
 
-        ((source_id, revision_id, unit_id),) = await owner.run_blocking(
+        ((source_id, revision_id, unit_id),) = await owner.run_write(
             labels, ExecutionContext()
         )
         case = {
@@ -241,7 +241,7 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
                 "case_count": 1,
             }
         )
-        jobs = await owner.run_blocking(
+        jobs = await owner.run_write(
             lambda: JobRepository(
                 owner.db, artifacts=owner.artifacts, workspace_id=owner.workspace_id
             ),
@@ -312,12 +312,12 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
             ),
             scope,
         )
-        refreshed = await owner.run_blocking(
+        refreshed = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
         assert len(refreshed.members) == 2
         assert source_embedder.calls == old_embed_calls + 1
-        refreshed_slots = await owner.run_blocking(
+        refreshed_slots = await owner.run_write(
             lambda: owner.store.snapshot_slots(refreshed), ExecutionContext()
         )
         for slot_name, earlier in (("text", old_text), ("image", old_image)):

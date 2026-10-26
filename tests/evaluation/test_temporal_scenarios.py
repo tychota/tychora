@@ -44,14 +44,14 @@ def test_republishing_identical_older_edition_makes_it_default(tmp_path):
         _add(kb, first)
         owner = kb._workspace.owner
         original_snapshot = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.store.resolve_snapshot(None), ExecutionContext()
             )
         )
         first_revision = original_snapshot.members[0].revision_id
         _add(kb, second)
         second_snapshot = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.store.resolve_snapshot(None), ExecutionContext()
             )
         )
@@ -62,7 +62,7 @@ def test_republishing_identical_older_edition_makes_it_default(tmp_path):
         )
         _add(kb, first)
         current, retained_first, retained_second = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: (
                     owner.store.resolve_snapshot(None),
                     owner.store.resolve_snapshot(original_snapshot.snapshot_id),
@@ -112,7 +112,7 @@ def test_public_source_dates_editions_and_review_filter(tmp_path):
         )
         owner = kb._workspace.owner
         old_snapshot = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.store.resolve_snapshot(None),
                 ExecutionContext(),
             )
@@ -128,7 +128,7 @@ def test_public_source_dates_editions_and_review_filter(tmp_path):
             ),
         )
         rows = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     "SELECT revision_id,edition_key,published_on,effective_from,effective_until,"
                     "declared_review_state FROM revisions ORDER BY edition_key"
@@ -149,7 +149,7 @@ def test_public_source_dates_editions_and_review_filter(tmp_path):
             }
         )
         current_snapshot, retained_old = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: (
                     owner.store.resolve_snapshot(None),
                     owner.store.resolve_snapshot(old_snapshot.snapshot_id),
@@ -254,7 +254,7 @@ def test_public_source_dates_editions_and_review_filter(tmp_path):
             ).fetchall()
 
         labelled = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 labels,
                 ExecutionContext(),
             )
@@ -402,7 +402,7 @@ async def test_http_source_metadata_reaches_revision_fields(tmp_path):
                 accepted.json()["id"], ExecutionContext(), timeout=scaled(10)
             )
             assert completed.state == "succeeded"
-        rows = await owner.run_blocking(
+        rows = await owner.run_write(
             lambda: owner.db.execute(
                 "SELECT edition_key,published_on,effective_from,declared_review_state "
                 "FROM revisions"
@@ -432,7 +432,7 @@ def test_legacy_revision_projection_conflict_does_not_rewrite_history(tmp_path):
             return owner.db.execute("SELECT revision_id FROM revisions").fetchone()[0]
 
         revision_id = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 simulate_old_projection,
                 ExecutionContext(),
             )
@@ -442,7 +442,7 @@ def test_legacy_revision_projection_conflict_does_not_rewrite_history(tmp_path):
         assert status.state == "failed"
         assert status.error_code == "IDEMPOTENCY_CONFLICT"
         retained = kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     "SELECT revision_id,published_on,effective_from,declared_review_state "
                     "FROM revisions"
@@ -469,7 +469,7 @@ def test_invalid_half_open_interval_is_rejected_before_publication(tmp_path):
         owner = kb._workspace.owner
         assert (
             kb._workspace.bridge.call(
-                owner.run_blocking(
+                owner.run_write(
                     lambda: owner.db.execute(
                         "SELECT count(*) FROM revisions"
                     ).fetchone()[0],

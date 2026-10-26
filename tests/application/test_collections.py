@@ -111,14 +111,14 @@ async def test_bounded_inventory_hidden_revision_and_cursor_epoch(
             owner.db.commit()
             owner.db.set_trace_callback(statements.append)
 
-        await owner.run_blocking(hide_and_overflow, ExecutionContext())
+        await owner.run_write(hide_and_overflow, ExecutionContext())
 
         def forbidden_artifact(*args, **kwargs):
             raise AssertionError("Inventory must not decode corpus/job artifacts")
 
         monkeypatch.setattr(owner.artifacts, "open_verified", forbidden_artifact)
         hidden = await service.documents(kb.scope, ExecutionContext())
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.set_trace_callback(None), ExecutionContext()
         )
         item = hidden.documents[0]
@@ -247,7 +247,7 @@ async def test_source_page_filters_hidden_rows_before_sql_limit(tmp_path):
             )
             owner.db.commit()
 
-        await owner.run_blocking(populate, ExecutionContext())
+        await owner.run_write(populate, ExecutionContext())
         restricted = kb.scope.model_copy(
             update={"collection_ids": frozenset({str(kb.default_collection_id)})}
         )
@@ -269,7 +269,7 @@ async def test_injected_provider_collection_mutations_preserve_consent(tmp_path)
             update={"capabilities": frozenset({"read", "manage"})}
         )
         owner.scope = scope
-        bundle = await owner.run_blocking(lambda: install(owner), ExecutionContext())
+        bundle = await owner.run_write(lambda: install(owner), ExecutionContext())
         service = CollectionService(owner)
         cid = bundle.collection.collection_id
         page = await service.list(scope, ExecutionContext())
@@ -286,7 +286,7 @@ async def test_injected_provider_collection_mutations_preserve_consent(tmp_path)
         assert active.archived_at is None
         consent = await service.consent(cid, scope, ExecutionContext())
         assert consent.collection_upload_providers == ("synthetic",)
-        raw = await owner.run_blocking(
+        raw = await owner.run_write(
             lambda: owner.db.execute(
                 "SELECT policy_json FROM collections WHERE collection_id=?", (cid,)
             ).fetchone()[0],
@@ -311,7 +311,7 @@ async def test_managed_collection_mutations_reject_injected_provider(
             update={"capabilities": frozenset({"read", "manage"})}
         )
         owner.scope = scope
-        bundle = await owner.run_blocking(lambda: install(owner), ExecutionContext())
+        bundle = await owner.run_write(lambda: install(owner), ExecutionContext())
         owner.managed_default_owner = True
         service = CollectionService(owner)
         with pytest.raises(TychoraError) as error:

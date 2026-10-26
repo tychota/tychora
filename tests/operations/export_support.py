@@ -14,7 +14,7 @@ DEFAULT_COLLECTION = "00000000-0000-4000-8000-000000000001"
 def owner_rows(kb, sql, params=()):
     """Run a read on the owner thread and return plain tuples."""
     owner = kb._workspace.owner
-    return owner.run_blocking_sync(
+    return owner.run_write_sync(
         lambda: [tuple(r) for r in owner.db.execute(sql, params).fetchall()],
         ExecutionContext(),
     )
@@ -91,7 +91,7 @@ def upload_scope():
 def grant_upload(kb):
     owner = kb._workspace.owner
     kb._workspace.bridge.call(
-        owner.run_blocking(
+        owner.run_write(
             lambda: owner.db.execute(
                 'UPDATE collections SET policy_json=? WHERE slug="default"',
                 ('{"schema_version":1,"upload_providers":["voyage"]}',),

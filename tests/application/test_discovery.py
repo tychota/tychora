@@ -178,7 +178,7 @@ async def test_code_source_discovery_uses_retained_scoped_resolution_rates(tmp_p
             return len(text)
 
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 'INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
                 (collection, owner.workspace_id, "code", "Code"),
@@ -267,7 +267,7 @@ async def test_code_source_discovery_uses_retained_scoped_resolution_rates(tmp_p
                 (ref.sha256, extraction_id),
             )
 
-        await owner.run_blocking(hide_candidate, ExecutionContext())
+        await owner.run_write(hide_candidate, ExecutionContext())
         diagnostic = await InspectionService(owner).inspect(
             InspectRequest(subject="diagnostics", id=extraction_id),
             scope,

@@ -23,13 +23,13 @@ async def test_service_wait_cancel_events_use_canonical_thread(tmp_path):
         principal_id="writer", capabilities=frozenset({"read", "write"})
     )
     with WorkspaceOwner.open(tmp_path / "workspace", settings, scope) as owner:
-        repo = await owner.run_blocking(
+        repo = await owner.run_write(
             lambda: JobRepository(
                 owner.db, artifacts=owner.artifacts, workspace_id=owner.workspace_id
             ),
             ExecutionContext(),
         )
-        config = await owner.run_blocking(
+        config = await owner.run_write(
             lambda: owner.artifacts.put_stream(
                 BytesIO(
                     b'{"type":"registry","schema_version":"1","data":{"offline":true}}'
@@ -64,13 +64,13 @@ async def test_wait_timeout_and_delivery_cancel_do_not_cancel_job(tmp_path):
         principal_id="writer", capabilities=frozenset({"read", "write"})
     )
     with WorkspaceOwner.open(tmp_path / "workspace", settings, scope) as owner:
-        repo = await owner.run_blocking(
+        repo = await owner.run_write(
             lambda: JobRepository(
                 owner.db, artifacts=owner.artifacts, workspace_id=owner.workspace_id
             ),
             ExecutionContext(),
         )
-        config = await owner.run_blocking(
+        config = await owner.run_write(
             lambda: owner.artifacts.put_stream(
                 BytesIO(b'{"type":"registry","schema_version":"1"}'), "application/json"
             ),

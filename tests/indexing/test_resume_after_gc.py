@@ -19,7 +19,7 @@ async def _interrupted_add(owner, service, scope, monkeypatch) -> str:
     monkeypatch.setattr(owner.store, "publish_snapshot", killed)
     with pytest.raises(TychoraError):
         await service.add(_text_source("second"), scope, "resume-second")
-    return await owner.run_blocking(
+    return await owner.run_write(
         lambda: owner.db.execute(
             "SELECT job_id FROM jobs WHERE idempotency_key='resume-second'"
         ).fetchone()[0],
@@ -33,14 +33,14 @@ async def _collect_everything(owner) -> None:
         gc.collect(ExecutionContext(), limit=1024, include_unpublished=True)
         gc.reclaim()
 
-    await owner.run_blocking(collect, ExecutionContext())
+    await owner.run_write(collect, ExecutionContext())
 
 
 async def _retry_and_resume(owner, service, scope, job_id) -> None:
-    await owner.run_blocking(lambda: _jobs(service).retry(job_id), ExecutionContext())
+    await owner.run_write(lambda: _jobs(service).retry(job_id), ExecutionContext())
     resumed = await service.add(_text_source("second"), scope, "resume-second")
     assert resumed.state == "succeeded"
-    state = await owner.run_blocking(
+    state = await owner.run_write(
         lambda: owner.db.execute(
             "SELECT state FROM jobs WHERE job_id=?", (job_id,)
         ).fetchone()[0],

@@ -67,7 +67,7 @@ async def test_retry_uses_exact_committed_capture_and_verified_plan(
     )
 
     with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 'INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,\'{"schema_version":1,"upload_providers":[]}\')',
                 (collection, owner.workspace_id, "manuals", "Manuals"),
@@ -94,7 +94,7 @@ async def test_retry_uses_exact_committed_capture_and_verified_plan(
             await service.add(source, scope, "same-request")
         jobs = service._jobs
         assert jobs is not None
-        status = await owner.run_blocking(
+        status = await owner.run_write(
             lambda: jobs.get(owner.db.execute("SELECT job_id FROM jobs").fetchone()[0]),
             ExecutionContext(),
         )
@@ -112,7 +112,7 @@ async def test_retry_uses_exact_committed_capture_and_verified_plan(
             ),
         )
         jobs, acquirer = await resumed._ports(ExecutionContext())
-        await reopened.run_blocking(lambda: jobs.retry(status.id), ExecutionContext())
+        await reopened.run_write(lambda: jobs.retry(status.id), ExecutionContext())
         original_capture = acquirer.capture
 
         def forbidden_capture(*args):
@@ -122,7 +122,7 @@ async def test_retry_uses_exact_committed_capture_and_verified_plan(
         completed = await resumed.add(source, scope, "same-request")
         assert completed.state == "succeeded" and completed.id == status.id
         assert (
-            await reopened.run_blocking(
+            await reopened.run_write(
                 lambda: reopened.db.execute(
                     "SELECT COUNT(*) FROM extractions"
                 ).fetchone()[0],
@@ -157,19 +157,19 @@ async def test_retry_uses_exact_committed_capture_and_verified_plan(
         monkeypatch.setattr(resumed, "_extract", fail_parse)
         with pytest.raises(RuntimeError, match="sensitive parser interruption"):
             await resumed.add(parser_source, scope, "parser-before-plan")
-        parser_job = await reopened.run_blocking(
+        parser_job = await reopened.run_write(
             lambda: reopened.db.execute(
                 "SELECT job_id FROM jobs WHERE idempotency_key='parser-before-plan'"
             ).fetchone()[0],
             ExecutionContext(),
         )
         assert (
-            await reopened.run_blocking(
+            await reopened.run_write(
                 lambda: jobs.get(parser_job).error_code, ExecutionContext()
             )
             == "JOB_INTERRUPTED"
         )
-        await reopened.run_blocking(lambda: jobs.retry(parser_job), ExecutionContext())
+        await reopened.run_write(lambda: jobs.retry(parser_job), ExecutionContext())
         assert (
             await resumed.add(parser_source, scope, "parser-before-plan")
         ).state == "succeeded"
@@ -183,16 +183,16 @@ async def test_retry_uses_exact_committed_capture_and_verified_plan(
         monkeypatch.setattr(jobs, "complete", fail_after_publication)
         with pytest.raises(RuntimeError, match="sensitive completion interruption"):
             await resumed.add(source, scope, "published-before-event")
-        published_job = await reopened.run_blocking(
+        published_job = await reopened.run_write(
             lambda: reopened.db.execute(
                 "SELECT job_id FROM jobs WHERE idempotency_key='published-before-event'"
             ).fetchone()[0],
             ExecutionContext(),
         )
-        published_status = await reopened.run_blocking(
+        published_status = await reopened.run_write(
             lambda: jobs.get(published_job), ExecutionContext()
         )
         assert published_status.state == "succeeded"
-        assert published_status.result_snapshot_id == await reopened.run_blocking(
+        assert published_status.result_snapshot_id == await reopened.run_write(
             reopened.store.active_snapshot_id, ExecutionContext()
         )

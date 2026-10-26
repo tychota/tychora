@@ -181,7 +181,7 @@ async def test_revision_cursor_skips_hidden_first_and_is_scope_bound(tmp_path):
                 owner.db.commit()
                 return source_id, hidden
 
-            source_id, hidden = await owner.run_blocking(seed, ExecutionContext())
+            source_id, hidden = await owner.run_write(seed, ExecutionContext())
             first = await client.get(f"/v1/sources/{source_id}/revisions?limit=1")
             assert first.status_code == 200, first.text
             assert len(first.json()["revisions"]) == 1
@@ -291,7 +291,7 @@ async def test_extraction_and_channel_coverage_continue_in_bounded_pages(tmp_pat
                 owner.db.commit()
                 return source_id, revision_id, f"{0:064x}"
 
-            source_id, revision_id, extraction_id = await owner.run_blocking(
+            source_id, revision_id, extraction_id = await owner.run_write(
                 seed, ExecutionContext()
             )
             revision = await client.get(f"/v1/sources/{source_id}/revisions")
@@ -1326,7 +1326,7 @@ async def test_expired_sse_cursor_requests_authoritative_refresh(tmp_path):
             await services.jobs_for_scope(owner.scope).wait(
                 job_id, ExecutionContext(), timeout=5
             )
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: services.jobs.repository.expire_diagnostics(
                     datetime.now(UTC) + timedelta(seconds=1)
                 ),
@@ -1512,7 +1512,7 @@ def test_app_lifespan_drains_jobs_before_borrowed_owner_closes(tmp_path):
         from tychora.ports.execution import ExecutionContext
 
         assert (
-            owner.run_blocking_sync(
+            owner.run_write_sync(
                 lambda: owner.db.execute(
                     "SELECT workspace_id FROM workspaces"
                 ).fetchone()[0],
@@ -1807,9 +1807,9 @@ async def test_source_and_revision_history_use_bounded_database_pages(tmp_path):
                 owner.db.commit()
                 return source_id
 
-            source_id = await owner.run_blocking(seed_history, ExecutionContext())
+            source_id = await owner.run_write(seed_history, ExecutionContext())
             statements = []
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: owner.db.set_trace_callback(statements.append),
                 ExecutionContext(),
             )
@@ -1846,7 +1846,7 @@ async def test_source_and_revision_history_use_bounded_database_pages(tmp_path):
                 assert len(first.content) < 1048576
                 assert len(revisions.content) < 1048576
             finally:
-                await owner.run_blocking(
+                await owner.run_write(
                     lambda: owner.db.set_trace_callback(None), ExecutionContext()
                 )
             source_queries = [
@@ -1859,7 +1859,7 @@ async def test_source_and_revision_history_use_bounded_database_pages(tmp_path):
             ]
             assert source_queries and all("LIMIT" in q for q in source_queries)
             assert revision_queries and all("LIMIT" in q for q in revision_queries)
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: owner.db.execute(
                     "UPDATE sources SET source_key=? WHERE source_id=?",
                     ("x" * 1048576, source_id),
@@ -1919,7 +1919,7 @@ async def test_health_requires_proven_whole_workspace_read(
                 }[restriction]
                 owner.db.execute(f"UPDATE {table} SET {column}=1")
 
-        await owner.run_blocking(arrange, ExecutionContext())
+        await owner.run_write(arrange, ExecutionContext())
         # The owner itself may be narrowed: comparing the token to owner.scope
         # cannot establish access to this second collection or elevated floors.
         collections = kb.scope.collection_ids | {other}
@@ -2016,7 +2016,7 @@ async def test_retained_content_routes_return_exact_windows_and_gate_read(tmp_pa
                 start,
                 end,
                 text,
-            ) = await owner.run_blocking(
+            ) = await owner.run_write(
                 lambda: owner.db.execute(
                     "SELECT r.source_id,e.revision_id,e.extraction_id,c.unit_id,c.char_start,c.char_end,u.text "
                     "FROM chunks c JOIN evidence_units u USING(unit_id) JOIN extractions e ON e.extraction_id=c.extraction_id "

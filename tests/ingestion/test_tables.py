@@ -331,7 +331,7 @@ def test_composed_tables_commit_once_with_exact_rows_and_captions(
     plan = DocumentCompositionPlan(
         base_normalizer_fingerprint=source.parsed.normalizer_fingerprint
     )
-    result = source.owner.run_blocking_sync(
+    result = source.owner.run_write_sync(
         lambda: compose_document(
             source.parsed, source.registry, plan, source.owner.artifacts, source.ctx
         ),
@@ -369,14 +369,14 @@ def test_composed_tables_commit_once_with_exact_rows_and_captions(
         assert not bundle.proxies and all(
             not fragment.caption for fragment in result.fragments
         )
-    source.owner.run_blocking_sync(
+    source.owner.run_write_sync(
         lambda: source.store.commit_extraction(bundle), source.ctx
     )
-    source.owner.run_blocking_sync(
+    source.owner.run_write_sync(
         lambda: source.store.commit_extraction(bundle), source.ctx
     )
     assert (
-        source.owner.run_blocking_sync(
+        source.owner.run_write_sync(
             lambda: source.owner.db.execute(
                 "SELECT COUNT(*) FROM extractions"
             ).fetchone()[0],
@@ -385,7 +385,7 @@ def test_composed_tables_commit_once_with_exact_rows_and_captions(
         == 1
     )
     assert (
-        source.owner.run_blocking_sync(
+        source.owner.run_write_sync(
             lambda: source.store.hydrate(tuple(u.unit_id for u in bundle.units)),
             source.ctx,
         )
@@ -484,7 +484,7 @@ def test_composed_document_archive_replays_canonical_evidence(
     monkeypatch.setattr(DoclingParser, "extract", extract_synthetic)
     monkeypatch.setenv("TYCHORA_TEST_DOCLING_MODELS", str(tmp_path))
     source = document_record_case("standard@1", "docx", commit=False, scope=scope)
-    result = source.owner.run_blocking_sync(
+    result = source.owner.run_write_sync(
         lambda: compose_document(
             source.parsed,
             source.registry,
@@ -496,7 +496,7 @@ def test_composed_document_archive_replays_canonical_evidence(
         ),
         source.ctx,
     )
-    source.owner.run_blocking_sync(
+    source.owner.run_write_sync(
         lambda: source.store.commit_extraction(result.bundle), source.ctx
     )
     archive = tmp_path / "archive"
@@ -630,7 +630,7 @@ def composed_inputs(source):
                 values[asset.artifact_ref.sha256] = stream.read()
         return values
 
-    return source.owner.run_blocking_sync(read, source.ctx)
+    return source.owner.run_write_sync(read, source.ctx)
 
 
 @pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
@@ -799,7 +799,7 @@ def test_valid_legacy_document_backup_restores_exact_snapshot_and_rejects_tamper
         "docling-record-normalizer-v1", kind, source.registry.schema_digests
     )
     raw = extraction_document(old_data)
-    ref = source.owner.run_blocking_sync(
+    ref = source.owner.run_write_sync(
         lambda: source.owner.artifacts.put_stream(BytesIO(raw), "application/json"),
         source.ctx,
     )
@@ -823,13 +823,13 @@ def test_valid_legacy_document_backup_restores_exact_snapshot_and_rejects_tamper
     )
     refs = {item.sha256: item for item in old.bundle.artifacts}
     for sha, payload in old.payloads.items():
-        source.owner.run_blocking_sync(
+        source.owner.run_write_sync(
             lambda sha=sha, payload=payload: source.owner.artifacts.put_stream(
                 BytesIO(payload), refs[sha].media_type
             ),
             source.ctx,
         )
-    source.owner.run_blocking_sync(
+    source.owner.run_write_sync(
         lambda: source.store.commit_extraction(old.bundle), source.ctx
     )
     archive = tmp_path / "legacy-archive"
@@ -853,7 +853,7 @@ def test_valid_legacy_document_backup_restores_exact_snapshot_and_rejects_tamper
         docling_models=asset_path("TYCHORA_TEST_DOCLING_MODELS"),
     )
     assert (
-        source.owner.run_blocking_sync(
+        source.owner.run_write_sync(
             lambda: service._retained_bundle(parsed.registration, ExecutionContext()),
             source.ctx,
         )
@@ -872,7 +872,7 @@ def test_valid_legacy_document_backup_restores_exact_snapshot_and_rejects_tamper
     )
     upgraded = asyncio.run(service.add(same_source, scope))
     assert upgraded.state == "succeeded"
-    current_rows = source.owner.run_blocking_sync(
+    current_rows = source.owner.run_write_sync(
         lambda: source.owner.db.execute(
             "SELECT extraction_id FROM extractions WHERE revision_id=?",
             (parsed.registration.revision.revision_id,),
@@ -903,7 +903,7 @@ def test_valid_legacy_document_backup_restores_exact_snapshot_and_rejects_tamper
             source.owner.db.execute("ROLLBACK TO legacy_selection_probe")
             source.owner.db.execute("RELEASE legacy_selection_probe")
 
-    source.owner.run_blocking_sync(selected_version_gate, source.ctx)
+    source.owner.run_write_sync(selected_version_gate, source.ctx)
     RestoreService().import_backup(
         archive, tmp_path / "legacy-restored", scope, ExecutionContext()
     )
@@ -993,7 +993,7 @@ def test_changed_plan_commits_distinct_extraction_same_revision(document_record_
         for copies in (True, False)
     ]
     products = [
-        source.owner.run_blocking_sync(
+        source.owner.run_write_sync(
             lambda plan=plan: compose_document(
                 source.parsed, source.registry, plan, source.owner.artifacts, source.ctx
             ),
@@ -1007,12 +1007,12 @@ def test_changed_plan_commits_distinct_extraction_same_revision(document_record_
         != products[1].bundle.extraction.extraction_id
     )
     for product in products:
-        source.owner.run_blocking_sync(
+        source.owner.run_write_sync(
             lambda product=product: source.store.commit_extraction(product.bundle),
             source.ctx,
         )
     assert (
-        source.owner.run_blocking_sync(
+        source.owner.run_write_sync(
             lambda: source.owner.db.execute(
                 "SELECT COUNT(*) FROM extractions"
             ).fetchone()[0],
@@ -1046,7 +1046,7 @@ def test_real_caption_copy_commit_and_retention_replay(document_record_case):
     plan = DocumentCompositionPlan(
         base_normalizer_fingerprint=source.parsed.normalizer_fingerprint
     )
-    result = source.owner.run_blocking_sync(
+    result = source.owner.run_write_sync(
         lambda: compose_document(
             source.parsed, source.registry, plan, source.owner.artifacts, source.ctx
         ),
@@ -1062,7 +1062,7 @@ def test_real_caption_copy_commit_and_retention_replay(document_record_case):
         units[uid].citable and "Reference vessel" in units[uid].text
         for uid in caption_copy.required_unit_ids
     )
-    source.owner.run_blocking_sync(
+    source.owner.run_write_sync(
         lambda: source.store.commit_extraction(result.bundle), source.ctx
     )
 
@@ -1106,7 +1106,7 @@ def test_real_caption_copy_commit_and_retention_replay(document_record_case):
         )
         assert replay.bundle == result.bundle
 
-    source.owner.run_blocking_sync(retained_replay, source.ctx)
+    source.owner.run_write_sync(retained_replay, source.ctx)
 
 
 @pytest.mark.assets("TYCHORA_TEST_DOCLING_MODELS")
@@ -1630,7 +1630,7 @@ def test_build_at_exact_input_ceiling_replays_retained_closure(
         ) as stream:
             return stream.read()
 
-    retained[source.parsed.docling_json_ref.sha256] = source.owner.run_blocking_sync(
+    retained[source.parsed.docling_json_ref.sha256] = source.owner.run_write_sync(
         raw_payload, source.ctx
     )
     assert (
@@ -1644,7 +1644,7 @@ def test_build_at_exact_input_ceiling_replays_retained_closure(
         == result.bundle
     )
     assert (
-        source.owner.run_blocking_sync(
+        source.owner.run_write_sync(
             lambda: composition.compose_document(
                 source.parsed, source.registry, plan, source.owner.artifacts, source.ctx
             ),

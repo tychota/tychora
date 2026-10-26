@@ -799,7 +799,7 @@ async def test_first_source_capture_is_registered_and_reauthorized_after_queue(
         for ref in bundle.artifacts:
             with reader().open_verified(ref) as data:
                 owner.artifacts.put_stream(data, ref.media_type)
-        created = await owner.run_blocking(
+        created = await owner.run_write(
             lambda: owner.db.execute("SELECT created_at FROM workspaces").fetchone()[0],
             ExecutionContext(),
         )
@@ -821,7 +821,7 @@ async def test_first_source_capture_is_registered_and_reauthorized_after_queue(
                 ),
             }
         )
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.store.commit_extraction(bundle), ExecutionContext()
         )
         metadata = bundle.revision.metadata_json
@@ -842,7 +842,7 @@ async def test_first_source_capture_is_registered_and_reauthorized_after_queue(
         )
         registration = CapturedSourceRegistration(source=source, kind_id="manual@1")
         with pytest.raises(TychoraError) as error:
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: owner.upload_policy.register_captured_source(
                     registration,
                     scope.model_copy(update={"capabilities": frozenset()}),
@@ -851,13 +851,13 @@ async def test_first_source_capture_is_registered_and_reauthorized_after_queue(
                 ExecutionContext(),
             )
         assert error.value.code == "FORBIDDEN_SCOPE"
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.upload_policy.register_captured_source(
                 registration, scope, policy_epoch=0
             ),
             ExecutionContext(),
         )
-        captured = await owner.run_blocking(
+        captured = await owner.run_write(
             lambda: Acquirer(owner.artifacts, config).capture(
                 SourceInput.model_validate(
                     {
@@ -920,7 +920,7 @@ async def test_first_source_capture_is_registered_and_reauthorized_after_queue(
             proof=CapturedOriginalRegionProof(capture=captured),
             region=region,
         )
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.upload_policy.authorize_captured(
                 scope, "synthetic", authorization, 0
             ),
@@ -929,7 +929,7 @@ async def test_first_source_capture_is_registered_and_reauthorized_after_queue(
         jpeg_output = BytesIO()
         image.save(jpeg_output, format="JPEG", quality=90)
         jpeg_payload = jpeg_output.getvalue()
-        jpeg_capture = await owner.run_blocking(
+        jpeg_capture = await owner.run_write(
             lambda: Acquirer(owner.artifacts, config).capture(
                 SourceInput.model_validate(
                     {
@@ -954,7 +954,7 @@ async def test_first_source_capture_is_registered_and_reauthorized_after_queue(
         crop_output = BytesIO()
         crop.save(crop_output, format="PNG")
         crop_payload = crop_output.getvalue()
-        crop_ref = await owner.run_blocking(
+        crop_ref = await owner.run_write(
             lambda: owner.artifacts.put_stream(BytesIO(crop_payload), "image/png"),
             ExecutionContext(),
         )
@@ -993,7 +993,7 @@ async def test_first_source_capture_is_registered_and_reauthorized_after_queue(
                 "edition_key": "3",
             }
         )
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.upload_policy.authorize_captured(
                 scope,
                 "synthetic",
@@ -1116,7 +1116,7 @@ async def test_first_source_capture_is_registered_and_reauthorized_after_queue(
         changed_metadata = FrozenJsonMap(
             {**metadata, "title": "Changed revision title"}
         )
-        changed_capture = await owner.run_blocking(
+        changed_capture = await owner.run_write(
             lambda: Acquirer(owner.artifacts, config).capture(
                 SourceInput.model_validate(
                     {
@@ -1146,7 +1146,7 @@ async def test_first_source_capture_is_registered_and_reauthorized_after_queue(
                 "title": changed_metadata["title"],
             }
         )
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.upload_policy.authorize_captured(
                 scope,
                 "synthetic",
@@ -1161,7 +1161,7 @@ async def test_first_source_capture_is_registered_and_reauthorized_after_queue(
             ExecutionContext(),
         )
         with pytest.raises(TychoraError) as error:
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: owner.upload_policy.authorize_captured(
                     scope, "synthetic", authorization, 1
                 ),
@@ -1170,7 +1170,7 @@ async def test_first_source_capture_is_registered_and_reauthorized_after_queue(
         assert error.value.code == "SCOPE_CHANGED"
         bad_region = region.model_copy(update={"region_pixel_sha256": "f" * 64})
         with pytest.raises(TychoraError) as error:
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: owner.upload_policy.authorize_captured(
                     scope,
                     "synthetic",
@@ -1218,7 +1218,7 @@ async def test_first_source_capture_is_registered_and_reauthorized_after_queue(
                 ),
                 region=region,
             )
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "UPDATE collections SET policy_json='{}' WHERE collection_id=?",
                 (COLLECTION,),
@@ -1226,14 +1226,14 @@ async def test_first_source_capture_is_registered_and_reauthorized_after_queue(
             ExecutionContext(),
         )
         with pytest.raises(TychoraError) as error:
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: owner.upload_policy.authorize_captured(
                     scope, "synthetic", authorization, 0
                 ),
                 ExecutionContext(),
             )
         assert error.value.code == "FORBIDDEN_SCOPE"
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "UPDATE collections SET policy_json=? WHERE collection_id=?",
                 (
@@ -1243,7 +1243,7 @@ async def test_first_source_capture_is_registered_and_reauthorized_after_queue(
             ),
             ExecutionContext(),
         )
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "UPDATE sources SET withdrawn_at='2026-01-01T00:00:00Z' "
                 "WHERE source_id=?",
@@ -1252,34 +1252,34 @@ async def test_first_source_capture_is_registered_and_reauthorized_after_queue(
             ExecutionContext(),
         )
         with pytest.raises(TychoraError) as error:
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: owner.upload_policy.authorize_captured(
                     scope, "synthetic", authorization, 0
                 ),
                 ExecutionContext(),
             )
         assert error.value.code == "FORBIDDEN_SCOPE"
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "UPDATE sources SET withdrawn_at=NULL WHERE source_id=?", (source_id,)
             ),
             ExecutionContext(),
         )
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute(
                 "DELETE FROM sources WHERE source_id=?", (source_id,)
             ),
             ExecutionContext(),
         )
         with pytest.raises(TychoraError) as error:
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: owner.upload_policy.authorize_captured(
                     scope, "synthetic", authorization, 0
                 ),
                 ExecutionContext(),
             )
         assert error.value.code == "FORBIDDEN_SCOPE"
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.upload_policy.register_captured_source(
                 registration, scope, policy_epoch=0
             ),
@@ -1314,7 +1314,7 @@ async def test_first_source_capture_is_registered_and_reauthorized_after_queue(
                     break
                 await asyncio.sleep(0.01)
             assert len(started) == 2
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: owner.store.withdraw_source(source_id), ExecutionContext()
             )
             release.set()
@@ -1407,7 +1407,7 @@ def test_registered_image_keeps_pixel_owner_docling_json_and_sql(
                 ).read_text()
             )["manual@1"]["metadata"]
         )
-        captured = owner.run_blocking_sync(
+        captured = owner.run_write_sync(
             lambda: Acquirer(owner.artifacts, config).capture(
                 SourceInput.model_validate(
                     {
@@ -1445,7 +1445,7 @@ def test_registered_image_keeps_pixel_owner_docling_json_and_sql(
             capture=captured,
             workspace=WorkspaceRow(
                 workspace_id=owner.workspace_id,
-                created_at=owner.run_blocking_sync(
+                created_at=owner.run_write_sync(
                     lambda: owner.db.execute(
                         "SELECT created_at FROM workspaces"
                     ).fetchone()[0],
@@ -1601,7 +1601,7 @@ def test_registered_image_keeps_pixel_owner_docling_json_and_sql(
                 ),
             ),
         )
-        enriched = owner.run_blocking_sync(
+        enriched = owner.run_write_sync(
             lambda: compose_document(
                 parsed, Registry.from_config(config), plan, owner.artifacts, ctx
             ),
@@ -1612,7 +1612,7 @@ def test_registered_image_keeps_pixel_owner_docling_json_and_sql(
         original = next(
             unit for unit in bundle.units if unit.unit_type == "image_original"
         )
-        owner.run_blocking_sync(lambda: owner.store.commit_extraction(bundle), ctx)
+        owner.run_write_sync(lambda: owner.store.commit_extraction(bundle), ctx)
         proxy = next(unit for unit in bundle.units if unit.unit_type == "asset_proxy")
         assert original.text == "" and original.text_origin == "source"
         locator = cast(ImageLocator, original.locators[0])
@@ -1624,7 +1624,7 @@ def test_registered_image_keeps_pixel_owner_docling_json_and_sql(
         assert bundle.proxies[0].required_unit_ids == frozenset({original.unit_id})
         assert parsed.document_json is not None and parsed.docling_json_ref is not None
         assert parsed.original_image.pixel_sha256 == original.attributes["pixel_sha256"]
-        assert owner.run_blocking_sync(
+        assert owner.run_write_sync(
             lambda: owner.store.hydrate((original.unit_id,)), ctx
         ) == (original,)
 
@@ -1704,7 +1704,7 @@ def test_first_pdf_context_is_authorized_from_raw_selector_and_replays(
     parsed = case.parsed
     owner = case.owner
     registration = parsed.registration
-    owner.run_blocking_sync(
+    owner.run_write_sync(
         lambda: (
             owner.db.execute(
                 "INSERT INTO collections "
@@ -1733,7 +1733,7 @@ def test_first_pdf_context_is_authorized_from_raw_selector_and_replays(
         ),
         kind_id=registration.revision.kind_id,
     )
-    owner.run_blocking_sync(
+    owner.run_write_sync(
         lambda: owner.upload_policy.register_captured_source(
             captured_registration, scope, policy_epoch=0
         ),
@@ -1821,7 +1821,7 @@ def test_first_pdf_context_is_authorized_from_raw_selector_and_replays(
         region=region,
     )
     assert (
-        owner.run_blocking_sync(
+        owner.run_write_sync(
             lambda: owner.db.execute("SELECT count(*) FROM evidence_units").fetchone()[
                 0
             ],
@@ -1866,7 +1866,7 @@ def test_first_pdf_context_is_authorized_from_raw_selector_and_replays(
             }
         )
         with pytest.raises(TychoraError) as error:
-            owner.run_blocking_sync(
+            owner.run_write_sync(
                 lambda forged_region=forged_region: (
                     owner.upload_policy.authorize_captured(
                         scope,
@@ -1995,7 +1995,7 @@ def test_first_pdf_context_is_authorized_from_raw_selector_and_replays(
         base_normalizer_fingerprint=parsed.normalizer_fingerprint,
         proxies=(planned_vision_proxy(region, observation),),
     )
-    result = owner.run_blocking_sync(
+    result = owner.run_write_sync(
         lambda: compose_document(
             parsed, case.registry, plan, owner.artifacts, case.ctx
         ),
@@ -2011,7 +2011,7 @@ def test_first_pdf_context_is_authorized_from_raw_selector_and_replays(
         }
     )
     with pytest.raises(ValueError, match="derivation"):
-        owner.run_blocking_sync(
+        owner.run_write_sync(
             lambda: compose_document(
                 parsed, case.registry, forged_plan, owner.artifacts, case.ctx
             ),
@@ -2059,7 +2059,7 @@ def test_first_pdf_context_is_authorized_from_raw_selector_and_replays(
     )
     assert replay.bundle == result.bundle
     assert (
-        owner.run_blocking_sync(
+        owner.run_write_sync(
             lambda: owner.db.execute("SELECT count(*) FROM evidence_units").fetchone()[
                 0
             ],
@@ -2130,7 +2130,7 @@ def test_selected_scanned_pdf_page_adds_ocr_proxy_without_promoting_native_text(
         "standard@1", "pdf", source_builder=mixed_pdf, commit=False
     )
     parsed = case.parsed
-    base_result = case.owner.run_blocking_sync(
+    base_result = case.owner.run_write_sync(
         lambda: compose_document(
             parsed,
             case.registry,
@@ -2225,7 +2225,7 @@ def test_selected_scanned_pdf_page_adds_ocr_proxy_without_promoting_native_text(
         proof=retained_proof,
         region=captured_region,
     )
-    case.owner.run_blocking_sync(
+    case.owner.run_write_sync(
         lambda: case.owner.upload_policy._verify_captured_pixels(
             retained_authorization
         ),
@@ -2239,7 +2239,7 @@ def test_selected_scanned_pdf_page_adds_ocr_proxy_without_promoting_native_text(
     )
     with pytest.raises(TychoraError):
         rejected_ctx = ExecutionContext()
-        case.owner.run_blocking_sync(
+        case.owner.run_write_sync(
             lambda: case.owner.upload_policy._verify_captured_pixels(
                 retained_authorization.model_copy(update={"proof": forged_proof})
             ),
@@ -2305,14 +2305,14 @@ def test_selected_scanned_pdf_page_adds_ocr_proxy_without_promoting_native_text(
             planned_vision_proxy(region, second),
         ),
     )
-    result = case.owner.run_blocking_sync(
+    result = case.owner.run_write_sync(
         lambda: compose_document(
             parsed, case.registry, plan, case.owner.artifacts, case.ctx
         ),
         case.ctx,
     )
     bundle = result.bundle
-    single = case.owner.run_blocking_sync(
+    single = case.owner.run_write_sync(
         lambda: compose_document(
             parsed,
             case.registry,
@@ -2376,7 +2376,7 @@ def test_selected_scanned_pdf_page_adds_ocr_proxy_without_promoting_native_text(
             forged_plan,
             {**retained, forged_ref.sha256: forged_payload},
         )
-    case.owner.run_blocking_sync(
+    case.owner.run_write_sync(
         lambda: case.owner.store.commit_extraction(bundle), case.ctx
     )
 

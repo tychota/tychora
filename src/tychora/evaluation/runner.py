@@ -275,7 +275,7 @@ class EvaluationService:
                 "FORBIDDEN_SCOPE", "Gold registration requires management grant"
             )
         dataset = await asyncio.to_thread(load_dataset, path)
-        return await self.owner.run_blocking(
+        return await self.owner.run_write(
             lambda: self.repository.register(dataset, grant), ctx
         )
 
@@ -288,7 +288,7 @@ class EvaluationService:
                 "FORBIDDEN_SCOPE", "Gold registration requires management grant"
             )
         dataset = await asyncio.to_thread(load_dataset_bytes, manifest, cases)
-        return await self.owner.run_blocking(
+        return await self.owner.run_write(
             lambda: self.repository.register(dataset, grant), ctx
         )
 
@@ -424,13 +424,13 @@ class EvaluationService:
                 epochs,
                 config_sha,
                 handle,
-            ) = await self.owner.run_blocking(accept, ctx)
+            ) = await self.owner.run_write(accept, ctx)
             case_results: dict[str, list[dict]] = {case.case_id: [] for case in cases}
             retained_case_bytes = 0
             evaluations: list[CaseEvaluation] = []
             metric_sets: list[MetricSet] = []
             try:
-                locator_cache = await self.owner.run_blocking(
+                locator_cache = await self.owner.run_write(
                     lambda: RetainedBindingCache(self.owner, request.snapshot_id), ctx
                 )
                 for variant in request.variants:
@@ -451,7 +451,7 @@ class EvaluationService:
                                 raise TychoraError(
                                     "SCOPE_CHANGED", "Evaluation snapshot changed"
                                 )
-                            locator_assessment = await self.owner.run_blocking(
+                            locator_assessment = await self.owner.run_write(
                                 lambda result=delivered.result: verify_result_locators(
                                     self.owner, result, cache=locator_cache
                                 ),
@@ -465,7 +465,7 @@ class EvaluationService:
                             )
                             if case.benchmark == "integrity":
                                 _integrity_check(case, scored)
-                            observed = await self.owner.run_blocking(self._epochs, ctx)
+                            observed = await self.owner.run_write(self._epochs, ctx)
                             if observed != epochs:
                                 raise TychoraError(
                                     "SCOPE_CHANGED",
@@ -544,14 +544,14 @@ class EvaluationService:
                     )
                     self.jobs.complete(handle.id)
 
-                await self.owner.run_blocking(finish, ctx)
+                await self.owner.run_write(finish, ctx)
             except BaseException as error:
                 failure = (
                     error
                     if isinstance(error, TychoraError)
                     else TychoraError("JOB_INTERRUPTED", "Evaluation did not complete")
                 )
-                await self.owner.run_blocking(
+                await self.owner.run_write(
                     lambda: self.jobs.fail(handle.id, failure), ExecutionContext()
                 )
                 raise
@@ -560,11 +560,11 @@ class EvaluationService:
     async def get(
         self, evaluation_id: str, scope: RequestScope, ctx: ExecutionContext
     ) -> dict:
-        return await self.owner.run_blocking(
+        return await self.owner.run_write(
             lambda: self.repository.get(evaluation_id, scope, self.jobs), ctx
         )
 
     async def list_runs(self, scope: RequestScope, ctx: ExecutionContext) -> list[dict]:
-        return await self.owner.run_blocking(
+        return await self.owner.run_write(
             lambda: self.repository.list_runs(scope, self.jobs), ctx
         )

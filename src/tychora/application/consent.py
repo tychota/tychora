@@ -168,6 +168,6 @@ async def run_public_upload_consent(
     scope: RequestScope,
     request: ProviderUploadConsentMaintenance,
 ) -> MaintenanceResult:
-    return await owner.run_blocking(
+    return await owner.run_write(
         lambda: apply_upload_consent(owner, scope, request), ExecutionContext()
     )

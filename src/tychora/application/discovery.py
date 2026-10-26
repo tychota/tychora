@@ -404,7 +404,7 @@ class DiscoveryService:
                 sources.setdefault(kind, set()).add(source)
             return {kind: len(ids) for kind, ids in sources.items()}
 
-        return owner.run_blocking_sync(read, ExecutionContext())
+        return owner.run_write_sync(read, ExecutionContext())
 
     def _source_rows(
         self,
@@ -448,7 +448,7 @@ class DiscoveryService:
                 ).fetchall()
             )
 
-        return owner.run_blocking_sync(read, ExecutionContext())
+        return owner.run_write_sync(read, ExecutionContext())
 
     def _revision_page(
         self,
@@ -547,7 +547,7 @@ class DiscoveryService:
                 scope_limited=limited,
             )
 
-        return owner.run_blocking_sync(read, ExecutionContext())
+        return owner.run_write_sync(read, ExecutionContext())
 
     def _extraction_coverage(
         self, extraction: str, kind: str, scope: RequestScope
@@ -650,7 +650,7 @@ class DiscoveryService:
                 ) from None
             return row[0]
 
-        return owner.run_blocking_sync(read, ExecutionContext())
+        return owner.run_write_sync(read, ExecutionContext())
 
     def source_extractions(
         self,
@@ -689,7 +689,7 @@ class DiscoveryService:
                 else None,
             )
 
-        return owner.run_blocking_sync(read, ExecutionContext())
+        return owner.run_write_sync(read, ExecutionContext())
 
     def source_channels(
         self,
@@ -741,7 +741,7 @@ class DiscoveryService:
                 else None,
             )
 
-        return owner.run_blocking_sync(read, ExecutionContext())
+        return owner.run_write_sync(read, ExecutionContext())
 
     def source_selections(
         self,
@@ -910,7 +910,7 @@ class DiscoveryService:
                 else None,
             )
 
-        return owner.run_blocking_sync(read, ExecutionContext())
+        return owner.run_write_sync(read, ExecutionContext())
 
     def source_revisions(
         self,
@@ -1013,7 +1013,7 @@ class DiscoveryService:
             )
             return definitions, next_cursor
 
-        return owner.run_blocking_sync(read, ExecutionContext())
+        return owner.run_write_sync(read, ExecutionContext())
 
     def _code_resolution(self, extraction: str, scope: RequestScope) -> FrozenJsonMap:
         """Read typed retained rates only inside the current pinned eligibility view."""
@@ -1224,7 +1224,7 @@ class DiscoveryService:
                 )
             return form
 
-        return await owner.run_blocking(read, ctx)
+        return await owner.run_write(read, ctx)
 
     def definition(
         self, subject: str, item_id: str, scope: RequestScope

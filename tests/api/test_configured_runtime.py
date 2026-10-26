@@ -103,7 +103,7 @@ def test_public_add_persists_native_graph_generation(tmp_path):
         )
         assert kb.jobs.wait(second.id).state == "succeeded"
         view = kb._workspace.bridge.call(
-            kb._workspace.owner.run_blocking(
+            kb._workspace.owner.run_write(
                 lambda: kb._workspace.owner.store.resolve_snapshot(None),
                 __import__(
                     "tychora.ports.execution", fromlist=["ExecutionContext"]
@@ -390,7 +390,7 @@ def test_public_add_dispatches_configured_text_only_after_policy_grant(
     ) as kb:
         owner = kb._workspace.owner
         kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     'UPDATE collections SET policy_json=? WHERE slug="default"',
                     ('{"schema_version":1,"upload_providers":["voyage"]}',),
@@ -663,7 +663,7 @@ def test_public_visual_query_uses_default_binding_and_narrow_scope(
     ) as kb:
         owner = kb._workspace.owner
         kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     'UPDATE collections SET policy_json=? WHERE slug="default"',
                     ('{"schema_version":1,"upload_providers":["voyage"]}',),
@@ -778,7 +778,7 @@ def test_public_rerank_uses_default_binding_and_narrow_scope(tmp_path, monkeypat
     ) as kb:
         owner = kb._workspace.owner
         kb._workspace.bridge.call(
-            owner.run_blocking(
+            owner.run_write(
                 lambda: owner.db.execute(
                     'UPDATE collections SET policy_json=? WHERE slug="default"',
                     ('{"schema_version":1,"upload_providers":["voyage"]}',),

@@ -537,5 +537,5 @@ async def run_public_removal(
     ctx = ExecutionContext()
     if isinstance(request, PurgeOriginalsMaintenance):
         async with owner.comparison_admission.mutation(ctx):
-            return await owner.run_blocking(execute, ctx)
-    return await owner.run_blocking(execute, ctx)
+            return await owner.run_write(execute, ctx)
+    return await owner.run_write(execute, ctx)

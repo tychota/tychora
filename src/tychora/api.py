@@ -161,7 +161,7 @@ class LocalWorkspace:
             )
             if str(DEFAULT_COLLECTION_ID) in scope.collection_ids:
                 self.bridge.call(
-                    self.owner.run_blocking(
+                    self.owner.run_write(
                         self._ensure_default_collection, ExecutionContext()
                     )
                 )
@@ -176,7 +176,7 @@ class LocalWorkspace:
                 )
 
                 self.scope = self.bridge.call(
-                    self.owner.run_blocking(
+                    self.owner.run_write(
                         lambda: restore_default_owner_upload_scope(self.owner),
                         ExecutionContext(),
                     )
@@ -205,7 +205,7 @@ class LocalWorkspace:
                     raise
 
             self.services: Services = self.bridge.call(
-                self.owner.run_blocking(prepare_services, ExecutionContext())
+                self.owner.run_write(prepare_services, ExecutionContext())
             )
             from tychora.application.removal import RemovalService
 
@@ -216,7 +216,7 @@ class LocalWorkspace:
                 self.services.jobs.repository.interrupt_orphaned_jobs()
 
             self.bridge.call(
-                self.owner.run_blocking(
+                self.owner.run_write(
                     reconcile_removal,
                     ExecutionContext(),
                 )
@@ -315,7 +315,7 @@ class _LocalRebuildTarget:
 
     def _on_owner[T](self, call: Callable[[], T]) -> T:
         owner = self._workspace.owner
-        return self._workspace.bridge.call(owner.run_blocking(call, ExecutionContext()))
+        return self._workspace.bridge.call(owner.run_write(call, ExecutionContext()))
 
     def kinds(self) -> frozenset[str]:
         """Kind identifiers the new workspace's registry knows."""

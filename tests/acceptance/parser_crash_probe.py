@@ -30,7 +30,7 @@ def run(root: Path) -> None:
     scope = RequestScope(principal_id="synthetic-parser-owner")
     with WorkspaceOwner.open(root / "data", config, scope) as owner:
         ctx = ExecutionContext()
-        ref = owner.run_blocking_sync(
+        ref = owner.run_write_sync(
             lambda: owner.artifacts.put_stream(
                 BytesIO(str(root).encode()), "text/plain"
             ),

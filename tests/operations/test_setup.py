@@ -186,18 +186,18 @@ async def test_setup_apply_persists_capture_checkpoint_and_result_across_reopen(
     workspace = tmp_path / "workspace"
     ctx = ExecutionContext()
     with WorkspaceOwner.open(workspace, config, scope) as owner:
-        job_id = await owner.run_blocking(
+        job_id = await owner.run_write(
             lambda: _run_setup(owner, scope, bundle, tmp_path / "cache"), ctx
         )
     with WorkspaceOwner.open(workspace, config, scope) as owner:
-        repo = await owner.run_blocking(
+        repo = await owner.run_write(
             lambda: JobRepository(
                 owner.db, artifacts=owner.artifacts, workspace_id=owner.workspace_id
             ),
             ctx,
         )
-        status = await owner.run_blocking(lambda: repo.get(job_id), ctx)
-        checkpoint = await owner.run_blocking(
+        status = await owner.run_write(lambda: repo.get(job_id), ctx)
+        checkpoint = await owner.run_write(
             lambda: repo.completed_step(job_id, "provision", status.request_digest),
             ctx,
         )
@@ -225,7 +225,7 @@ async def test_setup_rejects_missing_or_corrupt_offline_bundle_and_reuses_cache(
             (bundle, "INTEGRITY_ERROR"),
         ):
             with pytest.raises(TychoraError) as error:
-                await owner.run_blocking(
+                await owner.run_write(
                     lambda local_bundle=local_bundle: _apply_setup(
                         owner,
                         scope,
@@ -240,7 +240,7 @@ async def test_setup_rejects_missing_or_corrupt_offline_bundle_and_reuses_cache(
         outside.write_bytes(b"pinned")
         (bundle / "fixture/asset.bin").symlink_to(outside)
         with pytest.raises(TychoraError) as error:
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: _apply_setup(
                     owner, scope, tmp_path / "cache", bundle, offline=True
                 ),
@@ -250,7 +250,7 @@ async def test_setup_rejects_missing_or_corrupt_offline_bundle_and_reuses_cache(
         (bundle / "fixture/asset.bin").unlink()
         (bundle / "fixture/asset.bin").write_bytes(b"broken")
         with pytest.raises(TychoraError) as error:
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: _apply_setup(
                     owner, scope, tmp_path / "cache", bundle, offline=True
                 ),
@@ -258,7 +258,7 @@ async def test_setup_rejects_missing_or_corrupt_offline_bundle_and_reuses_cache(
             )
         assert error.value.code == "INTEGRITY_ERROR"
         (bundle / "fixture/asset.bin").write_bytes(b"pinned")
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: _apply_setup(
                 owner, scope, tmp_path / "cache", bundle, offline=True
             ),
@@ -270,7 +270,7 @@ async def test_setup_rejects_missing_or_corrupt_offline_bundle_and_reuses_cache(
             calls.append(url)
             raise AssertionError("verified cache must not fetch")
 
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: _apply_setup(
                 owner,
                 scope,
@@ -304,7 +304,7 @@ async def test_online_setup_fetches_only_allowlisted_verified_asset(
         return b"pinned"
 
     with WorkspaceOwner.open(tmp_path / "workspace", config, scope) as owner:
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: _apply_setup(
                 owner,
                 scope,
@@ -347,7 +347,7 @@ def test_setup_rejects_ancestor_swap_during_injected_fetch(tmp_path, monkeypatch
         WorkspaceOwner.open(tmp_path / "workspace", config, scope) as owner,
         pytest.raises(TychoraError, match="safely"),
     ):
-        owner.run_blocking_sync(
+        owner.run_write_sync(
             lambda: _apply_setup(
                 owner,
                 scope,
@@ -408,14 +408,14 @@ def test_cached_setup_observes_cancellation_before_success(tmp_path, monkeypatch
             return service.apply(service.plan(("fixture",)), None, ctx)
 
         with pytest.raises(TychoraError) as error:
-            owner.run_blocking_sync(apply, ExecutionContext())
-        job_id = owner.run_blocking_sync(
+            owner.run_write_sync(apply, ExecutionContext())
+        job_id = owner.run_write_sync(
             lambda: owner.db.execute(
                 "SELECT job_id FROM jobs ORDER BY created_at DESC LIMIT 1"
             ).fetchone()[0],
             ExecutionContext(),
         )
-        status = owner.run_blocking_sync(
+        status = owner.run_write_sync(
             lambda: JobRepository(
                 owner.db, artifacts=owner.artifacts, workspace_id=owner.workspace_id
             ).get(job_id),

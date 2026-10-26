@@ -266,7 +266,7 @@ def test_selected_crop_budget_denies_before_cas(retained_case, monkeypatch):
 
     monkeypatch.setattr(execution.owner.artifacts, "put_stream", observed_put)
     with pytest.raises(TychoraError) as error:
-        execution.owner.run_blocking_sync(
+        execution.owner.run_write_sync(
             lambda: derive_selected_region(
                 execution.owner, parsed, selected, before_retain=deny
             ),

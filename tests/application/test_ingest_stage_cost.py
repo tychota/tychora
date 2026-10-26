@@ -25,7 +25,7 @@ async def test_sub_stage_markers_do_not_reverify_bindings(tmp_path: Path, monkey
         monkeypatch.setattr(JobRepository, "_verify_bindings", counting)
 
     async with _published(tmp_path, before_add=patch) as (owner, _, _):
-        stages = await owner.run_blocking(
+        stages = await owner.run_write(
             lambda: [
                 row[0]
                 for row in owner.db.execute(

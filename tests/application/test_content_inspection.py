@@ -17,7 +17,7 @@ published = published_fixture
 
 
 async def content_request(owner, **kwargs):
-    lineage = await owner.run_blocking(
+    lineage = await owner.run_write(
         lambda: owner.db.execute(
             "SELECT r.source_id,e.revision_id,e.extraction_id FROM extractions e "
             "JOIN revisions r USING(revision_id) ORDER BY e.created_at DESC LIMIT 1"
@@ -67,7 +67,7 @@ async def long_content(published):
 async def test_pages_preserve_stored_identity_unicode_and_source_order(long_content):
     owner, scope = long_content
     request = await content_request(owner, limit=1)
-    rows, units = await owner.run_blocking(
+    rows, units = await owner.run_write(
         lambda: (
             owner.db.execute(
                 "SELECT c.chunk_id,c.unit_id,c.char_start,c.char_end,c.token_count,c.chunker_fingerprint "
@@ -211,7 +211,7 @@ async def restricted_windows(owner, uid):
                 ),
             )
 
-    await owner.run_blocking(install, ExecutionContext())
+    await owner.run_write(install, ExecutionContext())
 
 
 @pytest.mark.asyncio
@@ -243,7 +243,7 @@ async def test_excluded_overlap_cannot_hide_later_disjoint_windows(published):
         if isinstance(loc, TextLocator)
     ] == [(12, 22)]
     # A rejected parent cannot be revived by requesting a locally disjoint range.
-    await owner.run_blocking(
+    await owner.run_write(
         lambda: owner.db.execute(
             "INSERT INTO review_events(unit_id,state,actor_id,created_at) VALUES (?,'rejected','reviewer','2026-01-01T00:00:00Z')",
             (uid,),
@@ -263,7 +263,7 @@ async def test_cursor_rejects_policy_epoch_change_and_delivery_race(
     service = InspectionService(owner)
     request = await content_request(owner, limit=1)
     first = await service.extraction_windows(request, scope, ExecutionContext())
-    await owner.run_blocking(
+    await owner.run_write(
         lambda: owner.store.record_review(
             ReviewTarget(unit_id=first.windows[0].unit_id), "accepted", "reviewer"
         ),
@@ -303,7 +303,7 @@ async def test_corrupt_window_is_never_sliced_or_served(published, assignment):
         owner.db.execute("PRAGMA foreign_keys=OFF")
         owner.db.execute("UPDATE chunks SET " + assignment)
 
-    await owner.run_blocking(corrupt, ExecutionContext())
+    await owner.run_write(corrupt, ExecutionContext())
     with pytest.raises(TychoraError) as error:
         await InspectionService(owner).extraction_windows(
             request, scope, ExecutionContext()
@@ -330,7 +330,7 @@ async def test_removed_original_and_empty_unit_remain_inspectable(published):
             (sha256(b"").hexdigest(), uid),
         )
 
-    await owner.run_blocking(mutate, ExecutionContext())
+    await owner.run_write(mutate, ExecutionContext())
     service = InspectionService(owner)
     page = await service.extraction_units(request, scope, ExecutionContext())
     assert [(u.id, u.preview) for u in page.units] == [
@@ -413,7 +413,7 @@ async def test_cursor_cannot_move_to_other_retained_lineage_or_resource(long_con
             ExecutionContext(),
         )
     assert error.value.code == "INVALID_REQUEST"
-    other = await owner.run_blocking(
+    other = await owner.run_write(
         lambda: owner.db.execute(
             "SELECT r.source_id,e.revision_id,e.extraction_id FROM extractions e JOIN revisions r USING(revision_id) WHERE e.extraction_id<>?",
             (request.extraction_id,),
@@ -570,11 +570,11 @@ async def test_proxy_window_preserves_image_locator_only_with_readable_dependenc
         )
         return window_id, locator, asset_id
 
-    window_id, locator, asset_id = await owner.run_blocking(
+    window_id, locator, asset_id = await owner.run_write(
         install_proxy, ExecutionContext()
     )
     if review_state == "needs_review":
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.store.record_review(
                 ReviewTarget(
                     unit_id=owner.db.execute(
@@ -599,7 +599,7 @@ async def test_proxy_window_preserves_image_locator_only_with_readable_dependenc
         if denied_dependency == "source"
         else ReviewTarget(asset_id=asset_id)
     )
-    await owner.run_blocking(
+    await owner.run_write(
         lambda: owner.store.record_review(target, "rejected", "reviewer"),
         ExecutionContext(),
     )

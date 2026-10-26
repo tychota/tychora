@@ -806,4 +806,4 @@ async def run_public_setup(owner, repository, scope, request):
             job=handle,
         )
 
-    return await owner.run_blocking(execute, ExecutionContext())
+    return await owner.run_write(execute, ExecutionContext())

@@ -47,7 +47,7 @@ async def test_owner_worker_preserves_sqlite_affinity_and_heartbeat(
             assert release.wait(5)
             return owner.db.execute("SELECT workspace_id FROM workspaces").fetchone()[0]
 
-        pending = asyncio.create_task(owner.run_blocking(work, ExecutionContext()))
+        pending = asyncio.create_task(owner.run_write(work, ExecutionContext()))
         try:
             for _ in range(100):
                 if started.is_set():
@@ -74,7 +74,7 @@ async def test_cancelled_delivery_keeps_worker_lease_until_actual_exit(
                 started.set()
                 assert release.wait(5)
 
-        pending = asyncio.create_task(owner.run_blocking(work, ExecutionContext()))
+        pending = asyncio.create_task(owner.run_write(work, ExecutionContext()))
         try:
             for _ in range(100):
                 if started.is_set():
@@ -110,6 +110,7 @@ async def test_queue_bound_rejects_excess_work(tmp_path, settings, scope):
             worker.submit(lambda: 2)
         assert exc.value.code == "WORKSPACE_BUSY"
         assert exc.value.retryable
+        assert exc.value.reason == "queue.full"
     finally:
         release.set()
         await drain_result(first, ExecutionContext())
@@ -220,7 +221,7 @@ async def test_parser_receives_independent_copies_and_retains_staging_through_ca
 
     root = tmp_path / "data"
     with WorkspaceOwner.open(root, settings, scope) as owner:
-        ref = await owner.run_blocking(
+        ref = await owner.run_write(
             lambda: owner.artifacts.put_stream(
                 BytesIO(b"synthetic input"), "text/plain"
             ),
@@ -262,11 +263,11 @@ async def test_cancelled_queued_operation_never_enters_call(tmp_path, settings, 
             started.set()
             assert release.wait(5)
 
-        first = asyncio.create_task(owner.run_blocking(held, ExecutionContext()))
+        first = asyncio.create_task(owner.run_write(held, ExecutionContext()))
         while not started.is_set():
             await asyncio.sleep(0.01)
         second = asyncio.create_task(
-            owner.run_blocking(lambda: called.append(True), ExecutionContext())
+            owner.run_write(lambda: called.append(True), ExecutionContext())
         )
         await asyncio.sleep(0.02)
         second.cancel()
@@ -345,7 +346,7 @@ async def test_copy_cancellation_retains_shared_cas_pin(
         original(source, destination, length)
 
     with WorkspaceOwner.open(tmp_path / "data", settings, scope) as owner:
-        ref = await owner.run_blocking(
+        ref = await owner.run_write(
             lambda: owner.artifacts.put_stream(
                 BytesIO(b"synthetic bytes"), "text/plain"
             ),
@@ -381,7 +382,7 @@ async def test_parser_process_count_is_bounded_and_unknown_staging_is_retained(
         unknown = root / "staging/unknown-old-child"
         unknown.mkdir()
         (unknown / "retained-input").write_bytes(b"unknown old input")
-        ref = await owner.run_blocking(
+        ref = await owner.run_write(
             lambda: owner.artifacts.put_stream(BytesIO(b"bounded"), "text/plain"),
             ExecutionContext(),
         )
@@ -562,7 +563,7 @@ def test_sync_owner_collects_after_child_exit_and_retains_output(
 
     with WorkspaceOwner.open(tmp_path / "data", settings, scope) as owner:
         ctx = ExecutionContext()
-        ref = owner.run_blocking_sync(
+        ref = owner.run_write_sync(
             lambda: owner.artifacts.put_stream(BytesIO(b"original"), "text/plain"), ctx
         )
 
@@ -573,14 +574,10 @@ def test_sync_owner_collects_after_child_exit_and_retains_output(
         result = owner.run_parser_sync(
             _write_parser_output, (ref,), ctx, collector=collect
         )
-        assert owner.run_blocking_sync(
-            lambda: owner.artifacts.stat(result).available, ctx
-        )
+        assert owner.run_write_sync(lambda: owner.artifacts.stat(result).available, ctx)
         assert not list((owner.path / "staging").iterdir())
         with pytest.raises(TychoraError, match="owner thread"):
-            owner.run_blocking_sync(
-                lambda: owner.run_blocking_sync(lambda: None, ctx), ctx
-            )
+            owner.run_write_sync(lambda: owner.run_write_sync(lambda: None, ctx), ctx)
 
 
 @pytest.mark.asyncio
@@ -589,7 +586,7 @@ async def test_sync_owner_bridge_rejects_event_loop(tmp_path, settings, scope):
         WorkspaceOwner.open(tmp_path / "data", settings, scope) as owner,
         pytest.raises(TychoraError, match="async"),
     ):
-        owner.run_blocking_sync(lambda: None, ExecutionContext())
+        owner.run_write_sync(lambda: None, ExecutionContext())
 
 
 def test_collector_failure_removes_private_outputs(tmp_path, settings, scope):
@@ -597,7 +594,7 @@ def test_collector_failure_removes_private_outputs(tmp_path, settings, scope):
 
     with WorkspaceOwner.open(tmp_path / "data", settings, scope) as owner:
         ctx = ExecutionContext()
-        ref = owner.run_blocking_sync(
+        ref = owner.run_write_sync(
             lambda: owner.artifacts.put_stream(BytesIO(b"original"), "text/plain"), ctx
         )
 
@@ -618,7 +615,7 @@ async def test_cancelled_collector_drains_before_staging_cleanup(
     started, release = threading.Event(), threading.Event()
     with WorkspaceOwner.open(tmp_path / "data", settings, scope) as owner:
         ctx = ExecutionContext()
-        ref = await owner.run_blocking(
+        ref = await owner.run_write(
             lambda: owner.artifacts.put_stream(BytesIO(b"original"), "text/plain"), ctx
         )
 
@@ -661,7 +658,7 @@ def _fifo_collection_probe(directory, settings, scope, sender):
             raise AssertionError("FIFO reached result collector")
 
         try:
-            owner.run_blocking_sync(
+            owner.run_write_sync(
                 lambda: owner._collect_outputs(
                     staging,
                     (StagedOutput("output", "application/json", 0),),

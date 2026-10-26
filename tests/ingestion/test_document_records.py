@@ -387,7 +387,7 @@ def test_forged_parsed_source_facts_are_rejected_even_with_rehashed_root(
         data["units"][0]["heading_path"] = ["forged context"]
     else:
         data["units"][0]["locators"][0]["physical_page"] = 99
-    count = source_case.owner.run_blocking_sync(
+    count = source_case.owner.run_write_sync(
         lambda: source_case.owner.db.execute(
             "SELECT COUNT(*) FROM extractions"
         ).fetchone()[0],
@@ -396,7 +396,7 @@ def test_forged_parsed_source_facts_are_rejected_even_with_rehashed_root(
     with pytest.raises(ValueError):
         rebind(data)
     assert (
-        source_case.owner.run_blocking_sync(
+        source_case.owner.run_write_sync(
             lambda: source_case.owner.db.execute(
                 "SELECT COUNT(*) FROM extractions"
             ).fetchone()[0],

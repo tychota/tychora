@@ -759,8 +759,8 @@ class InspectionService:
     async def inspect(
         self, request: InspectRequest, scope: RequestScope, ctx: ExecutionContext
     ) -> InspectionResult:
-        return await self.owner.run_blocking(
-            lambda: self._inspect_sync(request, scope, ctx), ctx
+        return await self.owner.run_write(
+            lambda: self._inspect_sync(request, scope, ctx), ctx, "interactive"
         )
 
     async def extraction_units(
@@ -771,8 +771,10 @@ class InspectionService:
     ) -> ExtractionUnitsPage:
         from tychora.application.retained_content import content_page
 
-        return await self.owner.run_blocking(
-            lambda: content_page(self, request, scope, ctx, windows=False), ctx
+        return await self.owner.run_write(
+            lambda: content_page(self, request, scope, ctx, windows=False),
+            ctx,
+            "interactive",
         )
 
     async def extraction_windows(
@@ -783,15 +785,17 @@ class InspectionService:
     ) -> ExtractionWindowsPage:
         from tychora.application.retained_content import content_page
 
-        return await self.owner.run_blocking(
-            lambda: content_page(self, request, scope, ctx, windows=True), ctx
+        return await self.owner.run_write(
+            lambda: content_page(self, request, scope, ctx, windows=True),
+            ctx,
+            "interactive",
         )
 
     async def relations(
         self, request: RelationRequest, scope: RequestScope, ctx: ExecutionContext
     ) -> RelationResult:
-        return await self.owner.run_blocking(
-            lambda: self._relations_sync(request, scope, ctx), ctx
+        return await self.owner.run_write(
+            lambda: self._relations_sync(request, scope, ctx), ctx, "interactive"
         )
 
     def _relations_sync(

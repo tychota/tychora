@@ -53,7 +53,7 @@ class _OwnerDb:
 
 
 def _on_owner(owner, call):
-    return owner.run_blocking_sync(call, ExecutionContext())
+    return owner.run_write_sync(call, ExecutionContext())
 
 
 def _db(owner) -> _OwnerDb:
@@ -139,7 +139,7 @@ def _storage_path(owner, sha: str) -> Path:
 
 
 def _collect(owner, **options):
-    return owner.run_blocking_sync(
+    return owner.run_write_sync(
         lambda: SnapshotGc(owner).collect(ExecutionContext(), **options),
         ExecutionContext(),
     )
@@ -239,7 +239,7 @@ def test_pinned_reader_keeps_its_snapshot_and_payloads_through_manage_gc(
             assert pinned in _snapshots(_db(owner))
             # A lease blocks every unlink, so released payloads wait.
             assert result.deleted_payloads == 0
-            slots = owner.run_blocking_sync(
+            slots = owner.run_write_sync(
                 lambda: owner.store.snapshot_slots(view, fresh=True),
                 ExecutionContext(),
             )
@@ -476,7 +476,7 @@ def test_receipt_of_a_collected_snapshot_still_resolves(tmp_path, monkeypatch):
         monkeypatch.setattr(snapshot_rows, "RETAINED_SNAPSHOTS", 1)
         _collect(owner)
         assert first not in _snapshots(_db(owner))
-        receipt = owner.run_blocking_sync(
+        receipt = owner.run_write_sync(
             lambda: PublicationReceipts(owner.store).lookup(job_id),
             ExecutionContext(),
         )

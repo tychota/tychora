@@ -59,25 +59,25 @@ def install(owner):
 @pytest.mark.asyncio
 async def test_upload_rechecks_canonical_grants_and_epoch(tmp_path):
     with prepared(tmp_path) as (owner, scope):
-        bundle = await owner.run_blocking(lambda: install(owner), ExecutionContext())
+        bundle = await owner.run_write(lambda: install(owner), ExecutionContext())
         deps = frozenset({bundle.units[0].unit_id, bundle.revision.revision_id})
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.upload_policy.authorize(scope, "synthetic", deps, 0),
             ExecutionContext(),
         )
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.store.withdraw_source(bundle.source.source_id),
             ExecutionContext(),
         )
         with pytest.raises(TychoraError) as exc:
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: owner.upload_policy.authorize(scope, "synthetic", deps, 0),
                 ExecutionContext(),
             )
         assert exc.value.code == "SCOPE_CHANGED"
         assert exc.value.retryable
         with pytest.raises(TychoraError) as exc:
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: owner.upload_policy.authorize(scope, "synthetic", deps, 1),
                 ExecutionContext(),
             )
@@ -107,7 +107,7 @@ async def test_upload_rechecks_canonical_grants_and_epoch(tmp_path):
 )
 async def test_upload_denies_missing_or_invalid_permission(tmp_path, change):
     with prepared(tmp_path, offline=change == "offline") as (owner, scope):
-        bundle = await owner.run_blocking(lambda: install(owner), ExecutionContext())
+        bundle = await owner.run_write(lambda: install(owner), ExecutionContext())
         deps = frozenset({bundle.units[0].unit_id})
         request = scope
 
@@ -168,7 +168,7 @@ async def test_upload_denies_missing_or_invalid_permission(tmp_path, change):
                     ),
                 )
 
-        await owner.run_blocking(mutate, ExecutionContext())
+        await owner.run_write(mutate, ExecutionContext())
         if change == "owner_grant":
             request = scope.model_copy(
                 update={"upload_providers": frozenset({"ungranted"})}
@@ -184,7 +184,7 @@ async def test_upload_denies_missing_or_invalid_permission(tmp_path, change):
         if change == "empty":
             deps = frozenset()
         with pytest.raises(TychoraError) as exc:
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: owner.upload_policy.authorize(
                     request,
                     "ungranted" if change == "owner_grant" else "synthetic",
@@ -207,7 +207,7 @@ async def test_provider_concurrency_and_queued_reauthorization(tmp_path):
     import threading
 
     with prepared(tmp_path) as (owner, scope):
-        bundle = await owner.run_blocking(lambda: install(owner), ExecutionContext())
+        bundle = await owner.run_write(lambda: install(owner), ExecutionContext())
         release = threading.Event()
         lock = threading.Lock()
         started = []
@@ -238,7 +238,7 @@ async def test_provider_concurrency_and_queued_reauthorization(tmp_path):
                     break
                 await asyncio.sleep(0.01)
             assert len(started) == 2
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: owner.store.withdraw_source(bundle.source.source_id),
                 ExecutionContext(),
             )
@@ -257,7 +257,7 @@ async def test_provider_concurrency_and_queued_reauthorization(tmp_path):
 @pytest.mark.parametrize("case", ["missing", "cycle", "hidden"])
 async def test_proxy_upload_requires_all_registered_dependencies(tmp_path, case):
     with prepared(tmp_path) as (owner, scope):
-        bundle = await owner.run_blocking(lambda: install(owner), ExecutionContext())
+        bundle = await owner.run_write(lambda: install(owner), ExecutionContext())
         unit = bundle.units[0].unit_id
 
         def proxy():
@@ -305,9 +305,9 @@ async def test_proxy_upload_requires_all_registered_dependencies(tmp_path, case)
                         "UPDATE evidence_units SET extraction_id='hidden-extraction' WHERE unit_id='support'"
                     )
 
-        await owner.run_blocking(proxy, ExecutionContext())
+        await owner.run_write(proxy, ExecutionContext())
         with pytest.raises(TychoraError) as exc:
-            await owner.run_blocking(
+            await owner.run_write(
                 lambda: owner.upload_policy.authorize(
                     scope, "synthetic", frozenset({unit}), 0
                 ),
@@ -319,9 +319,9 @@ async def test_proxy_upload_requires_all_registered_dependencies(tmp_path, case)
 @pytest.mark.asyncio
 async def test_reopening_rejects_changed_retained_kind(tmp_path):
     with prepared(tmp_path) as (owner, scope):
-        await owner.run_blocking(lambda: install(owner), ExecutionContext())
+        await owner.run_write(lambda: install(owner), ExecutionContext())
         config, root = owner.config, owner.path
-        await owner.run_blocking(
+        await owner.run_write(
             lambda: owner.db.execute("UPDATE kinds SET definition_json='{}'"),
             ExecutionContext(),
         )

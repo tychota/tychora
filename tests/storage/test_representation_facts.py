@@ -221,7 +221,7 @@ def test_intervals_read_back_in_document_order(tmp_path, monkeypatch):
             with owner.store.uow.read() as tx:
                 return tx.representations.intervals(tuple(sorted(units)))
 
-        intervals = owner.run_blocking_sync(read, ExecutionContext())
+        intervals = owner.run_write_sync(read, ExecutionContext())
     assert len(units) > 2
     assert list(units) != sorted(units)
     assert intervals == facts.intervals
@@ -243,7 +243,7 @@ def test_published_add_persists_what_eligibility_derives(tmp_path):
             with store.uow.read() as tx:
                 return facts, tx.representations.dependencies(owners)
 
-        facts, stored = owner.run_blocking_sync(read, ExecutionContext())
+        facts, stored = owner.run_write_sync(read, ExecutionContext())
     assert facts.units and facts.chunks
     for fact in facts.units:
         assert stored[fact.unit_id] == fact.dependency_ids

@@ -47,7 +47,7 @@ async def test_archive_blocks_work_hides_cached_query_and_retains_inspection(tmp
             query = {"question": "cobalt", "modalities": ["lexical"]}
             before = await client.post("/v1/queries", json=query)
             assert before.json()["citations"]
-            unit = await owner.run_blocking(
+            unit = await owner.run_write(
                 lambda: owner.db.execute(
                     "SELECT unit_id FROM evidence_units LIMIT 1"
                 ).fetchone()[0],
@@ -157,7 +157,7 @@ async def test_captured_bundle_cannot_overwrite_current_collection(
                     )
                     owner.db.commit()
 
-                await owner.run_blocking(consent_change, ExecutionContext())
+                await owner.run_write(consent_change, ExecutionContext())
         finally:
             release.set()
         result = await services.jobs.wait(
@@ -170,7 +170,7 @@ async def test_captured_bundle_cannot_overwrite_current_collection(
             assert result.state == "failed"
             assert result.error_code == "FORBIDDEN_SCOPE"
             assert (
-                await owner.run_blocking(
+                await owner.run_write(
                     owner.store.active_snapshot_id, ExecutionContext()
                 )
                 is None
@@ -228,7 +228,7 @@ async def test_archived_members_survive_unrelated_publication_and_reactivate(tmp
             assert kb.jobs.wait(handle.id, timeout=5).state == "succeeded"
 
         add(a.collection_id, "a.md")
-        identities = await ws.owner.run_blocking(
+        identities = await ws.owner.run_write(
             lambda: ws.owner.db.execute(
                 "SELECT source_id,revision_id,extraction_id FROM snapshot_members"
             ).fetchall(),
@@ -240,7 +240,7 @@ async def test_archived_members_survive_unrelated_publication_and_reactivate(tmp
         add(b.collection_id, "b.md")
         page = await service.documents(kb.scope, ExecutionContext())
         assert [doc.collection_id for doc in page.documents] == [b.collection_id]
-        snapshot = await ws.owner.run_blocking(
+        snapshot = await ws.owner.run_write(
             lambda: ws.owner.store.resolve_snapshot(None), ExecutionContext()
         )
         assert all(
@@ -286,7 +286,7 @@ async def test_reuse_target_archived_after_prepared_plan_is_denied(
         }
         first = kb.sources.add(source)
         assert kb.jobs.wait(first.id, timeout=5).state == "succeeded"
-        active = await kb._workspace.owner.run_blocking(
+        active = await kb._workspace.owner.run_write(
             kb._workspace.owner.store.active_snapshot_id, ExecutionContext()
         )
         entered, release = Event(), Event()
@@ -311,7 +311,7 @@ async def test_reuse_target_archived_after_prepared_plan_is_denied(
         )
         assert result.state == "failed" and result.error_code == "FORBIDDEN_SCOPE"
         assert (
-            await kb._workspace.owner.run_blocking(
+            await kb._workspace.owner.run_write(
                 kb._workspace.owner.store.active_snapshot_id, ExecutionContext()
             )
             == active

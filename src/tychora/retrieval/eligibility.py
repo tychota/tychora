@@ -820,8 +820,10 @@ class EligibilityAttempt:
             self.compiler.revalidate_epoch(self.view, "provider")
         else:
             assert self.ctx is not None
-            await self.owner.run_blocking(
-                lambda: self.compiler.revalidate_epoch(self.view, "provider"), self.ctx
+            await self.owner.run_write(
+                lambda: self.compiler.revalidate_epoch(self.view, "provider"),
+                self.ctx,
+                "interactive",
             )
         return await call()
 
@@ -856,15 +858,16 @@ async def run_pinned_eligibility[T](
 
     try:
         snapshot = (
-            await owner.run_blocking(enter, ctx)
+            await owner.run_write(enter, ctx, "interactive")
             if owner is not None and ctx is not None
             else enter()
         )
         for attempt_number in range(2):
             compiled = (
-                await owner.run_blocking(
+                await owner.run_write(
                     lambda: compiler.compile_attempt(snapshot, scope, request, config),
                     ctx,
+                    "interactive",
                 )
                 if owner is not None and ctx is not None
                 else compiler.compile_attempt(snapshot, scope, request, config)
@@ -875,11 +878,12 @@ async def run_pinned_eligibility[T](
                 result = await operation(attempt)
                 completed_operation = True
                 if owner is not None and ctx is not None:
-                    await owner.run_blocking(
+                    await owner.run_write(
                         lambda view=attempt.view: compiler.revalidate_epoch(
                             view, "delivery"
                         ),
                         ctx,
+                        "interactive",
                     )
                 else:
                     compiler.revalidate_epoch(attempt.view, "delivery")
@@ -899,8 +903,10 @@ async def run_pinned_eligibility[T](
         if entered:
             if owner is not None:
                 cleanup = asyncio.create_task(
-                    owner.run_blocking(
-                        lambda: pin.__exit__(None, None, None), ExecutionContext()
+                    owner.run_write(
+                        lambda: pin.__exit__(None, None, None),
+                        ExecutionContext(),
+                        "interactive",
                     )
                 )
                 try:

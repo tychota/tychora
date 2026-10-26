@@ -62,7 +62,7 @@ def run(mode: str, root: Path) -> None:
                     (ref.sha256, result.run_id),
                 )
 
-            kb._workspace.bridge.call(owner.run_blocking(retain, ExecutionContext()))
+            kb._workspace.bridge.call(owner.run_write(retain, ExecutionContext()))
             (root.parent / "history-receipt.json").write_text(
                 json.dumps(
                     {
@@ -95,7 +95,7 @@ def run(mode: str, root: Path) -> None:
                 )
 
             replayed = kb._workspace.bridge.call(
-                owner.run_blocking(replay, ExecutionContext())
+                owner.run_write(replay, ExecutionContext())
             )
             assert replayed.input.text == "identity marker"
 

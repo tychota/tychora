@@ -128,10 +128,10 @@ class CollectionService:
                 policy_epoch=epoch,
             )
 
-        return await self.owner.run_blocking(read, ctx)
+        return await self.owner.run_write(read, ctx)
 
     async def get(self, collection_id, scope, ctx):
-        return await self.owner.run_blocking(
+        return await self.owner.run_write(
             lambda: self._summary(self._row(collection_id, self._grant(scope))), ctx
         )
 
@@ -195,7 +195,7 @@ class CollectionService:
             )
             return cid, True
 
-        return await self.owner.run_blocking(lambda: self._mutate(scope, create), ctx)
+        return await self.owner.run_write(lambda: self._mutate(scope, create), ctx)
 
     async def edit(self, collection_id: str, request: CollectionEdit, scope, ctx):
         def edit(grant):
@@ -236,7 +236,7 @@ class CollectionService:
                 )
             return collection_id, changed
 
-        return await self.owner.run_blocking(lambda: self._mutate(scope, edit), ctx)
+        return await self.owner.run_write(lambda: self._mutate(scope, edit), ctx)
 
     async def set_archived(self, collection_id, archived, scope, ctx):
         def archive(grant):
@@ -256,7 +256,7 @@ class CollectionService:
                 )
             return collection_id, changed
 
-        return await self.owner.run_blocking(lambda: self._mutate(scope, archive), ctx)
+        return await self.owner.run_write(lambda: self._mutate(scope, archive), ctx)
 
     async def consent(self, collection_id, scope, ctx):
         def read():
@@ -280,7 +280,7 @@ class CollectionService:
                 ),
             )
 
-        return await self.owner.run_blocking(read, ctx)
+        return await self.owner.run_write(read, ctx)
 
     async def documents(self, scope, ctx, *, cursor=None, limit=50):
         def read():
@@ -406,4 +406,4 @@ class CollectionService:
                 else None,
             )
 
-        return await self.owner.run_blocking(read, ctx)
+        return await self.owner.run_write(read, ctx)

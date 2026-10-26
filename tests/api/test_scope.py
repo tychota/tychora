@@ -267,7 +267,7 @@ async def test_pinned_vector_family_survives_credential_rotation_and_new_add(tmp
             from tychora.ports.execution import ExecutionContext
 
             current_config = owner.config
-            snapshot_id = await owner.run_blocking(
+            snapshot_id = await owner.run_write(
                 owner.store.active_snapshot_id, ExecutionContext()
             )
             policy = rotated + "\n[configuration.limits]\nlimit=4\n"
@@ -278,7 +278,7 @@ async def test_pinned_vector_family_survives_credential_rotation_and_new_add(tmp
             assert changed_policy.json()["code"] == "PROFILE_INCOMPATIBLE"
             assert settings.read_text() == rotated and owner.config is current_config
             assert (
-                await owner.run_blocking(
+                await owner.run_write(
                     owner.store.active_snapshot_id, ExecutionContext()
                 )
                 == snapshot_id

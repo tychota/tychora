@@ -53,7 +53,7 @@ def test_public_retry_rebuilds_current_code_projection(tmp_path, monkeypatch):
             ).fetchall()
 
         before = kb._workspace.bridge.call(
-            owner.run_blocking(extraction_rows, ExecutionContext())
+            owner.run_write(extraction_rows, ExecutionContext())
         )
         assert len(before) == 1
         fresh = kb.sources.add(request)
@@ -63,7 +63,7 @@ def test_public_retry_rebuilds_current_code_projection(tmp_path, monkeypatch):
             fresh_status.state,
         )
         after = kb._workspace.bridge.call(
-            owner.run_blocking(extraction_rows, ExecutionContext())
+            owner.run_write(extraction_rows, ExecutionContext())
         )
         assert len(after) == 2
         assert before[0] in after

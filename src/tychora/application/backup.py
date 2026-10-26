@@ -104,7 +104,7 @@ class BackupService:
             raise TychoraError(
                 "INVALID_REQUEST", "Backup destination must be outside the workspace"
             )
-        return self.owner.run_blocking_sync(
+        return self.owner.run_write_sync(
             lambda: self._export_on_owner(destination, scope, ctx), ctx
         )
 

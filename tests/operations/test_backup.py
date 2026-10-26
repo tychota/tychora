@@ -88,7 +88,7 @@ def backup_case(tmp_path):
             )
             return nested.sha256, unreferenced.sha256
 
-        nested_sha, unreferenced_sha = owner.run_blocking_sync(seed, ExecutionContext())
+        nested_sha, unreferenced_sha = owner.run_write_sync(seed, ExecutionContext())
 
         class Case:
             nested_schema_sha = nested_sha
@@ -194,13 +194,13 @@ def test_backup_reconciles_pending_but_absent_payload(backup_case):
         with f.owner.artifacts.payload_guard(ref.sha256):
             f.owner.artifacts.unlink_registered(ref)
 
-    f.owner.run_blocking_sync(pending_absent, ExecutionContext())
+    f.owner.run_write_sync(pending_absent, ExecutionContext())
     receipt = f.export()
     assert f.unreferenced_but_present_sha not in {
         a.sha256 for a in receipt.manifest.artifacts
     }
     assert (
-        f.owner.run_blocking_sync(
+        f.owner.run_write_sync(
             lambda: f.owner.db.execute(
                 "SELECT payload_state FROM artifacts WHERE artifact_sha=?",
                 (f.unreferenced_but_present_sha,),
@@ -235,7 +235,7 @@ def test_backup_rejects_unknown_typed_schema(backup_case):
             (ref.sha256,),
         )
 
-    f.owner.run_blocking_sync(bad_manifest, ExecutionContext())
+    f.owner.run_write_sync(bad_manifest, ExecutionContext())
     with pytest.raises(TychoraError) as error:
         f.export()
     assert error.value.code == "INTEGRITY_ERROR"
@@ -269,7 +269,7 @@ def test_backup_holds_lease_and_owner_serialization_through_copy(
         assert f.owner.artifacts.payload_is_pinned(f.nested_schema_sha)
         mutation_thread = threading.Thread(
             target=lambda: (
-                f.owner.run_blocking_sync(
+                f.owner.run_write_sync(
                     lambda: f.owner.db.execute(
                         "UPDATE workspaces SET policy_epoch=policy_epoch+1"
                     ),
@@ -327,7 +327,7 @@ def test_cancelled_backup_drains_copy_before_unpin(backup_case, monkeypatch):
 
 def test_backup_rejects_new_collection_outside_owner_grant(backup_case):
     f = backup_case
-    f.owner.run_blocking_sync(
+    f.owner.run_write_sync(
         lambda: f.owner.db.execute(
             "INSERT INTO collections (collection_id,workspace_id,slug,title,policy_json) "
             "VALUES (?,?,?,?,?)",
@@ -413,7 +413,7 @@ def test_backup_survives_source_workspace_removal(tmp_path):
             )
             return ref.sha256
 
-        payload_sha = owner.run_blocking_sync(seed, ExecutionContext())
+        payload_sha = owner.run_write_sync(seed, ExecutionContext())
         receipt = BackupService(owner).export(
             destination, scope, ctx=ExecutionContext()
         )
@@ -514,7 +514,7 @@ def test_backup_uses_trusted_published_capture_state_for_nested_originals(backup
         )
         return original.sha256, child.sha256
 
-    original_sha, child_sha = f.owner.run_blocking_sync(
+    original_sha, child_sha = f.owner.run_write_sync(
         seed_published_capture, ExecutionContext()
     )
     receipt = f.export()
@@ -560,7 +560,7 @@ def test_backup_manifest_above_the_byte_limit_fails_with_a_registered_reason(
 
 def test_backup_rejects_scope_below_source_access_floor(backup_case):
     f = backup_case
-    f.owner.run_blocking_sync(
+    f.owner.run_write_sync(
         lambda: f.owner.db.execute(
             "INSERT INTO sources (source_id,collection_id,source_key,source_type,registration_json,"
             "access_floor,created_at) VALUES (?,?,?,?,?,?,?)",
@@ -777,7 +777,7 @@ def test_backup_rejects_manifest_payload_size_disagreeing_with_registry(
                 ),
             )
 
-    f.owner.run_blocking_sync(seed_bad_reference, ExecutionContext())
+    f.owner.run_write_sync(seed_bad_reference, ExecutionContext())
     with pytest.raises(TychoraError) as error:
         f.export()
     assert error.value.code == "INTEGRITY_ERROR"
@@ -789,7 +789,7 @@ def _inventory_shas(kb):
     from tychora.ports.execution import ExecutionContext
 
     owner = kb._workspace.owner
-    return owner.run_blocking_sync(
+    return owner.run_write_sync(
         lambda: from_backup(owner.db, artifacts=owner.artifacts).required_shas,
         ExecutionContext(),
     )
