@@ -2,7 +2,7 @@
 
 import pytest
 
-from tests.helpers.corpus import reader, registry, seed_bundle
+from tests.helpers.corpus import reader, recomputed_facts, registry, seed_bundle
 from tests.helpers.legacy import OutputCounter
 from tychora import Tychora
 from tychora.adapters.sqlite.connection import open_corpus
@@ -225,3 +225,34 @@ def test_intervals_read_back_in_document_order(tmp_path, monkeypatch):
     assert len(units) > 2
     assert list(units) != sorted(units)
     assert intervals == facts.intervals
+
+
+def test_persisted_facts_equal_facts_recomputed_from_canonical_rows(tmp_path):
+    """The coordinator's stored sets are the ones the stored rows imply."""
+    with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
+        _add_manual(kb)
+        owner = kb._workspace.owner
+
+        def read():
+            store = owner.store
+            view = store.resolve_snapshot(None)
+            with store.uow.read() as tx:
+                members = tuple(tx.snapshots.all_members(view.snapshot_id))
+            result = []
+            for member in members:
+                expected = recomputed_facts(store, member.extraction_id)
+                units = tuple({row.unit_id for row in expected.intervals})
+                with store.uow.read() as tx:
+                    stored = tx.representations.dependencies(
+                        tuple(expected.dependency_map())
+                    )
+                    intervals = tx.representations.intervals(units)
+                result.append((expected, stored, intervals))
+            return result
+
+        checked = owner.run_write_sync(read, ExecutionContext())
+    assert checked
+    for expected, stored, intervals in checked:
+        assert expected.dependencies
+        assert dict(stored) == expected.dependency_map()
+        assert set(intervals) == set(expected.intervals)

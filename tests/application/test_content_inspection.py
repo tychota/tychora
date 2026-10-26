@@ -208,7 +208,7 @@ async def restricted_windows(owner, uid):
                     1,
                 ),
             )
-        refresh_facts(owner.store)
+        refresh_facts(owner.store, extraction)
 
     await owner.run_write(install, ExecutionContext())
 
@@ -325,7 +325,7 @@ async def test_removed_original_and_empty_unit_remain_inspectable(published):
             "FROM evidence_units WHERE unit_id=?",
             (sha256(b"").hexdigest(), uid),
         )
-        refresh_facts(owner.store)
+        refresh_facts(owner.store, request.extraction_id)
 
     await owner.run_write(mutate, ExecutionContext())
     service = InspectionService(owner)
@@ -565,7 +565,7 @@ async def test_proxy_window_preserves_image_locator_only_with_readable_dependenc
             "context_group_key,chunker_fingerprint,token_count) VALUES (?,?,?,0,0,?,'fixture','retained-proxy-fixture',3)",
             (window_id, proxy_uid, request.extraction_id, len(text)),
         )
-        refresh_facts(owner.store)
+        refresh_facts(owner.store, request.extraction_id)
         return window_id, locator, asset_id
 
     window_id, locator, asset_id = await owner.run_write(

@@ -525,6 +525,50 @@ def _health_service(f):
     return RecoveryService(SimpleNamespace(store=f.store, db=f.store.db))
 
 
+def _swap_group(f, snapshot_id):
+    """Point one text record at another existing context group."""
+    rows = f.store.db.execute(
+        "SELECT v.record_id,v.group_id FROM vector_records v JOIN snapshot_batches s "
+        "USING(batch_id) WHERE s.snapshot_id=? AND v.group_id IS NOT NULL "
+        "ORDER BY v.record_id",
+        (snapshot_id,),
+    ).fetchall()
+    record, group = rows[0]
+    other = next(row[1] for row in rows if row[1] != group)
+    f.store.db.execute(
+        "UPDATE vector_records SET group_id=? WHERE record_id=?", (other, record)
+    )
+
+
+def _widen_group_set(f, snapshot_id):
+    """Add one dependency to a context group's persisted set."""
+    (group,) = f.store.db.execute(
+        "SELECT v.group_id FROM vector_records v JOIN snapshot_batches s "
+        "USING(batch_id) WHERE s.snapshot_id=? AND v.group_id IS NOT NULL LIMIT 1",
+        (snapshot_id,),
+    ).fetchone()
+    f.store.db.execute(
+        "INSERT INTO representation_dependencies(owner_id,dependency_id) VALUES (?,?)",
+        (group, "forged-dependency"),
+    )
+
+
+@pytest.mark.parametrize("tamper", [_swap_group, _widen_group_set])
+def test_native_health_refuses_a_tampered_group_binding(projected, tamper):
+    from tychora.ports.execution import ExecutionContext
+
+    f = projected
+    f.add_revision("a second group", source_key="second-group.md")
+    tamper(f, f.store.active_snapshot_id())
+    f.store.db.commit()
+    with pytest.raises(TychoraError) as error:
+        _health_service(f)._verify_native_on_owner(ExecutionContext())
+    assert (error.value.code, error.value.reason) == (
+        "INTEGRITY_ERROR",
+        "canonical.binding_mismatch",
+    )
+
+
 def test_native_recovery_streams_batches_without_loading_every_slot(projected):
     from tychora.ports.execution import ExecutionContext
 

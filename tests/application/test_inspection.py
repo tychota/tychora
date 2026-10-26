@@ -47,6 +47,13 @@ class Counter:
         return len(text.split())
 
 
+def _extraction_of(owner, unit_id: str) -> str:
+    """The extraction that holds one unit."""
+    return owner.db.execute(
+        "SELECT extraction_id FROM evidence_units WHERE unit_id=?", (unit_id,)
+    ).fetchone()[0]
+
+
 @asynccontextmanager
 async def _published(tmp_path: Path, before_add=None):
     """A workspace with one published synthetic manual and its first unit id.
@@ -197,7 +204,7 @@ async def test_native_overlap_denies_child_slice_and_allows_disjoint_parent_rang
             (uid,),
         )
         raw_review(owner.db, "unit", "rejected-child")
-        refresh_facts(owner.store)
+        refresh_facts(owner.store, _extraction_of(owner, uid))
 
     await owner.run_write(add_rejected_child, ExecutionContext())
     service = InspectionService(owner)
@@ -315,7 +322,7 @@ async def test_retained_docling_source_parts_denies_rejected_child_overlap(publi
             (locator(6), uid),
         )
         raw_review(owner.db, "unit", "doc-child")
-        refresh_facts(owner.store)
+        refresh_facts(owner.store, _extraction_of(owner, uid))
 
     await owner.run_write(install_parts, ExecutionContext())
     service = InspectionService(owner)
@@ -663,7 +670,7 @@ async def test_registered_zero_text_asset_and_unregistered_paths(published, hist
             "INSERT INTO unit_assets(unit_id,asset_id,role) VALUES (?,?,?)",
             ("image-unit", "image-asset", "source"),
         )
-        refresh_facts(owner.store)
+        refresh_facts(owner.store, extraction)
         return payload, revision, ref.sha256
 
     payload, revision, sha = await owner.run_write(register_image, ExecutionContext())

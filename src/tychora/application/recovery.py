@@ -13,6 +13,7 @@ from uuid import uuid4
 from tychora.adapters.files.references import from_backup
 from tychora.adapters.sqlite.graph import read_graph_build
 from tychora.adapters.sqlite.jobs import JobRepository
+from tychora.adapters.sqlite.repositories import SqliteRepresentationRepository
 from tychora.adapters.sqlite.vector_owners import OwnerRow, vector_owner_rows
 from tychora.application.removal import RemovalService
 from tychora.application.restore import RESTORE_SUSPENSION, deletion_suspended
@@ -223,10 +224,19 @@ def verify_canonical_native_batch(
         _verify_native_vector_sql(db, batch)
 
 
+def _group_sets_match(db, batch: RetainedBatch) -> bool:
+    """True when each record's persisted group set equals its sealed dependencies."""
+    grouped = [row for row in batch.vector_records if row.group_id is not None]
+    stored = SqliteRepresentationRepository(db).dependencies(
+        tuple({row.group_id for row in grouped if row.group_id is not None})
+    )
+    return all(stored.get(row.group_id or "") == row.dependency_ids for row in grouped)
+
+
 def _verify_native_vector_sql(db, batch: RetainedBatch) -> None:
     """Check the batch's vector rows and its batch artifact against the sealed plan."""
     rows = db.execute(
-        "SELECT record_id,batch_id,chunk_id,asset_id,input_sha,row_index "
+        "SELECT record_id,batch_id,chunk_id,asset_id,input_sha,row_index,group_id "
         "FROM vector_records WHERE batch_id=? ORDER BY record_id",
         (batch.batch_id,),
     ).fetchall()
@@ -238,10 +248,11 @@ def _verify_native_vector_sql(db, batch: RetainedBatch) -> None:
             row.asset_id,
             row.input_sha,
             row.row_index,
+            row.group_id,
         )
         for row in batch.vector_records
     )
-    if rows != expected_rows:
+    if rows != expected_rows or not _group_sets_match(db, batch):
         raise TychoraError(
             "INTEGRITY_ERROR",
             "Native vector SQL differs from sealed plan",
@@ -577,8 +588,8 @@ class RecoveryService:
             loaded = tuple(
                 store.iter_snapshot_batches(snapshot, slots=frozenset(channels))
             )
-            for item in {pair[0].slot: pair[0] for pair in loaded}.values():
-                if item.slot in {"text", "image"}:
+            for item in snapshot.families:
+                if item.slot in {"text", "image"} and item.slot in channels:
                     origin_sha = item.family.config_json.get("effective_config_sha")
                     if not isinstance(origin_sha, str):
                         raise TychoraError(

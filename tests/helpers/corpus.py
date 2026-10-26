@@ -201,14 +201,9 @@ def commit_with_facts(store, bundle) -> str:
     return store.commit_extraction(bundle, facts)
 
 
-def refresh_facts(store) -> None:
-    """Recompute every extraction's persisted facts after a test edits its rows.
-
-    A test that inserts units, chunks or assets into committed rows stores the
-    facts a fresh commit of the edited rows would, replacing the earlier sets.
-    """
+def recomputed_facts(store, extraction_id: str):
+    """The representation facts a fresh commit of one extraction's stored rows has."""
     from tychora.adapters.sqlite.eligibility import retained_rows
-    from tychora.adapters.sqlite.repositories import SqliteRepresentationRepository
     from tychora.contracts.publication import SnapshotMember
     from tychora.indexing.representations import (
         ChunkSpan,
@@ -217,30 +212,53 @@ def refresh_facts(store) -> None:
     )
 
     db = store.db
-    members = [
-        SnapshotMember(source_id=source, revision_id=revision, extraction_id=extraction)
-        for extraction, revision, source in db.execute(
-            "SELECT e.extraction_id,e.revision_id,r.source_id FROM extractions e "
-            "JOIN revisions r USING(revision_id)"
-        ).fetchall()
-    ]
-    with store.immediate_transaction():
-        db.execute("DELETE FROM ownership_intervals")
-        db.execute(
-            "DELETE FROM representation_dependencies WHERE owner_id IN "
-            "(SELECT unit_id FROM evidence_units UNION SELECT chunk_id FROM chunks "
-            "UNION SELECT asset_id FROM assets)"
+    revision, source = db.execute(
+        "SELECT e.revision_id,r.source_id FROM extractions e "
+        "JOIN revisions r USING(revision_id) WHERE e.extraction_id=?",
+        (extraction_id,),
+    ).fetchone()
+    rows = retained_rows(
+        store,
+        SnapshotMember(
+            source_id=source, revision_id=revision, extraction_id=extraction_id
+        ),
+    )
+    spans = [
+        ChunkSpan(*row)
+        for row in db.execute(
+            "SELECT chunk_id,unit_id,char_start,char_end FROM chunks "
+            "WHERE extraction_id=?",
+            (extraction_id,),
         )
-        for member in members:
-            rows = retained_rows(store, member)
-            spans = [
-                ChunkSpan(*row)
-                for row in db.execute(
-                    "SELECT chunk_id,unit_id,char_start,char_end FROM chunks "
-                    "WHERE extraction_id=?",
-                    (member.extraction_id,),
-                )
-            ]
+    ]
+    return representation_facts(rows, prepare_extraction(rows), spans)
+
+
+def refresh_facts(store, *extraction_ids: str) -> None:
+    """Recompute these extractions' persisted facts after a test edits their rows.
+
+    A test that inserts units, chunks or assets into committed rows stores the
+    facts a fresh commit of the edited rows would, replacing the earlier sets.
+    """
+    from tychora.adapters.sqlite.repositories import SqliteRepresentationRepository
+
+    assert extraction_ids
+    db = store.db
+    with store.immediate_transaction():
+        for extraction_id in extraction_ids:
+            args = (extraction_id,) * 3
+            db.execute(
+                "DELETE FROM ownership_intervals WHERE unit_id IN "
+                "(SELECT unit_id FROM evidence_units WHERE extraction_id=?)",
+                (extraction_id,),
+            )
+            db.execute(
+                "DELETE FROM representation_dependencies WHERE owner_id IN "
+                "(SELECT unit_id FROM evidence_units WHERE extraction_id=? "
+                "UNION SELECT chunk_id FROM chunks WHERE extraction_id=? "
+                "UNION SELECT asset_id FROM assets WHERE extraction_id=?)",
+                args,
+            )
             SqliteRepresentationRepository(db, writable=True).write(
-                representation_facts(rows, prepare_extraction(rows), spans)
+                recomputed_facts(store, extraction_id)
             )
