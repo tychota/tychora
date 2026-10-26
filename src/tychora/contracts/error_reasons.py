@@ -50,6 +50,13 @@ _ENTRIES = (
     ),
     Reason(
         "INTEGRITY_ERROR",
+        "canonical.facts_missing",
+        False,
+        "Run `tychora --workspace NEW manage rebuild workspace --from OLD`; a "
+        "published extraction has no persisted representation facts.",
+    ),
+    Reason(
+        "INTEGRITY_ERROR",
         "config.drift",
         False,
         "Restore the configuration that produced this snapshot, or run `tychora manage rebuild index`.",

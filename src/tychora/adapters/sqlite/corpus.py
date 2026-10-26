@@ -26,7 +26,6 @@ from tychora.contracts.indexing import RepresentationFacts
 from tychora.contracts.publication import (
     PublicationPlan,
     RetainedBatch,
-    RetainedSlot,
     SnapshotMember,
     SnapshotView,
 )
@@ -39,11 +38,7 @@ from tychora.ports.vectors import VectorIndex
 from .migrations import SCHEMA_VERSION
 from .policy import PolicyRepository
 from .publication import publish_snapshot
-from .retained_slots import (
-    RetainedBatchCache,
-    iter_retained_batches,
-    load_retained_slots,
-)
+from .retained_slots import iter_retained_batches
 from .validation import validate_bundle, verify_artifacts
 
 
@@ -90,7 +85,6 @@ class CorpusStore(PolicyRepository):
         self.leases = leases if leases is not None else LeaseSet()
         self.publication_context = publication_context
         self.uow = SqliteUnitOfWork(db)
-        self.batch_cache = RetainedBatchCache()
 
     @contextmanager
     def immediate_transaction(self):
@@ -117,27 +111,11 @@ class CorpusStore(PolicyRepository):
         snapshot: SnapshotView,
         members: tuple[SnapshotMember, ...] | None = None,
     ):
-        from .eligibility import all_members, read_eligibility_facts
+        """Detach the snapshot's eligibility facts; no artifact is reopened.
 
-        row = self.db.execute(
-            "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
-            (snapshot.config_sha,),
-        ).fetchone()
-        if row is None or row[2] != snapshot.config_sha or row[3] != "present":
-            _fail("Snapshot resolved-config artifact is unavailable")
-        ref = artifact_ref((snapshot.config_sha, *row[:3]))
-        with self.artifacts.open_verified(ref) as stream:
-            try:
-                payload = json.load(stream)
-            except (ValueError, UnicodeError):
-                _fail("Snapshot resolved-config artifact is invalid")
-        if (
-            not isinstance(payload, dict)
-            or payload.get("type") != "registry"
-            or payload.get("schema_version") != "1"
-            or not isinstance(payload.get("data"), dict)
-        ):
-            _fail("Snapshot resolved-config artifact is invalid")
+        The configuration artifact was verified when the snapshot was published.
+        """
+        from .eligibility import all_members, read_eligibility_facts
 
         return read_eligibility_facts(
             self,
@@ -213,19 +191,6 @@ class CorpusStore(PolicyRepository):
         view = self.resolve_snapshot(selector)
         with self.leases.pin(frozenset({view.snapshot_id})):
             yield view
-
-    def snapshot_slots(
-        self, view: SnapshotView, *, fresh: bool = False
-    ) -> tuple[RetainedSlot, ...]:
-        """Return each slot of a snapshot with the contents of its batches.
-
-        Loaded batches are cached by batch ID, so a query after an add reads only
-        the add's new batches. ``fresh`` reads every batch from SQL and its input
-        manifest again, so recovery sees drift introduced after an earlier load.
-        """
-        return load_retained_slots(
-            self.db, self.artifacts, view, None if fresh else self.batch_cache
-        )
 
     def iter_snapshot_batches(
         self,

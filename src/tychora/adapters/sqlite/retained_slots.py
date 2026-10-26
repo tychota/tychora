@@ -1,14 +1,12 @@
-"""Rebuild per-slot batch contents from SQL rows and batch input manifests.
+"""Rebuild one batch's contents from SQL rows and its input manifest for native recovery.
 
-Eligibility, native recovery and default bindings read these until the query
-path joins against batches directly. Every row is checked against the batch's
-receipt and input manifest, so drift in SQL is refused rather than served.
-Lexical records carry their chunk IDs only: their text stays in the FTS index.
+Every row is checked against the batch's receipt and input manifest, so drift
+in SQL is refused rather than served. Lexical records carry their chunk IDs
+only: their text stays in the FTS index.
 """
 
 import json
 import sqlite3
-from collections import OrderedDict
 from collections.abc import Callable, Iterator
 from typing import Any
 
@@ -26,7 +24,6 @@ from tychora.contracts.publication import (
     LexicalBatchReceipt,
     LexicalRecord,
     RetainedBatch,
-    RetainedSlot,
     SnapshotView,
     VectorRecordBinding,
     receipt_count,
@@ -210,94 +207,6 @@ def _batch(
         )
     except ValueError:
         raise _differs("Retained batch rows differ from their artifact") from None
-
-
-# Records the batch cache holds before evicting the least recently used batch:
-# a 10,000-document corpus of about 20 chunks per document with lexical and text
-# batches, a few hundred MB of slim records.
-MAX_CACHED_RECORDS = 500_000
-
-
-def _records(batch: RetainedBatch) -> int:
-    graph = batch.graph_manifest
-    extra = len(graph.evidence_ids) + len(graph.assertion_ids) if graph else 0
-    return 1 + len(batch.lexical_records) + len(batch.vector_records) + extra
-
-
-class RetainedBatchCache:
-    """Loaded batches by batch ID, bounded by their total record count.
-
-    A batch ID binds the family, extraction and exact input manifest, and a
-    ready batch's rows never change, so an entry stays valid for every snapshot
-    that binds the batch. Collected batches are no longer bound by any snapshot
-    and age out. Only the owner thread uses it.
-    """
-
-    def __init__(self, max_records: int = MAX_CACHED_RECORDS) -> None:
-        self._max_records = max_records
-        self._batches: OrderedDict[str, RetainedBatch] = OrderedDict()
-        self._records = 0
-
-    def get(self, batch_id: str) -> RetainedBatch | None:
-        """Return the cached batch and mark it recently used, or ``None``."""
-        batch = self._batches.get(batch_id)
-        if batch is not None:
-            self._batches.move_to_end(batch_id)
-        return batch
-
-    def discard(self, batch_ids: tuple[str, ...]) -> None:
-        """Drop batches that left the ready state; absent IDs are ignored."""
-        for batch_id in batch_ids:
-            previous = self._batches.pop(batch_id, None)
-            if previous is not None:
-                self._records -= _records(previous)
-
-    def put(self, batch: RetainedBatch) -> None:
-        """Cache a loaded batch, evicting the least recently used over the cap."""
-        previous = self._batches.pop(batch.batch_id, None)
-        if previous is not None:
-            self._records -= _records(previous)
-        self._batches[batch.batch_id] = batch
-        self._records += _records(batch)
-        while self._records > self._max_records and len(self._batches) > 1:
-            _, evicted = self._batches.popitem(last=False)
-            self._records -= _records(evicted)
-
-
-def load_retained_slots(
-    db: sqlite3.Connection,
-    artifacts: Artifacts,
-    view: SnapshotView,
-    cache: RetainedBatchCache | None = None,
-) -> tuple[RetainedSlot, ...]:
-    """Return every slot of ``view`` with the contents of the batches it binds.
-
-    With a cache, only batches it does not hold are read and verified; without
-    one, every batch is read from SQL and its input manifest.
-    """
-    rows = SqliteBatchRepository(db, writable=False)
-
-    def load(item: SlotFamily, row: BatchRow) -> RetainedBatch:
-        cached = cache.get(row.batch_id) if cache is not None else None
-        if cached is not None:
-            return cached
-        batch = _batch(db, artifacts, item, row)
-        if cache is not None:
-            cache.put(batch)
-        return batch
-
-    return tuple(
-        RetainedSlot(
-            slot=item.slot,
-            family=item.family,
-            required=item.required,
-            batches=tuple(
-                load(item, row)
-                for row in rows.for_snapshot(view.snapshot_id, item.slot)
-            ),
-        )
-        for item in view.families
-    )
 
 
 def iter_retained_batches(

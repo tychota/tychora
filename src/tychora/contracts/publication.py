@@ -18,7 +18,6 @@ from .graph import GraphBatchReceipt, GraphManifest
 from .identity import JsonValue, canonical_bytes, digest
 from .snapshots import (
     PAGE_BUCKETS,
-    IndexFamily,
     MembershipPage,
     PageBatch,
     SlotFamily,
@@ -164,24 +163,6 @@ class RetainedBatch(Contract):
         ordered = sorted(self.vector_records, key=lambda row: row.record_id)
         if [row.row_index for row in ordered] != list(range(len(ordered))):
             raise ValueError("Vector row indexes must follow record order")
-        return self
-
-
-class RetainedSlot(Contract):
-    """The family a snapshot serves one slot from and the batches it binds."""
-
-    slot: NonEmptyStr
-    family: IndexFamily
-    required: bool = True
-    batches: tuple[RetainedBatch, ...]
-
-    @model_validator(mode="after")
-    def bound_batches(self) -> Self:
-        """Require one family for every batch and no duplicate batch."""
-        if any(batch.family_id != self.family.family_id for batch in self.batches):
-            raise ValueError("Snapshot slot batch family differs")
-        if len({batch.batch_id for batch in self.batches}) != len(self.batches):
-            raise ValueError("Snapshot slot duplicates a batch")
         return self
 
 

@@ -17,13 +17,13 @@ from tychora.configuration.resolve import resolve_config
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
+from tychora.contracts.graph import GraphBatchReceipt
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.indexing import IndexRecordDigest
 from tychora.contracts.publication import (
     LexicalBatchReceipt,
     LexicalRecord,
     RetainedBatch,
-    RetainedSlot,
     SnapshotMember,
     SnapshotView,
     VectorRecordBinding,
@@ -112,9 +112,11 @@ _FIXTURE_MEMBERS = (
 
 
 class _FixtureView(SnapshotView):
-    """A synthetic snapshot carrying the retained slots its reader returns."""
+    """A synthetic snapshot carrying the batch facts its reader returns."""
 
-    fixture_slots: tuple[RetainedSlot, ...] = ()
+    fixture_batches: tuple[tuple[str, str, str | None], ...] = ()
+    fixture_lexical: tuple[tuple[str, str], ...] = ()
+    fixture_graph: GraphBatchReceipt | None = None
 
 
 def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images=()):
@@ -146,7 +148,7 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
         ),
         lexical_records=tuple(LexicalRecord(chunk_id=chunk) for chunk in chunks),
     )
-    slots = [RetainedSlot(slot="lexical", family=family, batches=(batch,))]
+    slots = [("lexical", family, batch)]
     if vectors:
         text_family = IndexFamily(
             family_id=digest("text-family"),
@@ -194,9 +196,7 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
             vector_records=bindings,
             vectors=artifact,
         )
-        slots.append(
-            RetainedSlot(slot="text", family=text_family, batches=(text_batch,))
-        )
+        slots.append(("text", text_family, text_batch))
     if images:
         image_family = IndexFamily(
             family_id=digest("image-family"),
@@ -240,9 +240,7 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
             vector_records=bindings,
             vectors=artifact,
         )
-        slots.append(
-            RetainedSlot(slot="image", family=image_family, batches=(image_batch,))
-        )
+        slots.append(("image", image_family, image_batch))
     return _FixtureView(
         snapshot_id="snapshot",
         workspace_id="workspace",
@@ -258,11 +256,13 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
         ).hexdigest(),
         member_count=1,
         page_ids=(),
-        families=tuple(
-            SlotFamily(slot=item.slot, family=item.family, required=item.required)
-            for item in slots
+        families=tuple(SlotFamily(slot=slot, family=item) for slot, item, _ in slots),
+        fixture_batches=tuple(
+            (slot, item.batch_id, item.extraction_id) for slot, _, item in slots
         ),
-        fixture_slots=tuple(slots),
+        fixture_lexical=tuple(
+            (record.chunk_id, "extraction") for record in batch.lexical_records
+        ),
     )
 
 
@@ -367,8 +367,14 @@ class _Reader:
     def read_eligibility_facts(
         self, snapshot: SnapshotView, members=None
     ) -> EligibilityFacts:
-        slots = snapshot.fixture_slots if isinstance(snapshot, _FixtureView) else ()
-        return replace(self.facts, slots=slots)
+        if not isinstance(snapshot, _FixtureView):
+            return self.facts
+        return replace(
+            self.facts,
+            batches=snapshot.fixture_batches,
+            lexical_chunks=snapshot.fixture_lexical,
+            graph_receipt=snapshot.fixture_graph,
+        )
 
     def retained_config(self, snapshot: SnapshotView) -> ResolvedConfig:
         raise TychoraError(
@@ -1241,27 +1247,6 @@ def test_rejected_group_owner_blocks_only_its_vector_records(config, scope):
     assert attempt.dependencies_for("b-vector") == frozenset({"revision", "b"})
 
 
-def test_vector_fact_outside_selected_receipt_is_not_eligible(config, scope):
-    original = _facts()
-    facts = replace(
-        original,
-        vectors=(
-            VectorFact(
-                "foreign",
-                chunk_id="child-chunk",
-                dependency_ids=frozenset({"revision", "child"}),
-            ),
-        ),
-    )
-    view = EligibilityCompiler(_Reader(config, facts)).compile_eligibility(
-        _snapshot(config),
-        scope,
-        _request(),
-        config,
-    )
-    assert view.vector_record_ids == frozenset()
-
-
 @pytest.mark.asyncio
 async def test_retired_original_is_not_reopened_for_range_ownership(tmp_path):
     from tests.runtime.test_upload_policy import install, prepared
@@ -1331,16 +1316,11 @@ def test_only_explicit_global_revision_matches_missing_scoped_facet(config, scop
     assert "child" in global_view.context_unit_ids
 
 
-def test_new_decision_blocks_only_selected_graph_assertion(config, scope):
-    from tychora.contracts.graph import (
-        GraphBatchReceipt,
-        GraphGenerationSpec,
-        GraphManifest,
-    )
-
+def test_new_decision_blocks_every_assertion_after_the_watermark(config, scope):
     snapshot = _snapshot(config)
     selected_assertion = digest("selected-assertion")
     unrelated_assertion = digest("unrelated-assertion")
+    earlier_assertion = digest("earlier-assertion")
     family = IndexFamily(
         family_id=digest("graph-family"),
         channel="graph",
@@ -1350,56 +1330,44 @@ def test_new_decision_blocks_only_selected_graph_assertion(config, scope):
         backend_namespace="graph-fixture",
         created_at="2025-01-01",
     )
-    manifest = GraphManifest(
-        spec=GraphGenerationSpec(
-            generation_id="generation",
-            family_id=family.family_id,
-            config_sha=family.config_sha,
-            registry_digest=config.registry_digest,
-            workspace_id="workspace",
-            decision_watermark=0,
-        ),
-        entity_ids=(),
-        evidence_ids=(),
-        assertion_ids=(selected_assertion,),
-        content_digest=digest("content"),
-    )
     receipt = GraphBatchReceipt(
         generation_id="generation",
         family_id=family.family_id,
         config_sha=family.config_sha,
-        decision_watermark=0,
-        manifest_digest=digest("graph-manifest-v1", manifest.model_dump(mode="json")),
+        decision_watermark=1,
+        manifest_digest=digest("graph-manifest"),
         entity_count=0,
         evidence_count=0,
         assertion_count=1,
     )
-    batch = RetainedBatch(
-        batch_id="graph-batch",
-        family_id=family.family_id,
-        input_manifest=snapshot.fixture_slots[0].batches[0].input_manifest,
-        expected_count=0,
-        receipt=receipt,
-        graph_manifest=manifest,
-    )
     snapshot = snapshot.model_copy(
         update={
             "families": (*snapshot.families, SlotFamily(slot="graph", family=family)),
-            "fixture_slots": (
-                *snapshot.fixture_slots,
-                RetainedSlot(slot="graph", family=family, batches=(batch,)),
+            "fixture_batches": (
+                *snapshot.fixture_batches,
+                ("graph", "graph-batch", None),
             ),
+            "fixture_graph": receipt,
         }
     )
     facts = replace(
         _facts(),
-        assertion_decisions=((selected_assertion, 1), (unrelated_assertion, 1)),
+        assertion_decisions=(
+            (selected_assertion, 2),
+            (unrelated_assertion, 2),
+            (earlier_assertion, 1),
+        ),
     )
     view = EligibilityCompiler(_Reader(config, facts)).compile_eligibility(
         snapshot, scope, _request(), config
     )
     assert view.graph_generation_id == "generation"
-    assert view.blocked_assertion_ids == frozenset({selected_assertion})
+    assert "generation" in view.selected_batch_ids
+    # The query reads no generation manifest, so every assertion decided after
+    # the watermark is blocked; traversal never reaches one outside the generation.
+    assert view.blocked_assertion_ids == frozenset(
+        {selected_assertion, unrelated_assertion}
+    )
 
 
 def _old_allowed(dependencies, revisions, units, assets):

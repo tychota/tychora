@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tests.helpers.publication import slots_of
 from tests.indexing.test_publication import ProjectedCorpus, make_projected_corpus
 from tychora.adapters.sqlite.repositories import snapshots as snapshot_rows
 from tychora.application.snapshot_gc import SnapshotGc
@@ -39,7 +40,7 @@ def _owner(f: ProjectedCorpus):
 
 def _text_batches(f: ProjectedCorpus, snapshot_id: str):
     view = f.store.resolve_snapshot(snapshot_id)
-    return next(s for s in f.store.snapshot_slots(view) if s.slot == "text").batches
+    return next(s for s in slots_of(f.store, view) if s.slot == "text").batches
 
 
 def _snapshot_ids(f: ProjectedCorpus) -> list[str]:
@@ -73,7 +74,6 @@ def test_collection_drops_native_records_of_collected_batches_only(corpus):
         assert f.vector.verify_batch(batch.receipt).ready
     for batch in collected:
         assert not f.vector.verify_batch(batch.receipt).ready
-        assert f.store.batch_cache.get(batch.batch_id) is None
 
 
 def test_batches_of_a_detached_index_wait_and_can_be_built_again(corpus):
@@ -94,7 +94,6 @@ def test_batches_of_a_detached_index_wait_and_can_be_built_again(corpus):
     )
     assert states == {first.batch_id: "removed", second.batch_id: "removed"}
     assert f.vector.verify_batch(first.receipt).ready
-    assert f.store.batch_cache.get(first.batch_id) is None
     # A removed batch builds again when its content returns.
     f.store.vector_indexes.update(attached)
     f.add_revision("old source text")

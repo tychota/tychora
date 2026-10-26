@@ -24,8 +24,9 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.graph import GraphBatchReceipt, GraphManifest
 from tychora.contracts.identity import canonical_bytes, digest, family_id, space_id
 from tychora.contracts.indexing import FamilySpec, IndexRecordDigest
-from tychora.contracts.publication import IndexFamily, RetainedBatch
+from tychora.contracts.publication import RetainedBatch
 from tychora.contracts.requests import RequestScope
+from tychora.contracts.snapshots import IndexFamily
 from tychora.contracts.vector_batches import decode_vector_batch, row_value_sha
 from tychora.contracts.vectors import BatchReceipt, VectorBatch, VectorOwner
 from tychora.indexing.receipts import receipt_digest
@@ -573,11 +574,12 @@ class RecoveryService:
                     "Native recovery requires snapshot collection grants",
                 )
             snapshot_config = validate_retained_config(store.retained_config(snapshot))
-            for slot in (slots := store.snapshot_slots(snapshot, fresh=True)):
-                if slot.slot not in channels:
-                    continue
-                if slot.slot in {"text", "image"}:
-                    origin_sha = slot.family.config_json.get("effective_config_sha")
+            loaded = tuple(
+                store.iter_snapshot_batches(snapshot, slots=frozenset(channels))
+            )
+            for item in {pair[0].slot: pair[0] for pair in loaded}.values():
+                if item.slot in {"text", "image"}:
+                    origin_sha = item.family.config_json.get("effective_config_sha")
                     if not isinstance(origin_sha, str):
                         raise TychoraError(
                             "INTEGRITY_ERROR", "Retained vector config binding differs"
@@ -590,102 +592,91 @@ class RecoveryService:
                             "PROFILE_INCOMPATIBLE", "Retained vector profile differs"
                         )
                     verify_semantic_vector_family(
-                        slot.family, origin_config, snapshot.workspace_id
+                        item.family, origin_config, snapshot.workspace_id
                     )
-                for batch in slot.batches:
-                    verify_canonical_native_batch(store, slot.family, batch)
-            for slot in slots:
-                if slot.slot not in channels:
+            for item, batch in loaded:
+                verify_canonical_native_batch(store, item.family, batch)
+            for item, batch in loaded:
+                if self._native_batch_state(batch, item.family) == "ready":
                     continue
-                for batch in slot.batches:
-                    if self._native_batch_state(batch, slot.family) == "ready":
-                        continue
-                    if slot.slot in {"text", "image"}:
-                        receipt, physical = self._reverify_vector(
-                            slot.family, batch, ctx
+                if item.slot in {"text", "image"}:
+                    receipt, physical = self._reverify_vector(item.family, batch, ctx)
+                else:
+                    receipt = batch.receipt
+                    manifest = batch.graph_manifest
+                    if not isinstance(receipt, GraphBatchReceipt) or manifest is None:
+                        raise TychoraError(
+                            "INTEGRITY_ERROR", "Graph receipt type differs"
                         )
-                    else:
-                        receipt = batch.receipt
-                        manifest = batch.graph_manifest
-                        if (
-                            not isinstance(receipt, GraphBatchReceipt)
-                            or manifest is None
-                        ):
-                            raise TychoraError(
-                                "INTEGRITY_ERROR", "Graph receipt type differs"
-                            )
-                        build = read_graph_build(store, manifest.spec, ctx)
-                        if GraphManifest.from_build(build) != manifest:
-                            raise TychoraError(
-                                "INTEGRITY_ERROR", "Graph canonical input differs"
-                            )
-                        graph = store.graph_indexes.get(receipt.generation_id)
-                        if graph is None or not hasattr(graph, "prepare_build"):
-                            raise TychoraError(
-                                "CAPABILITY_MISSING",
-                                "Native graph builder is unavailable",
-                            )
-                        graph.prepare_build(build)
-                        if (
-                            graph.begin_generation(manifest.spec)
-                            != receipt.generation_id
-                        ):
-                            raise TychoraError(
-                                "INTEGRITY_ERROR", "Graph generation identity differs"
-                            )
-                        if graph.sealed_receipt(receipt.generation_id) is None:
-                            graph.upsert_batch(
-                                receipt.generation_id,
-                                tuple(item.assertion for item in build.assertions),
-                                tuple(item.unit for item in build.units),
-                                ctx,
-                            )
-                        if (
-                            graph.seal_generation(receipt.generation_id, manifest, ctx)
-                            != receipt
-                        ):
-                            raise TychoraError(
-                                "INTEGRITY_ERROR", "Native graph receipt differs"
-                            )
-                        physical = {
-                            "backend": "ladybug",
-                            "manifest_digest": receipt.manifest_digest,
-                            "decision_watermark": receipt.decision_watermark,
-                        }
-                    self._write_physical_proof(
-                        batch.batch_id,
-                        {
-                            "type": "physical-verification",
-                            "schema_version": 1,
-                            "workspace_id": self.owner.workspace_id,
-                            "snapshot_id": snapshot.snapshot_id,
-                            "family_id": slot.family.family_id,
-                            "batch_id": batch.batch_id,
-                            "input_manifest_sha256": batch.input_manifest.sha256,
-                            "historical_receipt_digest": digest(
-                                "historical-native-receipt-v1",
-                                receipt.model_dump(mode="json"),
-                            ),
-                            "physical": physical,
-                        },
-                    )
-                    ctx.checkpoint()
-                    with store.immediate_transaction():
-                        if store.active_snapshot_id() != active_snapshot_id:
-                            raise TychoraError(
-                                "WORKSPACE_BUSY",
-                                "Active snapshot changed during native recovery",
-                            )
-                        if (
-                            self.owner.db.execute(
-                                "UPDATE index_batches SET state='ready' WHERE batch_id=? AND family_id=? AND state='pending'",
-                                (batch.batch_id, slot.family.family_id),
-                            ).rowcount
-                            != 1
-                        ):
-                            raise TychoraError(
-                                "WORKSPACE_BUSY", "Native batch changed during recovery"
-                            )
+                    build = read_graph_build(store, manifest.spec, ctx)
+                    if GraphManifest.from_build(build) != manifest:
+                        raise TychoraError(
+                            "INTEGRITY_ERROR", "Graph canonical input differs"
+                        )
+                    graph = store.graph_indexes.get(receipt.generation_id)
+                    if graph is None or not hasattr(graph, "prepare_build"):
+                        raise TychoraError(
+                            "CAPABILITY_MISSING",
+                            "Native graph builder is unavailable",
+                        )
+                    graph.prepare_build(build)
+                    if graph.begin_generation(manifest.spec) != receipt.generation_id:
+                        raise TychoraError(
+                            "INTEGRITY_ERROR", "Graph generation identity differs"
+                        )
+                    if graph.sealed_receipt(receipt.generation_id) is None:
+                        graph.upsert_batch(
+                            receipt.generation_id,
+                            tuple(item.assertion for item in build.assertions),
+                            tuple(item.unit for item in build.units),
+                            ctx,
+                        )
+                    if (
+                        graph.seal_generation(receipt.generation_id, manifest, ctx)
+                        != receipt
+                    ):
+                        raise TychoraError(
+                            "INTEGRITY_ERROR", "Native graph receipt differs"
+                        )
+                    physical = {
+                        "backend": "ladybug",
+                        "manifest_digest": receipt.manifest_digest,
+                        "decision_watermark": receipt.decision_watermark,
+                    }
+                self._write_physical_proof(
+                    batch.batch_id,
+                    {
+                        "type": "physical-verification",
+                        "schema_version": 1,
+                        "workspace_id": self.owner.workspace_id,
+                        "snapshot_id": snapshot.snapshot_id,
+                        "family_id": item.family.family_id,
+                        "batch_id": batch.batch_id,
+                        "input_manifest_sha256": batch.input_manifest.sha256,
+                        "historical_receipt_digest": digest(
+                            "historical-native-receipt-v1",
+                            receipt.model_dump(mode="json"),
+                        ),
+                        "physical": physical,
+                    },
+                )
+                ctx.checkpoint()
+                with store.immediate_transaction():
+                    if store.active_snapshot_id() != active_snapshot_id:
+                        raise TychoraError(
+                            "WORKSPACE_BUSY",
+                            "Active snapshot changed during native recovery",
+                        )
+                    if (
+                        self.owner.db.execute(
+                            "UPDATE index_batches SET state='ready' WHERE batch_id=? AND family_id=? AND state='pending'",
+                            (batch.batch_id, item.family.family_id),
+                        ).rowcount
+                        != 1
+                    ):
+                        raise TychoraError(
+                            "WORKSPACE_BUSY", "Native batch changed during recovery"
+                        )
         return self._reconcile_on_owner(ctx)
 
     def _write_physical_proof(self, batch_id: str, proof: dict) -> None:

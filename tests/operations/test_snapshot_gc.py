@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from tests.api.test_public_sync import CharacterCounter
+from tests.helpers.publication import slots_of
 from tychora import SourceInput, Tychora
 from tychora.adapters.sqlite.publication import PublicationReceipts
 from tychora.adapters.sqlite.repositories import batches as batch_rows
@@ -240,7 +241,7 @@ def test_pinned_reader_keeps_its_snapshot_and_payloads_through_manage_gc(
             # A lease blocks every unlink, so released payloads wait.
             assert result.deleted_payloads == 0
             slots = owner.run_write_sync(
-                lambda: owner.store.snapshot_slots(view, fresh=True),
+                lambda: slots_of(owner.store, view),
                 ExecutionContext(),
             )
             assert any(slot.batches for slot in slots)
@@ -381,7 +382,7 @@ def test_pending_orphan_batch_is_collected(tmp_path, monkeypatch):
         )
 
 
-def test_collection_drops_cached_batches_and_bumps_the_lexical_epoch_once(
+def test_collection_drops_old_batches_and_bumps_the_lexical_epoch_once(
     tmp_path, monkeypatch
 ):
     with Tychora.open(tmp_path / "kb", token_counter=CharacterCounter()) as kb:
@@ -401,7 +402,6 @@ def test_collection_drops_cached_batches_and_bumps_the_lexical_epoch_once(
             )
         ]
         assert len(old) == 4
-        assert all(owner.store.batch_cache.get(batch) is not None for batch in old)
         # Searches recorded query runs that would retain the early snapshots.
         _db(owner).execute(
             "UPDATE query_runs SET expires_at='2000-01-01T00:00:00+00:00'"
@@ -411,7 +411,6 @@ def test_collection_drops_cached_batches_and_bumps_the_lexical_epoch_once(
         monkeypatch.setattr(snapshot_rows, "RETAINED_SNAPSHOTS", 1)
         summary = _collect(owner, limit=1000)
         assert summary.batches == 4
-        assert all(owner.store.batch_cache.get(batch) is None for batch in old)
         assert (
             _count(_db(owner), "SELECT lexical_statistics_epoch FROM workspaces")
             == epoch + 1

@@ -7,6 +7,7 @@ import pytest
 
 from tests.evaluation.conftest import SyntheticCounter
 from tests.helpers.corpus import reader, seed_bundle
+from tests.helpers.publication import slots_of
 from tychora.adapters.ladybug.generation import LadybugGraphStore
 from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
 from tychora.adapters.sqlite.jobs import JobRepository
@@ -245,7 +246,7 @@ async def test_published_decisions_and_hidden_parent_support_are_excluded(tmp_pa
         snapshot = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ctx
         )
-        slots = await owner.run_write(lambda: owner.store.snapshot_slots(snapshot), ctx)
+        slots = await owner.run_write(lambda: slots_of(owner.store, snapshot), ctx)
         slot = next(slot for slot in slots if slot.slot == "graph")
         graph_batch = slot.batches[0]
         assert isinstance(graph_batch.receipt, GraphBatchReceipt)

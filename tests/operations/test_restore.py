@@ -592,11 +592,8 @@ def test_vector_rebuild_rejects_missing_or_altered_float32_cache(tmp_path):
     from tychora.contracts.embeddings import EmbeddingRecord
     from tychora.contracts.identity import family_id, space_id
     from tychora.contracts.indexing import FamilySpec, IndexRecordDigest
-    from tychora.contracts.publication import (
-        IndexFamily,
-        RetainedBatch,
-        VectorRecordBinding,
-    )
+    from tychora.contracts.publication import RetainedBatch, VectorRecordBinding
+    from tychora.contracts.snapshots import IndexFamily
     from tychora.contracts.vector_batches import (
         VECTOR_BATCH_MEDIA_TYPE,
         VectorBatchRow,

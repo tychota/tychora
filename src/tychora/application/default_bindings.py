@@ -35,6 +35,7 @@ from tychora.application.visual import OwnerVisualAccess
 from tychora.configuration.registry import Registry
 from tychora.contracts.embeddings import VisualEmbeddingLimits
 from tychora.contracts.errors import TychoraError
+from tychora.contracts.graph import GraphBatchReceipt
 from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.indexing import FamilySpec
 from tychora.ports.execution import ExecutionContext
@@ -207,6 +208,18 @@ def _missing_ready_native_storage(owner: WorkspaceOwner) -> dict[str, str]:
     return missing
 
 
+def _graph_generations(owner: WorkspaceOwner, snapshot_id: str) -> tuple[str, ...]:
+    """The graph generations a snapshot binds, read from their batch receipts."""
+    with owner.store.uow.read() as tx:
+        return tuple(
+            receipt.generation_id
+            for row in tx.batches.for_snapshot(snapshot_id, "graph")
+            if isinstance(
+                receipt := tx.batches.receipt(row.batch_id), GraphBatchReceipt
+            )
+        )
+
+
 def compose_default_bindings(
     owner: WorkspaceOwner,
     config: ResolvedConfig,
@@ -241,35 +254,33 @@ def compose_default_bindings(
             else None
         )
         if (active_id := owner.store.active_snapshot_id()) is not None:
-            slots = owner.store.snapshot_slots(owner.store.resolve_snapshot(active_id))
-            for slot in slots:
-                if slot.slot not in unavailable:
+            view = owner.store.resolve_snapshot(active_id)
+            generations = _graph_generations(owner, active_id)
+            for item in view.families:
+                if item.slot not in unavailable:
                     continue
-                if slot.slot in {"text", "image"}:
-                    owner.store.vector_indexes.pop(slot.family.family_id, None)
-                elif slot.slot == "graph":
-                    for batch in slot.batches:
-                        if batch.graph_manifest is not None:
-                            owner.store.graph_indexes.pop(
-                                batch.graph_manifest.spec.generation_id, None
-                            )
-            for slot in slots:
+                if item.slot in {"text", "image"}:
+                    owner.store.vector_indexes.pop(item.family.family_id, None)
+                elif item.slot == "graph":
+                    for generation in generations:
+                        owner.store.graph_indexes.pop(generation, None)
+            for item in view.families:
                 index = (
                     text_index
-                    if slot.slot == "text"
+                    if item.slot == "text"
                     else visual_index
-                    if slot.slot == "image"
+                    if item.slot == "image"
                     else None
                 )
                 if index is not None:
                     spec = FamilySpec.model_validate_json(
-                        canonical_bytes(slot.family.config_json["spec"])
+                        canonical_bytes(item.family.config_json["spec"])
                     )
                     ready = owner.db.execute(
                         "SELECT 1 FROM snapshot_batches s JOIN index_batches b "
                         "ON b.batch_id=s.batch_id WHERE s.snapshot_id=? "
                         "AND s.slot=? AND b.state='ready' LIMIT 1",
-                        (active_id, slot.slot),
+                        (active_id, item.slot),
                     ).fetchone()
                     if ready is not None:
                         try:
@@ -277,27 +288,24 @@ def compose_default_bindings(
                         except ValueError:
                             raise TychoraError(
                                 "INTEGRITY_ERROR",
-                                f"Ready {slot.slot} native collection metadata differs",
+                                f"Ready {item.slot} native collection metadata differs",
                             ) from None
                     else:
                         handle = index.create_family(spec)
                     if handle is None:
-                        unavailable[slot.slot] = (
-                            f"Ready {slot.slot} native collection is missing"
+                        unavailable[item.slot] = (
+                            f"Ready {item.slot} native collection is missing"
                         )
-                        if slot.slot == "text":
+                        if item.slot == "text":
                             text_index = None
                         else:
                             visual_index = None
                         owner.store.vector_indexes.pop(spec.family_id, None)
                     else:
                         owner.store.vector_indexes[spec.family_id] = index
-                elif graph is not None and slot.slot == "graph":
-                    for batch in slot.batches:
-                        if batch.graph_manifest is not None:
-                            owner.store.graph_indexes[
-                                batch.graph_manifest.spec.generation_id
-                            ] = graph
+                elif graph is not None and item.slot == "graph":
+                    for generation in generations:
+                        owner.store.graph_indexes[generation] = graph
         text_settings = config.values.providers.text
         if not config.values.offline and text_settings.provider == "voyage":
             if text_settings.model not in {

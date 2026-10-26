@@ -12,7 +12,7 @@ import pytest
 import pytest_asyncio
 from PIL import Image
 
-from tests.helpers.corpus import raw_review
+from tests.helpers.corpus import raw_review, refresh_facts
 from tests.retrieval.graph_fixture import assertion, sealed_graph, unit
 from tests.typed_json import json_array, json_object, json_string
 from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
@@ -197,6 +197,7 @@ async def test_native_overlap_denies_child_slice_and_allows_disjoint_parent_rang
             (uid,),
         )
         raw_review(owner.db, "unit", "rejected-child")
+        refresh_facts(owner.store)
 
     await owner.run_write(add_rejected_child, ExecutionContext())
     service = InspectionService(owner)
@@ -314,6 +315,7 @@ async def test_retained_docling_source_parts_denies_rejected_child_overlap(publi
             (locator(6), uid),
         )
         raw_review(owner.db, "unit", "doc-child")
+        refresh_facts(owner.store)
 
     await owner.run_write(install_parts, ExecutionContext())
     service = InspectionService(owner)
@@ -661,6 +663,7 @@ async def test_registered_zero_text_asset_and_unregistered_paths(published, hist
             "INSERT INTO unit_assets(unit_id,asset_id,role) VALUES (?,?,?)",
             ("image-unit", "image-asset", "source"),
         )
+        refresh_facts(owner.store)
         return payload, revision, ref.sha256
 
     payload, revision, sha = await owner.run_write(register_image, ExecutionContext())

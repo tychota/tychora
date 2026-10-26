@@ -194,7 +194,6 @@ ignore_imports = [
   "tychora.adapters.sqlite.corpus -> tychora.application.collection_policy",  # tychora/adapters/sqlite/corpus.py:8
   "tychora.adapters.sqlite.corpus -> tychora.application.leases",  # tychora/adapters/sqlite/corpus.py:9
   "tychora.adapters.sqlite.eligibility -> tychora.application.collection_policy",  # tychora/adapters/sqlite/eligibility.py:9
-  "tychora.adapters.sqlite.eligibility -> tychora.indexing.representations",  # tychora/adapters/sqlite/eligibility.py:39
   "tychora.adapters.sqlite.eligibility -> tychora.retrieval.eligibility",  # tychora/adapters/sqlite/eligibility.py:40
   "tychora.adapters.sqlite.evaluations -> tychora.evaluation.dataset",  # tychora/adapters/sqlite/evaluations.py:14
   "tychora.adapters.sqlite.history -> tychora.retrieval.response",  # tychora/adapters/sqlite/history.py:23

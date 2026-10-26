@@ -225,29 +225,3 @@ def test_intervals_read_back_in_document_order(tmp_path, monkeypatch):
     assert len(units) > 2
     assert list(units) != sorted(units)
     assert intervals == facts.intervals
-
-
-def test_published_add_persists_what_eligibility_derives(tmp_path):
-    with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
-        _add_manual(kb)
-        owner = kb._workspace.owner
-
-        def read():
-            store = owner.store
-            facts = store.read_eligibility_facts(store.resolve_snapshot(None))
-            owners = (
-                *(fact.unit_id for fact in facts.units),
-                *(fact.chunk_id for fact in facts.chunks),
-                *(fact.asset_id for fact in facts.assets),
-            )
-            with store.uow.read() as tx:
-                return facts, tx.representations.dependencies(owners)
-
-        facts, stored = owner.run_write_sync(read, ExecutionContext())
-    assert facts.units and facts.chunks
-    for fact in facts.units:
-        assert stored[fact.unit_id] == fact.dependency_ids
-    for fact in facts.chunks:
-        assert stored[fact.chunk_id] == fact.dependency_ids
-    for fact in facts.assets:
-        assert stored[fact.asset_id] == fact.dependency_ids

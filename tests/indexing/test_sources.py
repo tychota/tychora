@@ -13,7 +13,7 @@ import pytest
 from PIL import Image
 
 from tests.code.conftest import make_repo
-from tests.helpers.publication import members_of
+from tests.helpers.publication import members_of, slots_of
 from tests.indexing.test_publication import RecordingCounter, RecordingEmbedder
 from tests.providers.test_visual import CharacterCounter, RecordingRawTransport, _limits
 from tychora.adapters.chroma.index import ChromaVectorIndex
@@ -126,7 +126,7 @@ async def _members(owner, view):
 async def _slots(owner, view):
     """Read a snapshot's retained slots on the owner thread."""
     return await owner.run_write(
-        lambda: owner.store.snapshot_slots(view), ExecutionContext()
+        lambda: slots_of(owner.store, view), ExecutionContext()
     )
 
 

@@ -121,9 +121,9 @@ from tychora.configuration.indexed_representation import pinned_runtime_compatib
 from tychora.configuration.registry import Registry, compile_filter
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.graph import GraphBatchReceipt, graph_manifest_digest
+from tychora.contracts.graph import GraphBatchReceipt
 from tychora.contracts.identity import JsonValue, canonical_bytes, digest
-from tychora.contracts.publication import RetainedSlot, SnapshotMember, SnapshotView
+from tychora.contracts.publication import SnapshotMember, SnapshotView
 from tychora.contracts.requests import (
     AndFilter,
     EqFilter,
@@ -192,7 +192,9 @@ class EligibilityFacts:
     assertion_decisions: tuple[tuple[str, int], ...] = ()
     revision_facets: tuple[tuple[str, str, object], ...] = ()
     historical_definitions: tuple[tuple[str, object], ...] = ()
-    slots: tuple[RetainedSlot, ...] = ()
+    batches: tuple[tuple[str, str, str | None], ...] = ()
+    lexical_chunks: tuple[tuple[str, str], ...] = ()
+    graph_receipt: GraphBatchReceipt | None = None
 
 
 class EligibilityReader(Protocol):
@@ -634,21 +636,11 @@ class EligibilityCompiler:
             if item.revision_id in revision_ids
         }
         selected_chunks = {
-            row.chunk_id
-            for slot in facts.slots
-            if slot.slot == "lexical"
-            for batch in slot.batches
-            if batch.extraction_id in extraction_ids
-            for row in batch.lexical_records
+            chunk
+            for chunk, extraction in facts.lexical_chunks
+            if extraction in extraction_ids
         }
-        selected_vectors = {
-            row.record_id
-            for slot in facts.slots
-            if slot.slot in {"text", "image"}
-            for batch in slot.batches
-            if batch.extraction_id in extraction_ids
-            for row in batch.vector_records
-        }
+        selected_vectors = {item.record_id for item in facts.vectors}
         chunk_owner_units = source_units | candidate_proxy_units
         eligible_chunks = frozenset(
             item.chunk_id
@@ -669,35 +661,20 @@ class EligibilityCompiler:
                 item.dependency_ids, revision_ids, eligible_units, eligible_assets
             )
         )
-        batch_ids: list[str] = []
-        graph_binding = None
-        graph_assertion_ids: frozenset[str] = frozenset()
-        for slot in facts.slots:
-            for batch in slot.batches:
-                if slot.slot == "graph":
-                    if not isinstance(batch.receipt, GraphBatchReceipt):
-                        raise TychoraError(
-                            "INTEGRITY_ERROR", "Graph batch receipt is unavailable"
-                        )
-                    if (
-                        batch.graph_manifest is None
-                        or batch.receipt.manifest_digest
-                        != graph_manifest_digest(batch.graph_manifest)
-                    ):
-                        raise TychoraError(
-                            "INTEGRITY_ERROR", "Graph manifest binding differs"
-                        )
-                    graph_binding = batch.receipt
-                    graph_assertion_ids = frozenset(batch.graph_manifest.assertion_ids)
-                    batch_ids.append(batch.receipt.generation_id)
-                elif batch.extraction_id in extraction_ids:
-                    batch_ids.append(batch.batch_id)
+        graph_binding = facts.graph_receipt
+        batch_ids = [
+            batch
+            for slot, batch, extraction in facts.batches
+            if slot != "graph" and extraction in extraction_ids
+        ]
+        if graph_binding is not None:
+            batch_ids.append(graph_binding.generation_id)
+        # Every assertion decided after the generation's watermark is blocked;
+        # an assertion outside the generation is never reached by traversal.
         blocked = frozenset(
             assertion
             for assertion, decision in facts.assertion_decisions
-            if graph_binding is not None
-            and assertion in graph_assertion_ids
-            and decision > graph_binding.decision_watermark
+            if graph_binding is not None and decision > graph_binding.decision_watermark
         )
         graph_kwargs = (
             {
