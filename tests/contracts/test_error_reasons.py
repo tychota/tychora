@@ -76,6 +76,7 @@ CLASSIFIED_REASONS = {
         "kind.unknown",
         "tokens.atomic_limit",
         "policy.use_unknown",
+        "policy.use_override_empty",
     },
 }
 

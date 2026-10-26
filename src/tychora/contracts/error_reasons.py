@@ -298,6 +298,12 @@ _ENTRIES = (
     ),
     Reason(
         "INVALID_REQUEST",
+        "policy.use_override_empty",
+        False,
+        "Keep at least one use; pass None to clear the override, or withdraw the source.",
+    ),
+    Reason(
+        "INVALID_REQUEST",
         "kind.section_levels_invalid",
         False,
         "Fix the kind's `heading_levels` or `context_level`: levels are part, chapter, section, article, annex, clause or file.",

@@ -2,11 +2,12 @@
 
 import ast
 import re
+import sqlite3
 from pathlib import Path
 
 import pytest
 
-from tests.helpers.corpus import reader, registry, seed_bundle
+from tests.helpers.corpus import artifact, reader, registry, seed_bundle
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.contracts.corpus import ReviewTarget
@@ -142,9 +143,24 @@ def store(tmp_path):
     db.close()
 
 
+ASSERTION = (
+    b'{"type":"assertion","schema_version":"1",'
+    b'"record_id":"record-1","assertion_id":"assertion-1"}\n'
+)
+
+
 @pytest.fixture
 def bundle(store):
     seeded = seed_bundle("Seal checks are quarterly.")
+    assertions = artifact(ASSERTION, "application/x-ndjson")
+    seeded = seeded.model_copy(
+        update={
+            "artifacts": (*seeded.artifacts, assertions),
+            "extraction": seeded.extraction.model_copy(
+                update={"assertions_artifact_sha": assertions.sha256}
+            ),
+        }
+    )
     store.commit_extraction(seeded, _facts(seeded))
     return seeded
 
@@ -165,7 +181,15 @@ def _epoch(store):
         lambda s, b: s.withdraw_source(b.source.source_id),
         lambda s, b: s.set_allowed_uses_override(b.source.source_id, "never_generate"),
         lambda s, b: s.set_allowed_uses_override(b.source.source_id, ("lookup",)),
+        lambda s, b: s.set_allowed_uses_override(b.source.source_id, ["audit"]),
         lambda s, b: s.set_allowed_uses_override(b.source.source_id, None),
+        lambda s, b: s.record_assertion_decision(
+            "assertion-1",
+            b.extraction.assertions_artifact_sha,
+            "record-1",
+            "rejected",
+            "r",
+        ),
     ],
 )
 def test_every_eligibility_write_bumps_policy_epoch(store, bundle, write):
@@ -227,6 +251,62 @@ def test_allowed_uses_override_only_narrows(store, bundle):
     with pytest.raises(TychoraError) as error:
         store.set_allowed_uses_override("missing", None)
     assert (error.value.code, error.value.reason) == ("NOT_FOUND", "source.absent")
+
+
+def test_allowed_uses_override_accepts_a_list(store, bundle):
+    source = bundle.source.source_id
+    store.set_allowed_uses_override(source, ["lookup", "audit", "lookup"])
+    assert store.db.execute(
+        "SELECT allowed_uses_override FROM sources WHERE source_id=?", (source,)
+    ).fetchone() == ('["audit","lookup"]',)
+
+
+@pytest.mark.parametrize(
+    "override",
+    ["lookup", b"lookup", 3, {"lookup": True}, ("lookup", 1), frozenset({"lookup"})],
+)
+def test_allowed_uses_override_refuses_a_shape_that_is_not_a_use_list(
+    store, bundle, override
+):
+    before = _epoch(store)
+    with pytest.raises(TychoraError) as error:
+        store.set_allowed_uses_override(bundle.source.source_id, override)
+    assert error.value.code == "INVALID_REQUEST"
+    assert error.value.reason is None
+    assert "list of uses" in str(error.value)
+    assert _epoch(store) == before
+
+
+@pytest.mark.parametrize("override", [(), []])
+def test_allowed_uses_override_refuses_an_empty_list(store, bundle, override):
+    before = _epoch(store)
+    with pytest.raises(TychoraError) as error:
+        store.set_allowed_uses_override(bundle.source.source_id, override)
+    assert (error.value.code, error.value.reason) == (
+        "INVALID_REQUEST",
+        "policy.use_override_empty",
+    )
+    assert "None" in str(error.value)
+    assert "withdraw_source" in str(error.value)
+    assert _epoch(store) == before
+
+
+def test_allowed_uses_override_refuses_a_narrowing_that_keeps_nothing(
+    store, bundle, monkeypatch
+):
+    monkeypatch.setattr(store, "_known_uses", lambda: frozenset({"compose", "audit"}))
+    with pytest.raises(TychoraError) as error:
+        store.set_allowed_uses_override(bundle.source.source_id, "reference_only")
+    assert error.value.reason == "policy.use_override_empty"
+
+
+@pytest.mark.parametrize("value", ['{"uses":["lookup"]}', '"lookup"', "not json"])
+def test_the_override_column_holds_only_a_json_array(store, bundle, value):
+    with pytest.raises(sqlite3.IntegrityError):
+        store.db.execute(
+            "UPDATE sources SET allowed_uses_override=? WHERE source_id=?",
+            (value, bundle.source.source_id),
+        )
 
 
 def test_a_source_outside_the_granted_collections_reads_as_absent(store, bundle):

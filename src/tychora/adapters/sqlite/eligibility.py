@@ -7,7 +7,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING, NamedTuple
 
 from tychora.adapters.sqlite.repositories import SqliteWorkspaceRepository, artifact_ref
-from tychora.adapters.sqlite.retained_bindings import BindingScope
+from tychora.adapters.sqlite.retained_bindings import SOURCE_COLUMNS, BindingScope
 from tychora.application.collection_policy import collection_is_active
 from tychora.configuration.global_facets import (
     ROLE as GLOBAL_FACET_ROLE,
@@ -77,11 +77,11 @@ def _rows(db, query: str, args: tuple[str, ...] = ()) -> list[dict]:
 
 def _retained_heads(db, member) -> tuple[dict, dict, dict]:
     """The source, revision and extraction rows of one member, JSON decoded."""
-    source = _rows(db, "SELECT * FROM sources WHERE source_id=?", (member.source_id,))[
-        0
-    ]
-    source.pop("withdrawn_at")
-    source.pop("allowed_uses_override")
+    source = _rows(
+        db,
+        f"SELECT {SOURCE_COLUMNS} FROM sources WHERE source_id=?",
+        (member.source_id,),
+    )[0]
     source["registration_json"] = json.loads(source["registration_json"])
     revision = _rows(
         db, "SELECT * FROM revisions WHERE revision_id=?", (member.revision_id,)
