@@ -119,3 +119,33 @@ def open_corpus(
     except BaseException:
         db.close()
         raise
+
+
+def open_read_connection(path: Path) -> sqlite3.Connection:
+    """Open a read-only WAL connection for one read-pool thread.
+
+    The URI's ``mode=ro`` refuses writes to the database file and
+    ``query_only`` refuses every write, including to ``temp``. The writer has
+    already verified the schema, so only the journal mode is checked here.
+    The pool closes the connection from its closing thread after its worker
+    exits, hence ``check_same_thread=False``.
+    """
+    db = sqlite3.connect(
+        f"{path.resolve().as_uri()}?mode=ro",
+        uri=True,
+        isolation_level=None,
+        check_same_thread=False,
+    )
+    try:
+        db.execute("PRAGMA query_only=ON")
+        db.execute("PRAGMA busy_timeout=2000")
+        if db.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
+            raise TychoraError(
+                "INTEGRITY_ERROR",
+                "Read connections require a WAL database",
+                reason="invariant.unexpected",
+            )
+        return db
+    except BaseException:
+        db.close()
+        raise
