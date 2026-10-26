@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime
 
 from tychora.contracts.artifacts import ArtifactRef
@@ -30,6 +30,13 @@ from .workspace import require_write
 _SNAPSHOT_ROW = (
     "SELECT workspace_id,parent_snapshot_id,membership_sha,config_sha,member_count "
     "FROM snapshots WHERE snapshot_id=?"
+)
+# A full member read walks the snapshot's pages in bucket order and reads each
+# page through the page_members primary key, so it is linear in the members.
+PAGE_IDS = "SELECT page_id FROM snapshot_pages WHERE snapshot_id=? ORDER BY bucket"
+PAGE_MEMBERS = (
+    "SELECT source_id,revision_id,extraction_id,is_default FROM page_members "
+    "WHERE page_id=? ORDER BY revision_id"
 )
 _FAMILY_COLUMNS = ",".join(f"f.{name}" for name in FAMILY_COLUMNS.split(","))
 # Most recently published snapshots kept besides the active one, its parent and
@@ -139,7 +146,29 @@ class SqliteSnapshotRepository:
             "WHERE snapshot_id=? AND extraction_id=?",
             (snapshot_id, extraction_id),
         ).fetchone()
-        return None if row is None else _member(row)
+        if row is not None:
+            return _member(row)
+        if self._db.execute(_SNAPSHOT_ROW, (snapshot_id,)).fetchone() is None:
+            raise absent_snapshot()
+        return None
+
+    def all_members(self, snapshot_id: str) -> Iterator[SnapshotMember]:
+        """Yield every member, one membership page at a time in bucket order.
+
+        Members come in bucket order, not source order. A snapshot whose pages
+        hold a different number of members than its row records is refused.
+        """
+        row = self._db.execute(_SNAPSHOT_ROW, (snapshot_id,)).fetchone()
+        if row is None:
+            raise absent_snapshot()
+        page_ids = [r[0] for r in self._db.execute(PAGE_IDS, (snapshot_id,))]
+        count = 0
+        for page_id in page_ids:
+            rows = self._db.execute(PAGE_MEMBERS, (page_id,)).fetchall()
+            count += len(rows)
+            yield from map(_member, rows)
+        if count != row[4]:
+            raise _integrity("Snapshot members differ from their recorded count")
 
     def members(
         self, snapshot_id: str, *, after: Cursor | None = None, limit: int = 1000

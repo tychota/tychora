@@ -266,7 +266,7 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
     )
 
 
-def _serve_synthetic(owner, snapshot, members):
+def _serve_synthetic(monkeypatch, owner, snapshot, members):
     """Serve a synthetic snapshot from the owner's catalog, read with ``members``."""
     real_get = owner.catalog.get
     real_read = owner.store.read_eligibility_facts
@@ -279,8 +279,8 @@ def _serve_synthetic(owner, snapshot, members):
     def read(view, given=None):
         return real_read(view, members if given is None else given)
 
-    owner.catalog.get = get
-    owner.store.read_eligibility_facts = read
+    monkeypatch.setattr(owner.catalog, "get", get)
+    monkeypatch.setattr(owner.store, "read_eligibility_facts", read)
 
 
 def _register_config_artifact(db, artifacts, config):
@@ -942,7 +942,7 @@ def test_attempt_dependency_lookup_carries_complete_group_leaves(config, scope):
 
 @pytest.mark.asyncio
 async def test_owner_runner_retries_after_canonical_withdrawal_and_releases_pin(
-    tmp_path,
+    tmp_path, monkeypatch
 ):
 
     from tests.runtime.test_upload_policy import install, prepared
@@ -968,7 +968,7 @@ async def test_owner_runner_retries_after_canonical_withdrawal_and_releases_pin(
                 extraction_id=bundle.extraction.extraction_id,
             ),
         )
-        _serve_synthetic(owner, snapshot, members)
+        _serve_synthetic(monkeypatch, owner, snapshot, members)
         ctx = ExecutionContext()
         calls = []
         pins = []
@@ -1010,7 +1010,7 @@ async def test_owner_runner_retries_after_canonical_withdrawal_and_releases_pin(
 
 
 @pytest.mark.asyncio
-async def test_owner_runner_releases_pin_after_cancellation(tmp_path):
+async def test_owner_runner_releases_pin_after_cancellation(tmp_path, monkeypatch):
     import asyncio
 
     from tests.runtime.test_upload_policy import install, prepared
@@ -1036,7 +1036,7 @@ async def test_owner_runner_releases_pin_after_cancellation(tmp_path):
                 extraction_id=bundle.extraction.extraction_id,
             ),
         )
-        _serve_synthetic(owner, snapshot, members)
+        _serve_synthetic(monkeypatch, owner, snapshot, members)
         ctx = ExecutionContext()
 
         async def operation(attempt):
@@ -1059,7 +1059,7 @@ async def test_owner_runner_releases_pin_after_cancellation(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_owner_provider_denied_grant_never_dispatches(tmp_path):
+async def test_owner_provider_denied_grant_never_dispatches(tmp_path, monkeypatch):
 
     from tests.runtime.test_upload_policy import install, prepared
     from tychora.ports.execution import ExecutionContext
@@ -1084,7 +1084,7 @@ async def test_owner_provider_denied_grant_never_dispatches(tmp_path):
                 extraction_id=bundle.extraction.extraction_id,
             ),
         )
-        _serve_synthetic(owner, snapshot, members)
+        _serve_synthetic(monkeypatch, owner, snapshot, members)
         denied_scope = scope.model_copy(update={"upload_providers": frozenset()})
         invoked = []
         ctx = ExecutionContext()
