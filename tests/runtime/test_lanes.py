@@ -3,6 +3,7 @@
 import ast
 import asyncio
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from tychora.application.runtime import (
     CPU_THREAD_PREFIX,
     INTERACTIVE_BOUND,
     WRITER_THREAD_PREFIX,
+    BoundedWorker,
     PriorityWorker,
     drain_result,
 )
@@ -127,7 +129,15 @@ def test_native_handles_stay_on_writer_thread():
     offenders = [
         node.lineno
         for node in ast.walk(tree)
-        if isinstance(node, ast.Attribute) and node.attr == "to_thread"
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr in {"to_thread", "run_in_executor"}
+        )
+        or (
+            isinstance(node, ast.ImportFrom)
+            and node.module == "asyncio"
+            and any(alias.name == "to_thread" for alias in node.names)
+        )
     ]
     assert offenders == []
 
@@ -142,7 +152,7 @@ def test_run_blocking_is_gone():
 
 
 @pytest.mark.asyncio
-async def test_drained_priority_future_keeps_cancellation_semantics():
+async def test_drain_result_delivers_a_priority_future():
     worker = PriorityWorker()
     try:
         assert (
@@ -153,3 +163,74 @@ async def test_drained_priority_future_keeps_cancellation_semantics():
         )
     finally:
         worker.close()
+
+
+@pytest.mark.parametrize(
+    "make", [PriorityWorker, lambda: BoundedWorker(workers=1, queued=1)]
+)
+def test_closed_lane_refuses_as_closing_not_queue_full(make):
+    worker = make()
+    worker.close()
+    with pytest.raises(TychoraError) as error:
+        worker.submit(lambda: 1)
+    assert error.value.code == "WORKSPACE_BUSY"
+    assert error.value.retryable
+    assert error.value.reason != "queue.full"
+    assert error.value.message == "Workspace is closing; retry shortly"
+
+
+def test_close_runs_every_queued_call_before_cleanup():
+    worker = PriorityWorker()
+    order: list[str] = []
+    held, release = _hold(worker)
+    queued = [
+        worker.submit(lambda: order.append("b0"), "background"),
+        worker.submit(lambda: order.append("b1"), "background"),
+        worker.submit(lambda: order.append("i0"), "interactive"),
+    ]
+    closer = threading.Thread(
+        target=worker.close, args=(lambda: order.append("cleanup"),)
+    )
+    closer.start()
+    deadline = time.monotonic() + 5
+    while not worker._closed:
+        assert time.monotonic() < deadline
+        time.sleep(0.001)
+    release.set()
+    closer.join(5)
+    assert not closer.is_alive()
+    held.result(5)
+    assert all(future.done() for future in queued)
+    assert order == ["i0", "b0", "b1", "cleanup"]
+
+
+def test_failing_call_delivers_its_exception_and_the_worker_continues():
+    worker = PriorityWorker()
+    try:
+        failure = ValueError("boom")
+
+        def fail():
+            raise failure
+
+        failed = worker.submit(fail, "interactive")
+        assert failed.exception(5) is failure
+        assert worker.submit(lambda: 3).result(5) == 3
+    finally:
+        worker.close()
+
+
+def test_cancelled_queued_future_is_skipped_and_the_next_call_runs():
+    worker = PriorityWorker()
+    order: list[str] = []
+    held, release = _hold(worker)
+    try:
+        skipped = worker.submit(lambda: order.append("skipped"), "background")
+        following = worker.submit(lambda: order.append("next"), "background")
+        assert skipped.cancel()
+    finally:
+        release.set()
+    held.result(5)
+    following.result(5)
+    worker.close()
+    assert skipped.cancelled()
+    assert order == ["next"]

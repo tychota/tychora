@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from tychora.adapters.voyage.runtime import VoyageRuntime
     from tychora.adapters.voyage.visual import VoyageVisualEmbedder
     from tychora.application.owner import WorkspaceOwner
+    from tychora.application.runtime import Priority
     from tychora.contracts.requests import RequestScope
     from tychora.ports.tokens import TokenCounter
 
@@ -74,14 +75,21 @@ class OwnerVisualAccess:
             self.epoch,
         )
 
-    def _on_owner[T](self, call: Callable[[], T], ctx: ExecutionContext) -> T:
+    def _on_owner[T](
+        self, call: Callable[[], T], ctx: ExecutionContext, priority: Priority
+    ) -> T:
         if get_ident() == self.owner._thread_id:
             ctx.checkpoint()
             return call()
-        return self.owner.run_write_sync(call, ctx)
+        return self.owner.run_write_sync(call, ctx, priority)
 
-    def read_scope(self, items: tuple[VisualInput, ...], ctx: ExecutionContext) -> None:
-        self._on_owner(lambda: self._resolve(items), ctx)
+    def read_scope(
+        self,
+        items: tuple[VisualInput, ...],
+        ctx: ExecutionContext,
+        priority: Priority = "background",
+    ) -> None:
+        self._on_owner(lambda: self._resolve(items), ctx, priority)
 
     def _resolve(self, items: tuple[VisualInput, ...]) -> None:
         owner = self.owner
@@ -261,7 +269,7 @@ class OwnerVisualAccess:
                 self.scope, "voyage", authorization
             )
 
-        self._on_owner(check, ctx)
+        self._on_owner(check, ctx, "interactive" if mode == "query" else "background")
 
     @contextmanager
     def admitted(self) -> Iterator[None]:

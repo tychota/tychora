@@ -35,12 +35,19 @@ CPU_WORKERS = 2
 
 
 def queue_full() -> TychoraError:
-    """The refusal for work beyond a lane's queue bound or after it closed."""
+    """The refusal for work beyond a lane's queue bound."""
     return TychoraError(
         "WORKSPACE_BUSY",
-        "Workspace queue is full or closing; retry shortly",
+        "Workspace queue is full; retry shortly",
         retryable=True,
         reason="queue.full",
+    )
+
+
+def workspace_closing() -> TychoraError:
+    """The refusal for work submitted after the workspace started closing."""
+    return TychoraError(
+        "WORKSPACE_BUSY", "Workspace is closing; retry shortly", retryable=True
     )
 
 
@@ -61,7 +68,9 @@ class BoundedWorker:
 
     def submit[T](self, call: Callable[[], T]) -> Future[T]:
         with self._lock:
-            if self._closed or self._pending >= self._bound:
+            if self._closed:
+                raise workspace_closing()
+            if self._pending >= self._bound:
                 raise queue_full()
             self._pending += 1
             try:
@@ -104,7 +113,8 @@ class PriorityWorker(BoundedWorker):
     Each submission queues its call under its priority and schedules one pool
     slot; a slot runs the oldest interactive call, else the oldest background
     call, so the order is decided when the thread is free, not at submission.
-    A running call is never preempted.
+    A running call is never preempted. Sustained interactive load can starve
+    background calls; that is an accepted trade-off.
     """
 
     def __init__(
@@ -130,7 +140,9 @@ class PriorityWorker(BoundedWorker):
         future: Future[T] = Future()
         with self._lock:
             queue = self._queues[priority]
-            if self._closed or len(queue) >= self._bounds[priority]:
+            if self._closed:
+                raise workspace_closing()
+            if len(queue) >= self._bounds[priority]:
                 raise queue_full()
             queue.append((future, call))
             try:

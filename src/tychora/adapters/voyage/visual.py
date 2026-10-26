@@ -116,7 +116,7 @@ class VoyageVisualEmbedder:
         self, query: TextOrImage, ctx: ExecutionContext
     ) -> VisualQueryEmbeddingProbe:
         items, ids, operation_sha = self._access.operation(query, "query")
-        self._access.read_scope(items, ctx)
+        self._access.read_scope(items, ctx, "interactive")
         self._tokens(
             query.text if isinstance(query, TextQuery) else query.image.context,
             None if isinstance(query, TextQuery) else query.image,

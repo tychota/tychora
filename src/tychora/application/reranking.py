@@ -486,7 +486,7 @@ class OwnerRerankAccess:
         if get_ident() == self.owner._thread_id:
             ctx.checkpoint()
             return call()
-        return self.owner.run_write_sync(call, ctx)
+        return self.owner.run_write_sync(call, ctx, "interactive")
 
     async def prepare(
         self,
