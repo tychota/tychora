@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import os
 import shutil
 import sqlite3
@@ -29,8 +30,13 @@ from typing import (
 from uuid import UUID, uuid4
 
 from tychora.adapters.files.cas import LocalArtifacts
-from tychora.adapters.sqlite.connection import open_corpus, refuse_owned_or_older
+from tychora.adapters.sqlite.connection import (
+    open_corpus,
+    open_read_connection,
+    refuse_owned_or_older,
+)
 from tychora.adapters.sqlite.corpus import CorpusStore
+from tychora.adapters.sqlite.repositories import SqliteUnitOfWork, typed_storage_errors
 from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef
@@ -60,6 +66,7 @@ from tychora.ports.embeddings import (
     VisualOperation,
 )
 from tychora.ports.execution import ExecutionContext
+from tychora.ports.repositories import ReadTransaction
 from tychora.ports.vision import (
     CapturedOriginalRegionProof,
     CapturedRegionAuthorization,
@@ -78,6 +85,7 @@ from .runtime import (
     ParserExecutionLimits,
     Priority,
     PriorityWorker,
+    ReadPool,
     RuntimeIdentity,
     ServiceRuntime,
     drain_result,
@@ -95,6 +103,7 @@ class CloseableRuntime(Protocol):
 
 
 MAX_PARSER_OUTPUT_BYTES = 256 * 1024 * 1024
+_LOG = logging.getLogger(__name__)
 _DOCUMENT_UPLOAD: ContextVar[tuple[RequestScope, int] | None] = ContextVar(
     "document_upload", default=None
 )
@@ -121,6 +130,43 @@ def _sync_result[T](future: Future[T], ctx: ExecutionContext) -> T:
     return result
 
 
+def _required_slots(config: ResolvedConfig) -> frozenset[str]:
+    """The index slots a publication must fill under ``config``."""
+    index = config.values.index
+    slots = {"lexical"}
+    if index.text.backend != "disabled":
+        slots.add("text")
+    if index.image.backend != "disabled":
+        slots.add("image")
+    if index.graph != "disabled":
+        slots.add("graph")
+    return frozenset(slots)
+
+
+@contextmanager
+def read_boundary() -> Iterator[None]:
+    """Let only typed errors leave a read task.
+
+    SQLite failures become their typed storage errors; any other exception is
+    a defect, logged with its traceback under a fresh diagnostic ID that the
+    caller receives with ``INTEGRITY_ERROR`` reason ``invariant.unexpected``.
+    """
+    try:
+        with typed_storage_errors():
+            yield
+    except TychoraError:
+        raise
+    except Exception as error:  # noqa: BLE001 - every defect leaves typed, with a diagnostic
+        diagnostic = uuid4().hex
+        _LOG.error("Unexpected read failure [%s]", diagnostic, exc_info=error)
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            f"Unexpected read failure; report diagnostic {diagnostic}.",
+            reason="invariant.unexpected",
+            diagnostic_id=diagnostic,
+        ) from None
+
+
 class WorkspaceOwner:
     def __init__(self, path: Path, config: ResolvedConfig, scope: RequestScope) -> None:
         self.path = path.resolve()
@@ -140,6 +186,7 @@ class WorkspaceOwner:
         self._parsers = BoundedWorker(workers=2)
         self._providers: dict[str, BoundedWorker] = {}
         self._local_text: BoundedWorker | None = None
+        self._reads: ReadPool | None = None
         self._admission = Lock()
         self._closing = False
         self._handles = ExitStack()
@@ -170,8 +217,12 @@ class WorkspaceOwner:
                         lane.stop_admission()
                     if owner._local_text is not None:
                         owner._local_text.stop_admission()
+                    if owner._reads is not None:
+                        owner._reads.stop_admission()
                 with ExitStack() as cleanup:
                     cleanup.callback(owner._worker.close, owner._close_storage)
+                    if owner._reads is not None:
+                        cleanup.callback(owner._reads.close)
                     cleanup.callback(owner._cpu.close)
                     cleanup.callback(owner._parsers.close)
                     for lane in owner._providers.values():
@@ -247,19 +298,16 @@ class WorkspaceOwner:
         }
         registry.validate_activation(frozenset(retained), retained)
         self.upload_policy = CanonicalUploadPolicy(self)
-        required_slots = {"lexical"}
-        if self.config.values.index.text.backend != "disabled":
-            required_slots.add("text")
-        if self.config.values.index.image.backend != "disabled":
-            required_slots.add("image")
-        if self.config.values.index.graph != "disabled":
-            required_slots.add("graph")
         self.store = CorpusStore(
             self.db,
             registry=registry,
             artifacts=self.artifacts,
-            required_slots=frozenset(required_slots),
+            required_slots=_required_slots(self.config),
             leases=self.leases,
+        )
+        self._reads = ReadPool(
+            lambda: open_read_connection(database),
+            workers=max(1, min(4, os.cpu_count() or 1)),
         )
 
     def policy_epoch(self) -> int:
@@ -361,6 +409,25 @@ class WorkspaceOwner:
             return call()
 
         return await drain_result(self._cpu.submit(checked), ctx)
+
+    async def run_read[T](
+        self, call: Callable[[ReadTransaction], T], ctx: ExecutionContext
+    ) -> T:
+        """Run ``call`` in one deferred read transaction on a read-pool connection.
+
+        The transaction sees one WAL snapshot and rolls back on exit.
+        """
+        ctx.checkpoint()
+        reads = self._reads
+        if reads is None:
+            raise workspace_closing()
+
+        def task() -> T:
+            ctx.checkpoint()
+            with read_boundary(), SqliteUnitOfWork(reads.connection()).read() as tx:
+                return call(tx)
+
+        return await drain_result(reads.submit(task), ctx)
 
     def _stage(
         self, refs: tuple[ArtifactRef, ...], ctx: ExecutionContext

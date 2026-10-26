@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 import stat
+import threading
 import time
 import weakref
 from collections import deque
@@ -164,6 +165,46 @@ class PriorityWorker(BoundedWorker):
             future.set_exception(error)
         else:
             future.set_result(result)
+
+
+READ_THREAD_PREFIX = "tychora-read"
+READ_BOUND = 128
+
+
+class ReadPool(BoundedWorker):
+    """Read workers that each hold one connection opened on first use.
+
+    A connection belongs to the thread that opened it; ``close`` closes them
+    all once every worker has exited.
+    """
+
+    def __init__(
+        self, connect: Callable[[], Any], *, workers: int, queued: int = READ_BOUND
+    ) -> None:
+        super().__init__(workers=workers, queued=queued, name=READ_THREAD_PREFIX)
+        self._connect = connect
+        self._local = threading.local()
+        self._connections: list[Any] = []
+
+    def connection(self) -> Any:
+        """Return the calling pool thread's connection, opening it once."""
+        db = getattr(self._local, "db", None)
+        if db is None:
+            db = self._connect()
+            with self._lock:
+                self._connections.append(db)
+            self._local.db = db
+        return db
+
+    def close(self, cleanup: Callable[[], None] | None = None) -> None:
+        """Stop the workers, then close every connection they opened."""
+        try:
+            super().close(cleanup)
+        finally:
+            with self._lock:
+                connections, self._connections = self._connections, []
+            for db in connections:
+                db.close()
 
 
 async def drain_result[T](future: Future[T], ctx: ExecutionContext) -> T:
