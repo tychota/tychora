@@ -506,6 +506,23 @@ SKIP {offset} LIMIT {page_size}
                 break
             offset += _PAGE_SIZE
 
+    def _strategy_enabled(
+        self,
+        view: LegacyEligibilityView,
+        limits: GraphBudget,
+        strategy: Literal["semantic", "structural"],
+        enabled: bool,
+    ) -> bool:
+        """Check the generation and budget binding; a disabled strategy completes empty.
+
+        Callers hold ``self.store._lock`` around this and the traversal it guards.
+        """
+        self._ready(view)
+        self._bind_budget(view, limits)
+        if not enabled:
+            limits.completed_strategies.add(strategy)
+        return enabled
+
     def expand(
         self,
         view: LegacyEligibilityView,
@@ -514,10 +531,9 @@ SKIP {offset} LIMIT {page_size}
         ctx: ExecutionContext,
     ) -> GraphCandidates:
         with self.store._lock:
-            self._ready(view)
-            self._bind_budget(view, limits)
-            if not self.policy.semantic:
-                limits.completed_strategies.add("semantic")
+            if not self._strategy_enabled(
+                view, limits, "semantic", self.policy.semantic
+            ):
                 return GraphCandidates()
             seeds = tuple(dict.fromkeys(seed_unit_ids))
             if (
@@ -634,10 +650,9 @@ SKIP {offset} LIMIT {page_size}
         ctx: ExecutionContext,
     ) -> GraphCandidates:
         with self.store._lock:
-            self._ready(view)
-            self._bind_budget(view, limits)
-            if self.policy.structural != "code_context@1":
-                limits.completed_strategies.add("structural")
+            if not self._strategy_enabled(
+                view, limits, "structural", self.policy.structural == "code_context@1"
+            ):
                 return GraphCandidates()
             order = self._structural_order(view)
             seeds = tuple(dict.fromkeys(seed_unit_ids))
