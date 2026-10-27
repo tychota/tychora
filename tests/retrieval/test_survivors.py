@@ -84,6 +84,22 @@ def test_lanes_need_no_sql():
     assert survivors.lanes == {("unit", "u"): "authority"}
 
 
+def test_a_candidate_of_an_ungranted_extraction_is_dropped():
+    stray = OwnerFact(
+        owner_id="u",
+        kind="unit",
+        extraction_id="other",
+        dependency_ids=frozenset({"revision", "u"}),
+        unit_id="u",
+        citable=True,
+    )
+    survivors = check_survivors(
+        revision_view(), (_candidate(("unit", "u")),), {"u": stray}
+    )
+    assert survivors.candidates == ()
+    assert survivors.dropped == 1
+
+
 def test_at_most_200_candidates_are_read():
     candidates = tuple(_candidate(("unit", f"u{i}"), (f"c{i}",)) for i in range(300))
     ids = survivor_ids(candidates)

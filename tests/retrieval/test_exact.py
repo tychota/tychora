@@ -86,6 +86,43 @@ def test_exact_absence_does_not_expand_or_use_case_insensitive_code_alias():
     db.close()
 
 
+def test_exact_applies_the_candidate_filter():
+    db = _db()
+    view = revision_view(unit_filter=("hidden",))
+    result = SqliteLexicalSearch(db).exact(
+        view, ("rule:STD-1.2",), 32, ExecutionContext()
+    )
+    assert [o.key for o in result.owners] == [("unit", "hidden")]
+    db.close()
+
+
+def test_exact_restricts_to_eligible_extractions_when_not_every_member_is():
+    db = _db()
+    db.executescript("""
+        INSERT INTO snapshot_members VALUES ('snapshot','withheld');
+        INSERT INTO evidence_units VALUES ('withheld-unit','withheld',1);
+        INSERT INTO identifiers VALUES ('rule','STD-1.2','withheld-unit');
+    """)
+    search = SqliteLexicalSearch(db)
+
+    def keys(all_members):
+        view = revision_view(all_members=all_members)
+        return {
+            o.key
+            for o in search.exact(
+                view, ("rule:STD-1.2",), 32, ExecutionContext()
+            ).owners
+        }
+
+    assert keys(True) == {
+        ("unit", "allowed"),
+        ("unit", "hidden"),
+        ("unit", "withheld-unit"),
+    }
+    assert keys(False) == {("unit", "allowed"), ("unit", "hidden")}
+    db.close()
+
+
 def test_33_identifier_hits_are_complete_and_truncated():
     db = _db()
     for index in range(33):

@@ -48,7 +48,13 @@ def _owner_admitted(
     facts: Mapping[str, OwnerFact],
     has_windows: bool,
 ) -> bool:
-    """A citable source unit, or an asset reached through windows or its sources."""
+    """A citable source unit, or an asset reached through windows or its sources.
+
+    The owner's extraction must be granted: a fact from any other extraction is
+    refused here rather than failing the lane lookup.
+    """
+    if fact.extraction_id not in view.revision_of_extraction:
+        return False
     if fact.kind == "unit":
         return is_source_unit(view, fact)
     if fact.kind == "asset":
@@ -65,7 +71,12 @@ def check_survivors(
     candidates: Sequence[FusedCandidate],
     facts: Mapping[str, OwnerFact],
 ) -> Survivors:
-    """Keep each candidate whose owner and at least one window the view admits."""
+    """Keep each candidate whose owner and at least one window the view admits.
+
+    A candidate without its own fact is dropped: a missing row means the owner
+    is unknown to the snapshot (``owner_facts`` already refuses a known owner
+    that has no dependency set with ``facts_missing``).
+    """
     kept: list[FusedCandidate] = []
     lanes: dict[CandidateKey, str] = {}
     dropped = 0

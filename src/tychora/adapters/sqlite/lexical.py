@@ -3,7 +3,6 @@
 import json
 import sqlite3
 from collections import defaultdict
-from functools import lru_cache
 from typing import Literal
 
 from tychora.contracts.eligibility import EligibilityView
@@ -36,9 +35,8 @@ _EXACT = (
 )
 
 
-@lru_cache(maxsize=256)
 def _json_ids(ids: frozenset[str]) -> str:
-    """One JSON binding per ID set; a cached view's sets keep their hash."""
+    """One JSON array binding for ``json_each``, in a stable order."""
     return json.dumps(sorted(ids))
 
 
@@ -111,16 +109,18 @@ class SqliteLexicalSearch:
         ctx.checkpoint()
         rows = self._db.execute(
             _SEARCH + restriction + " ORDER BY score,r.chunk_id LIMIT ?",
-            (expression, view.snapshot_id, *args, WINDOW_LIMIT),
+            (expression, view.snapshot_id, *args, WINDOW_LIMIT + 1),
         ).fetchall()
         ctx.checkpoint()
+        truncated = len(rows) > WINDOW_LIMIT
+        rows = rows[:WINDOW_LIMIT]
         units: dict[str, list[tuple[str, float]]] = defaultdict(list)
         assets: dict[str, list[tuple[str, float]]] = defaultdict(list)
         for chunk, unit, asset, score in rows:
             (assets[asset] if asset is not None else units[unit]).append((chunk, score))
         return RankedOwners(
             owners=(*_ranked(units, "unit", limit), *_ranked(assets, "asset", limit)),
-            truncated=len(rows) >= WINDOW_LIMIT,
+            truncated=truncated,
             detail={"windows": len(rows), "owners": len(units) + len(assets)},
         )
 

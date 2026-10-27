@@ -142,6 +142,7 @@ def test_window_limit_sets_truncated_not_incomplete(monkeypatch):
     )
     assert result.truncated
     assert result.detail["windows"] == 3
+    assert sum(len(o.window_ids) for o in result.owners) == 3
     db.close()
 
 
@@ -160,15 +161,49 @@ def test_eligible_extraction_binding_is_skipped_when_every_member_is_eligible():
     db.close()
 
 
-def test_eligible_extraction_binding_is_built_once_per_view():
-    lexical_module._json_ids.cache_clear()
+def test_window_limit_is_not_reached_by_exactly_that_many_windows(monkeypatch):
+    monkeypatch.setattr(lexical_module, "WINDOW_LIMIT", 3)
     db = _db()
-    _record(db, "old", "window", "unit", "alpha")
-    view = revision_view(all_members=False)
-    search = SqliteLexicalSearch(db)
-    for _ in range(3):
-        search.search(view, "alpha", 80, ExecutionContext())
-    assert lexical_module._json_ids.cache_info().misses == 1
+    for index in range(3):
+        _record(db, "old", f"window-{index}", f"unit-{index}", "alpha")
+    result = SqliteLexicalSearch(db).search(
+        revision_view(), "alpha", 80, ExecutionContext()
+    )
+    assert not result.truncated
+    assert result.detail["windows"] == 3
+    db.close()
+
+
+def test_candidate_filter_and_asset_exclusions_restrict_units_and_proxies():
+    db = _db()
+    _record(db, "old", "kept-window", "kept", "alpha")
+    _record(db, "old", "filtered-window", "filtered", "alpha " * 20)
+    _record(db, "old", "kept-proxy-window", "kept-proxy", "alpha", asset="kept-asset")
+    _record(
+        db,
+        "old",
+        "filtered-proxy-window",
+        "filtered-proxy",
+        "alpha " * 20,
+        asset="filtered-asset",
+    )
+    _record(
+        db,
+        "old",
+        "excluded-proxy-window",
+        "excluded-proxy",
+        "alpha " * 20,
+        asset="excluded-asset",
+    )
+    view = revision_view(
+        unit_filter=("kept", "kept-proxy", "excluded-proxy"),
+        excluded_assets=("excluded-asset",),
+    )
+    result = SqliteLexicalSearch(db).search(view, "alpha", 80, ExecutionContext())
+    assert {owner.key for owner in result.owners} == {
+        ("unit", "kept"),
+        ("asset", "kept-asset"),
+    }
     db.close()
 
 
