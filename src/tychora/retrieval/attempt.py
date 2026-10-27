@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Literal, Protocol
@@ -22,13 +23,38 @@ from tychora.retrieval.compiler import CompiledEligibility, EligibilityCompiler
 from tychora.retrieval.eligibility import LegacyEligibilityCompiler
 
 
+class SnapshotLeases(Protocol):
+    """Leases that keep pinned snapshots from collection."""
+
+    def pin(self, keys: frozenset[str]) -> AbstractContextManager[None]:
+        """Hold the listed snapshots until the context exits."""
+        ...
+
+
+class AttemptStore(Protocol):
+    """The store operations a pinned attempt needs."""
+
+    @property
+    def leases(self) -> SnapshotLeases:
+        """The store's snapshot leases."""
+        ...
+
+    def retained_config(self, snapshot: SnapshotView) -> ResolvedConfig:
+        """The configuration the snapshot was published under."""
+        ...
+
+
 class AttemptOwner(Protocol):
     """The owner operations a pinned attempt runs on."""
 
     scope: RequestScope
     catalog: SnapshotCatalog
     eligibility_cache: EligibilityCache
-    store: Any
+
+    @property
+    def store(self) -> AttemptStore:
+        """The canonical store the attempt pins and reads retained configs from."""
+        ...
 
     async def run_read(
         self, call: Callable[[ReadTransaction], Any], ctx: ExecutionContext
@@ -115,7 +141,9 @@ class EligibilityAttempt:
             return self.legacy_dependencies[representation_id]
         except KeyError:
             raise TychoraError(
-                "FORBIDDEN_SCOPE", "Representation is not eligible"
+                "FORBIDDEN_SCOPE",
+                "Representation is not eligible",
+                reason="representation.ineligible",
             ) from None
 
     async def revalidate(self, stage: Literal["provider", "delivery"]) -> None:

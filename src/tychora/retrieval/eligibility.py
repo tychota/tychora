@@ -244,7 +244,9 @@ class LegacyEligibilityCompiler:
             or request.budgets.max_response_bytes > limits.max_response_bytes
         ):
             raise TychoraError(
-                "INVALID_REQUEST", "Request exceeds resolved profile limits"
+                "INVALID_REQUEST",
+                "Request exceeds resolved profile limits",
+                reason="request.limit_exceeded",
             )
         retained_config_sha = sha256(
             canonical_bytes(
@@ -257,23 +259,32 @@ class LegacyEligibilityCompiler:
         ).hexdigest()
         if registry.registry_digest != config.registry_digest:
             raise TychoraError(
-                "INVALID_REQUEST", "Snapshot and resolved profile differ"
+                "INVALID_REQUEST",
+                "Snapshot and resolved profile differ",
+                reason="profile.snapshot_mismatch",
             )
         if snapshot.config_sha != retained_config_sha:
             read_retained = getattr(self.reader, "retained_config", None)
             if not callable(read_retained):
                 raise TychoraError(
-                    "INVALID_REQUEST", "Snapshot and resolved profile differ"
+                    "INVALID_REQUEST",
+                    "Snapshot and resolved profile differ",
+                    reason="profile.snapshot_mismatch",
                 )
             retained_config = read_retained(snapshot)
             if not pinned_runtime_compatible(retained_config, config):
                 raise TychoraError(
                     "PROFILE_INCOMPATIBLE",
                     "Pinned snapshot requires publication under current settings.",
+                    reason="index.rebuild_required",
                 )
         mode_name = request.mode or config.values.mode or config.values.default_mode
         if mode_name is None or mode_name not in registry.modes:
-            raise TychoraError("INVALID_REQUEST", "Retrieval mode is unavailable")
+            raise TychoraError(
+                "INVALID_REQUEST",
+                "Retrieval mode is unavailable",
+                reason="mode.unavailable",
+            )
         mode = cast(dict[str, Any], registry.modes[mode_name])
         allowed_lanes = frozenset(mode["allowed_lanes"])
         allowed_uses = frozenset(mode["allowed_uses"]) & scope.uses

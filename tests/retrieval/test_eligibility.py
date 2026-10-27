@@ -872,30 +872,12 @@ async def test_owner_runner_retries_after_canonical_withdrawal_and_releases_pin(
     tmp_path, monkeypatch
 ):
 
-    from tests.runtime.test_upload_policy import install, prepared
+    from tests.runtime.test_upload_policy import prepared
     from tychora.ports.execution import ExecutionContext
     from tychora.retrieval.attempt import run_pinned_eligibility
 
     with prepared(tmp_path) as (owner, scope):
-        bundle = await owner.run_write(lambda: install(owner), ExecutionContext())
-        await owner.run_write(
-            lambda: _register_config_artifact(owner.db, owner.artifacts, owner.config),
-            ExecutionContext(),
-        )
-        snapshot = _snapshot(owner.config, chunks=()).model_copy(
-            update={
-                "snapshot_id": "synthetic-pin",
-                "workspace_id": owner.workspace_id,
-            }
-        )
-        members = (
-            SnapshotMember(
-                source_id=bundle.source.source_id,
-                revision_id=bundle.revision.revision_id,
-                extraction_id=bundle.extraction.extraction_id,
-            ),
-        )
-        _serve_synthetic(monkeypatch, owner, snapshot, members)
+        bundle = await _pin_synthetic(owner, monkeypatch)
         ctx = ExecutionContext()
         calls = []
         pins = []
@@ -941,30 +923,12 @@ async def test_owner_runner_retries_after_canonical_withdrawal_and_releases_pin(
 async def test_owner_runner_releases_pin_after_cancellation(tmp_path, monkeypatch):
     import asyncio
 
-    from tests.runtime.test_upload_policy import install, prepared
+    from tests.runtime.test_upload_policy import prepared
     from tychora.ports.execution import ExecutionContext
     from tychora.retrieval.attempt import run_pinned_eligibility
 
     with prepared(tmp_path) as (owner, scope):
-        bundle = await owner.run_write(lambda: install(owner), ExecutionContext())
-        await owner.run_write(
-            lambda: _register_config_artifact(owner.db, owner.artifacts, owner.config),
-            ExecutionContext(),
-        )
-        snapshot = _snapshot(owner.config, chunks=()).model_copy(
-            update={
-                "snapshot_id": "synthetic-pin",
-                "workspace_id": owner.workspace_id,
-            }
-        )
-        members = (
-            SnapshotMember(
-                source_id=bundle.source.source_id,
-                revision_id=bundle.revision.revision_id,
-                extraction_id=bundle.extraction.extraction_id,
-            ),
-        )
-        _serve_synthetic(monkeypatch, owner, snapshot, members)
+        await _pin_synthetic(owner, monkeypatch)
         ctx = ExecutionContext()
 
         async def operation(attempt):
@@ -990,30 +954,12 @@ async def test_owner_runner_releases_pin_after_cancellation(tmp_path, monkeypatc
 @pytest.mark.asyncio
 async def test_owner_provider_denied_grant_never_dispatches(tmp_path, monkeypatch):
 
-    from tests.runtime.test_upload_policy import install, prepared
+    from tests.runtime.test_upload_policy import prepared
     from tychora.ports.execution import ExecutionContext
     from tychora.retrieval.attempt import run_pinned_eligibility
 
     with prepared(tmp_path) as (owner, scope):
-        bundle = await owner.run_write(lambda: install(owner), ExecutionContext())
-        await owner.run_write(
-            lambda: _register_config_artifact(owner.db, owner.artifacts, owner.config),
-            ExecutionContext(),
-        )
-        snapshot = _snapshot(owner.config, chunks=()).model_copy(
-            update={
-                "snapshot_id": "synthetic-pin",
-                "workspace_id": owner.workspace_id,
-            }
-        )
-        members = (
-            SnapshotMember(
-                source_id=bundle.source.source_id,
-                revision_id=bundle.revision.revision_id,
-                extraction_id=bundle.extraction.extraction_id,
-            ),
-        )
-        _serve_synthetic(monkeypatch, owner, snapshot, members)
+        bundle = await _pin_synthetic(owner, monkeypatch)
         denied_scope = scope.model_copy(update={"upload_providers": frozenset()})
         invoked = []
         ctx = ExecutionContext()
@@ -1044,6 +990,131 @@ async def test_owner_provider_denied_grant_never_dispatches(tmp_path, monkeypatc
             )
         assert error.value.code == "FORBIDDEN_SCOPE"
         assert invoked == []
+
+
+async def _pin_synthetic(owner, monkeypatch):
+    """Install one extraction and serve it as the synthetic snapshot ``synthetic-pin``."""
+    from tests.runtime.test_upload_policy import install
+    from tychora.ports.execution import ExecutionContext
+
+    bundle = await owner.run_write(lambda: install(owner), ExecutionContext())
+    await owner.run_write(
+        lambda: _register_config_artifact(owner.db, owner.artifacts, owner.config),
+        ExecutionContext(),
+    )
+    snapshot = _snapshot(owner.config, chunks=()).model_copy(
+        update={"snapshot_id": "synthetic-pin", "workspace_id": owner.workspace_id}
+    )
+    members = (
+        SnapshotMember(
+            source_id=bundle.source.source_id,
+            revision_id=bundle.revision.revision_id,
+            extraction_id=bundle.extraction.extraction_id,
+        ),
+    )
+    _serve_synthetic(monkeypatch, owner, snapshot, members)
+    return bundle
+
+
+def _bump_epoch(owner, bundle):
+    """A production policy write that bumps the epoch and changes nothing readable."""
+    from tychora.contracts.corpus import ReviewTarget
+
+    owner.store.record_review(
+        ReviewTarget(revision_id=bundle.revision.revision_id), "accepted", "retry"
+    )
+
+
+@pytest.mark.asyncio
+async def test_second_epoch_change_returns_scope_changed(tmp_path, monkeypatch):
+    from tests.runtime.test_upload_policy import prepared
+    from tychora.ports.execution import ExecutionContext
+    from tychora.retrieval.attempt import run_pinned_eligibility
+
+    with prepared(tmp_path) as (owner, scope):
+        bundle = await _pin_synthetic(owner, monkeypatch)
+        ctx = ExecutionContext()
+        dispatched = []
+
+        async def operation(attempt):
+            await owner.run_write(lambda: _bump_epoch(owner, bundle), ctx)
+
+            async def provider():
+                dispatched.append(attempt.view.policy_epoch)
+                return "stale"
+
+            return await attempt.owner_provider(provider)
+
+        with pytest.raises(TychoraError) as error:
+            await run_pinned_eligibility(
+                EligibilityCompiler(owner.store.registry, owner.artifacts),
+                LegacyEligibilityCompiler(owner.store),
+                "synthetic-pin",
+                scope,
+                _request("lookup"),
+                owner.config,
+                operation,
+                owner=owner,
+                ctx=ctx,
+            )
+        assert error.value.code == "SCOPE_CHANGED"
+        assert error.value.reason == "policy.epoch_changed"
+        assert error.value.retryable
+        assert dispatched == []
+        assert not owner.store.leases.is_pinned("synthetic-pin")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bumps", [1, 2])
+async def test_views_compiled_at_different_epochs_are_never_paired(
+    tmp_path, monkeypatch, bumps
+):
+    """The legacy view is compiled after the v2 one; a bump in between retries."""
+    from tests.runtime.test_upload_policy import prepared
+    from tychora.ports.execution import ExecutionContext
+    from tychora.retrieval.attempt import run_pinned_eligibility
+
+    with prepared(tmp_path) as (owner, scope):
+        bundle = await _pin_synthetic(owner, monkeypatch)
+        legacy = LegacyEligibilityCompiler(owner.store)
+        compile_attempt = legacy.compile_attempt
+        compiled = []
+
+        def bumped_then_compiled(*args, **kwargs):
+            if len(compiled) < bumps:
+                _bump_epoch(owner, bundle)
+            compiled.append(1)
+            return compile_attempt(*args, **kwargs)
+
+        monkeypatch.setattr(legacy, "compile_attempt", bumped_then_compiled)
+        operated = []
+
+        async def operation(attempt):
+            assert attempt.require_legacy().policy_epoch == attempt.view.policy_epoch
+            operated.append(attempt.view.policy_epoch)
+            return "delivered"
+
+        run = run_pinned_eligibility(
+            EligibilityCompiler(owner.store.registry, owner.artifacts),
+            legacy,
+            "synthetic-pin",
+            scope,
+            _request("lookup"),
+            owner.config,
+            operation,
+            owner=owner,
+            ctx=ExecutionContext(),
+        )
+        if bumps == 1:
+            assert await run == "delivered"
+            assert len(operated) == 1
+        else:
+            with pytest.raises(TychoraError) as error:
+                await run
+            assert error.value.reason == "policy.epoch_changed"
+            assert operated == []
+        assert len(compiled) == 2
+        assert not owner.store.leases.is_pinned("synthetic-pin")
 
 
 def test_lexical_chunks_do_not_inherit_other_split_group_owners(config, scope):

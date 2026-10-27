@@ -272,6 +272,12 @@ _ENTRIES = (
         "Ask the workspace owner for the capability this operation needs.",
     ),
     Reason(
+        "FORBIDDEN_SCOPE",
+        "representation.ineligible",
+        False,
+        "Search again; the representation is outside the attempt's eligibility view.",
+    ),
+    Reason(
         "INVALID_REQUEST",
         "range.unsatisfiable",
         False,
