@@ -279,13 +279,19 @@ def _member_rows(
     return rows
 
 
+def _granted_uses(row: MemberRow) -> frozenset[str]:
+    """The revision's uses narrowed by its source's override; an override only narrows."""
+    uses = frozenset(json.loads(row.allowed_uses_json))
+    if row.allowed_uses_override is not None:
+        uses &= frozenset(json.loads(row.allowed_uses_override))
+    return uses
+
+
 def _readable(
     row: MemberRow, kind: _Kind, scope: RequestScope, mode: ModePolicy, active: bool
 ) -> bool:
     """Revision-level policy: scope, floors, withdrawal, archive, review and uses."""
-    uses = frozenset(json.loads(row.allowed_uses_json))
-    if row.allowed_uses_override is not None:
-        uses &= frozenset(json.loads(row.allowed_uses_override))
+    uses = _granted_uses(row)
     return (
         row.collection_id in scope.collection_ids
         and not row.withdrawn
@@ -324,9 +330,8 @@ def _admitted_members(
     ]
 
 
-def _revision_fact(
-    row: MemberRow, kind: _Kind, global_facets: Mapping[str, frozenset[str]]
-) -> RevisionFact:
+def _revision_fact(row: MemberRow, kind: _Kind) -> RevisionFact:
+    """Edition-selection facts; selection reads no global facets."""
     return RevisionFact(
         source_id=row.source_id,
         revision_id=row.revision_id,
@@ -336,7 +341,7 @@ def _revision_fact(
         access_rank=row.access_rank,
         source_floor=row.source_floor,
         collection_floor=row.collection_floor,
-        allowed_uses=frozenset(json.loads(row.allowed_uses_json)),
+        allowed_uses=_granted_uses(row),
         review_state=row.review_state,
         withdrawn=row.withdrawn,
         published_on=row.published_on,
@@ -344,7 +349,6 @@ def _revision_fact(
         effective_until=row.effective_until,
         is_default=row.is_default,
         kind_allowed_uses=kind.allowed_uses,
-        global_facets=global_facets.get(row.revision_id, frozenset()),
     )
 
 
@@ -584,9 +588,8 @@ class EligibilityCompiler:
         rows = _member_rows(tx, snapshot, members)
         kinds = self._kind_envelopes(tx, rows)
         admitted = _admitted_members(rows, kinds, job.scope, job.mode, self.registry)
-        facets = self._global_facets(tx, admitted) if job.selected is not None else {}
         selected_ids, warnings = select_temporal_revisions(
-            tuple(_revision_fact(r, kinds[r.kind_id], facets) for r in admitted),
+            tuple(_revision_fact(r, kinds[r.kind_id]) for r in admitted),
             explicit_ids=request.revision_ids,
             selector=request.revision_selector,
             as_of=request.as_of,
@@ -594,6 +597,8 @@ class EligibilityCompiler:
             unknown_dates=request.unknown_dates,
         )
         chosen = [row for row in admitted if row.revision_id in selected_ids]
+        # Global facets matter only to filters, and only for the chosen editions.
+        facets = self._global_facets(tx, chosen) if job.selected is not None else {}
         grants = {
             row.revision_id: RevisionGrant(
                 extraction_id=row.extraction_id,
@@ -720,10 +725,10 @@ class EligibilityCompiler:
             return {kind: self._kinds[(kind, h)] for kind, h in needed}
 
     def _global_facets(
-        self, tx: ReadTransaction, admitted: list[MemberRow]
+        self, tx: ReadTransaction, chosen: list[MemberRow]
     ) -> dict[str, frozenset[str]]:
-        """Verified global facets of the admitted revisions; read only for filters."""
-        revisions = tuple(sorted(row.revision_id for row in admitted))
+        """Verified global facets of the chosen revisions; read only for filters."""
+        revisions = tuple(sorted(row.revision_id for row in chosen))
         markers: dict[str, list] = defaultdict(list)
         for revision, source_ref, ref in tx.eligibility.global_facet_markers(revisions):
             markers[revision].append((source_ref, ref))
