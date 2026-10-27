@@ -356,6 +356,29 @@ async def rerank_candidates(
     )
 
 
+def _admitted_chunk(
+    window_id: str,
+    chunks: Mapping[str, ChunkRow],
+    view: EligibilityView,
+    dependencies: Mapping[str, frozenset[str]],
+) -> ChunkRow:
+    """The stored chunk of an admitted window whose persisted set the view allows."""
+    chunk = chunks.get(window_id)
+    if chunk is None:
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Admitted ranking window has no stored chunk.",
+            reason="canonical.row_invalid",
+        )
+    if not view.allows(dependencies.get(window_id, ())):
+        raise TychoraError(
+            "FORBIDDEN_SCOPE",
+            "Ranking window is not eligible.",
+            reason="scope.dependency_ineligible",
+        )
+    return chunk
+
+
 def matches_from_channels(
     candidate: FusedCandidate,
     channels: Mapping[str, tuple[ChannelCandidate, ...]],
@@ -376,13 +399,7 @@ def matches_from_channels(
             if hit.key != candidate.key:
                 continue
             for window_rank, window_id in enumerate(hit.matching_window_ids):
-                if window_id not in chunks or not view.allows(
-                    dependencies.get(window_id, ())
-                ):
-                    raise TychoraError(
-                        "FORBIDDEN_SCOPE", "Ranking window is not eligible."
-                    )
-                chunk = chunks[window_id]
+                chunk = _admitted_chunk(window_id, chunks, view, dependencies)
                 try:
                     unit = prepared.representation(chunk.unit_id).unit
                 except ValueError:

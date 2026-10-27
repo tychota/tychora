@@ -169,6 +169,28 @@ def _mapped_code_rows(bundle, units, file_texts):
     return rows
 
 
+def test_sets_helper_matches_persisted_representation_facts():
+    from tychora.indexing.representations import ChunkSpan, representation_facts
+
+    bundle = seed_bundle("Seal checks are quarterly.\n\nRecords are kept.")
+    prepared = prepare_extraction(bundle)
+    persisted = representation_facts(
+        bundle,
+        prepared,
+        (
+            ChunkSpan(c.chunk_id, c.unit_id, c.char_start, c.char_end)
+            for c in bundle.chunks
+        ),
+    ).dependency_map()
+    windows = tuple(
+        RerankMatch(c.chunk_id, c.unit_id, c.char_start, c.char_end, "lexical", 1, 1.0)
+        for c in bundle.chunks
+    )
+    sets = _sets(prepared, windows)
+    assert bundle.chunks
+    assert sets == {owner: persisted[owner] for owner in sets}
+
+
 def test_segment_keeps_winning_range_and_never_bridges_denied_gap(tmp_path):
     text = "left gap right"
     match = RerankMatch(None, "placeholder", 0, len(text), "lexical", 1, 1.0)
@@ -1452,25 +1474,29 @@ def test_separator_between_table_cell_fragments_yields_no_fragment():
 
 
 def _document_case(spans):
-    """Docling-shaped units: per-paragraph refs, shared heading paths."""
+    """Docling-shaped units: per-paragraph refs, one section key per heading path.
+
+    A span may carry a fourth item, its boundary key, to model articles or
+    sibling sections that share a heading path.
+    """
     from hashlib import sha256
 
     from tychora.contracts.evidence import DocumentLocator
     from tychora.contracts.indexing import PreparedExtraction, RepresentationUnit
 
-    text = "|".join(piece for _, piece, _ in spans)
+    text = "|".join(span[1] for span in spans)
     bundle = seed_bundle(text)
     original = bundle.units[0]
     units = []
     cursor = 0
-    for ordinal, (uid, piece, heading) in enumerate(spans):
+    for ordinal, (uid, piece, heading, *key) in enumerate(spans):
         units.append(
             original.model_copy(
                 update={
                     "unit_id": uid,
                     "ordinal": ordinal,
                     "native_ref": f"#/texts/{ordinal}",
-                    "boundary_key": f"#/texts/{ordinal}",
+                    "boundary_key": key[0] if key else "section:" + "/".join(heading),
                     "heading_path": heading,
                     "text": piece,
                     "text_sha": sha256(piece.encode()).hexdigest(),
@@ -1587,6 +1613,39 @@ def test_document_matches_join_across_an_eligible_gap_in_one_section(tmp_path):
         _ranked(rows, prepared, (units[2], units[3])), view, config(tmp_path), Counter()
     )
     assert len(split.segments) == 2
+
+
+def test_consecutive_articles_under_one_heading_are_not_neighbours(tmp_path):
+    heading = ("Regulation", "Title I")
+    units, rows, prepared, view = _document_case(
+        (
+            ("article-1", "Article 1 applies to pumps.", heading, "article:#/a/1"),
+            ("article-2", "Article 2 applies to seals.", heading, "article:#/a/2"),
+            ("article-3", "Article 3 applies to valves.", heading, "article:#/a/3"),
+        )
+    )
+    segment = assemble_segments(
+        _ranked(rows, prepared, (units[1],)), view, config(tmp_path), Counter()
+    ).segments[0]
+    assert segment.context_only_unit_ids == ()
+    joined = assemble_segments(
+        _ranked(rows, prepared, (units[0], units[2])), view, config(tmp_path), Counter()
+    )
+    assert len(joined.segments) == 2
+
+
+def test_sibling_sections_with_identical_headings_are_not_neighbours(tmp_path):
+    heading = ("Manual", "Notes")
+    units, rows, prepared, view = _document_case(
+        (
+            ("first-notes", "Check the housing.", heading, "section:#/texts/0"),
+            ("second-notes", "Inspect seals quarterly.", heading, "section:#/texts/2"),
+        )
+    )
+    segment = assemble_segments(
+        _ranked(rows, prepared, (units[1],)), view, config(tmp_path), Counter()
+    ).segments[0]
+    assert segment.context_only_unit_ids == ()
 
 
 def test_document_tables_never_join_as_plain_neighbors(tmp_path):

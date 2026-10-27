@@ -207,3 +207,105 @@ def test_changed_original_schema_envelope_controls_retained_record(tmp_path):
                 ),
             ),
         )
+
+
+def _feedback(uid, comment, schema, registry):
+    return StructuredRecordRow(
+        unit_id=uid,
+        record_type=schema,
+        schema_hash=json_string(registry.schema_digests[schema]),
+        data_json=FrozenJsonMap(
+            {
+                "comment": comment,
+                "decision": "Clarification requested",
+                "target": "draft-1",
+                "provenance": ["source-3"],
+                "status": "recorded",
+                "foundation_ids": [uid],
+            }
+        ),
+    )
+
+
+def test_each_segment_reads_records_from_its_own_candidates_slice(tmp_path):
+    from tychora.contracts.errors import TychoraError
+    from tychora.contracts.indexing import OwnedInterval
+
+    text = "Exact review quote."
+    bundle, prepared, ranked, view = case(text, (), kind="feedback@1")
+    first = bundle.units[0]
+    second = first.model_copy(update={"unit_id": "second-unit", "ordinal": 1})
+    revision = bundle.revision.revision_id
+    registry = Registry.from_config(config(tmp_path))
+    schema = json_string(
+        json_object(
+            registry.artifact, "definition_schema_bindings", "kinds", "feedback@1"
+        )["record_schema"]
+    )
+    item = ranked.items[0]
+    assert item.facts is not None
+    items = []
+    for unit in (first, second):
+        rep = prepared.units[0].model_copy(
+            update={
+                "unit": unit,
+                "ownership": (
+                    OwnedInterval(
+                        char_start=0,
+                        char_end=len(text),
+                        dependency_ids=frozenset({revision, unit.unit_id}),
+                    ),
+                ),
+            }
+        )
+        # One extraction, two slices: each candidate holds only its own unit.
+        rows = bundle.model_copy(
+            update={
+                "units": (unit,),
+                "records": (_feedback(unit.unit_id, text, schema, registry),),
+            }
+        )
+        items.append(
+            replace(
+                item,
+                facts=replace(
+                    item.facts,
+                    rows=rows,
+                    prepared=prepared.model_copy(update={"units": (rep,)}),
+                ),
+            )
+        )
+    selection = Selection(
+        segments=tuple(
+            segment(text).model_copy(
+                update={
+                    "segment_id": f"segment-{unit.unit_id}",
+                    "matched_unit_ids": (unit.unit_id,),
+                    "extraction_id": bundle.extraction.extraction_id,
+                    "revision_id": revision,
+                    "kind": "feedback@1",
+                }
+            )
+            for unit in (first, second)
+        ),
+        reservation_priority=(),
+        omitted_anchors=(),
+        lane_coverage=("feedback",),
+        text_budget=900,
+        visual_reserved_tokens=0,
+    )
+    attempt = revision_attempt(
+        view,
+        historical_kind_envelopes=MappingProxyType(
+            {"feedback@1": json_object(registry.historical_definitions(), "feedback@1")}
+        ),
+    )
+    tx = sets_transaction(
+        {unit.unit_id: frozenset({revision, unit.unit_id}) for unit in (first, second)}
+    )
+    records = prepare_records(tx, selection, RankedEvidence(tuple(items)), attempt)
+    assert {record.unit_id for record in records} == {first.unit_id, second.unit_id}
+    with pytest.raises(TychoraError) as orphan:
+        prepare_records(tx, selection, RankedEvidence((items[0],)), attempt)
+    assert orphan.value.code == "INTEGRITY_ERROR"
+    assert orphan.value.reason == "canonical.facts_missing"

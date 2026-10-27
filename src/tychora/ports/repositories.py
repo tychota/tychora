@@ -377,6 +377,10 @@ class RepresentationRepository(Protocol):
         """Units of the same extraction and boundary key within ``radius`` ordinals, by ordinal."""
         ...
 
+    def code_path(self, unit_id: str) -> str | None:
+        """The file a unit's first code locator names, or ``None`` for a non-code unit."""
+        ...
+
     def slice(
         self,
         extraction_id: str,

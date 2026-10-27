@@ -12,6 +12,7 @@ from threading import Lock, get_ident
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NoReturn
 
+from tychora.adapters.sqlite.repositories.errors import facts_missing
 from tychora.adapters.sqlite.repositories.slices import retained_rows
 from tychora.adapters.sqlite.retained_bindings import BindingScope
 from tychora.contracts.base import FrozenJsonMap
@@ -23,7 +24,6 @@ from tychora.contracts.corpus import (
 )
 from tychora.contracts.embeddings import QueryUploadAuthorization
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.evidence import CodeLocator
 from tychora.contracts.graph import GraphPath
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.indexing import PreparedExtraction, RepresentationUnit
@@ -218,6 +218,20 @@ def attest_ranking_input(
         _deny_ranking()
 
 
+def _by_extraction(
+    tx: ReadTransaction, representations: tuple[RankingInput, ...]
+) -> tuple[tuple[str, tuple[RankingInput, ...]], ...]:
+    """The inputs grouped by the extraction their candidate belongs to."""
+    facts = tx.eligibility.owner_facts(tuple(item.key[1] for item in representations))
+    extraction = {(fact.kind, fact.owner_id): fact.extraction_id for fact in facts}
+    by_extraction: dict[str, list[RankingInput]] = defaultdict(list)
+    for item in representations:
+        if item.key not in extraction:
+            _deny_ranking()
+        by_extraction[extraction[item.key]].append(item)
+    return tuple((key, tuple(group)) for key, group in by_extraction.items())
+
+
 def _rendered_units(group: tuple[RankingInput, ...]) -> tuple[str, ...]:
     """Every unit the inputs' spans and anchors render."""
     return tuple(
@@ -313,7 +327,7 @@ class OwnerRerankAccess:
         """Attest each input against the persisted slice of the units it renders."""
         dependencies: set[str] = set()
         with self.owner.store.uow.read() as tx:
-            for extraction_id, group in self._by_extraction(representations, ctx):
+            for extraction_id, group in _by_extraction(tx, representations):
                 ctx.checkpoint()
                 piece = tx.representations.slice(
                     extraction_id, unit_ids=_rendered_units(group)
@@ -326,28 +340,6 @@ class OwnerRerankAccess:
         if len(dependencies) > 2048:
             raise TychoraError("INVALID_REQUEST", "Rerank dependency limit exceeded.")
         return frozenset(dependencies)
-
-    def _by_extraction(
-        self, representations: tuple[RankingInput, ...], ctx: ExecutionContext
-    ) -> tuple[tuple[str, tuple[RankingInput, ...]], ...]:
-        """The inputs grouped by the extraction their candidate belongs to."""
-        by_extraction: dict[str, list[RankingInput]] = defaultdict(list)
-        for item in representations:
-            ctx.checkpoint()
-            kind, candidate_id = item.key
-            table, column = (
-                ("evidence_units", "unit_id")
-                if kind == "unit"
-                else ("assets", "asset_id")
-            )
-            row = self.owner.db.execute(
-                f"SELECT extraction_id FROM {table} WHERE {column}=?",
-                (candidate_id,),
-            ).fetchone()
-            if row is None:
-                _deny_ranking()
-            by_extraction[row[0]].append(item)
-        return tuple((key, tuple(group)) for key, group in by_extraction.items())
 
     def require_prepared(
         self, query: str, representations: tuple[RankingInput, ...], body_sha: str
@@ -504,12 +496,14 @@ def _window_ids(
     return windows
 
 
-def _code_file(piece: RepresentationSlice) -> str | None:
-    """The file of a code unit's first code locator, if it has one."""
-    for locator in piece.rows.units[0].locators if piece.rows.units else ():
-        if isinstance(locator, CodeLocator):
-            return locator.relative_path
-    return None
+def _continuation_targets(unit_id: str, paths: tuple[GraphPath, ...]) -> set[str]:
+    """The other ends of the continuation paths that touch the unit."""
+    return {
+        end
+        for path in paths
+        if unit_id in (path.source_unit_id, path.target_unit_id)
+        for end in (path.source_unit_id, path.target_unit_id)
+    } - {unit_id}
 
 
 def _candidate_slice(
@@ -517,28 +511,46 @@ def _candidate_slice(
     unit_id: str,
     chunks: Mapping[str, ChunkRow],
     paths: tuple[GraphPath, ...],
+    files: dict[tuple[str, str], RepresentationSlice],
 ) -> RepresentationSlice:
-    """The candidate's units, windows, neighbours and continuation targets; a code file whole."""
-    found = tx.representations.units((unit_id,))
-    if len(found) != 1:
+    """The candidate's units, windows, neighbours and continuation targets; a code file whole.
+
+    File slices are read once per ``(extraction, file)`` through ``files``.
+    """
+    targets = _continuation_targets(unit_id, paths)
+    found = {row.unit_id: row for row in tx.representations.units((unit_id, *targets))}
+    if unit_id not in found:
         raise TychoraError(
             "INTEGRITY_ERROR",
             "Rerank candidate is absent.",
             reason="canonical.row_invalid",
         )
-    extraction_id = found[0].extraction_id
-    first = tx.representations.slice(extraction_id, unit_ids=(unit_id,))
-    relative_path = _code_file(first)
+    extraction_id = found[unit_id].extraction_id
+    relative_path = tx.representations.code_path(unit_id)
     if relative_path is not None:
-        return tx.representations.slice(extraction_id, relative_path=relative_path)
+        key = (extraction_id, relative_path)
+        if key not in files:
+            files[key] = tx.representations.slice(
+                extraction_id, relative_path=relative_path
+            )
+        return files[key]
     needed = {unit_id, *(chunk.unit_id for chunk in chunks.values())}
+    needed.update(t for t in targets if found[t].extraction_id == extraction_id)
     needed.update(
         row.unit_id for row in tx.representations.neighbours(unit_id, NEIGHBOUR_RADIUS)
     )
-    for path in paths:
-        if unit_id in (path.source_unit_id, path.target_unit_id):
-            needed.update((path.source_unit_id, path.target_unit_id))
     return tx.representations.slice(extraction_id, unit_ids=tuple(sorted(needed)))
+
+
+def _persisted_sets(
+    tx: ReadTransaction, piece: RepresentationSlice, windows: tuple[str, ...]
+) -> Mapping[str, frozenset[str]]:
+    """The persisted sets of the slice's units and the windows; one missing is refused."""
+    requested = (*(unit.unit_id for unit in piece.rows.units), *windows)
+    dependencies = tx.representations.dependencies(requested)
+    if not set(requested) <= dependencies.keys():
+        raise facts_missing()
+    return dependencies
 
 
 async def prepare_rerank_facts(
@@ -563,6 +575,7 @@ async def prepare_rerank_facts(
 
     def load(tx: ReadTransaction) -> Mapping[CandidateKey, RerankFacts]:
         output: dict[CandidateKey, RerankFacts] = {}
+        files: dict[tuple[str, str], RepresentationSlice] = {}
         for candidate in admission.selected:
             ctx.checkpoint()
             kind, candidate_id = candidate.key
@@ -570,10 +583,8 @@ async def prepare_rerank_facts(
                 continue  # Native image ranking is independent of text reranking.
             windows = _window_ids(candidate, channels)
             chunks = {row.chunk_id: row for row in tx.representations.chunks(windows)}
-            piece = _candidate_slice(tx, candidate_id, chunks, paths)
-            dependencies = tx.representations.dependencies(
-                (*(unit.unit_id for unit in piece.rows.units), *windows)
-            )
+            piece = _candidate_slice(tx, candidate_id, chunks, paths, files)
+            dependencies = _persisted_sets(tx, piece, windows)
             output[candidate.key] = RerankFacts(
                 piece.rows,
                 piece.prepared,

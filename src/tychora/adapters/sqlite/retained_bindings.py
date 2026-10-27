@@ -73,7 +73,20 @@ class BindingScope:
         )
 
     def revision_artifacts(self) -> tuple[str, tuple[str, ...]]:
-        """Select the revision artifacts, keeping only the scoped file's source binding."""
+        """Select the revision artifacts, keeping only the scoped files' source bindings.
+
+        A unit scope keeps the source bindings its units' code locators name.
+        """
+        if self.unit_ids is not None:
+            units, args = self.units()
+            return (
+                (
+                    "ra.revision_id=? AND (ra.role<>'source_file' OR ra.source_ref IN ("
+                    "SELECT c.source_ref FROM locators c JOIN evidence_units u "
+                    f"USING(unit_id) WHERE {units} AND c.locator_type='code'))"
+                ),
+                (self.revision_id, *args),
+            )
         if self.relative_path is None:
             return "ra.revision_id=?", (self.revision_id,)
         return (

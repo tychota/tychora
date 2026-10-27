@@ -186,6 +186,27 @@ def _retained_artifacts(db, artifact_ids: set[str]) -> list[ArtifactRef]:
     return artifacts
 
 
+# The bounds a slice may hydrate: one oversized code file is refused before reading.
+MAX_SLICE_UNITS = 20_000
+MAX_SLICE_TEXT_BYTES = 16 * 1024 * 1024
+
+
+def require_bounded(db: sqlite3.Connection, scope: BindingScope) -> None:
+    """Refuse a scope whose units exceed the slice bounds, measured in SQLite."""
+    where, args = scope.units()
+    count, size = db.execute(
+        "SELECT COUNT(*),COALESCE(SUM(LENGTH(CAST(u.text AS BLOB))),0) "
+        f"FROM evidence_units u WHERE {where}",
+        args,
+    ).fetchone()
+    if count > MAX_SLICE_UNITS or size > MAX_SLICE_TEXT_BYTES:
+        raise TychoraError(
+            "INVALID_REQUEST",
+            "Representation slice exceeds its resource limit.",
+            reason="request.limit_exceeded",
+        )
+
+
 def retained_rows(
     db: sqlite3.Connection, scope: BindingScope
 ) -> RetainedRepresentationRows:

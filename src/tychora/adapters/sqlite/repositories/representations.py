@@ -14,7 +14,7 @@ from tychora.contracts.indexing import IntervalRow, RepresentationFacts
 from tychora.ports.repositories import ChunkRow, UnitRow
 
 from ..retained_bindings import BindingScope
-from .slices import prepared_slice, retained_rows
+from .slices import prepared_slice, require_bounded, retained_rows
 from .workspace import require_write
 
 _IN_IDS = "IN (SELECT value FROM json_each(?))"
@@ -49,6 +49,11 @@ _NEIGHBOURS = (
     "ORDER BY n.ordinal"
 )
 
+_CODE_PATH = (
+    "SELECT source_ref FROM locators WHERE unit_id=? AND locator_type='code' "
+    "ORDER BY fragment_ordinal LIMIT 1"
+)
+
 
 def _ids(values: tuple[str, ...]) -> str:
     return json.dumps(sorted(set(values)))
@@ -73,6 +78,10 @@ def _differs(owner: str) -> TychoraError:
         "Stored representation facts differ for " + owner,
         reason="canonical.binding_mismatch",
     )
+
+
+def _slice_differs(message: str) -> TychoraError:
+    return TychoraError("INTEGRITY_ERROR", message, reason="canonical.row_invalid")
 
 
 class SqliteRepresentationRepository:
@@ -112,6 +121,11 @@ class SqliteRepresentationRepository:
             UnitRow, self._db.execute(_NEIGHBOURS, (unit_id, radius, radius))
         )
 
+    def code_path(self, unit_id: str) -> str | None:
+        """The file a unit's first code locator names, or ``None`` for a non-code unit."""
+        row = self._db.execute(_CODE_PATH, (unit_id,)).fetchone()
+        return None if row is None else row[0]
+
     def slice(
         self,
         extraction_id: str,
@@ -119,24 +133,34 @@ class SqliteRepresentationRepository:
         unit_ids: tuple[str, ...] = (),
         relative_path: str | None = None,
     ) -> RepresentationSlice:
-        """Retained rows and persisted ownership of the listed units or of one code file."""
+        """Retained rows and persisted ownership of the listed units or of one code file.
+
+        An empty request is refused, as is a listed unit the extraction lacks; a
+        scope over the slice bounds is ``request.limit_exceeded``.
+        """
+        if not unit_ids and relative_path is None:
+            raise TychoraError(
+                "INTEGRITY_ERROR",
+                "A slice names no unit and no file.",
+                reason="invariant.unexpected",
+            )
         row = self._db.execute(
             "SELECT revision_id FROM extractions WHERE extraction_id=?",
             (extraction_id,),
         ).fetchone()
         if row is None:
-            raise TychoraError(
-                "INTEGRITY_ERROR",
-                "Slice extraction is not registered.",
-                reason="canonical.row_invalid",
-            )
+            raise _slice_differs("Slice extraction is not registered.")
         scope = BindingScope(
             extraction_id,
             row[0],
             relative_path,
             None if relative_path is not None else unit_ids,
         )
+        require_bounded(self._db, scope)
         rows = retained_rows(self._db, scope)
+        expected = len(set(unit_ids)) if relative_path is None else None
+        if not rows.units or expected not in (None, len(rows.units)):
+            raise _slice_differs("Slice units differ from the request.")
         intervals = self.intervals(tuple(unit.unit_id for unit in rows.units))
         sets = self.dependencies(tuple({item.dependency_digest for item in intervals}))
         return RepresentationSlice(

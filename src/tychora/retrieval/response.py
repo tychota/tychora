@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from tychora.ports.graph import GraphStore
     from tychora.ports.repositories import ReadTransaction
     from tychora.retrieval.attempt import EligibilityAttempt
-    from tychora.retrieval.rerank import RankedEvidence
+    from tychora.retrieval.rerank import RankedEvidence, RerankFacts
 
 
 @dataclass(frozen=True)
@@ -643,6 +643,25 @@ def _readable_units(
     )
 
 
+def _record_owner(segment: Segment, ranked: RankedEvidence) -> RerankFacts:
+    """The facts whose slice holds every matched unit of the segment: its candidate's."""
+    matched = set(segment.matched_unit_ids)
+    for item in ranked.items:
+        facts = item.facts
+        if (
+            facts is not None
+            and facts.prepared.extraction_id == segment.extraction_id
+            and matched <= {rep.unit.unit_id for rep in facts.prepared.units}
+            and facts.rows.revision.kind_id == segment.kind
+        ):
+            return facts
+    raise TychoraError(
+        "INTEGRITY_ERROR",
+        "Selected record owner has no retained facts.",
+        reason="canonical.facts_missing",
+    )
+
+
 def prepare_records(
     tx: ReadTransaction,
     selection: Selection,
@@ -659,19 +678,7 @@ def prepare_records(
                 "Record owner revision differs from the pinned view.",
                 reason="invariant.unexpected",
             )
-        owner = next(
-            (
-                item.facts
-                for item in ranked.items
-                if item.facts is not None
-                and item.facts.prepared.extraction_id == segment.extraction_id
-            ),
-            None,
-        )
-        if owner is None or owner.rows.revision.kind_id != segment.kind:
-            raise TychoraError(
-                "INTEGRITY_ERROR", "Selected record owner has no retained facts."
-            )
+        owner = _record_owner(segment, ranked)
         selected_rows = tuple(
             row for row in owner.rows.records if row.unit_id in segment.matched_unit_ids
         )
