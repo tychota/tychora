@@ -3,7 +3,7 @@
 from dataclasses import replace
 
 from tests.helpers.corpus import seed_bundle
-from tests.helpers.eligibility import eligibility_view
+from tests.helpers.eligibility import eligibility_view, revision_view
 from tests.ingestion.conftest import native_case  # noqa: F401
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.base import FrozenJsonMap
@@ -43,6 +43,39 @@ def locator_char_start(locator: Locator) -> int:
     return locator.char_start
 
 
+def _sets(prepared, matches=()):
+    """Each unit's persisted set from its ownership, and each window's from its unit."""
+    sets = {
+        rep.unit.unit_id: frozenset().union(
+            *(interval.dependency_ids for interval in rep.ownership)
+        )
+        or frozenset({prepared.revision_id, rep.unit.unit_id})
+        for rep in prepared.units
+    }
+    sets.update(
+        {match.window_id: sets[match.unit_id] for match in matches if match.window_id}
+    )
+    return sets
+
+
+def _facts(rows, prepared, matches):
+    """Facts carrying the persisted sets of their units and windows."""
+    return RerankFacts(rows, prepared, matches, dependencies=_sets(prepared, matches))
+
+
+def _view(rows, units=(), readable=None):
+    """A revision-level view of the rows' revision; units outside ``readable`` are excluded."""
+    excluded = (
+        ()
+        if readable is None
+        else tuple(unit.unit_id for unit in units if unit.unit_id not in readable)
+    )
+    return revision_view(
+        {rows.revision.revision_id: rows.extraction.extraction_id},
+        excluded_units=excluded,
+    )
+
+
 def config(tmp_path):
     path = tmp_path / "workspace.toml"
     path.write_text('schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n')
@@ -56,14 +89,9 @@ def case(text, matches, *, kind="manual@1", source_key="manual.md"):
     matches = tuple(replace(match, unit_id=unit.unit_id) for match in matches)
     candidate = FusedCandidate(("unit", unit.unit_id), 1, 1.0, {"lexical": 1})
     item = RankedEvidenceItem(
-        candidate, None, RerankFacts(bundle, prepared, matches), "disabled"
+        candidate, None, _facts(bundle, prepared, matches), "disabled"
     )
-    view = eligibility_view(
-        revision_ids=frozenset({bundle.revision.revision_id}),
-        context_unit_ids=frozenset({unit.unit_id}),
-        chunk_ids=frozenset(match.window_id for match in matches if match.window_id),
-    )
-    return bundle, prepared, RankedEvidence((item,)), view
+    return bundle, prepared, RankedEvidence((item,)), _view(bundle)
 
 
 def _mapped_code_rows(bundle, units, file_texts):
@@ -185,9 +213,7 @@ def test_segment_keeps_winning_range_and_never_bridges_denied_gap(tmp_path):
             ),
         )
     )
-    view = view.model_copy(
-        update={"context_unit_ids": frozenset({unit.unit_id, "left", "right"})}
-    )
+    view = view.model_copy(update={"excluded_unit_ids": frozenset({"gap"})})
     result = assemble_segments(ranked, view, config(tmp_path), Counter())
     assert len(result.segments) == 2
     for segment in result.segments:
@@ -382,7 +408,7 @@ def test_code_parent_and_child_original_ranges_do_not_duplicate(tmp_path):
             RankedEvidenceItem(
                 candidate,
                 None,
-                RerankFacts(
+                _facts(
                     rows,
                     prepared,
                     (
@@ -402,11 +428,7 @@ def test_code_parent_and_child_original_ranges_do_not_duplicate(tmp_path):
             for index, candidate in enumerate(candidates)
         )
     )
-    view = eligibility_view(
-        revision_ids=frozenset({bundle.revision.revision_id}),
-        context_unit_ids=frozenset({parent.unit_id, child.unit_id}),
-        chunk_ids=frozenset(),
-    )
+    view = _view(bundle)
     result = assemble_segments(ranked, view, config(tmp_path), Counter())
     assert len(result.segments) == 1
     locator = result.segments[0].citations[0].locators[0]
@@ -485,7 +507,7 @@ def test_continuation_context_requires_current_eligible_graph_path(tmp_path):
             RankedEvidenceItem(
                 candidate,
                 None,
-                RerankFacts(
+                _facts(
                     rows,
                     prepared,
                     (
@@ -498,7 +520,8 @@ def test_continuation_context_requires_current_eligible_graph_path(tmp_path):
             ),
         )
     )
-    view = eligibility_view(
+    view = _view(bundle)
+    graph_view = eligibility_view(
         revision_ids=frozenset({bundle.revision.revision_id}),
         context_unit_ids=frozenset({first.unit_id, second.unit_id}),
         chunk_ids=frozenset(),
@@ -545,6 +568,7 @@ def test_continuation_context_requires_current_eligible_graph_path(tmp_path):
             view,
             configured,
             Counter(),
+            graph_view=graph_view,
             continuation_paths=(path.model_copy(update={"status": status}),),
         )
         segment = result.segments[0]
@@ -555,7 +579,7 @@ def test_continuation_context_requires_current_eligible_graph_path(tmp_path):
             assert segment.citations[1].physical_page == 2
         else:
             assert len(segment.citations) == 1
-    view = view.model_copy(
+    graph_view = graph_view.model_copy(
         update={"blocked_assertion_ids": frozenset(path.assertion_ids)}
     )
     configured = base.model_copy(
@@ -571,7 +595,12 @@ def test_continuation_context_requires_current_eligible_graph_path(tmp_path):
     )
     assert (
         assemble_segments(
-            ranked, view, configured, Counter(), continuation_paths=(path,)
+            ranked,
+            view,
+            configured,
+            Counter(),
+            graph_view=graph_view,
+            continuation_paths=(path,),
         )
         .segments[0]
         .context_excerpts
@@ -617,11 +646,8 @@ def test_lane_reservation_and_visual_space_under_tight_budget(tmp_path):
         "Authority", (), kind="law@1", source_key="law.md"
     )
     ranked = RankedEvidence((*standard.items, *authority.items))
-    view = eligibility_view(
-        revision_ids=standard_view.revision_ids | authority_view.revision_ids,
-        context_unit_ids=standard_view.context_unit_ids
-        | authority_view.context_unit_ids,
-        chunk_ids=frozenset(),
+    view = standard_view.model_copy(
+        update={"revisions": {**standard_view.revisions, **authority_view.revisions}}
     )
     base = config(tmp_path)
     values = base.values.model_copy(
@@ -707,7 +733,7 @@ def test_same_boundary_neighbors_require_complete_current_eligibility(tmp_path):
             RankedEvidenceItem(
                 candidate,
                 None,
-                RerankFacts(
+                _facts(
                     rows,
                     prepared,
                     (RerankMatch(None, units[1].unit_id, 0, 3, "lexical", 1, 1.0),),
@@ -716,11 +742,7 @@ def test_same_boundary_neighbors_require_complete_current_eligibility(tmp_path):
             ),
         )
     )
-    view = eligibility_view(
-        revision_ids=frozenset({bundle.revision.revision_id}),
-        context_unit_ids=frozenset(unit.unit_id for unit in units),
-        chunk_ids=frozenset(),
-    )
+    view = _view(bundle)
     segment = assemble_segments(ranked, view, config(tmp_path), Counter()).segments[0]
     assert segment.context_only_unit_ids == (units[0].unit_id, units[2].unit_id)
     assert [
@@ -730,9 +752,7 @@ def test_same_boundary_neighbors_require_complete_current_eligibility(tmp_path):
         0,
         8,
     ]
-    view = view.model_copy(
-        update={"context_unit_ids": frozenset({units[1].unit_id, units[2].unit_id})}
-    )
+    view = _view(rows, units, {units[1].unit_id, units[2].unit_id})
     result = assemble_segments(ranked, view, config(tmp_path), Counter())
     segment = result.segments[0]
     assert segment.context_only_unit_ids == (units[2].unit_id,)
@@ -801,7 +821,7 @@ def test_one_eligible_ordinal_gap_can_join_matches_but_denied_gap_cannot(tmp_pat
                     ("unit", unit.unit_id), order, 1 / order, {"lexical": order}
                 ),
                 None,
-                RerankFacts(
+                _facts(
                     rows,
                     prepared,
                     (
@@ -815,18 +835,12 @@ def test_one_eligible_ordinal_gap_can_join_matches_but_denied_gap_cannot(tmp_pat
             for order, unit in enumerate((units[0], units[2]), 1)
         )
     )
-    view = eligibility_view(
-        revision_ids=frozenset({bundle.revision.revision_id}),
-        context_unit_ids=frozenset(unit.unit_id for unit in units),
-        chunk_ids=frozenset(),
-    )
+    view = _view(bundle)
     joined = assemble_segments(ranked, view, config(tmp_path), Counter())
     assert len(joined.segments) == 1
     assert joined.segments[0].matched_unit_ids == (units[0].unit_id, units[2].unit_id)
     assert joined.segments[0].context_only_unit_ids == (units[1].unit_id,)
-    view = view.model_copy(
-        update={"context_unit_ids": frozenset({units[0].unit_id, units[2].unit_id})}
-    )
+    view = _view(rows, units, {units[0].unit_id, units[2].unit_id})
     split = assemble_segments(ranked, view, config(tmp_path), Counter())
     assert len(split.segments) == 2
     assert all(
@@ -923,7 +937,7 @@ def test_code_import_context_is_separate_bounded_and_owner_checked(tmp_path):
             RankedEvidenceItem(
                 candidate,
                 None,
-                RerankFacts(
+                _facts(
                     rows,
                     prepared,
                     (
@@ -942,11 +956,7 @@ def test_code_import_context_is_separate_bounded_and_owner_checked(tmp_path):
             ),
         )
     )
-    view = eligibility_view(
-        revision_ids=frozenset({bundle.revision.revision_id}),
-        context_unit_ids=frozenset(unit.unit_id for unit in units),
-        chunk_ids=frozenset(),
-    )
+    view = _view(bundle)
     segment = assemble_segments(ranked, view, config(tmp_path), Counter()).segments[0]
     assert segment.text == units[1].text
     assert segment.context_excerpts[0].text == units[0].text
@@ -955,7 +965,7 @@ def test_code_import_context_is_separate_bounded_and_owner_checked(tmp_path):
         <= 160
     )
     assert locator_char_start(segment.citations[1].locators[0]) == 0
-    view = view.model_copy(update={"context_unit_ids": frozenset({units[1].unit_id})})
+    view = _view(rows, units, {units[1].unit_id})
     assert (
         assemble_segments(ranked, view, config(tmp_path), Counter())
         .segments[0]
@@ -1087,7 +1097,7 @@ def test_historical_role_comes_from_validated_selected_attempt(tmp_path):
     )
     segment = assemble_segments(
         ranked,
-        attempt.view,
+        _view(bundle),
         cfg,
         Counter(),
         historical_kind_roles=attempt.historical_kind_roles,
@@ -1098,7 +1108,7 @@ def test_historical_role_comes_from_validated_selected_attempt(tmp_path):
         and segment.role == original_role
     )
     with pytest.raises(TychoraError) as missing:
-        assemble_segments(ranked, attempt.view, cfg, Counter())
+        assemble_segments(ranked, _view(bundle), cfg, Counter())
     assert missing.value.code == "PROFILE_INCOMPATIBLE"
 
 
@@ -1189,7 +1199,7 @@ def test_code_diversity_counts_each_file_not_entire_repository(tmp_path):
                     ("unit", unit.unit_id), index, 1 / index, {"lexical": index}
                 ),
                 None,
-                RerankFacts(
+                _facts(
                     rows,
                     prepared,
                     (RerankMatch(None, unit.unit_id, 0, 1, "lexical", index, 1.0),),
@@ -1199,11 +1209,7 @@ def test_code_diversity_counts_each_file_not_entire_repository(tmp_path):
             for index, unit in enumerate(units, 1)
         )
     )
-    view = eligibility_view(
-        revision_ids=frozenset({bundle.revision.revision_id}),
-        context_unit_ids=frozenset(unit.unit_id for unit in units),
-        chunk_ids=frozenset(),
-    )
+    view = _view(bundle)
     result = assemble_segments(ranked, view, config(tmp_path), Counter())
     assert [segment.excerpts[0].text for segment in result.segments] == ["A", "B", "D"]
     assert result.omitted_anchors[0].unit_id == units[2].unit_id
@@ -1318,7 +1324,7 @@ def test_clipped_code_citation_uses_retained_encoding_and_cr_line_map(tmp_path):
         item = RankedEvidenceItem(
             FusedCandidate(("unit", source.unit_id), 1, 1.0, {"lexical": 1}),
             None,
-            RerankFacts(rows, prepared, ()),
+            _facts(rows, prepared, ()),
             "disabled",
         )
         clipped = _citation(item, source.unit_id, start, end).locators[0]
@@ -1359,7 +1365,7 @@ def test_clipped_code_citation_uses_validated_capture_descriptor_map():
     item = RankedEvidenceItem(
         FusedCandidate(("unit", source.unit_id), 1, 1.0, {"lexical": 1}),
         None,
-        RerankFacts(rows, prepared, ()),
+        _facts(rows, prepared, ()),
         "disabled",
     )
     clipped = _citation(item, source.unit_id, 6, 10).locators[0]
@@ -1505,11 +1511,7 @@ def _document_case(spans):
         ),
     )
     rows = bundle.model_copy(update={"units": units})
-    view = eligibility_view(
-        revision_ids=frozenset({bundle.revision.revision_id}),
-        context_unit_ids=frozenset(unit.unit_id for unit in units),
-        chunk_ids=frozenset(),
-    )
+    view = _view(bundle)
     return units, rows, prepared, view
 
 
@@ -1521,7 +1523,7 @@ def _ranked(rows, prepared, matched_units):
                     ("unit", unit.unit_id), order, 1 / order, {"lexical": order}
                 ),
                 None,
-                RerankFacts(
+                _facts(
                     rows,
                     prepared,
                     (
@@ -1634,11 +1636,7 @@ def test_neighbour_context_attaches_within_native_section(native_case, tmp_path)
     rows = normalize(parsed, parsed.registration.revision.revision_id, registry)
     prepared = prepare_extraction(rows)
     units = rows.units
-    view = eligibility_view(
-        revision_ids=frozenset({rows.revision.revision_id}),
-        context_unit_ids=frozenset(unit.unit_id for unit in units),
-        chunk_ids=frozenset(),
-    )
+    view = _view(rows)
     segment = assemble_segments(
         _ranked(rows, prepared, (units[2],)), view, config(tmp_path), Counter()
     ).segments[0]

@@ -17,6 +17,7 @@ from .base import (
 )
 from .code_storage import CodeFileDescriptor
 from .evidence import EvidenceUnit, Locator, ReviewState
+from .indexing import PreparedExtraction
 
 AccessRank = Annotated[int, Field(ge=0, le=3)]
 # How a source's granted uses narrow: a named narrowing, the uses to keep (a
@@ -197,6 +198,13 @@ class RetainedRepresentationRows(Contract):
     records: tuple[StructuredRecordRow, ...]
     identifiers: tuple[IdentifierRow, ...]
     code_files: tuple[CodeFileDescriptor, ...] = ()
+
+
+class RepresentationSlice(Contract):
+    """Some units of one extraction: their retained rows and persisted ownership."""
+
+    rows: RetainedRepresentationRows
+    prepared: PreparedExtraction
 
 
 class ReviewTarget(Contract):

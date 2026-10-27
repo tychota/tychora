@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from collections import defaultdict
 from collections.abc import Callable, Mapping
@@ -13,33 +12,24 @@ from threading import Lock, get_ident
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from tychora.adapters.sqlite.retained_bindings import SOURCE_COLUMNS
-from tychora.contracts.artifacts import ArtifactRef
+from tychora.adapters.sqlite.repositories.slices import retained_rows
+from tychora.adapters.sqlite.retained_bindings import BindingScope
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.candidates import CandidateKey, ChannelCandidate
 from tychora.contracts.corpus import (
-    AssetProxyRow,
-    AssetRow,
-    ChunkRow,
     ExtractionBundle,
-    ExtractionRow,
-    IdentifierRow,
-    LocatorRow,
+    RepresentationSlice,
     RetainedRepresentationRows,
-    RevisionArtifactRow,
-    RevisionRow,
-    SourceRow,
-    StructuredRecordRow,
-    UnitAssetRow,
 )
 from tychora.contracts.embeddings import QueryUploadAuthorization
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.evidence import EvidenceUnit
+from tychora.contracts.evidence import CodeLocator
+from tychora.contracts.graph import GraphPath
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.indexing import PreparedExtraction, RepresentationUnit
 from tychora.contracts.requests import RequestScope
-from tychora.indexing.representations import prepare_extraction
 from tychora.ports.execution import ExecutionContext
+from tychora.ports.repositories import ChunkRow, ReadTransaction
 from tychora.ports.reranking import RankedIndex, RankingInput, RankingSpan
 from tychora.ports.tokens import TokenCounter
 
@@ -51,6 +41,7 @@ if TYPE_CHECKING:
     from tychora.application.owner import WorkspaceOwner
     from tychora.retrieval.admission import Admission
     from tychora.retrieval.attempt import EligibilityAttempt
+    from tychora.retrieval.fusion import FusedCandidate
     from tychora.retrieval.rerank import RerankFacts
 
 
@@ -80,263 +71,20 @@ class RetainedReadBudget:
             )
 
 
-def _rows(
-    db: sqlite3.Connection,
-    sql: str,
-    parameters: tuple[str, ...],
-    budget: RetainedReadBudget,
-    ctx: ExecutionContext,
-    *,
-    units: bool = False,
-) -> tuple[dict[str, Any], ...]:
-    cursor = db.execute(sql, parameters)
-    columns = tuple(column[0] for column in cursor.description)
-    result = []
-    for raw in cursor:
-        ctx.checkpoint()
-        row = dict(zip(columns, raw, strict=True))
-        budget.accept(row, unit=units)
-        result.append(row)
-    return tuple(result)
-
-
-def _one(
-    db: sqlite3.Connection,
-    sql: str,
-    key: str,
-    budget: RetainedReadBudget,
-    ctx: ExecutionContext,
-) -> dict[str, Any]:
-    rows = _rows(db, sql, (key,), budget, ctx)
-    if len(rows) != 1:
-        raise TychoraError("NOT_FOUND", "Retained extraction is unavailable.")
-    return rows[0]
-
-
-def load_retained_representation(
-    db: sqlite3.Connection,
-    extraction_id: str,
-    budget: RetainedReadBudget,
-    ctx: ExecutionContext,
+def extraction_rows(
+    db: sqlite3.Connection, extraction_id: str
 ) -> RetainedRepresentationRows:
-    """Read exact stored representation facts in one short bounded transaction."""
-    if db.in_transaction:
+    """One whole extraction's retained rows; interim until visuals read slices."""
+    row = db.execute(
+        "SELECT revision_id FROM extractions WHERE extraction_id=?", (extraction_id,)
+    ).fetchone()
+    if row is None:
         raise TychoraError(
-            "INTEGRITY_ERROR", "Retained read requires a fresh transaction."
+            "INTEGRITY_ERROR",
+            "Retained extraction is unavailable.",
+            reason="canonical.row_invalid",
         )
-    ctx.checkpoint()
-    db.execute("BEGIN")
-    try:
-        extraction_raw = _one(
-            db,
-            "SELECT * FROM extractions WHERE extraction_id=?",
-            extraction_id,
-            budget,
-            ctx,
-        )
-        revision_raw = _one(
-            db,
-            "SELECT * FROM revisions WHERE revision_id=?",
-            extraction_raw["revision_id"],
-            budget,
-            ctx,
-        )
-        source_raw = _one(
-            db,
-            f"SELECT {SOURCE_COLUMNS} FROM sources WHERE source_id=?",
-            revision_raw["source_id"],
-            budget,
-            ctx,
-        )
-        unit_raw = _rows(
-            db,
-            "SELECT * FROM evidence_units WHERE extraction_id=? ORDER BY ordinal,unit_id",
-            (extraction_id,),
-            budget,
-            ctx,
-            units=True,
-        )
-        locator_raw = _rows(
-            db,
-            "SELECT l.* FROM locators l JOIN evidence_units u USING(unit_id) "
-            "WHERE u.extraction_id=? ORDER BY l.unit_id,l.fragment_ordinal",
-            (extraction_id,),
-            budget,
-            ctx,
-        )
-        asset_raw = _rows(
-            db,
-            "SELECT * FROM assets WHERE extraction_id=? ORDER BY asset_id",
-            (extraction_id,),
-            budget,
-            ctx,
-        )
-        link_raw = _rows(
-            db,
-            "SELECT ua.* FROM unit_assets ua JOIN evidence_units u USING(unit_id) "
-            "WHERE u.extraction_id=? ORDER BY ua.unit_id,ua.asset_id,ua.role",
-            (extraction_id,),
-            budget,
-            ctx,
-        )
-        proxy_raw = _rows(
-            db,
-            "SELECT p.* FROM asset_proxies p JOIN evidence_units u "
-            "ON u.unit_id=p.proxy_unit_id WHERE u.extraction_id=? "
-            "ORDER BY p.proxy_unit_id",
-            (extraction_id,),
-            budget,
-            ctx,
-        )
-        proxy_dependency_raw = _rows(
-            db,
-            "SELECT d.* FROM asset_proxy_dependencies d JOIN evidence_units u "
-            "ON u.unit_id=d.proxy_unit_id WHERE u.extraction_id=? "
-            "ORDER BY d.proxy_unit_id,d.required_unit_id",
-            (extraction_id,),
-            budget,
-            ctx,
-        )
-        record_raw = _rows(
-            db,
-            "SELECT r.* FROM structured_records r JOIN evidence_units u USING(unit_id) "
-            "WHERE u.extraction_id=? ORDER BY r.unit_id",
-            (extraction_id,),
-            budget,
-            ctx,
-        )
-        identifier_raw = _rows(
-            db,
-            "SELECT i.* FROM identifiers i JOIN evidence_units u USING(unit_id) "
-            "WHERE u.extraction_id=? ORDER BY i.unit_id,i.namespace,i.normalized_value",
-            (extraction_id,),
-            budget,
-            ctx,
-        )
-        revision_artifact_raw = _rows(
-            db,
-            "SELECT * FROM revision_artifacts WHERE revision_id=? "
-            "ORDER BY role,source_ref",
-            (revision_raw["revision_id"],),
-            budget,
-            ctx,
-        )
-        artifact_raw = _rows(
-            db,
-            "SELECT a.* FROM artifacts a WHERE a.artifact_sha IN ("
-            "SELECT r.original_sha FROM revisions r JOIN extractions e USING(revision_id) "
-            "WHERE e.extraction_id=? UNION "
-            "SELECT e.document_artifact_sha FROM extractions e WHERE e.extraction_id=? UNION "
-            "SELECT e.assertions_artifact_sha FROM extractions e WHERE e.extraction_id=? UNION "
-            "SELECT e.diagnostics_artifact_sha FROM extractions e WHERE e.extraction_id=? UNION "
-            "SELECT ra.artifact_sha FROM revision_artifacts ra JOIN extractions e USING(revision_id) "
-            "WHERE e.extraction_id=? UNION "
-            "SELECT l.artifact_sha FROM locators l JOIN evidence_units u USING(unit_id) "
-            "WHERE u.extraction_id=? UNION "
-            "SELECT a.artifact_sha FROM assets a WHERE a.extraction_id=? UNION "
-            "SELECT p.derivation_sha FROM asset_proxies p JOIN evidence_units u "
-            "ON u.unit_id=p.proxy_unit_id WHERE u.extraction_id=?"
-            ") ORDER BY a.artifact_sha",
-            (extraction_id,) * 8,
-            budget,
-            ctx,
-        )
-        locators_by_unit: dict[str, list[object]] = defaultdict(list)
-        locators = []
-        for row in locator_raw:
-            locator = json.loads(row["details_json"])
-            locators_by_unit[row["unit_id"]].append(locator)
-            locators.append(
-                LocatorRow.model_validate_json(
-                    canonical_bytes(
-                        {
-                            "locator_id": row["locator_id"],
-                            "unit_id": row["unit_id"],
-                            "fragment_ordinal": row["fragment_ordinal"],
-                            "locator": locator,
-                        }
-                    )
-                )
-            )
-        units = []
-        for raw in unit_raw:
-            row = dict(raw)
-            row["heading_path"] = json.loads(row.pop("heading_path_json"))
-            row["attributes"] = json.loads(row.pop("attributes_json"))
-            row["review_state"] = row.pop("declared_review_state")
-            row["citable"] = bool(row["citable"])
-            row["locators"] = locators_by_unit.get(row["unit_id"], [])
-            units.append(EvidenceUnit.model_validate_json(canonical_bytes(row)))
-        source_raw["registration_json"] = json.loads(source_raw["registration_json"])
-        revision_raw["allowed_uses_json"] = json.loads(
-            revision_raw["allowed_uses_json"]
-        )
-        revision_raw["metadata_json"] = json.loads(revision_raw["metadata_json"])
-        proxy_dependencies: dict[str, set[str]] = defaultdict(set)
-        for row in proxy_dependency_raw:
-            proxy_dependencies[row["proxy_unit_id"]].add(row["required_unit_id"])
-        result = RetainedRepresentationRows(
-            source=SourceRow.model_validate_json(canonical_bytes(source_raw)),
-            artifacts=tuple(
-                ArtifactRef.model_validate(
-                    {
-                        "sha256": row["artifact_sha"],
-                        "size_bytes": row["size_bytes"],
-                        "media_type": row["media_type"],
-                        "storage_key": row["storage_key"],
-                    }
-                )
-                for row in artifact_raw
-            ),
-            revision=RevisionRow.model_validate_json(canonical_bytes(revision_raw)),
-            revision_artifacts=tuple(
-                RevisionArtifactRow.model_validate(row) for row in revision_artifact_raw
-            ),
-            extraction=ExtractionRow.model_validate(extraction_raw),
-            units=tuple(units),
-            locators=tuple(locators),
-            assets=tuple(
-                AssetRow.model_validate(
-                    {
-                        **{
-                            key: value
-                            for key, value in row.items()
-                            if key != "locator_json"
-                        },
-                        "locator": json.loads(row["locator_json"]),
-                    }
-                )
-                for row in asset_raw
-            ),
-            unit_assets=tuple(UnitAssetRow.model_validate(row) for row in link_raw),
-            proxies=tuple(
-                AssetProxyRow.model_validate(
-                    {
-                        **row,
-                        "required_unit_ids": frozenset(
-                            proxy_dependencies[row["proxy_unit_id"]]
-                        ),
-                    }
-                )
-                for row in proxy_raw
-            ),
-            records=tuple(
-                StructuredRecordRow.model_validate(
-                    {**row, "data_json": json.loads(row["data_json"])}
-                )
-                for row in record_raw
-            ),
-            identifiers=tuple(
-                IdentifierRow.model_validate(row) for row in identifier_raw
-            ),
-        )
-        return result
-    except (ValueError, TypeError, KeyError, sqlite3.DatabaseError):
-        raise TychoraError(
-            "INTEGRITY_ERROR", "Retained representation is invalid."
-        ) from None
-    finally:
-        db.rollback()
+    return retained_rows(db, BindingScope(extraction_id, row[0]))
 
 
 class RerankAttestationError(TychoraError):
@@ -470,6 +218,36 @@ def attest_ranking_input(
         _deny_ranking()
 
 
+def _rendered_units(group: tuple[RankingInput, ...]) -> tuple[str, ...]:
+    """Every unit the inputs' spans and anchors render."""
+    return tuple(
+        sorted(
+            {span.unit_id for item in group for span in item.spans}
+            | {anchor.unit_id for item in group for anchor in item.anchors}
+        )
+    )
+
+
+def _attest_windows(
+    tx: ReadTransaction, item: RankingInput, extraction_id: str
+) -> None:
+    """Each indexed anchor lies inside its stored window of the same extraction."""
+    for anchor in item.anchors:
+        if anchor.indexed_window_id is None:
+            continue
+        stored = tx.representations.chunks((anchor.indexed_window_id,))
+        if (
+            len(stored) != 1
+            or stored[0].extraction_id != extraction_id
+            or stored[0].unit_id != anchor.unit_id
+            or not stored[0].char_start
+            <= anchor.char_start
+            < anchor.char_end
+            <= stored[0].char_end
+        ):
+            _deny_ranking()
+
+
 class OwnerRerankAccess:
     """Operation-local canonical gate bound to one owner and narrowed scope."""
 
@@ -532,8 +310,27 @@ class OwnerRerankAccess:
     def _prepare_canonical(
         self, representations: tuple[RankingInput, ...], ctx: ExecutionContext
     ) -> frozenset[str]:
-        owner = self.owner
-        budget = RetainedReadBudget()
+        """Attest each input against the persisted slice of the units it renders."""
+        dependencies: set[str] = set()
+        with self.owner.store.uow.read() as tx:
+            for extraction_id, group in self._by_extraction(representations, ctx):
+                ctx.checkpoint()
+                piece = tx.representations.slice(
+                    extraction_id, unit_ids=_rendered_units(group)
+                )
+                for item in group:
+                    dependencies.update(
+                        attest_ranking_input(item, piece.rows, piece.prepared)
+                    )
+                    _attest_windows(tx, item, extraction_id)
+        if len(dependencies) > 2048:
+            raise TychoraError("INVALID_REQUEST", "Rerank dependency limit exceeded.")
+        return frozenset(dependencies)
+
+    def _by_extraction(
+        self, representations: tuple[RankingInput, ...], ctx: ExecutionContext
+    ) -> tuple[tuple[str, tuple[RankingInput, ...]], ...]:
+        """The inputs grouped by the extraction their candidate belongs to."""
         by_extraction: dict[str, list[RankingInput]] = defaultdict(list)
         for item in representations:
             ctx.checkpoint()
@@ -543,47 +340,14 @@ class OwnerRerankAccess:
                 if kind == "unit"
                 else ("assets", "asset_id")
             )
-            row = owner.db.execute(
+            row = self.owner.db.execute(
                 f"SELECT extraction_id FROM {table} WHERE {column}=?",
                 (candidate_id,),
             ).fetchone()
             if row is None:
                 _deny_ranking()
-            budget.accept({"extraction_id": row[0]})
             by_extraction[row[0]].append(item)
-        dependencies: set[str] = set()
-        for extraction_id, group in by_extraction.items():
-            ctx.checkpoint()
-            rows = load_retained_representation(owner.db, extraction_id, budget, ctx)
-            try:
-                prepared = prepare_extraction(rows)
-            except (ValueError, TypeError, KeyError, AttributeError):
-                raise TychoraError(
-                    "INTEGRITY_ERROR", "Retained ownership is invalid."
-                ) from None
-            ctx.checkpoint()
-            for item in group:
-                dependencies.update(attest_ranking_input(item, rows, prepared))
-                for anchor in item.anchors:
-                    if anchor.indexed_window_id is None:
-                        continue
-                    stored = owner.db.execute(
-                        "SELECT unit_id,char_start,char_end FROM chunks "
-                        "WHERE chunk_id=? AND extraction_id=?",
-                        (anchor.indexed_window_id, extraction_id),
-                    ).fetchone()
-                    if (
-                        stored is None
-                        or stored[0] != anchor.unit_id
-                        or not stored[1]
-                        <= anchor.char_start
-                        < anchor.char_end
-                        <= stored[2]
-                    ):
-                        _deny_ranking()
-        if len(dependencies) > 2048:
-            raise TychoraError("INVALID_REQUEST", "Rerank dependency limit exceeded.")
-        return frozenset(dependencies)
+        return tuple((key, tuple(group)) for key, group in by_extraction.items())
 
     def require_prepared(
         self, query: str, representations: tuple[RankingInput, ...], body_sha: str
@@ -715,115 +479,109 @@ async def rank_with_owner(
         access.close_operation()
 
 
+NEIGHBOUR_RADIUS = 2
+
+
+def _window_ids(
+    candidate: FusedCandidate, channels: Mapping[str, tuple[ChannelCandidate, ...]]
+) -> tuple[str, ...]:
+    """The candidate's producer windows across every channel, first seen first."""
+    windows = tuple(
+        dict.fromkeys(
+            window_id
+            for hits in channels.values()
+            for hit in hits
+            if hit.key == candidate.key
+            for window_id in hit.matching_window_ids
+        )
+    )
+    if len(windows) > 2048:
+        raise TychoraError(
+            "INVALID_REQUEST",
+            "Rerank window limit exceeded.",
+            reason="request.limit_exceeded",
+        )
+    return windows
+
+
+def _code_file(piece: RepresentationSlice) -> str | None:
+    """The file of a code unit's first code locator, if it has one."""
+    for locator in piece.rows.units[0].locators if piece.rows.units else ():
+        if isinstance(locator, CodeLocator):
+            return locator.relative_path
+    return None
+
+
+def _candidate_slice(
+    tx: ReadTransaction,
+    unit_id: str,
+    chunks: Mapping[str, ChunkRow],
+    paths: tuple[GraphPath, ...],
+) -> RepresentationSlice:
+    """The candidate's units, windows, neighbours and continuation targets; a code file whole."""
+    found = tx.representations.units((unit_id,))
+    if len(found) != 1:
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Rerank candidate is absent.",
+            reason="canonical.row_invalid",
+        )
+    extraction_id = found[0].extraction_id
+    first = tx.representations.slice(extraction_id, unit_ids=(unit_id,))
+    relative_path = _code_file(first)
+    if relative_path is not None:
+        return tx.representations.slice(extraction_id, relative_path=relative_path)
+    needed = {unit_id, *(chunk.unit_id for chunk in chunks.values())}
+    needed.update(
+        row.unit_id for row in tx.representations.neighbours(unit_id, NEIGHBOUR_RADIUS)
+    )
+    for path in paths:
+        if unit_id in (path.source_unit_id, path.target_unit_id):
+            needed.update((path.source_unit_id, path.target_unit_id))
+    return tx.representations.slice(extraction_id, unit_ids=tuple(sorted(needed)))
+
+
 async def prepare_rerank_facts(
     owner: WorkspaceOwner,
     attempt: EligibilityAttempt,
     admission: Admission,
     channels: Mapping[str, tuple[ChannelCandidate, ...]],
     ctx: ExecutionContext,
+    *,
+    paths: tuple[GraphPath, ...] = (),
 ) -> Mapping[CandidateKey, RerankFacts]:
-    """Hydrate bounded retained source/window facts on the pinned owner's read lane."""
+    """Read each admitted text candidate's slice and persisted sets on the read pool."""
     from tychora.retrieval.rerank import RerankFacts, matches_from_channels
 
     if attempt.owner is not owner or len(admission.selected) > 64:
-        raise TychoraError("INTEGRITY_ERROR", "Rerank attempt owner differs.")
-    legacy = attempt.require_legacy()
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Rerank attempt owner differs.",
+            reason="invariant.unexpected",
+        )
+    view = attempt.view
 
-    def load() -> Mapping[CandidateKey, RerankFacts]:
-        budget = RetainedReadBudget()
-        prepared_by_extraction: dict[
-            str, tuple[RetainedRepresentationRows, PreparedExtraction]
-        ] = {}
+    def load(tx: ReadTransaction) -> Mapping[CandidateKey, RerankFacts]:
         output: dict[CandidateKey, RerankFacts] = {}
         for candidate in admission.selected:
             ctx.checkpoint()
             kind, candidate_id = candidate.key
             if kind == "asset":
                 continue  # Native image ranking is independent of text reranking.
-            if candidate_id not in legacy.source_unit_ids:
-                raise TychoraError(
-                    "FORBIDDEN_SCOPE", "Rerank candidate is not eligible."
-                )
-            row = owner.db.execute(
-                "SELECT extraction_id FROM evidence_units WHERE unit_id=?",
-                (candidate_id,),
-            ).fetchone()
-            if row is None:
-                raise TychoraError("INTEGRITY_ERROR", "Rerank candidate is absent.")
-            extraction_id = row[0]
-            budget.accept({"extraction_id": extraction_id})
-            if extraction_id not in prepared_by_extraction:
-                rows = load_retained_representation(
-                    owner.db, extraction_id, budget, ctx
-                )
-                try:
-                    prepared = prepare_extraction(rows)
-                except (ValueError, TypeError, KeyError, AttributeError):
-                    raise TychoraError(
-                        "INTEGRITY_ERROR", "Retained ownership is invalid."
-                    ) from None
-                prepared_by_extraction[extraction_id] = rows, prepared
-            rows, prepared = prepared_by_extraction[extraction_id]
-            window_ids = tuple(
-                dict.fromkeys(
-                    window_id
-                    for hits in channels.values()
-                    for hit in hits
-                    if hit.key == candidate.key
-                    for window_id in hit.matching_window_ids
-                )
+            windows = _window_ids(candidate, channels)
+            chunks = {row.chunk_id: row for row in tx.representations.chunks(windows)}
+            piece = _candidate_slice(tx, candidate_id, chunks, paths)
+            dependencies = tx.representations.dependencies(
+                (*(unit.unit_id for unit in piece.rows.units), *windows)
             )
-            if len(window_ids) > 2048:
-                raise TychoraError("INVALID_REQUEST", "Rerank window limit exceeded.")
-            chunks: dict[str, ChunkRow] = {}
-            for window_id in window_ids:
-                ctx.checkpoint()
-                if window_id not in legacy.chunk_ids:
-                    raise TychoraError(
-                        "FORBIDDEN_SCOPE", "Ranking window is not eligible."
-                    )
-                dependencies = attempt.dependencies_for(window_id)
-                allowed = (
-                    legacy.revision_ids
-                    | legacy.context_unit_ids
-                    | legacy.structural_unit_ids
-                    | legacy.asset_ids
-                )
-                if not dependencies <= allowed:
-                    raise TychoraError(
-                        "FORBIDDEN_SCOPE", "Ranking window is not eligible."
-                    )
-                raw = owner.db.execute(
-                    "SELECT * FROM chunks WHERE chunk_id=?", (window_id,)
-                ).fetchone()
-                if raw is None:
-                    raise TychoraError("INTEGRITY_ERROR", "Ranking window is absent.")
-                columns = tuple(
-                    column[1]
-                    for column in owner.db.execute("PRAGMA table_info(chunks)")
-                )
-                stored = dict(zip(columns, raw, strict=True))
-                budget.accept(stored)
-                try:
-                    unit = prepared.representation(stored["unit_id"]).unit
-                    chunk = ChunkRow.model_validate(
-                        {
-                            **stored,
-                            "text": unit.text[
-                                stored["char_start"] : stored["char_end"]
-                            ],
-                        }
-                    )
-                except (ValueError, TypeError, KeyError, AttributeError):
-                    raise TychoraError(
-                        "INTEGRITY_ERROR", "Ranking window is invalid."
-                    ) from None
-                chunks[window_id] = chunk
             output[candidate.key] = RerankFacts(
-                rows,
-                prepared,
-                matches_from_channels(candidate, channels, chunks, prepared, legacy),
+                piece.rows,
+                piece.prepared,
+                matches_from_channels(
+                    candidate, channels, chunks, piece.prepared, view, dependencies
+                ),
+                dependencies=dependencies,
             )
         return MappingProxyType(output)
 
-    return await owner.run_write(load, ctx, "interactive")
+    return await owner.run_read(load, ctx)

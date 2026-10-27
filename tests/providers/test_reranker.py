@@ -9,9 +9,17 @@ from typing import Any, cast
 import pytest
 from pydantic import ValidationError
 
-from tests.helpers.corpus import COLLECTION, artifact, reader, registry, seed_bundle
+from tests.helpers.corpus import (
+    COLLECTION,
+    artifact,
+    commit_with_facts,
+    reader,
+    registry,
+    seed_bundle,
+)
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
+from tychora.adapters.sqlite.repositories import SqliteRepresentationRepository
 from tychora.adapters.voyage.request_types import RawVoyageResponse
 from tychora.adapters.voyage.rerank import (
     map_rerank_response,
@@ -22,11 +30,9 @@ from tychora.adapters.voyage.runtime import VoyageRuntime
 from tychora.adapters.voyage.validation import qualify_voyage_rerank
 from tychora.application.owner import WorkspaceOwner
 from tychora.application.reranking import (
-    RetainedReadBudget,
     _create_injected_reranker,
     attest_ranking_input,
     create_reranker,
-    load_retained_representation,
     rank_with_owner,
 )
 from tychora.application.setup import SetupService, load_voyage_tokenizer
@@ -193,20 +199,22 @@ def test_ranking_input_rejects_caller_authored_rendered_text():
         )
 
 
+def _slice(db, bundle):
+    """The persisted slice of every unit of the bundle's extraction."""
+    return SqliteRepresentationRepository(db).slice(
+        bundle.extraction.extraction_id,
+        unit_ids=tuple(unit.unit_id for unit in bundle.units),
+    )
+
+
 def test_retained_representation_reuses_canonical_ownership(tmp_path: Path):
     bundle = seed_bundle("Exact synthetic source span.")
     db = open_corpus(tmp_path / "corpus.sqlite3", initialize=True)
     try:
-        CorpusStore(db, registry=registry(), artifacts=reader()).commit_extraction(
-            bundle
+        commit_with_facts(
+            CorpusStore(db, registry=registry(), artifacts=reader()), bundle
         )
-        retained = load_retained_representation(
-            db,
-            bundle.extraction.extraction_id,
-            RetainedReadBudget(),
-            ExecutionContext(),
-        )
-        assert prepare_extraction(retained) == prepare_extraction(
+        assert _slice(db, bundle).prepared == prepare_extraction(
             bundle.model_copy(update={"code_files": ()})
         )
         assert not db.in_transaction
@@ -224,16 +232,10 @@ def test_retained_code_reuses_validated_overlap_and_context_ownership(tmp_path: 
     )
     db = open_corpus(tmp_path / "code.sqlite3", initialize=True)
     try:
-        CorpusStore(db, registry=registry(), artifacts=artifacts).commit_extraction(
-            bundle
+        commit_with_facts(
+            CorpusStore(db, registry=registry(), artifacts=artifacts), bundle
         )
-        retained = load_retained_representation(
-            db,
-            bundle.extraction.extraction_id,
-            RetainedReadBudget(),
-            ExecutionContext(),
-        )
-        assert prepare_extraction(retained) == prepare_extraction(
+        assert _slice(db, bundle).prepared == prepare_extraction(
             bundle.model_copy(update={"code_files": ()})
         )
     finally:
@@ -569,7 +571,7 @@ async def test_standard_factory_dispatches_with_verified_local_tokenizer(
                     ),
                 }
             )
-            owner.store.commit_extraction(bundle)
+            commit_with_facts(owner.store, bundle)
             return bundle
 
         bundle = await owner.run_write(install, ExecutionContext())
@@ -676,7 +678,7 @@ async def test_owner_rerank_dispatches_only_attested_exact_text(tmp_path: Path):
                     ),
                 }
             )
-            owner.store.commit_extraction(bundle)
+            commit_with_facts(owner.store, bundle)
             return bundle
 
         bundle = await owner.run_write(install, ExecutionContext())

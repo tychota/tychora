@@ -5,10 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from tychora.application.reranking import (
-    RetainedReadBudget,
-    load_retained_representation,
-)
+from tychora.application.reranking import RetainedReadBudget, extraction_rows
 from tychora.contracts.errors import TychoraError
 from tychora.indexing.representations import prepare_extraction
 from tychora.ports.execution import ExecutionContext
@@ -285,9 +282,7 @@ async def prepare_visual_candidates(
             extraction_id = row[0]
             budget.accept({"extraction_id": extraction_id})
             if extraction_id not in retained:
-                rows = load_retained_representation(
-                    owner.db, extraction_id, budget, ctx
-                )
+                rows = extraction_rows(owner.db, extraction_id)
                 try:
                     prepare_extraction(rows)
                 except (ValueError, TypeError, KeyError, AttributeError):

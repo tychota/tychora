@@ -203,8 +203,8 @@ def commit_with_facts(store, bundle) -> str:
 
 def recomputed_facts(store, extraction_id: str):
     """The representation facts a fresh commit of one extraction's stored rows has."""
-    from tychora.adapters.sqlite.eligibility import retained_rows
-    from tychora.contracts.publication import SnapshotMember
+    from tychora.adapters.sqlite.repositories.slices import retained_rows
+    from tychora.adapters.sqlite.retained_bindings import BindingScope
     from tychora.indexing.representations import (
         ChunkSpan,
         prepare_extraction,
@@ -212,17 +212,11 @@ def recomputed_facts(store, extraction_id: str):
     )
 
     db = store.db
-    revision, source = db.execute(
-        "SELECT e.revision_id,r.source_id FROM extractions e "
-        "JOIN revisions r USING(revision_id) WHERE e.extraction_id=?",
+    (revision,) = db.execute(
+        "SELECT revision_id FROM extractions WHERE extraction_id=?",
         (extraction_id,),
     ).fetchone()
-    rows = retained_rows(
-        store,
-        SnapshotMember(
-            source_id=source, revision_id=revision, extraction_id=extraction_id
-        ),
-    )
+    rows = retained_rows(db, BindingScope(extraction_id, revision))
     spans = [
         ChunkSpan(*row)
         for row in db.execute(
@@ -262,3 +256,19 @@ def refresh_facts(store, *extraction_ids: str) -> None:
             SqliteRepresentationRepository(db, writable=True).write(
                 recomputed_facts(store, extraction_id)
             )
+
+
+def add_manual(kb, text: str, *, title: str) -> None:
+    """Add one markdown manual through the public API and wait for its job."""
+    job = kb.sources.add(
+        {
+            "type": "text",
+            "source_key": "manual.md",
+            "collection_id": "default",
+            "kind": "document@1",
+            "format": "markdown",
+            "text": text,
+            "metadata": {"title": title},
+        }
+    )
+    assert kb.jobs.wait(job.id).state == "succeeded"

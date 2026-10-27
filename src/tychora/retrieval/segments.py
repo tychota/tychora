@@ -9,6 +9,7 @@ from typing import cast
 
 from tychora.configuration.models import ResolvedConfig
 from tychora.contracts.base import FrozenJsonMap
+from tychora.contracts.eligibility import EligibilityView
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import (
     AnchorRange,
@@ -214,7 +215,7 @@ def _code_context(
     item: RankedEvidenceItem,
     matched_unit_id: str,
     matched_citation: Citation,
-    view: LegacyEligibilityView,
+    view: EligibilityView,
     counter: TokenCounter,
     remaining: int,
 ) -> tuple[tuple[Excerpt, ...], tuple[Citation, ...]]:
@@ -250,7 +251,7 @@ def _code_context(
                 raise TychoraError(
                     "INTEGRITY_ERROR", "Code context has no retained unit."
                 ) from None
-            if source_id not in view.context_unit_ids | view.structural_unit_ids:
+            if not _readable(item, source_id, view):
                 continue
             for left, right in permitted_ranges(
                 item.facts.prepared, source_id, start, end, view
@@ -279,6 +280,27 @@ def _code_context(
     return tuple(excerpts), tuple(citations)
 
 
+def _readable(item: RankedEvidenceItem, unit_id: str, view: EligibilityView) -> bool:
+    """Whether a unit of the item's slice is readable: its persisted set is allowed."""
+    assert item.facts is not None
+    dependencies = item.facts.dependencies.get(unit_id)
+    return dependencies is not None and view.allows(dependencies)
+
+
+@dataclass(frozen=True)
+class _Continuations:
+    """Pinned continuation paths and the unit-level view that admits them."""
+
+    paths: tuple[GraphPath, ...]
+    graph_view: LegacyEligibilityView | None
+
+    @property
+    def admitting(self) -> LegacyEligibilityView | None:
+        """The unit-level view when it binds a graph generation, else ``None``."""
+        view = self.graph_view
+        return None if view is None or view.graph_generation_id is None else view
+
+
 def _fit(text: str, counter: TokenCounter, ceiling: int) -> int:
     if counter.count(text) <= ceiling:
         return len(text)
@@ -296,26 +318,23 @@ def _continuation_context(
     item: RankedEvidenceItem,
     unit_id: str,
     matched_citation: Citation,
-    view: LegacyEligibilityView,
+    view: EligibilityView,
     config: ResolvedConfig,
     counter: TokenCounter,
     remaining: int,
-    paths: tuple[GraphPath, ...],
+    continuations: _Continuations,
 ) -> tuple[tuple[Excerpt, ...], tuple[Citation, ...]]:
     """Attach a separate physical fragment only from a pinned eligible path."""
     assert item.facts is not None
-    if (
-        not paths
-        or not config.values.retrieval.graph.semantic
-        or getattr(view, "graph_generation_id", None) is None
-    ):
-        return (), ()
     settings = config.values.retrieval
-    eligible = view.context_unit_ids | view.structural_unit_ids
+    graph_view = continuations.admitting
+    if not continuations.paths or not settings.graph.semantic or graph_view is None:
+        return (), ()
+    eligible = graph_view.context_unit_ids | graph_view.structural_unit_ids
     excerpts: list[Excerpt] = []
     citations: list[Citation] = []
     used_targets: set[str] = set()
-    for path in paths:
+    for path in continuations.paths:
         if path.source_unit_id == unit_id:
             target_id = path.target_unit_id
         elif path.target_unit_id == unit_id:
@@ -333,7 +352,7 @@ def _continuation_context(
             required_support_ids=path.required_support_ids,
             eligible_original_ids=eligible,
             blocked=any(
-                assertion_id in view.blocked_assertion_ids
+                assertion_id in graph_view.blocked_assertion_ids
                 for assertion_id in path.assertion_ids
             )
             or path.assertion_occurrences != 1
@@ -424,7 +443,7 @@ def _same_section(first, second) -> bool:
 def _neighbor_context(
     item: RankedEvidenceItem,
     unit_id: str,
-    view: LegacyEligibilityView,
+    view: EligibilityView,
     counter: TokenCounter,
     remaining: int,
 ) -> tuple[tuple[Excerpt, ...], tuple[Citation, ...]]:
@@ -446,7 +465,7 @@ def _neighbor_context(
         )
         if (
             neighbor is None
-            or neighbor.unit_id not in view.context_unit_ids
+            or not _readable(item, neighbor.unit_id, view)
             or not neighbor.citable
             or neighbor.text_origin != "source"
             or not neighbor.text
@@ -502,7 +521,7 @@ def _expand_to_line(
     unit_id: str,
     start: int,
     end: int,
-    view: LegacyEligibilityView,
+    view: EligibilityView,
     counter: TokenCounter,
     ceiling: int,
 ) -> tuple[int, int]:
@@ -533,8 +552,8 @@ def _segment(
     end: int,
     config: ResolvedConfig,
     counter: TokenCounter,
-    view: LegacyEligibilityView,
-    continuation_paths: tuple[GraphPath, ...],
+    view: EligibilityView,
+    continuations: _Continuations,
     historical_kind_roles: Mapping[str, str],
     segment_ceiling: int,
 ) -> Segment | None:
@@ -582,7 +601,7 @@ def _segment(
         ceiling
         - counter.count(excerpt.text)
         - sum(counter.count(part.text) for part in context_excerpts),
-        continuation_paths,
+        continuations,
     )
     neighbor_excerpts, neighbor_citations = _neighbor_context(
         item,
@@ -649,7 +668,7 @@ def _segment(
 def _coalesce_boundary_matches(
     options: list[tuple[int, int, Segment]],
     ranked: RankedEvidence,
-    view: LegacyEligibilityView,
+    view: EligibilityView,
     counter: TokenCounter,
     segment_ceiling: int,
 ) -> list[tuple[int, int, Segment]]:
@@ -724,7 +743,7 @@ def _coalesce_boundary_matches(
                 )
                 if (
                     gap is None
-                    or gap.unit_id not in view.context_unit_ids
+                    or not _readable(owner, gap.unit_id, view)
                     or not gap.citable
                     or gap.text_origin != "source"
                     or not gap.text
@@ -811,10 +830,11 @@ def _coalesce_boundary_matches(
 
 def assemble_segments(
     ranked: RankedEvidence,
-    view: LegacyEligibilityView,
+    view: EligibilityView,
     config: ResolvedConfig,
     counter: TokenCounter,
     *,
+    graph_view: LegacyEligibilityView | None = None,
     visual_limit: int = 3,
     continuation_paths: tuple[GraphPath, ...] = (),
     historical_kind_roles: Mapping[str, str] | None = None,
@@ -845,13 +865,11 @@ def assemble_segments(
             raise TychoraError(
                 "INTEGRITY_ERROR", "Selected text has no retained facts."
             )
-        if item.facts.prepared.revision_id not in view.revision_ids:
+        if item.facts.prepared.revision_id not in view.revisions:
             continue
         for index, anchor in enumerate(source_anchors(item)):
-            if (
-                anchor.indexed_window_id is not None
-                and anchor.indexed_window_id not in view.chunk_ids
-            ):
+            window = anchor.indexed_window_id
+            if window is not None and window not in item.facts.dependencies:
                 continue
             for start, end in permitted_ranges(
                 item.facts.prepared,
@@ -880,7 +898,7 @@ def assemble_segments(
                         config,
                         counter,
                         view,
-                        continuation_paths,
+                        _Continuations(continuation_paths, graph_view),
                         historical_kind_roles or {},
                         text_budget,
                     )

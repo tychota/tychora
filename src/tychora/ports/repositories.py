@@ -20,6 +20,7 @@ from tychora.contracts.base import (
     NonNegativeInt,
     Sha256,
 )
+from tychora.contracts.corpus import RepresentationSlice
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.indexing import IntervalRow, RepresentationFacts
@@ -370,6 +371,20 @@ class RepresentationRepository(Protocol):
 
     def intervals(self, unit_ids: tuple[str, ...]) -> tuple[IntervalRow, ...]:
         """Return the ownership intervals of these units in unit and start order."""
+        ...
+
+    def neighbours(self, unit_id: str, radius: int | None) -> tuple[UnitRow, ...]:
+        """Units of the same extraction and boundary key within ``radius`` ordinals, by ordinal."""
+        ...
+
+    def slice(
+        self,
+        extraction_id: str,
+        *,
+        unit_ids: tuple[str, ...] = (),
+        relative_path: str | None = None,
+    ) -> RepresentationSlice:
+        """Retained rows and persisted ownership of the listed units or of one code file."""
         ...
 
     def write(self, facts: RepresentationFacts) -> None:

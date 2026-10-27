@@ -35,6 +35,7 @@ from tychora.contracts.indexing import (
     RepresentationFacts,
     RepresentationUnit,
     dependency_digest,
+    symbol_path,
 )
 from tychora.contracts.sections import boundary_key
 
@@ -953,26 +954,12 @@ def _representation(
     unit: EvidenceUnit,
     ownership: tuple[OwnedInterval, ...],
 ) -> RepresentationUnit:
-    symbol_records = [
-        record
-        for record in bundle.records
-        if record.unit_id == unit.unit_id and record.record_type == "code_symbol"
-    ]
-    if len(symbol_records) > 1:
-        raise ValueError("Code unit has multiple symbol records")
-    symbol_path: tuple[str, ...] = ()
-    if symbol_records:
-        data = symbol_records[0].data_json
-        symbol_path = (
-            cast(str, data["relative_path"]),
-            cast(str, data["qualified_name"]),
-        )
     return RepresentationUnit(
         unit=unit,
         revision_id=bundle.revision.revision_id,
         title=bundle.revision.title,
         kind_id=bundle.revision.kind_id,
-        symbol_path=symbol_path,
+        symbol_path=symbol_path(bundle.records, unit.unit_id),
         ownership=ownership,
     )
 

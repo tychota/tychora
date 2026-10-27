@@ -8,7 +8,11 @@ import pytest
 from tests.code.conftest import code_registry
 from tests.code.test_structure import _registration
 from tests.formatting.test_response_budget import segment
-from tests.helpers.eligibility import eligibility_view, legacy_attempt
+from tests.helpers.eligibility import (
+    revision_attempt,
+    revision_view,
+    sets_transaction,
+)
 from tests.typed_json import json_object
 from tychora.adapters.code.normalize import normalize_code, retain_code_extraction
 from tychora.contracts.base import FrozenJsonMap, thaw_json
@@ -28,10 +32,12 @@ def test_code_symbol_alias_requires_exact_builtin_kind_schema_and_hash(tmp_path)
     bundle = normalize_code(retained, registry)
     prepared = prepare_extraction(bundle)
     record = next(row for row in bundle.records if row.data_json["name"] == "first")
-    unit_ids = frozenset(unit.unit_id for unit in bundle.units)
-    view = eligibility_view(
-        revision_ids=frozenset({bundle.revision.revision_id}),
-        context_unit_ids=unit_ids,
+    view = revision_view({bundle.revision.revision_id: bundle.extraction.extraction_id})
+    tx = sets_transaction(
+        {
+            unit.unit_id: frozenset({bundle.revision.revision_id, unit.unit_id})
+            for unit in bundle.units
+        }
     )
     selected = Selection(
         segments=(
@@ -66,11 +72,11 @@ def test_code_symbol_alias_requires_exact_builtin_kind_schema_and_hash(tmp_path)
             selected,
             segments=(selected.segments[0].model_copy(update={"kind": kind}),),
         )
-        attempt = legacy_attempt(
+        attempt = revision_attempt(
             view,
             historical_kind_envelopes=MappingProxyType({kind: historical}),
         )
-        return prepare_records(selection, ranked, attempt)
+        return prepare_records(tx, selection, ranked, attempt)
 
     (attached,) = check()
     assert attached.record_type == "code_symbol"

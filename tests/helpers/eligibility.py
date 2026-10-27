@@ -1,7 +1,8 @@
 """Complete synthetic eligibility views and attempts for retrieval unit tests."""
 
 from collections.abc import Mapping
-from types import MappingProxyType
+from dataclasses import replace
+from types import MappingProxyType, SimpleNamespace
 
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.eligibility import EligibilityView, RevisionGrant
@@ -85,28 +86,16 @@ def revision_view(
     )
 
 
-def legacy_attempt(
-    view: LegacyEligibilityView,
+def revision_attempt(
+    view: EligibilityView,
     *,
-    dependencies: Mapping[str, frozenset[str]] | None = None,
     historical_kind_envelopes: Mapping[str, FrozenJsonMap] | None = None,
     owner: AttemptOwner | None = None,
     ctx: ExecutionContext | None = None,
 ) -> EligibilityAttempt:
-    """An attempt whose legacy readers see ``view``.
-
-    Its revision-level view carries only ``view``'s snapshot, epoch and
-    digests, so epoch rechecks compare against the same policy epoch.
-    """
+    """An attempt that reads ``view`` and has no unit-level view."""
     compiled = CompiledEligibility(
-        EligibilityView(
-            snapshot_id=view.snapshot_id,
-            policy_epoch=view.policy_epoch,
-            scope_digest=view.scope_digest,
-            eligibility_policy_digest=view.eligibility_policy_digest,
-            eligibility_request_digest=view.eligibility_request_digest,
-            revisions={},
-        ),
+        view,
         historical_kind_envelopes=MappingProxyType(
             dict(historical_kind_envelopes or {})
         ),
@@ -121,10 +110,49 @@ def legacy_attempt(
         families=(),
     )
     return EligibilityAttempt(
-        compiled=compiled,
-        snapshot=snapshot,
+        compiled=compiled, snapshot=snapshot, owner=owner, ctx=ctx
+    )
+
+
+def legacy_attempt(
+    view: LegacyEligibilityView,
+    *,
+    dependencies: Mapping[str, frozenset[str]] | None = None,
+    historical_kind_envelopes: Mapping[str, FrozenJsonMap] | None = None,
+    owner: AttemptOwner | None = None,
+    ctx: ExecutionContext | None = None,
+    grants: Mapping[str, str] | None = None,
+) -> EligibilityAttempt:
+    """An attempt whose legacy readers see ``view``.
+
+    Its revision-level view carries ``view``'s snapshot, epoch and digests, so
+    epoch rechecks compare against the same policy epoch, and grants each
+    ``revision -> extraction`` pair of ``grants`` (none by default).
+    """
+    revisions = EligibilityView(
+        snapshot_id=view.snapshot_id,
+        policy_epoch=view.policy_epoch,
+        scope_digest=view.scope_digest,
+        eligibility_policy_digest=view.eligibility_policy_digest,
+        eligibility_request_digest=view.eligibility_request_digest,
+        revisions=revision_view(grants or {}).revisions,
+    )
+    return replace(
+        revision_attempt(
+            revisions,
+            historical_kind_envelopes=historical_kind_envelopes,
+            owner=owner,
+            ctx=ctx,
+        ),
         legacy=view,
         legacy_dependencies=MappingProxyType(dict(dependencies or {})),
-        owner=owner,
-        ctx=ctx,
+    )
+
+
+def sets_transaction(sets: Mapping[str, frozenset[str]]) -> SimpleNamespace:
+    """A read transaction double whose representations know only these persisted sets."""
+    return SimpleNamespace(
+        representations=SimpleNamespace(
+            dependencies=lambda ids: {i: sets[i] for i in ids if i in sets}
+        )
     )

@@ -60,6 +60,7 @@ CLASSIFIED_REASONS = {
         "scope.whole_workspace",
         "scope.capability_missing",
         "representation.ineligible",
+        "scope.dependency_ineligible",
     },
     "JOB_INTERRUPTED": {"job.orphaned"},
     "WORKSPACE_BUSY": {"owner.absent", "family.claimed", "storage.busy"},

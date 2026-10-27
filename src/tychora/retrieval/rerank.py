@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from tychora.application.reranking import (
@@ -13,18 +13,14 @@ from tychora.application.reranking import (
 )
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.candidates import ChannelCandidate
-from tychora.contracts.corpus import (
-    ChunkRow,
-    ExtractionBundle,
-    RetainedRepresentationRows,
-)
+from tychora.contracts.corpus import ExtractionBundle, RetainedRepresentationRows
+from tychora.contracts.eligibility import EligibilityView
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import AnchorRange, EvidenceUnit
-from tychora.contracts.graph import LegacyEligibilityView
-from tychora.contracts.identity import chunk_id as derive_chunk_id
 from tychora.contracts.indexing import PreparedExtraction
 from tychora.contracts.requests import PassageInput, QueryRequest, QuestionInput
 from tychora.ports.execution import ExecutionContext
+from tychora.ports.repositories import ChunkRow
 from tychora.ports.reranking import (
     RankingInput,
     RankingSpan,
@@ -63,6 +59,8 @@ class RerankFacts:
     prepared: PreparedExtraction
     matches: tuple[RerankMatch, ...]
     graph_support: RerankMatch | None = None
+    # The persisted sets of the slice's units and the candidate's windows.
+    dependencies: Mapping[str, frozenset[str]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -172,11 +170,25 @@ class RankedEvidence:
     failure: RerankFailure | None = None
 
 
+def _require_readable(
+    facts: RerankFacts, representation_ids: tuple[str, ...], view: EligibilityView
+) -> None:
+    """Refuse when a unit or window lacks a persisted set the view allows."""
+    for representation_id in representation_ids:
+        dependencies = facts.dependencies.get(representation_id)
+        if dependencies is None or not view.allows(dependencies):
+            raise TychoraError(
+                "FORBIDDEN_SCOPE",
+                "Ranking window is not eligible.",
+                reason="scope.dependency_ineligible",
+            )
+
+
 async def rerank_candidates(
     query: QueryRequest, admission: Admission, ctx: RerankContext
 ) -> RankedEvidence:
     """Score one complete textual pool through the existing owner-authorized path."""
-    legacy = ctx.attempt.require_legacy()
+    view = ctx.attempt.view
     ctx.execution.checkpoint()
     if len(admission.selected) > 64:
         raise TychoraError("INVALID_REQUEST", "Rerank candidate count is invalid.")
@@ -218,12 +230,6 @@ async def rerank_candidates(
         if candidate.key[0] == "asset":
             continue
         facts = ctx.facts[candidate.key]
-        allowed = (
-            legacy.revision_ids
-            | legacy.context_unit_ids
-            | legacy.structural_unit_ids
-            | legacy.asset_ids
-        )
         source_ids = tuple(
             dict.fromkeys(
                 (
@@ -233,9 +239,7 @@ async def rerank_candidates(
                 )
             )
         )
-        for source_id in source_ids:
-            if not ctx.attempt.dependencies_for(source_id) <= allowed:
-                raise TychoraError("FORBIDDEN_SCOPE", "Ranking window is not eligible.")
+        _require_readable(facts, source_ids, view)
     disabled = ctx.owner.config.values.providers.rerank.provider == "disabled"
     if disabled:
         return RankedEvidence(
@@ -278,7 +282,7 @@ async def rerank_candidates(
             continue
         facts = ctx.facts[candidate.key]
         units = {unit.unit_id: unit for unit in facts.rows.units}
-        item = ranking_input(candidate, units, legacy, ctx.counter, facts=facts)
+        item = ranking_input(candidate, units, view, ctx.counter, facts=facts)
         match_ids = tuple(
             dict.fromkeys(
                 (
@@ -287,15 +291,7 @@ async def rerank_candidates(
                 )
             )
         )
-        allowed = (
-            legacy.revision_ids
-            | legacy.context_unit_ids
-            | legacy.structural_unit_ids
-            | legacy.asset_ids
-        )
-        for representation_id in match_ids:
-            if not ctx.attempt.dependencies_for(representation_id) <= allowed:
-                raise TychoraError("FORBIDDEN_SCOPE", "Ranking window is not eligible.")
+        _require_readable(facts, match_ids, view)
         representations.append(item)
     assert text is not None
     try:
@@ -365,7 +361,8 @@ def matches_from_channels(
     channels: Mapping[str, tuple[ChannelCandidate, ...]],
     chunks: Mapping[str, ChunkRow],
     prepared: PreparedExtraction,
-    view: LegacyEligibilityView,
+    view: EligibilityView,
+    dependencies: Mapping[str, frozenset[str]],
     *,
     weights: Mapping[str, float] = DEFAULT_WEIGHTS,
 ) -> tuple[RerankMatch, ...]:
@@ -379,7 +376,9 @@ def matches_from_channels(
             if hit.key != candidate.key:
                 continue
             for window_rank, window_id in enumerate(hit.matching_window_ids):
-                if window_id not in view.chunk_ids or window_id not in chunks:
+                if window_id not in chunks or not view.allows(
+                    dependencies.get(window_id, ())
+                ):
                     raise TychoraError(
                         "FORBIDDEN_SCOPE", "Ranking window is not eligible."
                     )
@@ -391,16 +390,8 @@ def matches_from_channels(
                         "INTEGRITY_ERROR", "Ranking range has no canonical unit."
                     ) from None
                 if (
-                    chunk.chunk_id
-                    != derive_chunk_id(
-                        chunk.unit_id,
-                        chunk.char_start,
-                        chunk.char_end,
-                        chunk.chunker_fingerprint,
-                    )
-                    or chunk.extraction_id != prepared.extraction_id
+                    chunk.extraction_id != prepared.extraction_id
                     or chunk.char_end > len(unit.text)
-                    or chunk.text != unit.text[chunk.char_start : chunk.char_end]
                     or (
                         candidate.key[0] == "unit" and chunk.unit_id != candidate.key[1]
                     )
@@ -446,7 +437,7 @@ def _dependencies(
 def ranking_input(
     candidate: FusedCandidate,
     units: Mapping[str, EvidenceUnit],
-    view: LegacyEligibilityView,
+    view: EligibilityView,
     counter: TokenCounter,
     budget: int = 1200,
     *,
@@ -496,12 +487,6 @@ def ranking_input(
         raise TychoraError(
             "FORBIDDEN_SCOPE", "Graph support is not on the target unit."
         )
-    allowed = (
-        view.revision_ids
-        | view.context_unit_ids
-        | view.structural_unit_ids
-        | view.asset_ids
-    )
 
     def span_for(
         match: RerankMatch,
@@ -510,7 +495,7 @@ def ranking_input(
         role: Literal["match", "context"] = "match",
     ) -> RankingSpan:
         if match.unit_id not in units or (
-            match.window_id is not None and match.window_id not in view.chunk_ids
+            match.window_id is not None and match.window_id not in facts.dependencies
         ):
             raise TychoraError("FORBIDDEN_SCOPE", "Ranking window is not eligible.")
         unit = units[match.unit_id]
@@ -520,7 +505,7 @@ def ranking_input(
         dependencies = _dependencies(
             facts.prepared, match.unit_id, match.char_start, end
         )
-        if not dependencies <= allowed:
+        if not view.allows(dependencies):
             raise TychoraError("FORBIDDEN_SCOPE", "Ranking window is not eligible.")
         return RankingSpan(
             unit_id=unit.unit_id,
@@ -619,7 +604,7 @@ def ranking_input(
                 or end <= start
             ):
                 raise TychoraError("INTEGRITY_ERROR", "Code context is not canonical.")
-            if source_id not in view.context_unit_ids | view.structural_unit_ids:
+            if not view.allows(facts.dependencies.get(source_id, ())):
                 continue
             context_match = RerankMatch(
                 None, source_id, start, end, str(context["reason"]), 1, 0.0

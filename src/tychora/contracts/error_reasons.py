@@ -278,6 +278,12 @@ _ENTRIES = (
         "Search again; the representation is outside the attempt's eligibility view.",
     ),
     Reason(
+        "FORBIDDEN_SCOPE",
+        "scope.dependency_ineligible",
+        False,
+        "Retry the query; a cited range lost its grant while the query ran.",
+    ),
+    Reason(
         "INVALID_REQUEST",
         "range.unsatisfiable",
         False,
