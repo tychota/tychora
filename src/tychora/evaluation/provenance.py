@@ -7,8 +7,9 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from tychora.adapters.sqlite.eligibility import retained_rows
+from tychora.adapters.sqlite.repositories.slices import retained_rows
 from tychora.adapters.sqlite.retained_bindings import (
+    BindingScope,
     asset_extraction,
     binding_footprint,
     binding_key,
@@ -103,7 +104,7 @@ class RetainedBindingCache:
             self._release(key)
         rows, size = binding_footprint(self.owner.db, member, relative_path)
         self._release_until_fits(rows, size)
-        retained = retained_rows(self.owner.store, member, relative_path)
+        retained = retained_rows(self.owner.db, BindingScope.of(member, relative_path))
         self._resident[key] = _Resident(
             rows,
             size,

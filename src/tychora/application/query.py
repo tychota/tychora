@@ -824,7 +824,14 @@ class QueryService:
             ),
             lanes=survivors.lanes,
         )
-        facts = await prepare_rerank_facts(self.owner, attempt, admission, votes, ctx)
+        paths = tuple(
+            path
+            for item in (*graph_candidates.candidates, *graph_candidates.enrichments)
+            for path in item.paths
+        )
+        facts = await prepare_rerank_facts(
+            self.owner, attempt, admission, votes, ctx, paths=paths
+        )
         if request.exact_only or plan is not None and not plan.rerank:
             ranked = RankedEvidence(
                 tuple(
@@ -867,11 +874,6 @@ class QueryService:
                     unavailable=self.rerank_unavailable,
                 ),
             )
-        paths = tuple(
-            path
-            for item in (*graph_candidates.candidates, *graph_candidates.enrichments)
-            for path in item.paths
-        )
         relations = []
         seen_paths = set()
         eligible = view.graph_eligible_unit_ids
@@ -905,9 +907,10 @@ class QueryService:
             )
         selection = assemble_segments(
             ranked,
-            view,
+            attempt.view,
             self.owner.config,
             self.counter,
+            graph_view=attempt.legacy,
             continuation_paths=paths,
             historical_kind_roles=attempt.historical_kind_roles,
             total_tokens=request.budgets.max_tokens,
@@ -917,7 +920,9 @@ class QueryService:
             self.owner, attempt, ranked, ctx
         )
         visuals = select_visuals(visual_candidates, selection.segments)
-        records = prepare_records(selection, ranked, attempt)
+        records = await self.owner.run_read(
+            lambda tx: prepare_records(tx, selection, ranked, attempt), ctx
+        )
         checks = RelationChecks(status="not_evaluated")
         check_settings = self.owner.config.values.checks.relations
         if (

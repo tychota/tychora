@@ -9,6 +9,7 @@ file, so such a slice validates on its own.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -25,11 +26,12 @@ SOURCE_COLUMNS = ",".join(SourceRow.model_fields)
 
 @dataclass(frozen=True, slots=True)
 class BindingScope:
-    """The rows of one extraction, or of one code file within it, as SQL fragments."""
+    """The rows of one extraction, one code file or some units of it, as SQL fragments."""
 
     extraction_id: str
     revision_id: str
     relative_path: str | None = None
+    unit_ids: tuple[str, ...] | None = None
 
     @classmethod
     def of(cls, member: SnapshotMember, relative_path: str | None) -> BindingScope:
@@ -38,6 +40,11 @@ class BindingScope:
 
     def units(self) -> tuple[str, tuple[str, ...]]:
         """Select the scope's evidence units through the alias ``u``."""
+        if self.unit_ids is not None:
+            return (
+                "u.extraction_id=? AND u.unit_id IN (SELECT value FROM json_each(?))",
+                (self.extraction_id, json.dumps(sorted(set(self.unit_ids)))),
+            )
         if self.relative_path is None:
             return "u.extraction_id=?", (self.extraction_id,)
         return (
@@ -50,8 +57,8 @@ class BindingScope:
         )
 
     def assets(self) -> tuple[str, tuple[str, ...]]:
-        """Select the scope's assets through the alias ``a``."""
-        if self.relative_path is None:
+        """Select the scope's assets through the alias ``a``: linked ones for a part."""
+        if self.relative_path is None and self.unit_ids is None:
             return "a.extraction_id=?", (self.extraction_id,)
         units, args = self.units()
         return (

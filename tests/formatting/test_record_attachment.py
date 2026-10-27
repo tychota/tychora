@@ -6,7 +6,7 @@ from types import MappingProxyType
 import pytest
 
 from tests.formatting.test_response_budget import segment
-from tests.helpers.eligibility import legacy_attempt
+from tests.helpers.eligibility import revision_attempt, sets_transaction
 from tests.retrieval.test_segments import case, config
 from tests.typed_json import json_object, json_string
 from tychora.configuration.registry import Registry
@@ -67,13 +67,14 @@ def test_retained_feedback_record_has_complete_eligible_dependencies(tmp_path):
         text_budget=900,
         visual_reserved_tokens=0,
     )
-    attempt = legacy_attempt(
+    attempt = revision_attempt(
         view,
         historical_kind_envelopes=MappingProxyType(
             {"feedback@1": json_object(registry.historical_definitions(), "feedback@1")}
         ),
     )
-    prepared = prepare_records(selection, ranked, attempt)
+    tx = sets_transaction({uid: frozenset({bundle.revision.revision_id, uid})})
+    prepared = prepare_records(tx, selection, ranked, attempt)
     assert len(prepared) == 1
     assert prepared[0].value == value
     assert prepared[0].dependencies == frozenset({uid})
@@ -92,6 +93,7 @@ def test_retained_feedback_record_has_complete_eligible_dependencies(tmp_path):
     )
     assert (
         prepare_records(
+            tx,
             selection,
             RankedEvidence((hidden_item,)),
             attempt,
@@ -178,11 +180,13 @@ def test_changed_original_schema_envelope_controls_retained_record(tmp_path):
         {key: val for key, val in changed.items() if key != "envelope_digest"},
     )
 
+    tx = sets_transaction({uid: frozenset({bundle.revision.revision_id, uid})})
     assert (
         prepare_records(
+            tx,
             selection,
             RankedEvidence((retained,)),
-            legacy_attempt(
+            revision_attempt(
                 view,
                 historical_kind_envelopes=MappingProxyType(
                     {"feedback@1": FrozenJsonMap(original)}
@@ -193,9 +197,10 @@ def test_changed_original_schema_envelope_controls_retained_record(tmp_path):
     )
     with pytest.raises(TychoraError):
         prepare_records(
+            tx,
             selection,
             RankedEvidence((retained,)),
-            legacy_attempt(
+            revision_attempt(
                 view,
                 historical_kind_envelopes=MappingProxyType(
                     {"feedback@1": FrozenJsonMap(changed)}

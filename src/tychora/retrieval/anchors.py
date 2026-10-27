@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from tychora.contracts.eligibility import EligibilityView
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import AnchorRange
-from tychora.contracts.graph import LegacyEligibilityView
 from tychora.contracts.indexing import PreparedExtraction
 from tychora.retrieval.rerank import RankedEvidenceItem, RerankMatch
 
@@ -14,7 +14,7 @@ def permitted_ranges(
     unit_id: str,
     start: int,
     end: int,
-    view: LegacyEligibilityView,
+    view: EligibilityView,
 ) -> tuple[tuple[int, int], ...]:
     """Intersect a source range with every canonical owner and current grant."""
     try:
@@ -25,12 +25,6 @@ def permitted_ranges(
         ) from None
     if start < 0 or end <= start or end > len(representation.unit.text):
         raise TychoraError("INTEGRITY_ERROR", "Source anchor exceeds retained text.")
-    allowed = (
-        view.revision_ids
-        | view.context_unit_ids
-        | view.structural_unit_ids
-        | view.asset_ids
-    )
     result: list[tuple[int, int]] = []
     cursor = start
     for interval in representation.ownership:
@@ -39,7 +33,7 @@ def permitted_ranges(
         left, right = max(start, interval.char_start), min(end, interval.char_end)
         if left != cursor:
             raise TychoraError("INTEGRITY_ERROR", "Source ownership has a gap.")
-        if interval.dependency_ids <= allowed:
+        if view.allows(interval.dependency_ids):
             if result and result[-1][1] == left:
                 result[-1] = (result[-1][0], right)
             else:

@@ -1,7 +1,7 @@
 """Immutable indexing inputs, source windows, and receipt identities."""
 
 from collections.abc import Iterable
-from typing import Literal, Self
+from typing import Literal, Protocol, Self, cast
 from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
@@ -33,6 +33,43 @@ class OwnedInterval(Contract):
         if self.char_end <= self.char_start:
             raise ValueError("Owned interval must contain source text")
         return self
+
+
+class SymbolRecord(Protocol):
+    """The fields of a structured record that name a code symbol."""
+
+    @property
+    def unit_id(self) -> str:
+        """The unit the record belongs to."""
+        ...
+
+    @property
+    def record_type(self) -> str:
+        """The record's type; ``code_symbol`` names a symbol."""
+        ...
+
+    @property
+    def data_json(self) -> FrozenJsonMap:
+        """The record's value."""
+        ...
+
+
+def symbol_path(records: Iterable[SymbolRecord], unit_id: str) -> tuple[str, ...]:
+    """A code unit's file and qualified name from its one symbol record, or ``()``.
+
+    A unit with more than one symbol record is refused with ``ValueError``.
+    """
+    found = [
+        record
+        for record in records
+        if record.unit_id == unit_id and record.record_type == "code_symbol"
+    ]
+    if len(found) > 1:
+        raise ValueError("Code unit has multiple symbol records")
+    if not found:
+        return ()
+    data = found[0].data_json
+    return (cast(str, data["relative_path"]), cast(str, data["qualified_name"]))
 
 
 class RepresentationUnit(Contract):

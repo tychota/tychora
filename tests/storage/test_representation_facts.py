@@ -2,7 +2,13 @@
 
 import pytest
 
-from tests.helpers.corpus import reader, recomputed_facts, registry, seed_bundle
+from tests.helpers.corpus import (
+    add_manual,
+    reader,
+    recomputed_facts,
+    registry,
+    seed_bundle,
+)
 from tests.helpers.legacy import OutputCounter
 from tychora import Tychora
 from tychora.adapters.sqlite.connection import open_corpus
@@ -186,21 +192,6 @@ _MANUAL = (
 )
 
 
-def _add_manual(kb):
-    job = kb.sources.add(
-        {
-            "type": "text",
-            "source_key": "manual.md",
-            "collection_id": "default",
-            "kind": "document@1",
-            "format": "markdown",
-            "text": _MANUAL,
-            "metadata": {"title": "Pumps"},
-        }
-    )
-    assert kb.jobs.wait(job.id).state == "succeeded"
-
-
 def test_intervals_read_back_in_document_order(tmp_path, monkeypatch):
     committed: list[RepresentationFacts | None] = []
     commit = CorpusStore.commit_extraction
@@ -211,7 +202,7 @@ def test_intervals_read_back_in_document_order(tmp_path, monkeypatch):
 
     monkeypatch.setattr(CorpusStore, "commit_extraction", recording_commit)
     with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
-        _add_manual(kb)
+        add_manual(kb, _MANUAL, title="Pumps")
         owner = kb._workspace.owner
         (facts,) = committed
         assert facts is not None
@@ -230,7 +221,7 @@ def test_intervals_read_back_in_document_order(tmp_path, monkeypatch):
 def test_persisted_facts_equal_facts_recomputed_from_canonical_rows(tmp_path):
     """The coordinator's stored sets are the ones the stored rows imply."""
     with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
-        _add_manual(kb)
+        add_manual(kb, _MANUAL, title="Pumps")
         owner = kb._workspace.owner
 
         def read():

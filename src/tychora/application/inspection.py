@@ -8,12 +8,12 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-from tychora.adapters.sqlite.eligibility import retained_rows
 from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.application.discovery import (
     _permitted_resolutions,
     _scoped_resolution_rates,
 )
+from tychora.application.reranking import extraction_rows
 from tychora.configuration.graph_policy import resolve_graph_traversal_policy
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import CodepointRange, FrozenJsonMap
@@ -427,7 +427,7 @@ class InspectionService:
             # The retained representation validator reconstructs exact per-range
             # ownership from canonical locators/source parts, never from originals.
             if prepared is None:
-                prepared = prepare_extraction(retained_rows(owner.store, member))
+                prepared = prepare_extraction(extraction_rows(owner.db, extraction))
             representation = next(
                 (item for item in prepared.units if item.unit.unit_id == request.id),
                 None,

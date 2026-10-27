@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
 from tychora.configuration.compatibility import validate_historical_record
 from tychora.configuration.registry import Registry
-from tychora.contracts.base import FrozenJsonMap
+from tychora.contracts.base import FrozenJsonMap, thaw_json
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import (
     Citation,
@@ -24,7 +25,7 @@ from tychora.contracts.evidence import (
     VisualEvidence,
 )
 from tychora.contracts.graph import GraphBudget, LegacyEligibilityView
-from tychora.contracts.identity import digest
+from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.requests import (
     BudgetContract,
     QueryRequest,
@@ -38,8 +39,10 @@ from tychora.ports.tokens import TokenCounter
 from tychora.retrieval.segments import Selection
 
 if TYPE_CHECKING:
+    from tychora.contracts.eligibility import EligibilityView
     from tychora.ports.execution import ExecutionContext
     from tychora.ports.graph import GraphStore
+    from tychora.ports.repositories import ReadTransaction
     from tychora.retrieval.attempt import EligibilityAttempt
     from tychora.retrieval.rerank import RankedEvidence
 
@@ -630,24 +633,31 @@ def _record_dependencies(value: FrozenJsonMap, owner_id: str) -> frozenset[str]:
     return frozenset(dependencies)
 
 
+def _readable_units(
+    tx: ReadTransaction, view: EligibilityView, unit_ids: frozenset[str]
+) -> bool:
+    """Whether every unit has a persisted set the view allows."""
+    sets = tx.representations.dependencies(tuple(sorted(unit_ids)))
+    return len(sets) == len(unit_ids) and all(
+        view.allows(sets[unit_id]) for unit_id in unit_ids
+    )
+
+
 def prepare_records(
+    tx: ReadTransaction,
     selection: Selection,
     ranked: RankedEvidence,
     attempt: EligibilityAttempt,
 ) -> tuple[StructuredRecord, ...]:
     """Materialize records using the pinned original kind/schema envelopes."""
-    import json
-
-    from tychora.contracts.base import thaw_json
-    from tychora.contracts.identity import canonical_bytes
-
-    view = attempt.require_legacy()
-    eligible = view.context_unit_ids | view.structural_unit_ids
+    view = attempt.view
     results: dict[str, StructuredRecord] = {}
     for segment in selection.segments:
-        if segment.revision_id not in view.revision_ids:
+        if segment.revision_id not in view.revisions:
             raise TychoraError(
-                "INTEGRITY_ERROR", "Record owner revision differs from the pinned view."
+                "INTEGRITY_ERROR",
+                "Record owner revision differs from the pinned view.",
+                reason="invariant.unexpected",
             )
         owner = next(
             (
@@ -698,7 +708,7 @@ def prepare_records(
                 owner.prepared.representation(row.unit_id)
                 validate_historical_record(envelope, thaw_json(row.data_json))
                 dependencies = _record_dependencies(row.data_json, row.unit_id)
-                if not dependencies <= eligible:
+                if not _readable_units(tx, view, dependencies):
                     continue
                 record_id = digest(
                     "structured-record-v1",

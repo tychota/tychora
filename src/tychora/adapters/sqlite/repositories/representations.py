@@ -8,10 +8,13 @@ from collections.abc import Mapping
 from pydantic import ValidationError
 
 from tychora.contracts.base import Contract
+from tychora.contracts.corpus import RepresentationSlice
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.indexing import IntervalRow, RepresentationFacts
 from tychora.ports.repositories import ChunkRow, UnitRow
 
+from ..retained_bindings import BindingScope
+from .slices import prepared_slice, retained_rows
 from .workspace import require_write
 
 _IN_IDS = "IN (SELECT value FROM json_each(?))"
@@ -34,6 +37,16 @@ _INTERVALS = (
     "i.dependency_digest AS dependency_digest FROM ownership_intervals i "
     f"JOIN evidence_units u USING(unit_id) WHERE i.unit_id {_IN_IDS} "
     "ORDER BY u.extraction_id,u.ordinal,i.char_start"
+)
+
+# The unit's own extraction and boundary key; ``radius`` NULL keeps all of it.
+# Served by the ``units_extraction_boundary`` index.
+_NEIGHBOURS = (
+    "SELECT n.unit_id,n.extraction_id,n.boundary_key,n.ordinal,n.text_sha,"
+    "length(n.text) AS char_count FROM evidence_units u JOIN evidence_units n "
+    "ON n.extraction_id=u.extraction_id AND n.boundary_key=u.boundary_key "
+    "WHERE u.unit_id=? AND (? IS NULL OR abs(n.ordinal-u.ordinal)<=?) "
+    "ORDER BY n.ordinal"
 )
 
 
@@ -92,6 +105,43 @@ class SqliteRepresentationRepository:
     def intervals(self, unit_ids: tuple[str, ...]) -> tuple[IntervalRow, ...]:
         """Return the ownership intervals of these units in unit and start order."""
         return self._select(IntervalRow, _INTERVALS, unit_ids)
+
+    def neighbours(self, unit_id: str, radius: int | None) -> tuple[UnitRow, ...]:
+        """Units of the same extraction and boundary key within ``radius`` ordinals, by ordinal."""
+        return rows_by_name(
+            UnitRow, self._db.execute(_NEIGHBOURS, (unit_id, radius, radius))
+        )
+
+    def slice(
+        self,
+        extraction_id: str,
+        *,
+        unit_ids: tuple[str, ...] = (),
+        relative_path: str | None = None,
+    ) -> RepresentationSlice:
+        """Retained rows and persisted ownership of the listed units or of one code file."""
+        row = self._db.execute(
+            "SELECT revision_id FROM extractions WHERE extraction_id=?",
+            (extraction_id,),
+        ).fetchone()
+        if row is None:
+            raise TychoraError(
+                "INTEGRITY_ERROR",
+                "Slice extraction is not registered.",
+                reason="canonical.row_invalid",
+            )
+        scope = BindingScope(
+            extraction_id,
+            row[0],
+            relative_path,
+            None if relative_path is not None else unit_ids,
+        )
+        rows = retained_rows(self._db, scope)
+        intervals = self.intervals(tuple(unit.unit_id for unit in rows.units))
+        sets = self.dependencies(tuple({item.dependency_digest for item in intervals}))
+        return RepresentationSlice(
+            rows=rows, prepared=prepared_slice(rows, intervals, sets)
+        )
 
     def write(self, facts: RepresentationFacts) -> None:
         """Store facts once; a repeat is a no-op and a different set is refused."""

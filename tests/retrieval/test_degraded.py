@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from tests.helpers.corpus import reader, seed_bundle
-from tests.helpers.eligibility import legacy_attempt
+from tests.helpers.corpus import commit_with_facts, reader, seed_bundle
+from tests.helpers.eligibility import legacy_attempt, revision_view
 from tests.providers.test_reranker import (
     LengthCounter,
     RecordingRerankTransport,
@@ -59,6 +59,7 @@ def _case(*, offline: bool, degraded: bool, disabled: bool = False):
         matching_window_ids=(bundle.chunks[0].chunk_id,),
     )
     admission = Admission((candidate,), (), {}, {}, (), {}, 63)
+    owned = frozenset({unit.unit_id, bundle.revision.revision_id})
     facts = RerankFacts(
         bundle,
         prepare_extraction(bundle),
@@ -73,19 +74,12 @@ def _case(*, offline: bool, degraded: bool, disabled: bool = False):
                 1.0,
             ),
         ),
-    )
-    view = SimpleNamespace(
-        revision_ids=frozenset({bundle.revision.revision_id}),
-        context_unit_ids=frozenset({unit.unit_id}),
-        structural_unit_ids=frozenset(),
-        asset_ids=frozenset(),
-        chunk_ids=frozenset({bundle.chunks[0].chunk_id}),
+        dependencies={unit.unit_id: owned, bundle.chunks[0].chunk_id: owned},
     )
     attempt = SimpleNamespace(
-        require_legacy=lambda: view,
-        dependencies_for=lambda representation_id: frozenset(
-            {unit.unit_id, bundle.revision.revision_id}
-        ),
+        view=revision_view(
+            {bundle.revision.revision_id: bundle.extraction.extraction_id}
+        )
     )
     owner = SimpleNamespace(
         config=SimpleNamespace(
@@ -248,9 +242,8 @@ async def test_offline_factory_does_not_construct_transport(tmp_path):
 @pytest.mark.asyncio
 async def test_attempt_dependency_lookup_denial_blocks_before_provider():
     admission, context = _case(offline=False, degraded=True)
-    context.attempt.dependencies_for = lambda representation_id: (_ for _ in ()).throw(
-        TychoraError("FORBIDDEN_SCOPE", "Representation is not eligible")
-    )
+    key = admission.selected[0].key
+    context.facts[key] = replace(context.facts[key], dependencies={})
     with pytest.raises(TychoraError) as error:
         await rerank_candidates(
             QueryRequest(input=QuestionInput(text="query")),
@@ -264,15 +257,15 @@ async def test_attempt_dependency_lookup_denial_blocks_before_provider():
 async def test_attempt_unit_dependency_denial_blocks_before_provider():
     admission, context = _case(offline=False, degraded=True)
     candidate = admission.selected[0]
-
-    def dependencies_for(representation_id):
-        if representation_id == candidate.key[1]:
-            raise TychoraError("FORBIDDEN_SCOPE", "Representation is not eligible")
-        return frozenset(
-            {candidate.key[1], context.facts[candidate.key].rows.revision.revision_id}
-        )
-
-    context.attempt.dependencies_for = dependencies_for
+    facts = context.facts[candidate.key]
+    context.facts[candidate.key] = replace(
+        facts,
+        dependencies={
+            window: dependencies
+            for window, dependencies in facts.dependencies.items()
+            if window != candidate.key[1]
+        },
+    )
     with pytest.raises(TychoraError) as error:
         await rerank_candidates(
             QueryRequest(input=QuestionInput(text="query")),
@@ -323,7 +316,7 @@ async def _owner_case(tmp_path: Path, *, upload: bool = True):
                         ),
                     }
                 )
-                owner.store.commit_extraction(bundle)
+                commit_with_facts(owner.store, bundle)
                 bundles.append(bundle)
             epoch = owner.db.execute(
                 "SELECT policy_epoch FROM workspaces WHERE workspace_id=?",
@@ -363,6 +356,10 @@ async def _owner_case(tmp_path: Path, *, upload: bool = True):
         execution = ExecutionContext()
         attempt = legacy_attempt(
             view,
+            grants={
+                bundle.revision.revision_id: bundle.extraction.extraction_id
+                for bundle in bundles
+            },
             dependencies={
                 representation_id: frozenset(
                     {bundle.revision.revision_id, bundle.units[0].unit_id}
@@ -400,6 +397,7 @@ async def _owner_case(tmp_path: Path, *, upload: bool = True):
                         1.0,
                     ),
                 ),
+                dependencies=attempt.legacy_dependencies,
             )
             for candidate, bundle in zip(candidates, bundles, strict=True)
         }
@@ -558,31 +556,22 @@ async def test_owner_rejects_forged_index_window_before_transport(tmp_path):
         candidate = admission.selected[0]
         forged_id = "forged-window-id"
         facts = dict(context.facts)
+        # The forged window carries a readable set: only the store refuses it.
         facts[candidate.key] = replace(
             facts[candidate.key],
             matches=(replace(facts[candidate.key].matches[0], window_id=forged_id),),
-        )
-        legacy = context.attempt.legacy
-        assert legacy is not None
-        forged_view = legacy.model_copy(
-            update={"chunk_ids": legacy.chunk_ids | {forged_id}}
-        )
-        forged_dependencies = {
-            **context.attempt.legacy_dependencies,
-            forged_id: context.attempt.legacy_dependencies[
-                candidate.matching_window_ids[0]
-            ],
-        }
-        forged_attempt = replace(
-            context.attempt,
-            legacy=forged_view,
-            legacy_dependencies=forged_dependencies,
+            dependencies={
+                **facts[candidate.key].dependencies,
+                forged_id: facts[candidate.key].dependencies[
+                    candidate.matching_window_ids[0]
+                ],
+            },
         )
         with pytest.raises(TychoraError) as error:
             await rerank_candidates(
                 QueryRequest(input=QuestionInput(text="query")),
                 admission,
-                replace(context, attempt=forged_attempt, facts=facts),
+                replace(context, facts=facts),
             )
         assert error.value.code == "FORBIDDEN_SCOPE"
         assert transport.calls == []
