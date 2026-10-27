@@ -18,7 +18,7 @@ from typing import Literal
 from tests.indexing.test_publication import RecordingCounter, RecordingEmbedder
 from tychora.adapters.chroma.index import ChromaVectorIndex
 from tychora.adapters.ladybug.generation import LadybugGraphStore
-from tychora.adapters.sqlite.lexical import LexicalIndex
+from tychora.adapters.sqlite.lexical import SqliteLexicalSearch
 from tychora.adapters.voyage.query import VoyageTextQueryProvider
 from tychora.adapters.voyage.request_types import RawVoyageResponse
 from tychora.adapters.voyage.runtime import VoyageRuntime
@@ -28,10 +28,10 @@ from tychora.application.query import QueryService
 from tychora.application.sources import SourceService
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.base import FrozenJsonMap
-from tychora.contracts.candidates import CandidateKey, ChannelCandidates
+from tychora.contracts.candidates import CandidateKey
+from tychora.contracts.eligibility import EligibilityView
 from tychora.contracts.embeddings import EmbeddingCapabilities
 from tychora.contracts.evidence import QueryResult
-from tychora.contracts.graph import LegacyEligibilityView
 from tychora.contracts.identity import digest
 from tychora.contracts.indexing import FamilySpec
 from tychora.contracts.requests import QueryRequest, RequestScope, SourceInput
@@ -46,6 +46,7 @@ from tychora.evaluation.benchmarks import (
 )
 from tychora.indexing.coordinator import ProjectionCoordinator
 from tychora.ports.execution import ExecutionContext
+from tychora.ports.search import RankedOwners
 from tychora.retrieval.attempt import EligibilityAttempt
 from tychora.retrieval.cache import QueryCaches
 
@@ -207,7 +208,6 @@ class EngineSession:
             lambda: coordinator._retained_vector_spec(slot, "text") == retained_spec,
             ExecutionContext(),
         )
-        self.lexical = LexicalIndex(self.owner.db)
         self.token_counter = RecordingCounter()
         self.transport = self._Transport(self)
         runtime = VoyageRuntime(
@@ -249,7 +249,6 @@ class EngineSession:
             self.owner,
             output_counter=Counter(),
             caches=self.caches,
-            lexical=self.lexical,
             text_provider=VoyageTextQueryProvider(embedder),
             text_index=self.index,
         )
@@ -303,20 +302,21 @@ class EngineSession:
             self.counts = replace(self.counts, stages_ms=stages)
 
     def _instrument(self) -> None:
-        lexical_search = self.lexical.search
+        lexical_search = SqliteLexicalSearch.search
         vector_search = self.index.search
         revalidate = EligibilityAttempt.revalidate
         cached_result = self.caches.get_result
 
         def measured_lexical(
-            view: LegacyEligibilityView,
+            search: SqliteLexicalSearch,
+            view: EligibilityView,
             query: str,
-            candidate_limit: int,
+            limit: int,
             ctx: ExecutionContext,
-        ) -> ChannelCandidates:
+        ) -> RankedOwners:
             self._bump(retrieval_calls=1)
             return self._time(
-                "lexical_search", lexical_search, view, query, candidate_limit, ctx
+                "lexical_search", lexical_search, search, view, query, limit, ctx
             )
 
         def measured_vector(
@@ -360,9 +360,11 @@ class EngineSession:
                 self._bump(cache_hits=1)
             return value
 
-        vars(self.lexical)["search"] = measured_lexical
         vars(self.index)["search"] = measured_vector
-        # Attempts are created per query, so the class method is wrapped until close.
+        # Attempts and read transactions are created per query, so the class
+        # methods are wrapped until close.
+        self._lexical_search = lexical_search
+        SqliteLexicalSearch.search = measured_lexical  # ty: ignore[invalid-assignment]
         self._revalidate = revalidate
         EligibilityAttempt.revalidate = measured_revalidate  # ty: ignore[invalid-assignment]
         vars(self.caches)["get_result"] = measured_result
@@ -400,6 +402,7 @@ class EngineSession:
 
     def close(self) -> None:
         EligibilityAttempt.revalidate = self._revalidate
+        SqliteLexicalSearch.search = self._lexical_search
         self.owner_context.__exit__(None, None, None)
         if self._owns_trace:
             tracemalloc.stop()

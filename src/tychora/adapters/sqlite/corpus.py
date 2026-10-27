@@ -16,11 +16,9 @@ from tychora.configuration.collection_policy import require_active_collection
 from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
 from tychora.contracts.base import Contract, FrozenJsonMap
-from tychora.contracts.candidates import ChannelCandidates
 from tychora.contracts.corpus import ExtractionBundle, ReviewTarget
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit, Geometry
-from tychora.contracts.graph import LegacyEligibilityView
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.indexing import RepresentationFacts
 from tychora.contracts.publication import (
@@ -158,13 +156,6 @@ class CorpusStore(PolicyRepository):
         from .eligibility import policy_epoch
 
         return policy_epoch(self, workspace_id)
-
-    def lookup_identifiers(
-        self, namespaced: tuple[str, ...], view: LegacyEligibilityView, limit: int
-    ) -> ChannelCandidates:
-        from .lexical import lookup_identifiers
-
-        return lookup_identifiers(self, namespaced, view, limit)
 
     def resolve_snapshot(self, selector: str | None) -> SnapshotView:
         """Read the selected or active snapshot from SQL; no artifact is opened."""

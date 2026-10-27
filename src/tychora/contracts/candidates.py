@@ -24,3 +24,4 @@ class ChannelCandidates(Contract):
     distinct_candidate_count: NonNegativeInt = 0
     lexical_statistics_epoch: NonNegativeInt | None = None
     complete: bool = True
+    truncated: bool = False

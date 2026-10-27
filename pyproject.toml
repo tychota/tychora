@@ -192,7 +192,7 @@ ignore_imports = [
   "tychora.adapters.sqlite.eligibility -> tychora.retrieval.eligibility",  # tychora/adapters/sqlite/eligibility.py:40
   "tychora.adapters.sqlite.evaluations -> tychora.evaluation.dataset",  # tychora/adapters/sqlite/evaluations.py:14
   "tychora.adapters.sqlite.history -> tychora.retrieval.response",  # tychora/adapters/sqlite/history.py:23
-  "tychora.adapters.sqlite.lexical -> tychora.retrieval.lexical_query",  # tychora/adapters/sqlite/lexical.py:12
+  "tychora.adapters.sqlite.lexical -> tychora.retrieval.lexical_query",  # tychora/adapters/sqlite/lexical.py:13
   "tychora.adapters.sqlite.publication -> tychora.indexing.receipts",  # tychora/adapters/sqlite/publication.py:31
   "tychora.adapters.vision.anthropic -> tychora.application.owner",  # tychora/adapters/vision/anthropic.py:10
   "tychora.adapters.vision.local -> tychora.application.owner",  # tychora/adapters/vision/local.py:12

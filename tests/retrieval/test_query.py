@@ -22,7 +22,7 @@ from tests.retrieval.test_segments import config as base_config
 from tychora.adapters.chroma.index import ChromaVectorIndex
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
-from tychora.adapters.sqlite.lexical import LexicalIndex
+from tychora.adapters.sqlite.lexical import SqliteLexicalSearch
 from tychora.adapters.voyage.query import (
     VoyageTextQueryProvider,
     VoyageVisualQueryProvider,
@@ -579,7 +579,7 @@ async def test_offline_degraded_retained_lexical_replay_does_not_require_reranke
 @pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")
 @pytest.mark.asyncio
 async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     settings = tmp_path / "workspace.toml"
     settings.write_text(
@@ -661,14 +661,16 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
             def close(self):
                 pass
 
-        class CountingLexical(LexicalIndex):
+        class CountingLexical:
             def __init__(self):
-                super().__init__(owner.db)
                 self.calls = 0
+                original = SqliteLexicalSearch.search
 
-            def search(self, view, query, candidate_limit, ctx):
-                self.calls += 1
-                return super().search(view, query, candidate_limit, ctx)
+                def search(adapter, view, query, limit, ctx):
+                    self.calls += 1
+                    return original(adapter, view, query, limit, ctx)
+
+                monkeypatch.setattr(SqliteLexicalSearch, "search", search)
 
         transport = Transport()
         caches = QueryCaches()
@@ -689,7 +691,6 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
             owner,
             output_counter=OutputTokenCounter(asset_path("TYCHORA_TEST_MODEL_CACHE")),
             caches=caches,
-            lexical=lexical,
             text_provider=VoyageTextQueryProvider(embedder),
             text_index=index,
         )
@@ -760,7 +761,6 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
         retained_service = QueryService(
             owner,
             output_counter=service.counter,
-            lexical=lexical,
             text_provider=VoyageTextQueryProvider(embedder),
             text_index=index,
             caches=caches,

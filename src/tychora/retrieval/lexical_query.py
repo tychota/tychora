@@ -3,16 +3,16 @@
 import re
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from typing import cast
+from typing import Literal, cast
 
 from tychora.configuration.registry import Registry
-from tychora.contracts.candidates import ChannelCandidates
+from tychora.contracts.candidates import ChannelCandidate, ChannelCandidates
+from tychora.contracts.eligibility import EligibilityView
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.graph import LegacyEligibilityView
 from tychora.contracts.requests import PassageInput, QueryRequest, QuestionInput
-from tychora.ports.corpus import CorpusStore
 from tychora.ports.execution import ExecutionContext
-from tychora.ports.lexical import LexicalIndex
+from tychora.ports.repositories import ReadTransaction
+from tychora.ports.search import RankedOwners
 
 _TOKEN = re.compile(r"\w+", re.UNICODE)
 _PHRASE = re.compile(r'"([^"]+)"')
@@ -74,20 +74,59 @@ def extract_identifiers(text: str, registry: Registry) -> tuple[str, ...]:
     return tuple(result)
 
 
+def _channel(
+    name: Literal["exact", "lexical"],
+    view: EligibilityView,
+    ranked: RankedOwners,
+    epoch: int,
+    *,
+    scored: bool,
+) -> ChannelCandidates:
+    """A complete channel; ``truncated`` when a window or hit limit bound it."""
+
+    def candidates(kind: str) -> tuple[ChannelCandidate, ...]:
+        return tuple(
+            ChannelCandidate(
+                key=owner.key,
+                rank=owner.rank,
+                matching_window_ids=owner.window_ids,
+                score=owner.score if scored else None,
+            )
+            for owner in ranked.owners
+            if owner.key[0] == kind
+        )
+
+    return ChannelCandidates(
+        channel=name,
+        snapshot_id=view.snapshot_id,
+        policy_epoch=view.policy_epoch,
+        source_candidates=candidates("unit"),
+        asset_candidates=candidates("asset"),
+        matching_window_count=ranked.detail.get("windows", 0),
+        distinct_candidate_count=ranked.detail.get(
+            "owners", ranked.detail.get("hits", 0)
+        ),
+        lexical_statistics_epoch=epoch,
+        complete=True,
+        truncated=ranked.truncated,
+    )
+
+
 def retrieve_exact_lexical(
-    store: CorpusStore,
-    lexical: LexicalIndex,
-    view: LegacyEligibilityView,
+    tx: ReadTransaction,
+    view: EligibilityView,
     request: QueryRequest,
     registry: Registry,
     candidate_limit: int,
     ctx: ExecutionContext,
 ) -> tuple[ChannelCandidates, ...]:
-    """Dispatch exact and lexical channels while preserving exact-only isolation."""
+    """Run the exact channel, then lexical unless the request is exact-only."""
     ctx.checkpoint()
     if len(request.exact_identifiers) > 16:
         raise TychoraError(
-            "INVALID_REQUEST", "At most 16 exact identifiers are accepted"
+            "INVALID_REQUEST",
+            "At most 16 exact identifiers are accepted",
+            reason="request.limit_exceeded",
         )
     query = (
         request.input.text
@@ -99,10 +138,17 @@ def retrieve_exact_lexical(
             (*request.exact_identifiers, *extract_identifiers(query, registry))
         )
     )[:16]
-    exact = store.lookup_identifiers(namespaced, view, min(candidate_limit, 32))
+    epoch = tx.workspace.lexical_epoch()
+    exact = (
+        tx.lexical.exact(view, namespaced, min(candidate_limit, 32), ctx)
+        if namespaced
+        else RankedOwners(owners=())
+    )
+    exact_channel = _channel("exact", view, exact, epoch, scored=False)
     if request.exact_only or not query:
-        return (exact,)
-    return (exact, lexical.search(view, query, candidate_limit, ctx))
+        return (exact_channel,)
+    lexical = tx.lexical.search(view, query, candidate_limit, ctx)
+    return (exact_channel, _channel("lexical", view, lexical, epoch, scored=True))
 
 
 def lexical_expression(text: str, stopwords: frozenset[str]) -> str | None:

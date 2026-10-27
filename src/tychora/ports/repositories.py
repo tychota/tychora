@@ -32,6 +32,7 @@ from tychora.contracts.publication import (
     SnapshotView,
 )
 from tychora.contracts.snapshots import IndexFamily, MembershipPage, PageBatch
+from tychora.ports.search import LexicalSearch
 
 MAX_CURSOR_CHARS = 1024
 
@@ -517,6 +518,7 @@ class ReadTransaction(Protocol):
     snapshots: SnapshotRepository
     representations: RepresentationRepository
     eligibility: EligibilityRepository
+    lexical: LexicalSearch
 
 
 class WriteTransaction(ReadTransaction, Protocol):

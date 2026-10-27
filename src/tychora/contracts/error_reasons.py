@@ -377,6 +377,12 @@ _ENTRIES = (
     ),
     Reason(
         "INVALID_REQUEST",
+        "identifier.namespace_unknown",
+        False,
+        "Prefix the identifier with a registered namespace such as rule:, provision: or code.qualified_name:.",
+    ),
+    Reason(
+        "INVALID_REQUEST",
         "mode.unavailable",
         False,
         "Use a retrieval mode the profile defines.",

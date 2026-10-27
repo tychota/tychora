@@ -1,186 +1,167 @@
-"""SQLite FTS5 ranking over materialized selected and eligible rows."""
+"""SQLite FTS5 and identifier search restricted to an eligibility view by joins."""
 
+import json
 import sqlite3
 from collections import defaultdict
-from threading import RLock
+from functools import lru_cache
 from typing import Literal
 
-from tychora.contracts.candidates import ChannelCandidate, ChannelCandidates
+from tychora.contracts.eligibility import EligibilityView
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.graph import LegacyEligibilityView
 from tychora.ports.execution import ExecutionContext
+from tychora.ports.search import RankedOwner, RankedOwners
 from tychora.retrieval.lexical_query import lexical_expression, normalize_identifier
 
-
-class LexicalIndex:
-    def __init__(
-        self, db: sqlite3.Connection, *, stopwords: frozenset[str] = frozenset()
-    ):
-        self.db = db
-        self.stopwords = stopwords
-        self._lock = RLock()
-
-    def search(
-        self,
-        view: LegacyEligibilityView,
-        query: str,
-        candidate_limit: int,
-        ctx: ExecutionContext,
-    ) -> ChannelCandidates:
-        if not 1 <= candidate_limit <= 80:
-            raise TychoraError(
-                "INVALID_REQUEST", "Lexical candidate limit must be 1..80"
-            )
-        expression = lexical_expression(query, self.stopwords)
-        ctx.checkpoint()
-        with self._lock:
-            if self.db.in_transaction:
-                raise TychoraError(
-                    "INTEGRITY_ERROR",
-                    "Lexical search requires a fresh read transaction",
-                )
-            self.db.execute("BEGIN")
-            try:
-                epoch_row = self.db.execute(
-                    "SELECT lexical_statistics_epoch FROM workspaces JOIN snapshots USING(workspace_id) WHERE snapshot_id=?",
-                    (view.snapshot_id,),
-                ).fetchone()
-                if epoch_row is None:
-                    raise TychoraError("NOT_FOUND", "Selected snapshot is unavailable")
-                epoch = epoch_row[0]
-                rows: list[tuple[str, str, str | None, float]] = []
-                if expression and view.chunk_ids and view.selected_batch_ids:
-                    self.db.execute(
-                        "CREATE TEMP TABLE eligible_lexical_rows(rowid INTEGER PRIMARY KEY)"
-                    )
-                    self.db.execute(
-                        "CREATE TEMP TABLE eligible_chunk_ids(chunk_id TEXT PRIMARY KEY)"
-                    )
-                    self.db.execute(
-                        "CREATE TEMP TABLE selected_lexical_batch_ids(batch_id TEXT PRIMARY KEY)"
-                    )
-                    self.db.executemany(
-                        "INSERT INTO eligible_chunk_ids VALUES (?)",
-                        ((chunk,) for chunk in view.chunk_ids),
-                    )
-                    self.db.executemany(
-                        "INSERT INTO selected_lexical_batch_ids VALUES (?)",
-                        ((batch,) for batch in view.selected_batch_ids),
-                    )
-                    self.db.execute(
-                        """INSERT INTO eligible_lexical_rows
-                        SELECT r.rowid FROM lexical_records r
-                        JOIN eligible_chunk_ids c ON c.chunk_id=r.chunk_id
-                        JOIN selected_lexical_batch_ids b ON b.batch_id=r.batch_id
-                        JOIN snapshot_batches s ON s.batch_id=r.batch_id
-                          AND s.snapshot_id=? AND s.slot='lexical'""",
-                        (view.snapshot_id,),
-                    )
-                    ctx.checkpoint()
-                    rows = self.db.execute(
-                        """WITH scored AS MATERIALIZED (
-                          SELECT r.rowid, r.chunk_id,
-                            bm25(lexical_fts,5.0,3.0,2.0,1.0,0.5) AS score
-                          FROM lexical_fts
-                          JOIN lexical_records r ON r.rowid=lexical_fts.rowid
-                          JOIN eligible_lexical_rows e ON e.rowid=r.rowid
-                          WHERE lexical_fts MATCH ?
-                        )
-                        SELECT scored.chunk_id,c.unit_id,p.asset_id,scored.score
-                        FROM scored JOIN chunks c ON c.chunk_id=scored.chunk_id
-                        LEFT JOIN asset_proxies p ON p.proxy_unit_id=c.unit_id
-                        ORDER BY scored.score,scored.chunk_id""",
-                        (expression,),
-                    ).fetchall()
-                ctx.checkpoint()
-                sources: dict[str, list[tuple[str, float]]] = defaultdict(list)
-                assets: dict[str, list[tuple[str, float]]] = defaultdict(list)
-                for chunk, unit, asset, score in rows:
-                    if asset is None and unit in view.source_unit_ids:
-                        sources[unit].append((chunk, score))
-                    elif asset in view.asset_ids and unit in view.proxy_unit_ids:
-                        assets[asset].append((chunk, score))
-                source_candidates = _rank(sources, "unit", candidate_limit)
-                asset_candidates = _rank(assets, "asset", candidate_limit)
-                return ChannelCandidates(
-                    channel="lexical",
-                    snapshot_id=view.snapshot_id,
-                    policy_epoch=view.policy_epoch,
-                    source_candidates=source_candidates,
-                    asset_candidates=asset_candidates,
-                    matching_window_count=sum(map(len, sources.values()))
-                    + sum(map(len, assets.values())),
-                    distinct_candidate_count=len(sources) + len(assets),
-                    lexical_statistics_epoch=epoch,
-                    # All eligible rows were scored; the cap only bounds the result.
-                    complete=True,
-                )
-            finally:
-                for table in (
-                    "eligible_lexical_rows",
-                    "eligible_chunk_ids",
-                    "selected_lexical_batch_ids",
-                ):
-                    self.db.execute(f"DROP TABLE IF EXISTS temp.{table}")
-                self.db.rollback()
+WINDOW_LIMIT = 4000
+OWNERS_PER_KIND = 80
+EXACT_LIMIT = 32
+MAX_IDENTIFIERS = 16
+_IN = "IN (SELECT value FROM json_each(?))"
+_SEARCH = (
+    "SELECT r.chunk_id,c.unit_id,p.asset_id,"
+    "bm25(lexical_fts,5.0,3.0,2.0,1.0,0.5) AS score FROM lexical_fts "
+    "JOIN lexical_records r ON r.rowid=lexical_fts.rowid "
+    "JOIN chunks c ON c.chunk_id=r.chunk_id "
+    "JOIN evidence_units u ON u.unit_id=c.unit_id "
+    "LEFT JOIN asset_proxies p ON p.proxy_unit_id=c.unit_id "
+    "WHERE lexical_fts MATCH ? AND r.batch_id IN (SELECT batch_id FROM snapshot_batches "
+    "WHERE snapshot_id=? AND slot='lexical') "
+    "AND (u.citable=1 OR p.proxy_unit_id IS NOT NULL)"
+)
+_EXACT = (
+    "SELECT i.unit_id FROM identifiers i JOIN evidence_units u ON u.unit_id=i.unit_id "
+    "JOIN snapshot_members m ON m.extraction_id=u.extraction_id "
+    "WHERE m.snapshot_id=? AND i.namespace=? AND i.normalized_value=? AND u.citable=1 "
+    "AND NOT EXISTS (SELECT 1 FROM asset_proxies p WHERE p.proxy_unit_id=u.unit_id)"
+)
 
 
-def _rank(
+@lru_cache(maxsize=256)
+def _json_ids(ids: frozenset[str]) -> str:
+    """One JSON binding per ID set; a cached view's sets keep their hash."""
+    return json.dumps(sorted(ids))
+
+
+def _restriction(
+    view: EligibilityView, extraction: str, unit: str, asset: str | None = None
+) -> tuple[str, tuple[str, ...]]:
+    """Predicates and bindings for the view's extractions, exclusions and filter."""
+    clauses: list[str] = []
+    args: list[str] = []
+    if not view.all_members_eligible:
+        clauses.append(f"{extraction} {_IN}")
+        args.append(_json_ids(view.extraction_ids))
+    if view.excluded_unit_ids:
+        clauses.append(f"{unit} NOT {_IN}")
+        args.append(_json_ids(view.excluded_unit_ids))
+    if asset is not None and view.excluded_asset_ids:
+        clauses.append(f"({asset} IS NULL OR {asset} NOT {_IN})")
+        args.append(_json_ids(view.excluded_asset_ids))
+    if view.unit_filter is not None:
+        clauses.append(f"{unit} {_IN}")
+        args.append(_json_ids(view.unit_filter))
+    return "".join(" AND " + clause for clause in clauses), tuple(args)
+
+
+def _ranked(
     groups: dict[str, list[tuple[str, float]]],
     kind: Literal["unit", "asset"],
     limit: int,
-) -> tuple[ChannelCandidate, ...]:
-    ordered = sorted(
-        groups.items(), key=lambda item: (min(score for _, score in item[1]), item[0])
-    )
+) -> tuple[RankedOwner, ...]:
+    """Dense ranks of the best-scored owners; windows arrive best first."""
+    ordered = sorted(groups.items(), key=lambda item: (item[1][0][1], item[0]))
     return tuple(
-        ChannelCandidate(
+        RankedOwner(
             key=(kind, owner),
             rank=rank,
-            matching_window_ids=tuple(chunk for chunk, _ in windows),
-            score=min(score for _, score in windows),
+            score=windows[0][1],
+            window_ids=tuple(chunk for chunk, _ in windows),
         )
         for rank, (owner, windows) in enumerate(ordered[:limit], 1)
     )
 
 
-def lookup_identifiers(
-    store, namespaced: tuple[str, ...], view: LegacyEligibilityView, limit: int
-) -> ChannelCandidates:
-    """Equality lookup restricted to original candidate units in the pinned snapshot."""
-    if len(namespaced) > 16 or not 1 <= limit <= 32:
+def _limit(value: int, upper: int) -> None:
+    """Refuse a candidate limit outside ``1..upper``."""
+    if not 1 <= value <= upper:
         raise TychoraError(
             "INVALID_REQUEST",
-            "Exact lookup accepts up to 16 identifiers and 32 candidates",
+            f"Candidate limit must be 1..{upper}",
+            reason="request.limit_exceeded",
         )
-    try:
-        parsed = tuple(normalize_identifier(value) for value in namespaced)
-    except ValueError:
-        raise TychoraError(
-            "INVALID_REQUEST", "Identifier requires a registered namespace and value"
-        ) from None
-    hits: dict[str, int] = {}
-    for index, (namespace, value) in enumerate(parsed):
-        rows = store.db.execute(
-            """SELECT i.unit_id FROM identifiers i
-            JOIN evidence_units u ON u.unit_id=i.unit_id
-            JOIN snapshot_members m ON m.extraction_id=u.extraction_id
-            WHERE m.snapshot_id=? AND i.namespace=? AND i.normalized_value=?
-            ORDER BY i.unit_id""",
-            (view.snapshot_id, namespace, value),
+
+
+class SqliteLexicalSearch:
+    """FTS5 ranking and identifier equality inside the caller's read transaction."""
+
+    def __init__(self, db: sqlite3.Connection) -> None:
+        self._db = db
+
+    def search(
+        self, view: EligibilityView, query: str, limit: int, ctx: ExecutionContext
+    ) -> RankedOwners:
+        """Rank owners by their best of at most ``WINDOW_LIMIT`` eligible windows."""
+        _limit(limit, OWNERS_PER_KIND)
+        expression = lexical_expression(query, frozenset())
+        if expression is None:
+            return RankedOwners(owners=(), detail={"windows": 0, "owners": 0})
+        restriction, args = _restriction(
+            view, "c.extraction_id", "c.unit_id", "p.asset_id"
         )
-        for (unit_id,) in rows:
-            if unit_id in view.source_unit_ids:
+        ctx.checkpoint()
+        rows = self._db.execute(
+            _SEARCH + restriction + " ORDER BY score,r.chunk_id LIMIT ?",
+            (expression, view.snapshot_id, *args, WINDOW_LIMIT),
+        ).fetchall()
+        ctx.checkpoint()
+        units: dict[str, list[tuple[str, float]]] = defaultdict(list)
+        assets: dict[str, list[tuple[str, float]]] = defaultdict(list)
+        for chunk, unit, asset, score in rows:
+            (assets[asset] if asset is not None else units[unit]).append((chunk, score))
+        return RankedOwners(
+            owners=(*_ranked(units, "unit", limit), *_ranked(assets, "asset", limit)),
+            truncated=len(rows) >= WINDOW_LIMIT,
+            detail={"windows": len(rows), "owners": len(units) + len(assets)},
+        )
+
+    def exact(
+        self,
+        view: EligibilityView,
+        identifiers: tuple[str, ...],
+        limit: int,
+        ctx: ExecutionContext,
+    ) -> RankedOwners:
+        """Citable original units carrying any identifier; every hit is counted."""
+        _limit(limit, EXACT_LIMIT)
+        if len(identifiers) > MAX_IDENTIFIERS:
+            raise TychoraError(
+                "INVALID_REQUEST",
+                f"At most {MAX_IDENTIFIERS} exact identifiers are accepted",
+                reason="request.limit_exceeded",
+            )
+        try:
+            parsed = tuple(normalize_identifier(value) for value in identifiers)
+        except ValueError:
+            raise TychoraError(
+                "INVALID_REQUEST",
+                "Identifier requires a registered namespace and value",
+                reason="identifier.namespace_unknown",
+            ) from None
+        restriction, args = _restriction(view, "u.extraction_id", "u.unit_id")
+        hits: dict[str, int] = {}
+        for index, (namespace, value) in enumerate(parsed):
+            ctx.checkpoint()
+            for (unit_id,) in self._db.execute(
+                _EXACT + restriction + " ORDER BY i.unit_id",
+                (view.snapshot_id, namespace, value, *args),
+            ):
                 hits.setdefault(unit_id, index)
-    ordered = sorted(hits, key=lambda unit: (hits[unit], unit))
-    return ChannelCandidates(
-        channel="exact",
-        snapshot_id=view.snapshot_id,
-        policy_epoch=view.policy_epoch,
-        source_candidates=tuple(
-            ChannelCandidate(key=("unit", unit), rank=rank)
-            for rank, unit in enumerate(ordered[:limit], 1)
-        ),
-        distinct_candidate_count=len(hits),
-        complete=len(hits) <= limit,
-    )
+        ordered = sorted(hits, key=lambda unit: (hits[unit], unit))
+        return RankedOwners(
+            owners=tuple(
+                RankedOwner(key=("unit", unit), rank=rank, score=0.0)
+                for rank, unit in enumerate(ordered[:limit], 1)
+            ),
+            truncated=len(hits) > limit,
+            detail={"hits": len(hits)},
+        )

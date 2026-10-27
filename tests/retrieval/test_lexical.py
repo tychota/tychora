@@ -2,10 +2,12 @@
 
 import sqlite3
 
-from tychora.adapters.sqlite.lexical import LexicalIndex
+import pytest
+
+from tests.helpers.eligibility import revision_view
+from tychora.adapters.sqlite import lexical as lexical_module
+from tychora.adapters.sqlite.lexical import SqliteLexicalSearch
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.graph import LegacyEligibilityView
-from tychora.contracts.identity import digest
 from tychora.ports.execution import ExecutionContext
 from tychora.retrieval.lexical_query import lexical_expression
 
@@ -37,36 +39,13 @@ def test_explicit_phrase_retains_internal_stopwords_for_adjacency():
     assert '"alpha the beta"' in expression
 
 
-def _view(*, chunks, batches=("old",), sources=(), proxies=(), assets=()):
-    return LegacyEligibilityView(
-        snapshot_id="snapshot",
-        policy_epoch=0,
-        scope_digest=digest("scope"),
-        eligibility_policy_digest=digest("policy"),
-        eligibility_request_digest=digest("request"),
-        selected_batch_ids=batches,
-        revision_ids=frozenset({"revision"}),
-        source_unit_ids=frozenset(sources),
-        context_unit_ids=frozenset(sources) | frozenset(proxies),
-        structural_unit_ids=frozenset(),
-        proxy_unit_ids=frozenset(proxies),
-        chunk_ids=frozenset(chunks),
-        asset_ids=frozenset(assets),
-        vector_record_ids=frozenset(),
-        blocked_assertion_ids=frozenset(),
-    )
-
-
 def _db():
     db = sqlite3.connect(":memory:", isolation_level=None)
     db.executescript("""
-        CREATE TABLE workspaces(workspace_id TEXT, lexical_statistics_epoch INTEGER);
-        INSERT INTO workspaces VALUES ('workspace', 7);
-        CREATE TABLE snapshots(snapshot_id TEXT, workspace_id TEXT);
-        INSERT INTO snapshots VALUES ('snapshot', 'workspace');
         CREATE TABLE snapshot_batches(snapshot_id TEXT, slot TEXT, batch_id TEXT);
         INSERT INTO snapshot_batches VALUES ('snapshot', 'lexical', 'old');
-        CREATE TABLE chunks(chunk_id TEXT, unit_id TEXT);
+        CREATE TABLE evidence_units(unit_id TEXT PRIMARY KEY, extraction_id TEXT, citable INTEGER);
+        CREATE TABLE chunks(chunk_id TEXT PRIMARY KEY, unit_id TEXT, extraction_id TEXT);
         CREATE TABLE asset_proxies(proxy_unit_id TEXT, asset_id TEXT);
         CREATE TABLE lexical_records(rowid INTEGER PRIMARY KEY, batch_id TEXT,
           chunk_id TEXT, identifiers TEXT, title TEXT, headings TEXT, body TEXT, context TEXT);
@@ -80,8 +59,14 @@ def _db():
     return db
 
 
-def _record(db, batch, chunk, unit, body, asset=None):
-    db.execute("INSERT INTO chunks VALUES (?,?)", (chunk, unit))
+def _record(
+    db, batch, chunk, unit, body, *, asset=None, extraction="extraction", citable=1
+):
+    db.execute(
+        "INSERT OR IGNORE INTO evidence_units VALUES (?,?,?)",
+        (unit, extraction, 0 if asset is not None else citable),
+    )
+    db.execute("INSERT INTO chunks VALUES (?,?,?)", (chunk, unit, extraction))
     if asset is not None:
         db.execute("INSERT INTO asset_proxies VALUES (?,?)", (unit, asset))
     db.execute(
@@ -90,125 +75,113 @@ def _record(db, batch, chunk, unit, body, asset=None):
     )
 
 
-def test_eligible_rows_are_scored_before_owner_limits_and_epoch_is_captured():
+def test_joins_restrict_to_snapshot_batches_eligible_extractions_and_exclusions():
     db = _db()
     for index in range(100):
         _record(db, "old", f"window-{index}", "repeated", "alpha")
     _record(db, "old", "end-window", "ending", "alpha beta")
     _record(db, "old", "hidden", "hidden-owner", "alpha " * 100)
+    _record(db, "old", "other", "other-owner", "alpha " * 50, extraction="other")
+    _record(db, "old", "heading", "heading-owner", "alpha " * 50, citable=0)
     _record(db, "new", "unpublished", "new-owner", "alpha " * 100)
-    view = _view(
-        chunks=tuple(f"window-{i}" for i in range(100)) + ("end-window",),
-        sources=("repeated", "ending"),
-    )
-    result = LexicalIndex(db).search(view, "alpha", 80, ExecutionContext())
-    assert {candidate.key for candidate in result.source_candidates} == {
+    view = revision_view(excluded_units=("hidden-owner",), all_members=False)
+    result = SqliteLexicalSearch(db).search(view, "alpha", 80, ExecutionContext())
+    assert {owner.key for owner in result.owners} == {
         ("unit", "repeated"),
         ("unit", "ending"),
     }
-    assert (
-        len(
-            next(
-                candidate.matching_window_ids
-                for candidate in result.source_candidates
-                if candidate.key[1] == "repeated"
-            )
-        )
-        == 100
-    )
-    assert result.lexical_statistics_epoch == 7
-    assert result.complete
+    repeated = next(o for o in result.owners if o.key[1] == "repeated")
+    assert len(repeated.window_ids) == 100
+    assert not result.truncated
     db.close()
 
 
-def test_proxy_windows_rank_in_independent_asset_pool():
+def test_proxy_windows_rank_in_an_independent_asset_pool():
     db = _db()
     _record(db, "old", "source-window", "source", "café")
     _record(db, "old", "proxy-window", "proxy", "cafe", asset="asset")
-    view = _view(
-        chunks=("source-window", "proxy-window"),
-        sources=("source",),
-        proxies=("proxy",),
-        assets=("asset",),
+    result = SqliteLexicalSearch(db).search(
+        revision_view(), "cafe", 80, ExecutionContext()
     )
-    result = LexicalIndex(db).search(view, "cafe", 80, ExecutionContext())
-    assert [candidate.key for candidate in result.source_candidates] == [
-        ("unit", "source")
-    ]
-    assert [candidate.key for candidate in result.asset_candidates] == [
-        ("asset", "asset")
-    ]
+    assert [o.key for o in result.owners if o.key[0] == "unit"] == [("unit", "source")]
+    assert [o.key for o in result.owners if o.key[0] == "asset"] == [("asset", "asset")]
     db.close()
 
 
-def test_epoch_change_is_visible_on_repeated_search():
+def test_lexical_ranks_survive_owner_grouping():
     db = _db()
-    _record(db, "old", "window", "source", "alpha")
-    view = _view(chunks=("window",), sources=("source",))
-    index = LexicalIndex(db)
-    first = index.search(view, "alpha", 80, ExecutionContext())
-    db.execute("UPDATE workspaces SET lexical_statistics_epoch=8")
-    second = index.search(view, "alpha", 80, ExecutionContext())
-    assert first.lexical_statistics_epoch == 7
-    assert second.lexical_statistics_epoch == 8
-    assert second.source_candidates
-    db.close()
-
-
-def test_cancelled_search_clears_owner_connection_temp_rows():
-    db = _db()
-    _record(db, "old", "window", "source", "alpha")
-    view = _view(chunks=("window",), sources=("source",))
-    index = LexicalIndex(db)
-
-    calls = 0
-
-    class CancelAfterMaterialization(ExecutionContext):
-        def checkpoint(self):
-            nonlocal calls
-            calls += 1
-            if calls == 2:
-                raise TychoraError("CANCELLED", "Cancelled")
-
-    try:
-        index.search(view, "alpha", 80, CancelAfterMaterialization())
-    except TychoraError as error:
-        assert error.code == "CANCELLED"
-    else:
-        raise AssertionError("search should cancel")
-    assert (
-        db.execute(
-            "SELECT name FROM sqlite_temp_master WHERE name LIKE 'eligible_%'"
-        ).fetchall()
-        == []
-    )
-    assert index.search(view, "alpha", 80, ExecutionContext()).source_candidates
-    db.close()
-
-
-def test_eighty_owner_caps_are_independent_and_ranks_are_dense():
-    db = _db()
-    source_chunks = []
-    proxy_chunks = []
     for index in range(81):
-        source_chunk = f"source-window-{index}"
-        proxy_chunk = f"proxy-window-{index}"
-        source_chunks.append(source_chunk)
-        proxy_chunks.append(proxy_chunk)
-        _record(db, "old", source_chunk, f"source-{index}", "alpha")
-        _record(db, "old", proxy_chunk, f"proxy-{index}", "alpha", f"asset-{index}")
-    view = _view(
-        chunks=(*source_chunks, *proxy_chunks),
-        sources=tuple(f"source-{index}" for index in range(81)),
-        proxies=tuple(f"proxy-{index}" for index in range(81)),
-        assets=tuple(f"asset-{index}" for index in range(81)),
+        _record(db, "old", f"source-window-{index}", f"source-{index}", "alpha")
+        _record(
+            db,
+            "old",
+            f"proxy-window-{index}",
+            f"proxy-{index}",
+            "alpha",
+            asset=f"asset-{index}",
+        )
+    result = SqliteLexicalSearch(db).search(
+        revision_view(), "alpha", 80, ExecutionContext()
     )
-    result = LexicalIndex(db).search(view, "alpha", 80, ExecutionContext())
-    assert len(result.source_candidates) == len(result.asset_candidates) == 80
-    assert [item.rank for item in result.source_candidates] == list(range(1, 81))
-    assert [item.rank for item in result.asset_candidates] == list(range(1, 81))
-    assert result.distinct_candidate_count == 162
-    # Every eligible row was scored: truncation to the cap is a bounded result,
-    # visible through the counts, not an incomplete index.
-    assert result.complete
+    units = [o for o in result.owners if o.key[0] == "unit"]
+    assets = [o for o in result.owners if o.key[0] == "asset"]
+    assert len(units) == len(assets) == 80
+    assert [o.rank for o in units] == list(range(1, 81))
+    assert [o.rank for o in assets] == list(range(1, 81))
+    assert result.detail["owners"] == 162
+    db.close()
+
+
+def test_window_limit_sets_truncated_not_incomplete(monkeypatch):
+    monkeypatch.setattr(lexical_module, "WINDOW_LIMIT", 3)
+    db = _db()
+    for index in range(5):
+        _record(db, "old", f"window-{index}", f"unit-{index}", "alpha")
+    result = SqliteLexicalSearch(db).search(
+        revision_view(), "alpha", 80, ExecutionContext()
+    )
+    assert result.truncated
+    assert result.detail["windows"] == 3
+    db.close()
+
+
+def test_eligible_extraction_binding_is_skipped_when_every_member_is_eligible():
+    db = _db()
+    _record(db, "old", "window", "unit", "alpha")
+    statements = []
+    db.set_trace_callback(statements.append)
+    search = SqliteLexicalSearch(db)
+    search.search(revision_view(all_members=True), "alpha", 80, ExecutionContext())
+    search.search(revision_view(all_members=False), "alpha", 80, ExecutionContext())
+    db.set_trace_callback(None)
+    fts = [s for s in statements if "lexical_fts MATCH" in s]
+    assert "json_each" not in fts[0]
+    assert "json_each" in fts[1]
+    db.close()
+
+
+def test_eligible_extraction_binding_is_built_once_per_view():
+    lexical_module._json_ids.cache_clear()
+    db = _db()
+    _record(db, "old", "window", "unit", "alpha")
+    view = revision_view(all_members=False)
+    search = SqliteLexicalSearch(db)
+    for _ in range(3):
+        search.search(view, "alpha", 80, ExecutionContext())
+    assert lexical_module._json_ids.cache_info().misses == 1
+    db.close()
+
+
+def test_a_cancelled_context_raises_before_the_search_runs():
+    db = _db()
+    _record(db, "old", "window", "unit", "alpha")
+    statements = []
+    db.set_trace_callback(statements.append)
+    ctx = ExecutionContext()
+    ctx.cancelled.set()
+    with pytest.raises(TychoraError) as error:
+        SqliteLexicalSearch(db).search(revision_view(), "alpha", 80, ctx)
+    db.set_trace_callback(None)
+    assert error.value.code == "CANCELLED"
+    assert not [s for s in statements if "lexical_fts MATCH" in s]
     db.close()

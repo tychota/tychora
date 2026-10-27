@@ -16,7 +16,9 @@ from tychora.ports.repositories import (
     WorkspaceRepository,
     WriteTransaction,
 )
+from tychora.ports.search import LexicalSearch
 
+from ..lexical import SqliteLexicalSearch
 from .artifacts import SqliteArtifactRepository
 from .batches import SqliteBatchRepository
 from .eligibility import SqliteEligibilityRepository
@@ -75,6 +77,7 @@ class SqliteTransaction:
     snapshots: SnapshotRepository
     representations: RepresentationRepository
     eligibility: EligibilityRepository
+    lexical: LexicalSearch
 
     def __init__(self, db: sqlite3.Connection, *, writable: bool) -> None:
         self.workspace = SqliteWorkspaceRepository(db, writable=writable)
@@ -84,6 +87,7 @@ class SqliteTransaction:
         self.snapshots = SqliteSnapshotRepository(db, writable=writable)
         self.representations = SqliteRepresentationRepository(db, writable=writable)
         self.eligibility = SqliteEligibilityRepository(db)
+        self.lexical = SqliteLexicalSearch(db)
 
 
 class SqliteUnitOfWork:

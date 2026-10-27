@@ -87,6 +87,7 @@ CLASSIFIED_REASONS = {
         "policy.use_unknown",
         "policy.use_override_empty",
         "request.limit_exceeded",
+        "identifier.namespace_unknown",
         "mode.unavailable",
         "profile.snapshot_mismatch",
     },
