@@ -486,10 +486,10 @@ async def test_ready_native_relation_cursor_rejects_changed_query(
     service = InspectionService(owner, case.graph)
     view = case.view(context={"a", "b", "c"}, candidates={"a", "b", "c"})
     monkeypatch.setattr(
-        service, "_attempt", lambda _snapshot, _scope: SimpleNamespace(view=view)
+        service, "_legacy_attempt", lambda _snapshot, _scope: SimpleNamespace(view=view)
     )
     monkeypatch.setattr(
-        service, "compiler", SimpleNamespace(revalidate_epoch=lambda *_: None)
+        service, "legacy", SimpleNamespace(revalidate_epoch=lambda *_: None)
     )
     first = await service.relations(
         RelationRequest(
@@ -515,7 +515,7 @@ async def test_ready_native_relation_cursor_rejects_changed_query(
     assert changed.value.code == "INVALID_REQUEST"
     monkeypatch.setattr(
         service,
-        "_attempt",
+        "_legacy_attempt",
         lambda _snapshot, _scope: SimpleNamespace(
             view=view.model_copy(update={"graph_generation_id": "later-generation"})
         ),
@@ -551,13 +551,13 @@ async def test_ready_native_relation_inspection_stops_at_100_edges(
     eligible = {"seed", *targets}
     monkeypatch.setattr(
         service,
-        "_attempt",
+        "_legacy_attempt",
         lambda _snapshot, _scope: SimpleNamespace(
             view=case.view(context=eligible, candidates=eligible)
         ),
     )
     monkeypatch.setattr(
-        service, "compiler", SimpleNamespace(revalidate_epoch=lambda *_: None)
+        service, "legacy", SimpleNamespace(revalidate_epoch=lambda *_: None)
     )
     result = await service.relations(
         RelationRequest(

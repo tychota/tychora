@@ -26,20 +26,41 @@ SOURCE_COLUMNS = ",".join(SourceRow.model_fields)
 
 @dataclass(frozen=True, slots=True)
 class BindingScope:
-    """The rows of one extraction, one code file or some units of it, as SQL fragments."""
+    """The rows of one extraction, one code file, some units or some assets, as SQL fragments.
+
+    An asset scope holds the listed assets and the units linked to them as a
+    source, caption or proxy.
+    """
 
     extraction_id: str
     revision_id: str
     relative_path: str | None = None
     unit_ids: tuple[str, ...] | None = None
+    asset_ids: tuple[str, ...] | None = None
 
     @classmethod
     def of(cls, member: SnapshotMember, relative_path: str | None) -> BindingScope:
         """Scope a snapshot member's extraction, optionally to one code file."""
         return cls(member.extraction_id, member.revision_id, relative_path)
 
+    @property
+    def partial(self) -> bool:
+        """Whether the scope lists units or assets rather than a whole file or extraction."""
+        return self.unit_ids is not None or self.asset_ids is not None
+
     def units(self) -> tuple[str, tuple[str, ...]]:
         """Select the scope's evidence units through the alias ``u``."""
+        if self.asset_ids is not None:
+            listed = json.dumps(sorted(set(self.asset_ids)))
+            return (
+                (
+                    "u.extraction_id=? AND (u.unit_id IN (SELECT unit_id FROM unit_assets "
+                    "WHERE asset_id IN (SELECT value FROM json_each(?))) OR u.unit_id IN "
+                    "(SELECT proxy_unit_id FROM asset_proxies "
+                    "WHERE asset_id IN (SELECT value FROM json_each(?))))"
+                ),
+                (self.extraction_id, listed, listed),
+            )
         if self.unit_ids is not None:
             return (
                 "u.extraction_id=? AND u.unit_id IN (SELECT value FROM json_each(?))",
@@ -57,27 +78,29 @@ class BindingScope:
         )
 
     def assets(self) -> tuple[str, tuple[str, ...]]:
-        """Select the scope's assets through the alias ``a``: linked ones for a part."""
-        if self.relative_path is None and self.unit_ids is None:
+        """Select the scope's assets through the alias ``a``: listed and linked ones for a part."""
+        if self.relative_path is None and not self.partial:
             return "a.extraction_id=?", (self.extraction_id,)
         units, args = self.units()
+        listed = json.dumps(sorted(set(self.asset_ids or ())))
         return (
             (
                 "a.extraction_id=? AND a.asset_id IN ("
+                "SELECT value FROM json_each(?) UNION "
                 "SELECT ua.asset_id FROM unit_assets ua JOIN evidence_units u "
                 f"USING(unit_id) WHERE {units} UNION "
                 "SELECT p.asset_id FROM asset_proxies p JOIN evidence_units u "
                 f"ON u.unit_id=p.proxy_unit_id WHERE {units})"
             ),
-            (self.extraction_id, *args, *args),
+            (self.extraction_id, listed, *args, *args),
         )
 
     def revision_artifacts(self) -> tuple[str, tuple[str, ...]]:
         """Select the revision artifacts, keeping only the scoped files' source bindings.
 
-        A unit scope keeps the source bindings its units' code locators name.
+        A unit or asset scope keeps the source bindings its units' code locators name.
         """
-        if self.unit_ids is not None:
+        if self.partial:
             units, args = self.units()
             return (
                 (
@@ -123,6 +146,24 @@ class BindingScope:
             ),
         )
 
+
+# Estimated bytes of one row beyond its payload columns, by table: about 1 KiB
+# for wide rows, a few hundred bytes for narrow link and reference rows.
+ROW_OVERHEAD = {
+    "sources": 1024,
+    "revisions": 1024,
+    "extractions": 1024,
+    "evidence_units": 1024,
+    "locators": 1024,
+    "structured_records": 1024,
+    "unit_assets": 128,
+    "asset_proxies": 256,
+    "asset_proxy_dependencies": 128,
+    "identifiers": 256,
+    "assets": 256,
+    "revision_artifacts": 192,
+    "artifacts": 192,
+}
 
 # Tables joined to the scoped units, with the payload columns each row carries.
 _UNIT_TABLES = (
@@ -207,7 +248,9 @@ def binding_footprint(
 def scope_footprint(db, source_id: str, scope: BindingScope) -> tuple[int, int]:
     """Count rows and estimate UTF-8 payload bytes in SQLite before Python hydration.
 
-    Each row costs 1024 bytes of overhead plus the length of its payload columns.
+    Each row costs its table's ``ROW_OVERHEAD`` plus the length of its payload
+    columns. The source, revision and extraction rows count once per scope, so
+    slices of one extraction each count them again.
     A locator whose recorded artifact differs from its row's artifact fails here,
     before any row is hydrated.
     """
@@ -230,7 +273,8 @@ def scope_footprint(db, source_id: str, scope: BindingScope) -> tuple[int, int]:
         payload = "+".join(
             f"COALESCE(LENGTH(CAST({column} AS BLOB)),0)" for column in columns
         )
-        estimated = f"1024+{payload}" if payload else "1024"
+        overhead = ROW_OVERHEAD[table.split(" ", 1)[0]]
+        estimated = f"{overhead}+{payload}" if payload else str(overhead)
         count, byte_count = db.execute(
             f"SELECT COUNT(*),COALESCE(SUM({estimated}),0) FROM {table} WHERE {where}",
             args,

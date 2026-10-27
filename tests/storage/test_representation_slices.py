@@ -7,10 +7,11 @@ from tests.helpers.eligibility import revision_attempt, revision_view
 from tests.helpers.legacy import OutputCounter
 from tests.helpers.owner import on_owner, owner_row, owner_rows
 from tychora import Tychora
-from tychora.application.reranking import extraction_rows, prepare_rerank_facts
+from tychora.application.reranking import prepare_rerank_facts
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.candidates import ChannelCandidate
 from tychora.contracts.errors import TychoraError
+from tychora.contracts.operations import ExtractionContentRequest
 from tychora.indexing.representations import prepare_extraction
 from tychora.ports.execution import ExecutionContext
 from tychora.retrieval.admission import Admission
@@ -109,10 +110,6 @@ def test_slice_without_interval_sets_is_refused(kb):
     assert error.value.reason == "canonical.facts_missing"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="inspection, retained content and visuals move in the next commit",
-)
 def test_no_read_path_calls_prepare_extraction():
     import ast
     from pathlib import Path
@@ -135,6 +132,76 @@ def test_no_read_path_calls_prepare_extraction():
             if isinstance(node, ast.Name) and node.id == "prepare_extraction":
                 offenders.append(relative)
     assert offenders == []
+
+
+def test_inspecting_a_unit_reads_one_slice(kb, monkeypatch):
+    from tychora.adapters.sqlite.repositories import SqliteRepresentationRepository
+
+    owner = kb._workspace.owner
+    (unit_id,) = _inspect_row(owner, "unit_id")
+    calls = []
+    original = SqliteRepresentationRepository.slice
+
+    def counted(self, extraction_id, **kwargs):
+        calls.append(kwargs)
+        return original(self, extraction_id, **kwargs)
+
+    monkeypatch.setattr(SqliteRepresentationRepository, "slice", counted)
+    result = kb.inspect(
+        {
+            "subject": "evidence",
+            "id": unit_id,
+            "range": {"char_start": 0, "char_end": 7},
+        }
+    )
+    assert result.excerpts[0].text == "Inspect"
+    assert calls == [{"unit_ids": (unit_id,)}]
+
+
+def test_retained_content_pages_without_whole_extraction_reads(kb, monkeypatch):
+    from tychora.adapters.sqlite.repositories import representations
+
+    owner = kb._workspace.owner
+    lineage = owner_row(
+        owner,
+        "SELECT r.source_id,e.revision_id,e.extraction_id FROM extractions e "
+        "JOIN revisions r USING(revision_id)",
+    )
+    assert lineage is not None
+    source_id, revision_id, extraction_id = lineage
+    scopes = []
+    original = representations.retained_rows
+
+    def recording(db, scope):
+        scopes.append(scope)
+        return original(db, scope)
+
+    monkeypatch.setattr(representations, "retained_rows", recording)
+    request = ExtractionContentRequest(
+        source_id=source_id,
+        revision_id=revision_id,
+        extraction_id=extraction_id,
+        limit=2,
+    )
+    page = kb._workspace.bridge.call(
+        kb._workspace.services.inspection.extraction_windows(
+            request, kb.scope, ExecutionContext()
+        )
+    )
+    assert page.windows
+    assert scopes and all(scope.unit_ids is not None for scope in scopes)
+
+
+def test_narrow_rows_cost_less_than_unit_rows(kb):
+    from tychora.adapters.sqlite.retained_bindings import ROW_OVERHEAD
+
+    owner = kb._workspace.owner
+    extraction_id, unit_id = _inspect_row(owner, "extraction_id,unit_id")
+    piece = _read(
+        kb, lambda tx: tx.representations.slice(extraction_id, unit_ids=(unit_id,))
+    )
+    assert ROW_OVERHEAD["artifacts"] <= 256 < ROW_OVERHEAD["evidence_units"]
+    assert piece.footprint.row_bytes < piece.footprint.rows * 1024
 
 
 _FIRST_FILE = (
@@ -266,6 +333,22 @@ def test_slice_refuses_an_empty_or_unknown_request(kb):
             ),
         )
     assert unknown.value.reason == "canonical.row_invalid"
+    with pytest.raises(TychoraError) as mixed:
+        _read(
+            kb,
+            lambda tx: tx.representations.slice(
+                extraction_id, unit_ids=(unit_id,), asset_ids=("some-asset",)
+            ),
+        )
+    assert mixed.value.reason == "invariant.unexpected"
+    with pytest.raises(TychoraError) as absent:
+        _read(
+            kb,
+            lambda tx: tx.representations.slice(
+                extraction_id, asset_ids=("absent-asset",)
+            ),
+        )
+    assert absent.value.reason == "canonical.row_invalid"
 
 
 def _candidates(kb):
@@ -325,7 +408,7 @@ def _full_facts(kb, candidate, channels, view):
     )
     assert found is not None
     (extraction_id,) = found
-    rows = on_owner(owner, lambda: extraction_rows(owner.db, extraction_id))
+    rows = on_owner(owner, lambda: _full_rows(owner, extraction_id))
     prepared = prepare_extraction(rows)
     windows = candidate.matching_window_ids
     chunks = _read(

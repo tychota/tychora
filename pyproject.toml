@@ -141,8 +141,7 @@ ignore_imports = [
   "tychora.retrieval.rerank -> tychora.application.owner",  # tychora/retrieval/rerank.py:40
   "tychora.retrieval.rerank -> tychora.application.reranking",  # tychora/retrieval/rerank.py:9
   "tychora.retrieval.segments -> tychora.application.setup",  # tychora/retrieval/segments.py:38
-  "tychora.retrieval.visuals -> tychora.application.owner",  # tychora/retrieval/visuals.py:18
-  "tychora.retrieval.visuals -> tychora.application.reranking",  # tychora/retrieval/visuals.py:8
+  "tychora.retrieval.visuals -> tychora.application.owner",  # tychora/retrieval/visuals.py:25
   "tychora.clients.async_ -> tychora.interfaces.http.client",  # tychora/clients/async_.py:405
   "tychora.clients.sync -> tychora.interfaces.http.client",  # tychora/clients/sync.py:352
   "tychora.contracts.documents -> tychora.adapters.docling.text_coordinates",  # tychora/contracts/documents.py:304
@@ -241,8 +240,7 @@ ignore_imports = [
   "tychora.retrieval.rerank -> tychora.application.owner",  # tychora/retrieval/rerank.py:40
   "tychora.retrieval.rerank -> tychora.application.reranking",  # tychora/retrieval/rerank.py:9
   "tychora.retrieval.segments -> tychora.application.setup",  # tychora/retrieval/segments.py:38
-  "tychora.retrieval.visuals -> tychora.application.owner",  # tychora/retrieval/visuals.py:18
-  "tychora.retrieval.visuals -> tychora.application.reranking",  # tychora/retrieval/visuals.py:8
+  "tychora.retrieval.visuals -> tychora.application.owner",  # tychora/retrieval/visuals.py:25
 ]
 
 [[tool.importlinter.contracts]]

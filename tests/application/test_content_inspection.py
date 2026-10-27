@@ -272,15 +272,16 @@ async def test_cursor_rejects_policy_epoch_change_and_delivery_race(
             ExecutionContext(),
         )
     assert error.value.code == "INVALID_REQUEST"
-    original = service.compiler.revalidate_epoch
+    from tychora.application import retained_content
 
-    def mutate_then_check(view, boundary):
-        owner.store.record_review(
-            ReviewTarget(unit_id=first.windows[0].unit_id), "rejected", "reviewer"
-        )
-        original(view, boundary)
+    original = retained_content.require_epoch
 
-    monkeypatch.setattr(service.compiler, "revalidate_epoch", mutate_then_check)
+    def mutate_then_check(tx, view):
+        # A policy change between the page reads and delivery, inside the read.
+        owner.db.execute("UPDATE workspaces SET policy_epoch=policy_epoch+1")
+        original(tx, view)
+
+    monkeypatch.setattr(retained_content, "require_epoch", mutate_then_check)
     with pytest.raises(TychoraError) as error:
         await service.extraction_windows(request, scope, ExecutionContext())
     assert error.value.code == "SCOPE_CHANGED"

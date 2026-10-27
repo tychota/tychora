@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass, field, replace
 from threading import Lock
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
@@ -93,6 +93,8 @@ class ModePolicy:
     original_reviews: frozenset[str]
     proxy_reviews: frozenset[str]
     proxy_disabled: bool
+    # Exact retained inspection alone reads archived collections; never cached.
+    include_archived: bool = False
 
 
 @dataclass(frozen=True)
@@ -304,6 +306,11 @@ def _readable(
     )
 
 
+def _collection_admitted(row: MemberRow, mode: ModePolicy) -> bool:
+    """An active collection, or any collection for exact retained inspection."""
+    return mode.include_archived or collection_is_active(row.collection_policy_json)
+
+
 def _admitted_members(
     rows: tuple[MemberRow, ...],
     kinds: Mapping[str, _Kind],
@@ -316,7 +323,7 @@ def _admitted_members(
     readable = []
     for row in rows:
         if row.collection_id not in active:
-            active[row.collection_id] = collection_is_active(row.collection_policy_json)
+            active[row.collection_id] = _collection_admitted(row, mode)
         if _readable(row, kinds[row.kind_id], scope, mode, active[row.collection_id]):
             readable.append(row)
     readable_kinds = frozenset(row.kind_id for row in readable)
@@ -514,6 +521,16 @@ class EligibilityCompiler:
         with self._lock:
             self._compatible.add((snapshot.config_sha, config.config_sha))
 
+    def ensure_compatible(
+        self,
+        snapshot: SnapshotView,
+        config: ResolvedConfig,
+        read_retained: Callable[[], ResolvedConfig],
+    ) -> None:
+        """Check the snapshot's retained configuration once per configuration pair."""
+        if not self.knows_compatible(snapshot, config):
+            self.mark_compatible(snapshot, config, read_retained())
+
     def key(
         self,
         tx: ReadTransaction,
@@ -558,9 +575,21 @@ class EligibilityCompiler:
         config: ResolvedConfig,
         *,
         members: tuple[SnapshotMember, ...] | None = None,
+        include_archived: bool = False,
     ) -> CompiledEligibility:
-        """Compile without the cache (explicit retained members are never cached)."""
+        """Compile without the cache (explicit retained members are never cached).
+
+        ``include_archived`` admits archived collections, for exact retained
+        inspection only; its policy digest differs from the mode's own.
+        """
         key, mode, selected = self.key(tx, snapshot, scope, request, config)
+        if include_archived:
+            mode = replace(
+                mode,
+                digest=digest("eligibility-policy-archived-v1", mode.digest),
+                include_archived=True,
+            )
+            key = key._replace(policy_digest=mode.digest)
         job = _Job(key, snapshot, scope, request, mode, selected)
         return self._compile(tx, job, members)
 

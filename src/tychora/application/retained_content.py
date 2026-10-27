@@ -9,7 +9,6 @@ from __future__ import annotations
 import secrets
 from typing import TYPE_CHECKING
 
-from tychora.application.reranking import extraction_rows
 from tychora.contracts.base import CodepointRange
 from tychora.contracts.corpus import ChunkRow
 from tychora.contracts.errors import TychoraError
@@ -27,10 +26,8 @@ from tychora.contracts.operations import (
     ExtractionWindowsPage,
     InspectRequest,
 )
-from tychora.indexing.representations import (
-    prepare_extraction,
-    project_code_excerpt_locator,
-)
+from tychora.indexing.representations import project_code_excerpt_locator
+from tychora.retrieval.attempt import readable_units, require_epoch
 from tychora.retrieval.compiler import eligible_cache_key
 
 if TYPE_CHECKING:
@@ -81,6 +78,22 @@ def _locators(rows, unit, start, end):
     return tuple(projected)
 
 
+def _page_units(columns, candidates) -> tuple[str, ...]:
+    """The distinct units of the page's candidate rows, in page order."""
+    at = columns.index("unit_id")
+    return tuple(dict.fromkeys(row[at] for row in candidates[:MAX_CANDIDATES]))
+
+
+def _page_reads(tx, view, extraction_id, units, windows):
+    """One slice of the page's units for windows, or the readable units for summaries."""
+    if not windows:
+        return None, None, readable_units(tx, view, units)
+    if not units:
+        return None, None, frozenset()
+    piece = tx.representations.slice(extraction_id, unit_ids=units)
+    return piece.rows, piece.prepared, frozenset()
+
+
 def content_page(
     service: InspectionService,
     request: ExtractionContentRequest,
@@ -96,7 +109,7 @@ def content_page(
     if not windows and request.chunk_id is not None:
         raise TychoraError("INVALID_REQUEST", "Chunk filters require windows.")
     pin_request = InspectRequest(subject="diagnostics", id=request.extraction_id)
-    with service._pin_retained(pin_request) as pin:
+    with service._pin_retained(pin_request) as pin, owner.store.uow.read() as tx:
         ctx.checkpoint()
         member = pin.members[0]
         if (member.source_id, member.revision_id) != (
@@ -104,14 +117,14 @@ def content_page(
             request.revision_id,
         ):
             raise TychoraError("NOT_FOUND", "Retained lineage is unavailable.")
-        attempt = service._attempt(pin.view, granted, pin.members)
-        if request.revision_id not in attempt.view.revision_ids:
+        view = service._attempt(tx, pin.view, granted, pin.members)
+        if request.revision_id not in view.revisions:
             raise TychoraError("FORBIDDEN_SCOPE", "Item is outside the readable scope.")
         binding = digest(
             "retained-content-cursor-v1",
             windows,
             request.model_dump(mode="json", exclude={"cursor"}),
-            eligible_cache_key(attempt.view),
+            eligible_cache_key(view),
         )
         offset = 0
         if request.cursor is not None:
@@ -144,8 +157,10 @@ def content_page(
         )
         columns = [column[0] for column in cursor.description]
         candidates = cursor.fetchall()
-        retained = extraction_rows(owner.db, member.extraction_id) if windows else None
-        prepared = prepare_extraction(retained) if retained is not None else None
+        units = _page_units(columns, candidates)
+        retained, prepared, readable = _page_reads(
+            tx, view, request.extraction_id, units, windows
+        )
         page_type = ExtractionWindowsPage if windows else ExtractionUnitsPage
         field = "windows" if windows else "units"
         lineage = {
@@ -176,13 +191,14 @@ def content_page(
                         {**stored, "text": unit.text[start:end]}
                     )
                     service._inspect_evidence(
+                        tx,
                         InspectRequest(
                             subject="evidence",
                             id=uid,
                             range=CodepointRange(char_start=start, char_end=end),
                         ),
                         pin,
-                        attempt,
+                        view,
                         prepared=prepared,
                     )
                     item = ExtractionWindow(
@@ -198,11 +214,7 @@ def content_page(
                         locators=_locators(retained, unit, start, end),
                     )
                 else:
-                    if (
-                        uid
-                        not in attempt.view.context_unit_ids
-                        | attempt.view.structural_unit_ids
-                    ):
+                    if uid not in readable:
                         raise TychoraError(
                             "FORBIDDEN_SCOPE", "Unit is outside readable scope."
                         )
@@ -261,6 +273,6 @@ def content_page(
                 "scope_limited": limited,
             }
         )
-        service.compiler.revalidate_epoch(attempt.view, "delivery")
+        require_epoch(tx, view)
         ctx.checkpoint()
         return result

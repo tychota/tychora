@@ -35,11 +35,14 @@ from tychora.contracts.operations import (
     SourceSelectionPage,
 )
 from tychora.contracts.requests import (
+    QueryRequest,
     RequestScope,
     canonical_scope_projection,
     query_run_scope_digests,
 )
 from tychora.ports.execution import ExecutionContext
+from tychora.retrieval.attempt import readable_units, require_epoch
+from tychora.retrieval.compiler import EligibilityCompiler
 
 if TYPE_CHECKING:
     from tychora.application.owner import WorkspaceOwner
@@ -83,6 +86,16 @@ def _permitted_resolutions(
             continue
         permitted.append(item)
     return tuple(permitted), limited
+
+
+def _mentioned_units(records: tuple[Resolution, ...]) -> set[str]:
+    """Every unit a resolution names: its origin, candidates and selected target."""
+    return {
+        unit
+        for item in records
+        for unit in (item.source_unit_id, *item.candidates, item.selected_target)
+        if unit is not None
+    }
 
 
 def _scoped_resolution_rates(
@@ -228,6 +241,74 @@ def _scoped_after(
         return value[1]
     except (ValueError, UnicodeError, TypeError):
         raise TychoraError("INVALID_REQUEST", "Invalid discovery cursor.") from None
+
+
+def _exact_request(
+    owner: WorkspaceOwner, scope: RequestScope, question: str
+) -> QueryRequest | None:
+    """An exact request in the configured mode, or the first the scope's uses read.
+
+    ``None`` when no registered mode serves any of the scope's uses.
+    """
+    limits = owner.config.values.limits
+    preferred = owner.config.values.mode or owner.config.values.default_mode
+    readable_modes = [
+        name
+        for name, definition in owner.store.registry.modes.items()
+        if set(cast(tuple[str, ...], cast(FrozenJsonMap, definition)["allowed_uses"]))
+        & scope.uses
+    ]
+    mode = (
+        preferred
+        if preferred in readable_modes
+        else next(iter(sorted(readable_modes)), None)
+    )
+    if mode is None:
+        return None
+    return QueryRequest.from_mapping(
+        {
+            "question": question,
+            "revision_selector": "all",
+            "mode": mode,
+            "exact_only": True,
+            "limit": min(8, limits.limit),
+            "budgets": {
+                "max_tokens": min(6000, limits.max_tokens),
+                "max_response_bytes": min(1048576, limits.max_response_bytes),
+            },
+        }
+    )
+
+
+def _resolution_records(owner: WorkspaceOwner, sha: str) -> tuple[Resolution, ...]:
+    """The resolution records of a retained code diagnostics artifact."""
+    from tychora.contracts.code import Resolution
+
+    ref_row = owner.db.execute(
+        "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
+        (sha,),
+    ).fetchone()
+    if (
+        ref_row is None
+        or ref_row[2] != sha
+        or ref_row[3] != "present"
+        or ref_row[0] > 16 * 1024 * 1024
+    ):
+        raise TychoraError(
+            "INTEGRITY_ERROR", "Code resolution artifact is unavailable."
+        )
+    ref = ArtifactRef.from_row((sha, *ref_row[:3]))
+    with owner.artifacts.open_verified(ref) as stream:
+        try:
+            payload = json.load(stream)
+            raw = payload["data"]["resolutions"]
+            if not isinstance(raw, list) or len(raw) > 100000:
+                raise ValueError
+            return tuple(Resolution.from_mapping(item) for item in raw)
+        except (ValueError, KeyError, TypeError):
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Code resolution artifact is invalid."
+            ) from None
 
 
 class DiscoveryService:
@@ -1020,92 +1101,39 @@ class DiscoveryService:
 
     def _code_resolution(self, extraction: str, scope: RequestScope) -> FrozenJsonMap:
         """Read typed retained rates only inside the current pinned eligibility view."""
-        from tychora.contracts.code import Resolution
-        from tychora.contracts.requests import QueryRequest
-        from tychora.retrieval.eligibility import LegacyEligibilityCompiler
-
         assert self.owner is not None
         owner = self.owner
-        with owner.store.pin_snapshot(None) as snapshot:
-            if owner.store.snapshot_member(snapshot.snapshot_id, extraction) is None:
-                return FrozenJsonMap(
-                    {"rates": [], "unsupported_references": 0, "scope_limited": True}
-                )
-            limits = owner.config.values.limits
-            preferred = owner.config.values.mode or owner.config.values.default_mode
-            readable_modes = [
-                name
-                for name, definition in owner.store.registry.modes.items()
-                if set(
-                    cast(
-                        tuple[str, ...], cast(FrozenJsonMap, definition)["allowed_uses"]
-                    )
-                )
-                & scope.uses
-            ]
-            mode = (
-                preferred
-                if preferred in readable_modes
-                else next(iter(sorted(readable_modes)), None)
+        limited = FrozenJsonMap(
+            {"rates": [], "unsupported_references": 0, "scope_limited": True}
+        )
+        with owner.store.pin_snapshot(None) as snapshot, owner.store.uow.read() as tx:
+            request = _exact_request(owner, scope, "Code resolution discovery")
+            if (
+                request is None
+                or owner.store.snapshot_member(snapshot.snapshot_id, extraction) is None
+            ):
+                return limited
+            compiler = EligibilityCompiler(owner.store.registry, owner.artifacts)
+            compiler.ensure_compatible(
+                snapshot, owner.config, lambda: owner.store.retained_config(snapshot)
             )
-            if mode is None:
-                return FrozenJsonMap(
-                    {"rates": [], "unsupported_references": 0, "scope_limited": True}
-                )
-            request = QueryRequest.from_mapping(
-                {
-                    "question": "Code resolution discovery",
-                    "revision_selector": "all",
-                    "mode": mode,
-                    "exact_only": True,
-                    "limit": min(8, limits.limit),
-                    "budgets": {
-                        "max_tokens": min(6000, limits.max_tokens),
-                        "max_response_bytes": min(1048576, limits.max_response_bytes),
-                    },
-                }
-            )
-            compiler = LegacyEligibilityCompiler(owner.store)
-            view = compiler.compile_eligibility(snapshot, scope, request, owner.config)
+            view = compiler.compile(tx, snapshot, scope, request, owner.config).view
             row = owner.db.execute(
                 "SELECT e.revision_id,e.diagnostics_artifact_sha,r.source_id "
                 "FROM extractions e JOIN revisions r USING(revision_id) "
                 "WHERE e.extraction_id=?",
                 (extraction,),
             ).fetchone()
-            if row is None or row[0] not in view.revision_ids or row[1] is None:
-                return FrozenJsonMap(
-                    {"rates": [], "unsupported_references": 0, "scope_limited": True}
-                )
-            ref_row = owner.db.execute(
-                "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
-                (row[1],),
-            ).fetchone()
-            if (
-                ref_row is None
-                or ref_row[2] != row[1]
-                or ref_row[3] != "present"
-                or ref_row[0] > 16 * 1024 * 1024
-            ):
-                raise TychoraError(
-                    "INTEGRITY_ERROR", "Code resolution artifact is unavailable."
-                )
-            ref = ArtifactRef.from_row((row[1], *ref_row[:3]))
-            with owner.artifacts.open_verified(ref) as stream:
-                try:
-                    payload = json.load(stream)
-                    raw = payload["data"]["resolutions"]
-                    if not isinstance(raw, list) or len(raw) > 100000:
-                        raise ValueError
-                    records = tuple(Resolution.from_mapping(item) for item in raw)
-                except (ValueError, KeyError, TypeError):
-                    raise TychoraError(
-                        "INTEGRITY_ERROR", "Code resolution artifact is invalid."
-                    ) from None
+            if row is None or row[0] not in view.revisions or row[1] is None:
+                return limited
+            records = _resolution_records(owner, row[1])
             summary = _scoped_resolution_rates(
-                records, view.graph_eligible_unit_ids, view.revision_ids, row[2]
+                records,
+                readable_units(tx, view, _mentioned_units(records)),
+                frozenset(view.revisions),
+                row[2],
             )
-            compiler.revalidate_epoch(view, "delivery")
+            require_epoch(tx, view)
             return summary
 
     async def kind_metadata_schema(

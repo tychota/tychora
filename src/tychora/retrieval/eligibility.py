@@ -157,18 +157,6 @@ class LegacyEligibilityCompiler:
         self.reader = reader
         self._workspace_ids: dict[str, str] = {}
 
-    def compile_eligibility(
-        self,
-        snapshot: SnapshotView,
-        scope: RequestScope,
-        request: QueryRequest,
-        config: ResolvedConfig,
-        *,
-        members: tuple[SnapshotMember, ...] | None = None,
-    ) -> LegacyEligibilityView:
-        facts = self.reader.read_eligibility_facts(snapshot, members)
-        return self._compile(snapshot, scope, request, config, facts)[0]
-
     def compile_attempt(
         self,
         snapshot: SnapshotView,
