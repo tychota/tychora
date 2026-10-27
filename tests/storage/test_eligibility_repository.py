@@ -331,6 +331,34 @@ def test_owner_facts_resolve_a_chunk_record_from_its_group_set(kb):
     assert unit_id in group_set
 
 
+def test_owner_facts_map_a_proxy_window_record_to_its_asset(kb):
+    owner = kb._workspace.owner
+    ids = _add_asset(owner)
+    chunk_id, batch_id = _row(
+        owner,
+        "SELECT c.chunk_id,b.batch_id FROM chunks c "
+        "JOIN index_batches b ON b.extraction_id=c.extraction_id "
+        "WHERE c.unit_id=? ORDER BY c.chunk_id LIMIT 1",
+        (ids["proxy"],),
+    )
+    owner_rows(
+        owner,
+        "INSERT INTO vector_records(record_id,batch_id,chunk_id,input_sha,row_index,"
+        "group_id) VALUES ('proxy-record',?,?,'input',0,?)",
+        (batch_id, chunk_id, ids["proxy"]),
+    )
+    facts = {
+        fact.owner_id: fact
+        for fact in _read(
+            kb, lambda tx: tx.eligibility.owner_facts(("proxy-record", chunk_id))
+        )
+    }
+    record, window = facts["proxy-record"], facts[chunk_id]
+    assert record.kind == "record" and record.asset_id == ids["asset"]
+    assert record.proxy and record.unit_id == ids["proxy"]
+    assert window.proxy and window.asset_id == ids["asset"]
+
+
 def test_members_of_listed_extractions(kb):
     owner = kb._workspace.owner
     extraction_id, revision_id, _ = _first_extraction(owner)

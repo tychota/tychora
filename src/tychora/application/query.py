@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
 import struct
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -21,10 +20,7 @@ from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
-from tychora.contracts.candidates import (
-    CandidateKey,
-    ChannelCandidate,
-)
+from tychora.contracts.candidates import ChannelCandidate
 from tychora.contracts.corpus import AssetRow
 from tychora.contracts.embeddings import (
     EmbeddingCapabilities,
@@ -54,7 +50,6 @@ from tychora.contracts.requests import (
     RequestScope,
 )
 from tychora.contracts.requirements import ResponseRequirement, active_requirements
-from tychora.contracts.vectors import WorkLimits
 from tychora.formatting.render import OutputProfile
 from tychora.ports.execution import ExecutionContext
 from tychora.ports.query import TextQueryProvider, VisualQueryProvider
@@ -84,12 +79,20 @@ from tychora.retrieval.response import (
 )
 from tychora.retrieval.segments import Selection, assemble_segments
 from tychora.retrieval.survivors import load_survivors
+from tychora.retrieval.vectors import (
+    CHANNEL_LIMIT,
+    linked_visual_context,
+    vector_candidates,
+)
 from tychora.retrieval.visuals import prepare_visual_candidates, select_visuals
 
 if TYPE_CHECKING:
     from tychora.adapters.voyage.rerank import VoyageReranker
     from tychora.application.owner import WorkspaceOwner
     from tychora.ports.graph import GraphStore
+
+
+type _VectorChannel = tuple[tuple[ChannelCandidate, ...], bool]
 
 
 @dataclass(frozen=True)
@@ -178,33 +181,6 @@ def query_binding_from_owner(
         collection_ids=granted.collection_ids,
         dependency_ids=frozenset(),
         policy_epoch=policy_epoch,
-    )
-
-
-def linked_visual_context(
-    db: sqlite3.Connection,
-    asset_candidates: tuple[ChannelCandidate, ...],
-    eligible_unit_ids: frozenset[str],
-) -> tuple[ChannelCandidate, ...]:
-    """Add only real source links of eligible matched original assets."""
-    linked: list[str] = []
-    for asset in asset_candidates:
-        if asset.key[0] != "asset":
-            continue
-        rows = db.execute(
-            "SELECT unit_id FROM unit_assets WHERE asset_id=? AND role='source' ORDER BY unit_id LIMIT 2049",
-            (asset.key[1],),
-        ).fetchall()
-        if len(rows) > 2048:
-            raise TychoraError(
-                "INDEX_INCOMPLETE", "Visual source links exceed the bound."
-            )
-        for (unit_id,) in rows:
-            if unit_id in eligible_unit_ids and unit_id not in linked:
-                linked.append(unit_id)
-    return tuple(
-        ChannelCandidate(key=("unit", unit_id), rank=rank)
-        for rank, unit_id in enumerate(linked, 1)
     )
 
 
@@ -718,6 +694,8 @@ class QueryService:
         completed: list[str] = [
             channel.channel for channel in channels if channel.complete
         ]
+        # Vector channels an over-fetch bound cut short, kept for coverage.
+        truncated: list[str] = []
         if incomplete and not self.owner.config.values.retrieval.allow_degraded:
             raise TychoraError("INDEX_INCOMPLETE", "A retrieval channel is incomplete.")
         lexical_votes: dict[str, tuple[ChannelCandidate, ...]] = {
@@ -726,21 +704,16 @@ class QueryService:
         }
         votes = lexical_votes.copy() if plan is None or plan.lexical else {}
         vector_calls: list[
-            tuple[
-                str,
-                Callable[[], Awaitable[tuple[ChannelCandidate, ...] | TychoraError]],
-            ]
+            tuple[str, Callable[[], Awaitable[_VectorChannel | TychoraError]]]
         ] = []
 
-        async def text_candidates() -> tuple[ChannelCandidate, ...] | TychoraError:
+        async def text_candidates() -> _VectorChannel | TychoraError:
             try:
                 return await self._text_candidates(request, scope, attempt, ctx)
             except TychoraError as error:
                 return error
 
-        async def retrieve_visual_channel() -> (
-            tuple[ChannelCandidate, ...] | TychoraError
-        ):
+        async def retrieve_visual_channel() -> _VectorChannel | TychoraError:
             try:
                 return await self._visual_candidates(request, scope, attempt, ctx)
             except TychoraError as error:
@@ -777,32 +750,9 @@ class QueryService:
                     raise result
                 incomplete.append(channel)
                 continue
-            if channel == "visual":
-                try:
-                    linked = await self.owner.run_write(
-                        lambda selected=result: linked_visual_context(
-                            self.owner.db, selected, view.source_unit_ids
-                        ),
-                        ctx,
-                        "interactive",
-                    )
-                except TychoraError as error:
-                    if (
-                        not self.owner.config.values.retrieval.allow_degraded
-                        or error.code
-                        not in {
-                            "CAPABILITY_MISSING",
-                            "INDEX_INCOMPLETE",
-                            "PROVIDER_FAILURE",
-                            "FORBIDDEN_SCOPE",
-                        }
-                    ):
-                        raise
-                    incomplete.append(channel)
-                    continue
-                votes[channel] = (*result, *linked)
-            else:
-                votes[channel] = result
+            votes[channel], cut = result
+            if cut:
+                truncated.append(channel)
             completed.append(channel)
         fused = fuse(votes)
         graph_candidates = GraphCandidates()
@@ -1036,11 +986,11 @@ class QueryService:
         scope: RequestScope,
         attempt: EligibilityAttempt,
         ctx: ExecutionContext,
-    ) -> tuple[ChannelCandidate, ...]:
+    ) -> _VectorChannel:
         from tychora.contracts.requests import PassageInput, QuestionInput
 
         if not isinstance(request.input, (QuestionInput, PassageInput)):
-            return ()
+            return (), False
         query_text = request.input.text
         base = self.text_provider
         index = self.text_index
@@ -1065,119 +1015,25 @@ class QueryService:
                 scope=scope,
             )
         )
-        mapping, page = await self._search_vector_index(
-            index, attempt, "unit", query_vector.values, ctx
-        )
-        return await self.owner.run_write(
-            lambda: self._text_window_candidates(page, mapping, attempt),
-            ctx,
-            "interactive",
-        )
+        return await self._vector_channel(index, attempt, query_vector.values, ctx)
 
-    def _text_window_candidates(self, page, mapping, attempt):
-        view = attempt.require_legacy()
-        ranks = {"unit": 0, "asset": 0}
-        output = []
-        for candidate in page.candidates:
-            windows = []
-            if not candidate.record_ids:
-                raise TychoraError(
-                    "INTEGRITY_ERROR", "Vector candidate has no matched records."
-                )
-            for record_id in candidate.record_ids:
-                if (
-                    record_id not in view.vector_record_ids
-                    or mapping.get(record_id) != candidate.key
-                ):
-                    raise TychoraError(
-                        "INTEGRITY_ERROR", "Vector candidate left the pinned scope."
-                    )
-                row = self.owner.db.execute(
-                    "SELECT v.batch_id,v.chunk_id,c.unit_id,p.asset_id FROM vector_records v "
-                    "JOIN chunks c USING(chunk_id) LEFT JOIN asset_proxies p ON p.proxy_unit_id=c.unit_id "
-                    "WHERE v.record_id=?",
-                    (record_id,),
-                ).fetchone()
-                if (
-                    row is None
-                    or row[0] not in view.selected_batch_ids
-                    or row[1] not in view.chunk_ids
-                    or candidate.key
-                    != (("asset", row[3]) if row[3] is not None else ("unit", row[2]))
-                ):
-                    raise TychoraError(
-                        "INTEGRITY_ERROR",
-                        "Matched vector window differs from canonical binding.",
-                    )
-                windows.append(row[1])
-            kind = candidate.key[0]
-            ranks[kind] += 1
-            output.append(
-                ChannelCandidate(
-                    key=candidate.key,
-                    rank=ranks[kind],
-                    score=-candidate.distance,
-                    matching_window_ids=tuple(dict.fromkeys(windows)),
-                )
-            )
-        return tuple(output)
-
-    async def _search_vector_index(
+    async def _vector_channel(
         self,
-        index,
+        index: VectorIndex,
         attempt: EligibilityAttempt,
-        kind: str,
-        values,
+        values: tuple[float, ...],
         ctx: ExecutionContext,
-    ):
-        """Search the pinned vector scope and refuse incomplete coverage."""
-        label = "Text" if kind == "unit" else "Visual"
-        mapping = await self.owner.run_write(
-            lambda: self._vector_owners(attempt, kind), ctx, "interactive"
-        )
+    ) -> _VectorChannel:
+        """Search through the view on the writer, then map owners on the read pool."""
         payload = struct.pack("<" + "f" * len(values), *values)
-        page = await self.owner.run_write(
-            lambda: index.search(
-                payload, mapping, 80, WorkLimits(deadline=ctx.deadline), ctx
-            ),
+        ranked = await self.owner.run_write(
+            lambda: index.search(attempt.view, payload, CHANNEL_LIMIT, ctx),
             ctx,
             "interactive",
         )
-        if page.missing_record_ids or not page.coverage_complete or page.truncated:
-            raise TychoraError(
-                "INDEX_INCOMPLETE", f"{label} vector coverage is incomplete."
-            )
-        return mapping, page
-
-    def _vector_owners(
-        self, attempt: EligibilityAttempt, kind: str
-    ) -> dict[str, CandidateKey]:
-        view = attempt.require_legacy()
-        output: dict[str, CandidateKey] = {}
-        for record_id in view.vector_record_ids:
-            row = self.owner.db.execute(
-                "SELECT c.unit_id,v.asset_id,p.asset_id FROM vector_records v "
-                "LEFT JOIN chunks c ON c.chunk_id=v.chunk_id "
-                "LEFT JOIN asset_proxies p ON p.proxy_unit_id=c.unit_id "
-                "WHERE v.record_id=?",
-                (record_id,),
-            ).fetchone()
-            if row is None:
-                raise TychoraError(
-                    "INDEX_INCOMPLETE", "Selected vector record is absent."
-                )
-            unit_id, asset_id, proxy_asset_id = row
-            if kind == "unit" and unit_id in view.source_unit_ids:
-                output[record_id] = ("unit", unit_id)
-            elif (
-                kind == "unit"
-                and unit_id in view.proxy_unit_ids
-                and proxy_asset_id in view.asset_ids
-            ):
-                output[record_id] = ("asset", proxy_asset_id)
-            elif kind == "asset" and asset_id in view.asset_ids:
-                output[record_id] = ("asset", asset_id)
-        return output
+        return await self.owner.run_read(
+            lambda tx: vector_candidates(tx, attempt.view, ranked, CHANNEL_LIMIT), ctx
+        )
 
     async def _visual_candidates(
         self,
@@ -1185,7 +1041,7 @@ class QueryService:
         scope: RequestScope,
         attempt: EligibilityAttempt,
         ctx: ExecutionContext,
-    ) -> tuple[ChannelCandidate, ...]:
+    ) -> _VectorChannel:
         base = self.visual_provider
         index = self.visual_index
         if base is None or index is None:
@@ -1216,18 +1072,11 @@ class QueryService:
         vector = await attempt.owner_provider(
             lambda: self.owner.embed_visual_query(current, query, ctx, scope=scope)
         )
-        mapping, page = await self._search_vector_index(
-            index, attempt, "asset", vector.values, ctx
+        assets, cut = await self._vector_channel(index, attempt, vector.values, ctx)
+        linked = await self.owner.run_read(
+            lambda tx: linked_visual_context(tx, attempt.view, assets), ctx
         )
-        allowed = set(mapping.values())
-        if any(item.key not in allowed for item in page.candidates):
-            raise TychoraError(
-                "INTEGRITY_ERROR", "Visual candidate left the pinned scope."
-            )
-        return tuple(
-            ChannelCandidate(key=item.key, rank=rank, score=-item.distance)
-            for rank, item in enumerate(page.candidates, 1)
-        )
+        return (*assets, *linked), cut
 
     def _registered_image_query(
         self, asset_id: str, attempt: EligibilityAttempt

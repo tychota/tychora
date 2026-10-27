@@ -1,38 +1,37 @@
-"""Immutable Chroma families and bounded eligible-owner search."""
+"""Immutable Chroma families and owner search restricted to an eligibility view."""
 
 from __future__ import annotations
 
 import json
 import math
 import struct
-import time
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import chromadb
 from chromadb.api.collection_configuration import CreateHNSWConfiguration
 from chromadb.config import Settings
 from chromadb.errors import NotFoundError
 
+from tychora.contracts.candidates import CandidateKey
+from tychora.contracts.eligibility import EligibilityView
 from tychora.contracts.embeddings import EmbeddingRecord
 from tychora.contracts.identity import digest, space_id
 from tychora.contracts.indexing import FamilySpec, IndexRecordDigest
 from tychora.contracts.vector_batches import vector_value_sha
 from tychora.contracts.vectors import (
     BatchReceipt,
-    CandidateKey,
-    CandidatePage,
-    DenseCandidate,
     FamilyHandle,
     VectorBatch,
     VectorOwner,
     Verification,
-    WorkLimits,
+    partition_size,
 )
 from tychora.indexing.receipts import receipt_digest
 from tychora.ports.execution import ExecutionContext
+from tychora.ports.search import RankedOwner, RankedOwners
 
 _PARTITION_SIZE = 5_000
 _EF_SEARCH = 200
@@ -49,10 +48,50 @@ _QUALIFIED_CONFIGURATION = {
     "spann": None,
     "embedding_function": None,
 }
+REVISION_FILTER_LIMIT = 512
+OVERFETCH_FACTOR = 4
+OVERFETCH_DOUBLINGS = 2
+OVERFETCH_CAP = 1024
+
+type _Hit = tuple[str, float, Mapping[str, str]]
 
 
-class _PresenceDeadline(Exception):
-    """The eligible-ID scan ended before full membership was known."""
+def _owner_key(metadata: Mapping[str, str]) -> CandidateKey:
+    """The unit or asset a record's metadata names as its owner."""
+    return cast(CandidateKey, (metadata["owner_kind"], metadata["owner_id"]))
+
+
+def _kept(raw: Mapping[str, Any], revisions: Mapping[str, object]) -> list[_Hit]:
+    """The query's hits whose metadata revision the view grants."""
+    return [
+        (record_id, distance, metadata)
+        for record_id, distance, metadata in zip(
+            raw["ids"][0], raw["distances"][0], raw["metadatas"][0], strict=True
+        )
+        if metadata is not None and metadata.get("revision_id") in revisions
+    ]
+
+
+def _owners(hits: Sequence[_Hit], limit: int) -> tuple[RankedOwner, ...]:
+    """Group hits by metadata owner, best distance first; ``limit`` owners per kind."""
+    grouped: dict[CandidateKey, list[tuple[float, str]]] = defaultdict(list)
+    for record_id, distance, metadata in hits:
+        grouped[_owner_key(metadata)].append((distance, record_id))
+    ranked: list[RankedOwner] = []
+    for kind in ("unit", "asset"):
+        pool = sorted(
+            (min(rows)[0], key) for key, rows in grouped.items() if key[0] == kind
+        )
+        ranked.extend(
+            RankedOwner(
+                key=key,
+                rank=rank,
+                score=-distance,
+                window_ids=tuple(record for _, record in sorted(grouped[key])),
+            )
+            for rank, (distance, key) in enumerate(pool[:limit], 1)
+        )
+    return tuple(ranked)
 
 
 def _float32(raw: bytes, dimensions: int) -> tuple[float, ...]:
@@ -187,34 +226,26 @@ class ChromaVectorIndex:
         *,
         embeddings: bool = False,
         ctx: ExecutionContext | None = None,
-        deadline: float | None = None,
     ) -> dict[str, tuple[str, str, bytes]]:
         collection, _ = self._require()
         found: dict[str, tuple[str, str, bytes]] = {}
         for chunk in self._chunks(ids):
             if not chunk:
                 continue
-            self._presence_checkpoint(ctx, deadline)
+            if ctx is not None:
+                ctx.checkpoint()
             result = collection.get(
                 ids=chunk,
                 include=["metadatas", "embeddings"] if embeddings else ["metadatas"],
             )
-            self._presence_checkpoint(ctx, deadline)
+            if ctx is not None:
+                ctx.checkpoint()
             vectors = result["embeddings"] if embeddings else None
             for index, record_id in enumerate(result["ids"]):
                 metadata = result["metadatas"][index]
                 raw = _bytes(vectors[index]) if vectors is not None else b""
                 found[record_id] = (metadata["input_sha"], metadata["value_sha"], raw)
         return found
-
-    @staticmethod
-    def _presence_checkpoint(
-        ctx: ExecutionContext | None, deadline: float | None
-    ) -> None:
-        if ctx is not None:
-            ctx.checkpoint()
-        if deadline is not None and time.monotonic() >= deadline:
-            raise _PresenceDeadline
 
     def upsert_batch(self, batch: VectorBatch, ctx: ExecutionContext) -> BatchReceipt:
         collection, handle = self._require()
@@ -254,7 +285,7 @@ class ChromaVectorIndex:
         additions = [
             record for record in batch.records if record.record_id not in existing
         ]
-        for chunk in self._chunks(additions):
+        for chunk in self._chunks(additions, partition_size(handle.spec.dimensions)):
             ctx.checkpoint()
             collection.add(
                 ids=[item.record_id for item in chunk],
@@ -324,171 +355,57 @@ class ChromaVectorIndex:
         )
 
     def search(
-        self,
-        query_vector: bytes,
-        eligible_records_and_owners: Mapping[str, CandidateKey],
-        candidate_limit: int,
-        work_limits: WorkLimits,
-        ctx: ExecutionContext,
-    ) -> CandidatePage:
+        self, view: EligibilityView, vector: bytes, limit: int, ctx: ExecutionContext
+    ) -> RankedOwners:
+        """Owners nearest to ``vector`` among the view's revisions; ``limit`` per kind.
+
+        The store filters by revision when the view lists at most
+        ``REVISION_FILTER_LIMIT`` revisions; otherwise hits are kept by their
+        metadata revision. The page over-fetches ``OVERFETCH_FACTOR`` records
+        per wanted owner and doubles while too few owners came back from a
+        full page; ``truncated`` when the doublings or the cap ran out first.
+        Canonical owners and admission are the caller's: this only selects.
+        """
         collection, handle = self._require()
         self._check_collection(collection, handle.spec)
-        query = _float32(query_vector, handle.spec.dimensions)
-        if candidate_limit <= 0:
-            raise ValueError("Candidate limit must be positive")
-        if (
-            len(eligible_records_and_owners)
-            > _PARTITION_SIZE * work_limits.max_partitions
-        ):
-            raise ValueError("Eligible scope exceeds partition limit")
-        ctx.checkpoint()
-        if not eligible_records_and_owners:
-            return CandidatePage(
-                candidates=(),
-                missing_record_ids=(),
-                coverage_complete=True,
-                truncated=False,
-                exhausted=True,
-                returned_records=0,
-                queried_partitions=0,
+        query = list(_float32(vector, handle.spec.dimensions))
+        if not view.revisions or limit <= 0:
+            return RankedOwners(
+                owners=(), detail={"returned": 0, "queries": 0, "rescored": 0}
             )
-        try:
-            present = self._present(
-                sorted(eligible_records_and_owners),
-                ctx=ctx,
-                deadline=work_limits.deadline,
-            )
-        except _PresenceDeadline:
-            return CandidatePage(
-                candidates=(),
-                missing_record_ids=(),
-                coverage_complete=False,
-                truncated=True,
-                exhausted=False,
-                returned_records=0,
-                queried_partitions=0,
-            )
-        missing = tuple(sorted(set(eligible_records_and_owners) - present.keys()))
-        pools = (
-            sorted(
-                record_id
-                for record_id in present
-                if eligible_records_and_owners[record_id][0] == kind
-            )
-            for kind in ("unit", "asset")
+        revisions = sorted(view.revisions)
+        where = (
+            {"revision_id": {"$in": revisions}}
+            if len(revisions) <= REVISION_FILTER_LIMIT
+            else None
         )
-        partitions = [chunk for pool in pools for chunk in self._chunks(pool)]
-        if len(partitions) > work_limits.max_partitions:
-            raise ValueError("Eligible scope exceeds partition limit")
-        requests = [
-            min(2 * candidate_limit, len(partition)) for partition in partitions
-        ]
-        seen: dict[str, float] = {}
-        tails = [math.inf] * len(partitions)
-        returned = 0
-        queried: set[int] = set()
-        truncated = False
+        wanted = min(OVERFETCH_FACTOR * limit, OVERFETCH_CAP)
+        queries = 0
         while True:
-            progressed = False
-            ranked = self._rank(seen, eligible_records_and_owners)
-            for index, partition in enumerate(partitions):
-                kind = eligible_records_and_owners[partition[0]][0]
-                pool = [item for item in ranked if item.key[0] == kind]
-                threshold = (
-                    pool[candidate_limit - 1].distance
-                    if len(pool) >= candidate_limit
-                    else math.inf
-                )
-                if requests[index] == 0 or (
-                    index in queried
-                    and len(pool) >= candidate_limit
-                    and tails[index] > threshold
-                ):
-                    continue
-                if (
-                    work_limits.deadline is not None
-                    and time.monotonic() >= work_limits.deadline
-                ):
-                    truncated = True
-                    break
-                remaining = work_limits.max_returned_records - returned
-                if remaining <= 0:
-                    truncated = True
-                    break
-                requested = min(requests[index], remaining)
-                budget_clipped = requested < requests[index]
-                ctx.checkpoint()
-                raw = collection.query(
-                    query_embeddings=[list(query)],
-                    ids=partition,
-                    n_results=requested,
-                    include=["distances"],
-                )
-                queried.add(index)
-                ids = raw["ids"][0]
-                distances = raw["distances"][0]
-                returned += len(ids)
-                for record_id, distance in zip(ids, distances, strict=True):
-                    seen[record_id] = min(seen.get(record_id, math.inf), distance)
-                tails[index] = (
-                    math.inf
-                    if requested >= len(partition)
-                    else (distances[-1] if distances else math.inf)
-                )
-                requests[index] = (
-                    0
-                    if requested >= len(partition)
-                    else min(len(partition), 2 * requested)
-                )
-                if requested == len(partition) and len(ids) < len(partition):
-                    truncated = True
-                progressed = True
-                ranked = self._rank(seen, eligible_records_and_owners)
-                if budget_clipped:
-                    truncated = True
-                    break
-            if truncated or not progressed:
+            ctx.checkpoint()
+            raw = collection.query(
+                query_embeddings=[query],
+                n_results=wanted,
+                where=where,
+                include=["distances", "metadatas"],
+            )
+            queries += 1
+            returned = len(raw["ids"][0])
+            hits = _kept(raw, view.revisions)
+            enough = len({_owner_key(metadata) for _, _, metadata in hits}) >= limit
+            exhausted = returned < wanted
+            if (
+                enough
+                or exhausted
+                or queries > OVERFETCH_DOUBLINGS
+                or wanted >= OVERFETCH_CAP
+            ):
                 break
-        ranked = self._rank(seen, eligible_records_and_owners)
-        exhausted = all(request == 0 for request in requests) and not truncated
-        return CandidatePage(
-            candidates=tuple(
-                item
-                for kind in ("unit", "asset")
-                for item in [item for item in ranked if item.key[0] == kind][
-                    :candidate_limit
-                ]
-            ),
-            missing_record_ids=missing,
-            coverage_complete=not missing,
-            truncated=truncated,
-            exhausted=exhausted,
-            returned_records=returned,
-            queried_partitions=len(queried),
-        )
-
-    @staticmethod
-    def _rank(
-        seen: Mapping[str, float], eligible: Mapping[str, CandidateKey]
-    ) -> list[DenseCandidate]:
-        grouped: dict[CandidateKey, list[tuple[str, float]]] = defaultdict(list)
-        for record_id, distance in seen.items():
-            grouped[eligible[record_id]].append((record_id, distance))
-        return sorted(
-            (
-                DenseCandidate(
-                    key=key,
-                    distance=min(distance for _, distance in rows),
-                    record_ids=tuple(
-                        record_id
-                        for record_id, _ in sorted(
-                            rows, key=lambda row: (row[1], row[0])
-                        )
-                    ),
-                )
-                for key, rows in grouped.items()
-            ),
-            key=lambda item: (item.distance, item.key),
+            wanted = min(2 * wanted, OVERFETCH_CAP)
+        return RankedOwners(
+            owners=_owners(hits, limit),
+            truncated=not enough and not exhausted,
+            detail={"returned": returned, "queries": queries, "rescored": 0},
         )
 
     def drop_records(self, record_ids: Sequence[str], ctx: ExecutionContext) -> None:

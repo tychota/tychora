@@ -104,27 +104,43 @@ def check_survivors(
     return Survivors(tuple(kept), MappingProxyType(lanes), dropped, beyond_limit)
 
 
-def _missing_units(facts: Iterable[OwnerFact]) -> set[str]:
-    """Units a window's or an asset's admission reads besides its own fact."""
-    units: set[str] = set()
-    for fact in facts:
-        if fact.kind == "chunk" and fact.unit_id:
-            units.add(fact.unit_id)
-        elif fact.kind == "asset":
-            units.update(fact.source_owner_ids)
-    return units
+def _related(fact: OwnerFact) -> set[str]:
+    """What admitting ``fact`` reads besides its own fact.
+
+    A record reads its window and that window's unit, or its asset; a window
+    reads its unit; an asset reads its source units for the candidate filter.
+    """
+    if fact.kind == "record":
+        if fact.chunk_id is not None:
+            return {fact.chunk_id, *([fact.unit_id] if fact.unit_id else [])}
+        return {fact.asset_id} if fact.asset_id else set()
+    if fact.kind == "chunk" and fact.unit_id:
+        return {fact.unit_id}
+    if fact.kind == "asset":
+        return set(fact.source_owner_ids)
+    return set()
+
+
+def load_facts(tx: ReadTransaction, owner_ids: Iterable[str]) -> dict[str, OwnerFact]:
+    """Facts of the owners and of everything their admission reads.
+
+    Every read stays in the caller's read transaction; each round only adds
+    owners not asked for yet, so records take at most three reads (records,
+    windows and units or assets, asset sources) and windows or assets two.
+    """
+    asked = set(owner_ids)
+    facts = {f.owner_id: f for f in tx.eligibility.owner_facts(tuple(sorted(asked)))}
+    pending = facts.values()
+    while missing := {i for f in pending for i in _related(f)} - asked:
+        asked |= missing
+        read = tx.eligibility.owner_facts(tuple(sorted(missing)))
+        facts.update({f.owner_id: f for f in read})
+        pending = read
+    return facts
 
 
 def load_survivors(
     tx: ReadTransaction, view: EligibilityView, candidates: Sequence[FusedCandidate]
 ) -> Survivors:
     """Read the candidates', their windows' and those windows' units' facts, then check."""
-    # One read task: the second read only completes the first, inside the same
-    # read transaction, with the units of proxy windows and of asset sources.
-    facts = {
-        f.owner_id: f for f in tx.eligibility.owner_facts(survivor_ids(candidates))
-    }
-    units = tuple(sorted(_missing_units(facts.values()) - set(facts)))
-    if units:
-        facts.update({f.owner_id: f for f in tx.eligibility.owner_facts(units)})
-    return check_survivors(view, candidates, facts)
+    return check_survivors(view, candidates, load_facts(tx, survivor_ids(candidates)))

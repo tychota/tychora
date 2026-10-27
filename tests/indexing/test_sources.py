@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import threading
 from contextlib import asynccontextmanager
 from io import BytesIO
 from pathlib import Path
@@ -21,9 +22,11 @@ from tychora.adapters.ladybug.generation import LadybugGraphStore
 from tychora.adapters.voyage.runtime import VoyageRuntime
 from tychora.adapters.voyage.validation import qualify_voyage_visual_capabilities
 from tychora.application.owner import WorkspaceOwner
+from tychora.application.runtime import WRITER_THREAD_PREFIX
 from tychora.application.sources import SourceService
 from tychora.application.visual import create_visual_embedder
 from tychora.configuration.resolve import resolve_config
+from tychora.contracts import vectors as vector_contracts
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.embeddings import EmbeddingCapabilities, VisualEmbeddingLimits
@@ -1292,3 +1295,84 @@ async def test_registry_artifact_is_written_once_per_retained_sha(
             assert kb.jobs.wait(job.id).state == "succeeded"
         retained = kb._workspace.owner.config.retained_sha
     assert writes.count(retained) == 1
+
+
+@pytest.mark.asyncio
+async def test_add_writes_native_vectors_one_partition_per_writer_task(
+    tmp_path, config_factory, monkeypatch
+):
+    config = config_factory(dimensions=2)
+    collection = "55825936-6a6a-4d29-945a-327d771a76b7"
+    scope = RequestScope(
+        principal_id="writer",
+        collection_ids=frozenset({collection}),
+        capabilities=frozenset({"write", "manage", "read"}),
+        uses=frozenset({"lookup"}),
+        upload_providers=frozenset({"voyage"}),
+    )
+    monkeypatch.setattr(vector_contracts, "partition_size", lambda dimension: 1)
+    with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
+        await owner.run_write(
+            lambda: owner.db.execute(
+                "INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,?)",
+                (
+                    collection,
+                    owner.workspace_id,
+                    "manuals",
+                    "Manuals",
+                    '{"schema_version":1,"upload_providers":["voyage"]}',
+                ),
+            ),
+            ExecutionContext(),
+        )
+        index = ChromaVectorIndex(tmp_path / "vectors")
+        native_add = index.upsert_batch
+        writes: list[tuple[int, bool]] = []
+
+        def recording_upsert(batch, ctx):
+            on_writer = threading.current_thread().name.startswith(WRITER_THREAD_PREFIX)
+            writes.append((len(batch.records), on_writer))
+            return native_add(batch, ctx)
+
+        monkeypatch.setattr(index, "upsert_batch", recording_upsert)
+        counter = RecordingCounter()
+        service = SourceService(
+            owner,
+            ProjectionCoordinator(
+                store=owner.store,
+                artifacts=owner.artifacts,
+                config=config,
+                counter=counter,
+                text_embedder=RecordingEmbedder(counter),
+                text_index=index,
+            ),
+        )
+        text = "\n\n".join(f"Paragraph {i} about seals. " * 120 for i in range(4))
+        handle = await service.add(
+            SourceInput.from_mapping(
+                {
+                    "type": "text",
+                    "text": text,
+                    "format": "text",
+                    "kind": "manual@1",
+                    "metadata": {
+                        "title": "Partitioned",
+                        "publisher": "Example Team",
+                        "edition": "1",
+                    },
+                    "source_key": "partitioned.txt",
+                    "collection_id": collection,
+                }
+            ),
+            scope,
+        )
+        assert handle.state == "succeeded"
+        records = await owner.run_write(
+            lambda: owner.db.execute("SELECT COUNT(*) FROM vector_records").fetchone()[
+                0
+            ],
+            ExecutionContext(),
+        )
+    assert records > 1
+    # One single-record write per partition, then finalize's whole-batch check.
+    assert writes == [(1, True)] * records + [(records, True)]

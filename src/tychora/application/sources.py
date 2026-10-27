@@ -93,6 +93,7 @@ if TYPE_CHECKING:
     from tychora.contracts.acquisition import CaptureManifest
     from tychora.contracts.artifacts import ArtifactRef
     from tychora.contracts.corpus import ExtractionBundle
+    from tychora.contracts.embeddings import EmbeddingRecord
     from tychora.contracts.indexing import ContextGroup
     from tychora.indexing.coordinator import PreparedProjection, ProjectionCoordinator
     from tychora.ports.language import SyntaxResult
@@ -890,6 +891,7 @@ class SourceService:
         await self.owner.run_write(
             lambda: attempt.jobs.stage(attempt.handle.id, "project"), ctx
         )
+        await self._write_partitions(prepared, records, visual_records, ctx)
 
         def finalize() -> PublicationPlan:
             plan = self.coordinator.finalize(prepared, records, ctx, visual_records)
@@ -905,6 +907,28 @@ class SourceService:
                 raise
             return False, (prepared.text_groups, records)
         return True, (prepared.text_groups, records)
+
+    async def _write_partitions(
+        self,
+        prepared: PreparedProjection,
+        records: tuple[EmbeddingRecord, ...],
+        visual_records: tuple[EmbeddingRecord, ...],
+        ctx: ExecutionContext,
+    ) -> None:
+        """Add the native vectors one partition per background writer task.
+
+        An interactive query then waits behind at most one partition's HNSW
+        inserts; ``finalize`` finds every record present and only verifies.
+        """
+        native = await self.owner.run_write(
+            lambda: self.coordinator.native_batches(prepared, records, visual_records),
+            ctx,
+        )
+        for index, batch, dimension in native:
+            for part in batch.partitions(dimension):
+                await self.owner.run_write(
+                    lambda i=index, p=part: i.upsert_batch(p, ctx), ctx
+                )
 
     def _checkpoint(
         self, attempt: _Attempt, base: str | None, plan: PublicationPlan
