@@ -16,6 +16,7 @@ from .base import (
     Sha256,
 )
 from .code_storage import CodeFileDescriptor
+from .errors import TychoraError
 from .evidence import EvidenceUnit, Locator, ReviewState
 from .indexing import PreparedExtraction
 
@@ -200,11 +201,56 @@ class RetainedRepresentationRows(Contract):
     code_files: tuple[CodeFileDescriptor, ...] = ()
 
 
+class SliceFootprint(Contract):
+    """What hydrating rows costs, measured in SQLite before any row is read.
+
+    ``row_bytes`` estimates each row as 1024 bytes plus its payload columns.
+    """
+
+    units: NonNegativeInt = 0
+    rows: NonNegativeInt = 0
+    text_bytes: NonNegativeInt = 0
+    row_bytes: NonNegativeInt = 0
+
+    def plus(self, other: "SliceFootprint") -> "SliceFootprint":
+        """The footprint of both."""
+        return SliceFootprint(
+            units=self.units + other.units,
+            rows=self.rows + other.rows,
+            text_bytes=self.text_bytes + other.text_bytes,
+            row_bytes=self.row_bytes + other.row_bytes,
+        )
+
+    def require_within(self, limit: "SliceFootprint") -> None:
+        """Refuse with ``request.limit_exceeded`` when any measure exceeds ``limit``."""
+        if (
+            self.units > limit.units
+            or self.rows > limit.rows
+            or self.text_bytes > limit.text_bytes
+            or self.row_bytes > limit.row_bytes
+        ):
+            raise TychoraError(
+                "INVALID_REQUEST",
+                "Representation reads exceed their resource limit.",
+                reason="request.limit_exceeded",
+            )
+
+
+# The bounds of canonical representation preparation, per slice and per operation.
+REPRESENTATION_LIMIT = SliceFootprint(
+    units=20_000,
+    rows=100_000,
+    text_bytes=16 * 1024 * 1024,
+    row_bytes=32 * 1024 * 1024,
+)
+
+
 class RepresentationSlice(Contract):
     """Some units of one extraction: their retained rows and persisted ownership."""
 
     rows: RetainedRepresentationRows
     prepared: PreparedExtraction
+    footprint: SliceFootprint
 
 
 class ReviewTarget(Contract):

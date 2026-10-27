@@ -9,6 +9,7 @@ from collections.abc import Mapping
 
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.corpus import (
+    REPRESENTATION_LIMIT,
     AssetProxyRow,
     AssetRow,
     ExtractionRow,
@@ -17,6 +18,7 @@ from tychora.contracts.corpus import (
     RetainedRepresentationRows,
     RevisionArtifactRow,
     RevisionRow,
+    SliceFootprint,
     SourceRow,
     StructuredRecordRow,
     UnitAssetRow,
@@ -32,7 +34,7 @@ from tychora.contracts.indexing import (
 )
 from tychora.contracts.publication import SnapshotMember
 
-from ..retained_bindings import SOURCE_COLUMNS, BindingScope
+from ..retained_bindings import SOURCE_COLUMNS, BindingScope, scope_footprint
 from .errors import facts_missing
 
 
@@ -186,25 +188,27 @@ def _retained_artifacts(db, artifact_ids: set[str]) -> list[ArtifactRef]:
     return artifacts
 
 
-# The bounds a slice may hydrate: one oversized code file is refused before reading.
-MAX_SLICE_UNITS = 20_000
-MAX_SLICE_TEXT_BYTES = 16 * 1024 * 1024
+# The bounds one slice may hydrate: an oversized code file is refused before reading.
+MAX_SLICE = REPRESENTATION_LIMIT
 
 
-def require_bounded(db: sqlite3.Connection, scope: BindingScope) -> None:
-    """Refuse a scope whose units exceed the slice bounds, measured in SQLite."""
+def require_bounded(db: sqlite3.Connection, scope: BindingScope) -> SliceFootprint:
+    """Measure a scope in SQLite and refuse it above the slice bounds."""
     where, args = scope.units()
-    count, size = db.execute(
+    units, text_bytes = db.execute(
         "SELECT COUNT(*),COALESCE(SUM(LENGTH(CAST(u.text AS BLOB))),0) "
         f"FROM evidence_units u WHERE {where}",
         args,
     ).fetchone()
-    if count > MAX_SLICE_UNITS or size > MAX_SLICE_TEXT_BYTES:
-        raise TychoraError(
-            "INVALID_REQUEST",
-            "Representation slice exceeds its resource limit.",
-            reason="request.limit_exceeded",
-        )
+    (source_id,) = db.execute(
+        "SELECT source_id FROM revisions WHERE revision_id=?", (scope.revision_id,)
+    ).fetchone()
+    rows, row_bytes = scope_footprint(db, source_id, scope)
+    footprint = SliceFootprint(
+        units=units, rows=rows, text_bytes=text_bytes, row_bytes=row_bytes
+    )
+    footprint.require_within(MAX_SLICE)
+    return footprint
 
 
 def retained_rows(

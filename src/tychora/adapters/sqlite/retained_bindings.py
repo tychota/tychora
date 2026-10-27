@@ -158,7 +158,7 @@ _UNIT_TABLES = (
 
 
 def _measured_tables(
-    member: SnapshotMember, scope: BindingScope
+    source_id: str, scope: BindingScope
 ) -> tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...]:
     """Every table the binding hydrates: (from clause, where, arguments, payload columns)."""
     units, unit_args = scope.units()
@@ -169,7 +169,7 @@ def _measured_tables(
         (
             "sources",
             "source_id=?",
-            (member.source_id,),
+            (source_id,),
             ("source_key", "registration_json"),
         ),
         (
@@ -199,13 +199,18 @@ def _measured_tables(
 def binding_footprint(
     db, member: SnapshotMember, relative_path: str | None = None
 ) -> tuple[int, int]:
+    """Count rows and estimate bytes of one member's binding; see ``scope_footprint``."""
+    scope = BindingScope.of(member, relative_path)
+    return scope_footprint(db, member.source_id, scope)
+
+
+def scope_footprint(db, source_id: str, scope: BindingScope) -> tuple[int, int]:
     """Count rows and estimate UTF-8 payload bytes in SQLite before Python hydration.
 
     Each row costs 1024 bytes of overhead plus the length of its payload columns.
     A locator whose recorded artifact differs from its row's artifact fails here,
     before any row is hydrated.
     """
-    scope = BindingScope.of(member, relative_path)
     units, unit_args = scope.units()
     if db.execute(
         "SELECT 1 FROM locators l JOIN evidence_units u USING(unit_id) "
@@ -221,7 +226,7 @@ def binding_footprint(
         )
     rows = 0
     size = 0
-    for table, where, args, columns in _measured_tables(member, scope):
+    for table, where, args, columns in _measured_tables(source_id, scope):
         payload = "+".join(
             f"COALESCE(LENGTH(CAST({column} AS BLOB)),0)" for column in columns
         )

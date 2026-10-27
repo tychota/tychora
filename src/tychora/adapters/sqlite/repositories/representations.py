@@ -156,7 +156,7 @@ class SqliteRepresentationRepository:
             relative_path,
             None if relative_path is not None else unit_ids,
         )
-        require_bounded(self._db, scope)
+        footprint = require_bounded(self._db, scope)
         rows = retained_rows(self._db, scope)
         expected = len(set(unit_ids)) if relative_path is None else None
         if not rows.units or expected not in (None, len(rows.units)):
@@ -164,7 +164,9 @@ class SqliteRepresentationRepository:
         intervals = self.intervals(tuple(unit.unit_id for unit in rows.units))
         sets = self.dependencies(tuple({item.dependency_digest for item in intervals}))
         return RepresentationSlice(
-            rows=rows, prepared=prepared_slice(rows, intervals, sets)
+            rows=rows,
+            prepared=prepared_slice(rows, intervals, sets),
+            footprint=footprint,
         )
 
     def write(self, facts: RepresentationFacts) -> None:

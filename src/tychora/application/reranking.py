@@ -18,9 +18,11 @@ from tychora.adapters.sqlite.retained_bindings import BindingScope
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.candidates import CandidateKey, ChannelCandidate
 from tychora.contracts.corpus import (
+    REPRESENTATION_LIMIT,
     ExtractionBundle,
     RepresentationSlice,
     RetainedRepresentationRows,
+    SliceFootprint,
 )
 from tychora.contracts.embeddings import QueryUploadAuthorization
 from tychora.contracts.errors import TychoraError
@@ -472,6 +474,8 @@ async def rank_with_owner(
 
 
 NEIGHBOUR_RADIUS = 2
+# What one rerank preparation may hydrate across all its slices.
+MAX_OPERATION = REPRESENTATION_LIMIT
 
 
 def _window_ids(
@@ -506,17 +510,43 @@ def _continuation_targets(unit_id: str, paths: tuple[GraphPath, ...]) -> set[str
     } - {unit_id}
 
 
+class _SliceReader:
+    """Reads slices for one operation and bounds what they hydrate together.
+
+    A memoised file slice is read, and counted, once.
+    """
+
+    def __init__(self, tx: ReadTransaction) -> None:
+        self.tx = tx
+        self.files: dict[tuple[str, str], RepresentationSlice] = {}
+        self.total = SliceFootprint()
+
+    def __call__(
+        self,
+        extraction_id: str,
+        *,
+        unit_ids: tuple[str, ...] = (),
+        relative_path: str | None = None,
+    ) -> RepresentationSlice:
+        """One slice, refused when the operation's reads would exceed their limit."""
+        piece = self.tx.representations.slice(
+            extraction_id, unit_ids=unit_ids, relative_path=relative_path
+        )
+        total = self.total.plus(piece.footprint)
+        total.require_within(MAX_OPERATION)
+        self.total = total
+        return piece
+
+
 def _candidate_slice(
     tx: ReadTransaction,
     unit_id: str,
     chunks: Mapping[str, ChunkRow],
     paths: tuple[GraphPath, ...],
-    files: dict[tuple[str, str], RepresentationSlice],
+    read: _SliceReader,
 ) -> RepresentationSlice:
-    """The candidate's units, windows, neighbours and continuation targets; a code file whole.
-
-    File slices are read once per ``(extraction, file)`` through ``files``.
-    """
+    """The candidate's units, windows, neighbours and continuation targets; a code file whole."""
+    files = read.files
     targets = _continuation_targets(unit_id, paths)
     found = {row.unit_id: row for row in tx.representations.units((unit_id, *targets))}
     if unit_id not in found:
@@ -530,16 +560,20 @@ def _candidate_slice(
     if relative_path is not None:
         key = (extraction_id, relative_path)
         if key not in files:
-            files[key] = tx.representations.slice(
-                extraction_id, relative_path=relative_path
-            )
+            files[key] = read(extraction_id, relative_path=relative_path)
         return files[key]
     needed = {unit_id, *(chunk.unit_id for chunk in chunks.values())}
+    if not targets <= found.keys():
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Continuation target is absent.",
+            reason="canonical.row_invalid",
+        )
     needed.update(t for t in targets if found[t].extraction_id == extraction_id)
     needed.update(
         row.unit_id for row in tx.representations.neighbours(unit_id, NEIGHBOUR_RADIUS)
     )
-    return tx.representations.slice(extraction_id, unit_ids=tuple(sorted(needed)))
+    return read(extraction_id, unit_ids=tuple(sorted(needed)))
 
 
 def _persisted_sets(
@@ -575,7 +609,7 @@ async def prepare_rerank_facts(
 
     def load(tx: ReadTransaction) -> Mapping[CandidateKey, RerankFacts]:
         output: dict[CandidateKey, RerankFacts] = {}
-        files: dict[tuple[str, str], RepresentationSlice] = {}
+        read = _SliceReader(tx)
         for candidate in admission.selected:
             ctx.checkpoint()
             kind, candidate_id = candidate.key
@@ -583,7 +617,7 @@ async def prepare_rerank_facts(
                 continue  # Native image ranking is independent of text reranking.
             windows = _window_ids(candidate, channels)
             chunks = {row.chunk_id: row for row in tx.representations.chunks(windows)}
-            piece = _candidate_slice(tx, candidate_id, chunks, paths, files)
+            piece = _candidate_slice(tx, candidate_id, chunks, paths, read)
             dependencies = _persisted_sets(tx, piece, windows)
             output[candidate.key] = RerankFacts(
                 piece.rows,
