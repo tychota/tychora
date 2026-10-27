@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from tychora.adapters.sqlite.history import HistoryRepository, RunMetrics
-from tychora.adapters.sqlite.lexical import LexicalIndex
 from tychora.adapters.voyage.text import QueryOperationBinding
 from tychora.application.reranking import prepare_rerank_facts
 from tychora.configuration.indexed_representation import pinned_runtime_compatible
@@ -66,7 +65,7 @@ from tychora.retrieval.attempt import EligibilityAttempt, run_pinned_eligibility
 from tychora.retrieval.cache import QueryCaches
 from tychora.retrieval.compiler import EligibilityCompiler
 from tychora.retrieval.eligibility import LegacyEligibilityCompiler
-from tychora.retrieval.fusion import FusedCandidate, fuse
+from tychora.retrieval.fusion import fuse
 from tychora.retrieval.graph import augment
 from tychora.retrieval.lexical_query import retrieve_exact_lexical
 from tychora.retrieval.query import result_cache_key, validate_query_text
@@ -84,6 +83,7 @@ from tychora.retrieval.response import (
     prepare_records,
 )
 from tychora.retrieval.segments import Selection, assemble_segments
+from tychora.retrieval.survivors import load_survivors
 from tychora.retrieval.visuals import prepare_visual_candidates, select_visuals
 
 if TYPE_CHECKING:
@@ -216,7 +216,6 @@ class QueryService:
         owner: WorkspaceOwner,
         *,
         output_counter: TokenCounter,
-        lexical: LexicalIndex | None = None,
         graph: GraphStore | None = None,
         text_provider: TextQueryProvider | None = None,
         text_index: VectorIndex | None = None,
@@ -235,7 +234,6 @@ class QueryService:
         self.registry = owner.store.registry
         self.compiler = EligibilityCompiler(self.registry, owner.artifacts)
         self.legacy_compiler = LegacyEligibilityCompiler(owner.store)
-        self.lexical = lexical or LexicalIndex(owner.db)
         self.graph = graph
         self.text_provider = text_provider
         self.text_index = text_index
@@ -585,8 +583,8 @@ class QueryService:
                 ctx,
                 "interactive",
             )
-            lexical_epoch = await self.owner.run_write(
-                self._lexical_epoch, ctx, "interactive"
+            lexical_epoch = await self.owner.run_read(
+                lambda tx: tx.workspace.lexical_epoch(), ctx
             )
             key = result_cache_key(
                 request,
@@ -673,15 +671,6 @@ class QueryService:
             on_invalidated=supersede,
         )
 
-    def _lexical_epoch(self) -> int:
-        row = self.owner.db.execute(
-            "SELECT lexical_statistics_epoch FROM workspaces WHERE workspace_id=?",
-            (self.owner.workspace_id,),
-        ).fetchone()
-        if row is None:
-            raise TychoraError("INTEGRITY_ERROR", "Workspace statistics are absent.")
-        return int(row[0])
-
     async def _prepare(
         self,
         request: QueryRequest,
@@ -701,18 +690,11 @@ class QueryService:
                 "INVALID_REQUEST", "Selected image channel cannot run for this query"
             )
         channels = (
-            await self.owner.run_write(
-                lambda: retrieve_exact_lexical(
-                    self.owner.store,
-                    self.lexical,
-                    view,
-                    request,
-                    self.registry,
-                    80,
-                    ctx,
+            await self.owner.run_read(
+                lambda tx: retrieve_exact_lexical(
+                    tx, attempt.view, request, self.registry, 80, ctx
                 ),
                 ctx,
-                "interactive",
             )
             if plan is None or plan.lexical
             else ()
@@ -726,8 +708,8 @@ class QueryService:
             None,
         )
         if lexical_epoch is None:
-            lexical_epoch = await self.owner.run_write(
-                self._lexical_epoch, ctx, "interactive"
+            lexical_epoch = await self.owner.run_read(
+                lambda tx: tx.workspace.lexical_epoch(), ctx
             )
         assert lexical_epoch is not None
         incomplete: list[str] = [
@@ -854,8 +836,8 @@ class QueryService:
             if graph_votes:
                 votes["graph"] = graph_votes
                 fused = fuse(votes)
-        lanes = await self.owner.run_write(
-            lambda: self._candidate_lanes(fused, view), ctx, "interactive"
+        survivors = await self.owner.run_read(
+            lambda tx: load_survivors(tx, attempt.view, fused), ctx
         )
         required = cast(tuple[str, ...], mode.get("required_lanes", ()))
         active = active_requirements(
@@ -872,7 +854,7 @@ class QueryService:
             self.registry.lanes
         )
         admission = admit(
-            fused,
+            survivors.candidates,
             tuple(item.key for item in channels[0].source_candidates)
             if channels and (plan is None or plan.lexical)
             else (),
@@ -890,7 +872,7 @@ class QueryService:
                 required=required,
                 known=tuple(self.registry.lanes),
             ),
-            lanes=lanes,
+            lanes=survivors.lanes,
         )
         facts = await prepare_rerank_facts(self.owner, attempt, admission, votes, ctx)
         if request.exact_only or plan is not None and not plan.rerank:
@@ -1047,34 +1029,6 @@ class QueryService:
             ),
             lexical_epoch,
         )
-
-    def _candidate_lanes(
-        self, fused: tuple[FusedCandidate, ...], view: object
-    ) -> dict[CandidateKey, str]:
-        lanes: dict[CandidateKey, str] = {}
-        for candidate in fused:
-            kind, identifier = candidate.key
-            if kind == "unit":
-                row = self.owner.db.execute(
-                    "SELECT r.kind_id FROM evidence_units u "
-                    "JOIN extractions e USING(extraction_id) "
-                    "JOIN revisions r USING(revision_id) WHERE u.unit_id=?",
-                    (identifier,),
-                ).fetchone()
-            else:
-                row = self.owner.db.execute(
-                    "SELECT r.kind_id FROM assets a "
-                    "JOIN extractions e USING(extraction_id) "
-                    "JOIN revisions r USING(revision_id) WHERE a.asset_id=?",
-                    (identifier,),
-                ).fetchone()
-            lane = self.registry.lane_bindings.get(row[0]) if row else None
-            if not isinstance(lane, str):
-                raise TychoraError(
-                    "PROFILE_INCOMPATIBLE", "Candidate lane is unavailable."
-                )
-            lanes[candidate.key] = lane
-        return lanes
 
     async def _text_candidates(
         self,

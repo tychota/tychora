@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from types import MappingProxyType
 
 from tychora.contracts.base import FrozenJsonMap
-from tychora.contracts.eligibility import EligibilityView
+from tychora.contracts.eligibility import EligibilityView, RevisionGrant
 from tychora.contracts.graph import LegacyEligibilityView
 from tychora.contracts.identity import digest
 from tychora.contracts.publication import SnapshotView
@@ -45,6 +45,43 @@ def eligibility_view(
         graph_manifest_digest=digest("synthetic-graph-manifest")
         if graph_bound
         else None,
+    )
+
+
+def revision_view(
+    grants: Mapping[str, str] | None = None,
+    *,
+    excluded_units=(),
+    excluded_assets=(),
+    unit_filter=None,
+    all_members=True,
+    batches=None,
+    snapshot_id="snapshot",
+    lane="standard",
+) -> EligibilityView:
+    """A revision-level view granting each ``revision -> extraction`` pair."""
+    pairs = {"revision": "extraction"} if grants is None else grants
+    return EligibilityView(
+        snapshot_id=snapshot_id,
+        policy_epoch=0,
+        scope_digest=digest("synthetic-scope"),
+        eligibility_policy_digest=digest("synthetic-policy"),
+        eligibility_request_digest=digest("synthetic-request"),
+        revisions={
+            revision: RevisionGrant(
+                extraction_id=extraction,
+                source_id=f"source-{revision}",
+                kind_id="manual@1",
+                lane=lane,
+                collection_id="collection",
+            )
+            for revision, extraction in pairs.items()
+        },
+        excluded_unit_ids=frozenset(excluded_units),
+        excluded_asset_ids=frozenset(excluded_assets),
+        unit_filter=None if unit_filter is None else frozenset(unit_filter),
+        selected_batches=batches or {},
+        all_members_eligible=all_members,
     )
 
 
