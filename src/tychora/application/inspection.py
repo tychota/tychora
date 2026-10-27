@@ -117,8 +117,14 @@ class InspectionService:
         snapshot: SnapshotView,
         scope: RequestScope,
         members: tuple[SnapshotMember, ...] | None = None,
+        *,
+        include_archived: bool,
     ) -> EligibilityView:
-        """Compile the revision-level view inside the caller's read."""
+        """Compile the revision-level view inside the caller's read.
+
+        ``include_archived`` admits archived collections, for exact retained
+        inspection only.
+        """
         query = self._exact_query(scope)
         self.compiler.ensure_compatible(
             snapshot,
@@ -132,7 +138,7 @@ class InspectionService:
             query,
             self.owner.config,
             members=members,
-            include_archived=members is not None,
+            include_archived=include_archived,
         ).view
 
     def _legacy_attempt(self, snapshot: SnapshotView, scope: RequestScope):
@@ -762,7 +768,9 @@ class InspectionService:
                 raise TychoraError("ORIGINAL_REMOVED", "Original payload was removed.")
         with self._pin_retained(request) as pin, self.owner.store.uow.read() as tx:
             ctx.checkpoint()
-            view = self._attempt(tx, pin.view, granted, pin.members)
+            view = self._attempt(
+                tx, pin.view, granted, pin.members, include_archived=True
+            )
             result = self._inspect_subject(tx, request, pin, view)
             require_epoch(tx, view)
             ctx.checkpoint()

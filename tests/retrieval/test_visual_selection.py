@@ -13,6 +13,7 @@ from tests.helpers.eligibility import revision_attempt, revision_view
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.contracts.corpus import AssetRow, RevisionArtifactRow, UnitAssetRow
+from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import ImageLocator, Segment
 from tychora.contracts.identity import digest
 from tychora.ports.execution import ExecutionContext
@@ -248,3 +249,136 @@ def test_companion_reservation_requires_selected_text_revision():
     selected = select_visuals((old, current), (strongest,), limit=2)
     assert selected[1].asset_id == old.candidate.key[1]
     assert selected[1].selection_reasons == ("proxy_match",)
+
+
+# ---------------------------------------------------------------------------
+# Exclusion on the visual path
+
+
+def _with_proxy(case: AssetCandidate, required: str = "required-unit"):
+    """The case with a derived proxy of its asset that requires an unlinked unit."""
+    from dataclasses import replace
+
+    from tychora.contracts.corpus import AssetProxyRow
+
+    asset_id = case.candidate.key[1]
+    revision_id = case.rows.revision.revision_id
+    proxy = case.rows.units[0].model_copy(
+        update={
+            "unit_id": "proxy-unit",
+            "unit_type": "asset_proxy",
+            "citable": False,
+            "text_origin": "derived",
+            "text": "A pump diagram.",
+            "ordinal": 1,
+        }
+    )
+    rows = case.rows.model_copy(
+        update={
+            "units": (*case.rows.units, proxy),
+            "proxies": (
+                AssetProxyRow(
+                    proxy_unit_id=proxy.unit_id,
+                    asset_id=asset_id,
+                    origin_type="description",
+                    derivation_sha=digest("synthetic-derivation"),
+                    required_unit_ids=frozenset({required}),
+                ),
+            ),
+        }
+    )
+    # A proxy's persisted set names its asset and its required units.
+    sets = {
+        **case.unit_dependencies,
+        proxy.unit_id: frozenset({revision_id, proxy.unit_id, asset_id, required}),
+    }
+    return replace(case, rows=rows, unit_dependencies=sets)
+
+
+def _excluding(case: AssetCandidate, *units: str) -> AssetCandidate:
+    from dataclasses import replace
+
+    grants = {case.rows.revision.revision_id: case.rows.extraction.extraction_id}
+    return replace(case, view=revision_view(grants, excluded_units=units))
+
+
+def test_proxy_keeps_an_unlinked_required_unit_while_it_is_eligible():
+    case = _with_proxy(visual_case())
+    (visual,) = select_visuals((case,), ())
+    assert [proxy.proxy_id for proxy in visual.proxies] == ["proxy-unit"]
+    (visual,) = select_visuals((_excluding(case, "required-unit"),), ())
+    assert visual.proxies == ()
+
+
+def test_excluded_proxy_is_filtered_and_excluded_source_hides_the_visual():
+    case = _with_proxy(visual_case())
+    (visual,) = select_visuals((_excluding(case, "proxy-unit"),), ())
+    assert visual.proxies == ()
+    source = case.rows.units[0].unit_id
+    assert select_visuals((_excluding(case, source),), ()) == ()
+
+
+def _retained_owner(tmp_path, fixture: AssetCandidate):
+    """An owner shim over a fresh store holding the fixture's rows and facts."""
+    db = open_corpus(tmp_path / "corpus.sqlite3", initialize=True)
+    store = CorpusStore(db, registry=registry(), artifacts=reader())
+    commit_with_facts(store, fixture.rows)
+
+    class Owner:
+        def __init__(self):
+            self.db = db
+
+        async def run_read(self, call, ctx):
+            ctx.checkpoint()
+            with store.uow.read() as tx:
+                return call(tx)
+
+    return db, Owner()
+
+
+async def _prepared(owner, view, candidate):
+    attempt = revision_attempt(view, owner=owner)
+    ranked = RankedEvidence((RankedEvidenceItem(candidate, None, None, "independent"),))
+    return await prepare_visual_candidates(owner, attempt, ranked, ExecutionContext())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("change", "reason"),
+    [
+        ("excluded_asset", "scope.dependency_ineligible"),
+        ("other_extraction", "scope.dependency_ineligible"),
+        ("absent_asset", "canonical.row_invalid"),
+        ("missing_unit_set", "canonical.facts_missing"),
+    ],
+)
+async def test_visual_producer_refuses_what_it_cannot_admit(tmp_path, change, reason):
+    from dataclasses import replace
+
+    fixture = visual_case("refused.png")
+    db, owner = _retained_owner(tmp_path, fixture)
+    revision_id = fixture.rows.revision.revision_id
+    asset_id = fixture.candidate.key[1]
+    view, candidate = fixture.view, fixture.candidate
+    if change == "excluded_asset":
+        view = revision_view(
+            {revision_id: fixture.rows.extraction.extraction_id},
+            excluded_assets=(asset_id,),
+        )
+    elif change == "other_extraction":
+        # The revision is selected, but through another of its extractions.
+        view = revision_view({revision_id: "another-extraction"})
+    elif change == "absent_asset":
+        candidate = replace(candidate, key=("asset", "absent-asset"))
+    else:
+        db.execute(
+            "DELETE FROM representation_dependencies WHERE owner_id=?",
+            (fixture.rows.units[0].unit_id,),
+        )
+    with pytest.raises(TychoraError) as error:
+        await _prepared(owner, view, candidate)
+    assert error.value.reason == reason
+    assert error.value.code == (
+        "FORBIDDEN_SCOPE" if reason.startswith("scope.") else "INTEGRITY_ERROR"
+    )
+    db.close()

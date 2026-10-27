@@ -117,7 +117,9 @@ def content_page(
             request.revision_id,
         ):
             raise TychoraError("NOT_FOUND", "Retained lineage is unavailable.")
-        view = service._attempt(tx, pin.view, granted, pin.members)
+        view = service._attempt(
+            tx, pin.view, granted, pin.members, include_archived=True
+        )
         if request.revision_id not in view.revisions:
             raise TychoraError("FORBIDDEN_SCOPE", "Item is outside the readable scope.")
         binding = digest(
@@ -157,9 +159,8 @@ def content_page(
         )
         columns = [column[0] for column in cursor.description]
         candidates = cursor.fetchall()
-        units = _page_units(columns, candidates)
         retained, prepared, readable = _page_reads(
-            tx, view, request.extraction_id, units, windows
+            tx, view, request.extraction_id, _page_units(columns, candidates), windows
         )
         page_type = ExtractionWindowsPage if windows else ExtractionUnitsPage
         field = "windows" if windows else "units"
