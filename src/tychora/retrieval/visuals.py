@@ -89,7 +89,6 @@ def _visual(
         and proxy.proxy_unit_id in units
         and not units[proxy.proxy_unit_id].citable
         and units[proxy.proxy_unit_id].text_origin != "source"
-        and all(readable(unit_id) for unit_id in proxy.required_unit_ids)
     )
     return VisualEvidence(
         asset_id=asset.asset_id,
@@ -257,7 +256,9 @@ def _asset_candidate(
             "Visual asset is absent.",
             reason="canonical.row_invalid",
         )
-    if not view.allows(fact.dependency_ids):
+    if fact.extraction_id not in view.revision_of_extraction or not view.allows(
+        fact.dependency_ids
+    ):
         raise TychoraError(
             "FORBIDDEN_SCOPE",
             "Visual asset is not eligible.",
@@ -269,9 +270,31 @@ def _asset_candidate(
         piece.rows,
         view,
         fact.dependency_ids,
-        tx.representations.dependencies(tuple(u.unit_id for u in piece.rows.units)),
+        _unit_sets(tx, tuple(unit.unit_id for unit in piece.rows.units)),
         native_multimodal="visual" in item.candidate.ranks,
     )
+
+
+def _unit_sets(
+    tx: ReadTransaction, unit_ids: tuple[str, ...]
+) -> Mapping[str, frozenset[str]]:
+    """Every listed unit's persisted set; a unit without one is ``canonical.facts_missing``.
+
+    The asset slice holds its source, caption and proxy units, so every unit a
+    visual checks has a set here.
+    """
+    sets = {
+        fact.owner_id: fact.dependency_ids
+        for fact in tx.eligibility.owner_facts(unit_ids)
+        if fact.kind == "unit"
+    }
+    if not set(unit_ids) <= set(sets):
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "A visual unit has no persisted dependency set.",
+            reason="canonical.facts_missing",
+        )
+    return sets
 
 
 async def prepare_visual_candidates(

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, cast
 from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
+from tychora.contracts.code import Resolution
 from tychora.contracts.composition import VisionCapabilityDiagnostics
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes, digest
@@ -47,7 +48,6 @@ from tychora.retrieval.compiler import EligibilityCompiler
 if TYPE_CHECKING:
     from tychora.application.owner import WorkspaceOwner
     from tychora.configuration.models import ResolvedConfig
-    from tychora.contracts.code import Resolution
 
 SUBJECTS = (
     "kinds",
@@ -282,8 +282,6 @@ def _exact_request(
 
 def _resolution_records(owner: WorkspaceOwner, sha: str) -> tuple[Resolution, ...]:
     """The resolution records of a retained code diagnostics artifact."""
-    from tychora.contracts.code import Resolution
-
     ref_row = owner.db.execute(
         "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
         (sha,),
