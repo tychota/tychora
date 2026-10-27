@@ -424,20 +424,21 @@ def _separate_fragments(first, second) -> bool:
 def _same_section(first, second) -> bool:
     """Whether two units share the section that bounds neighbour context and joins.
 
-    Document units are grouped by their heading path, which every unit under one
-    section header shares with that section's boundary key. Document tables are
-    excluded: a table continued on another page joins only through a verified graph
-    path.
+    The boundary key is the section identity: two articles under one heading, or
+    two sibling sections with identical headings, are different sections. Document
+    tables are excluded: a table continued on another page joins only through a
+    verified graph path.
     """
+    if first.boundary_key != second.boundary_key:
+        return False
     if _is_document_unit(first) or _is_document_unit(second):
         return (
             _is_document_unit(first)
             and _is_document_unit(second)
             and first.unit_type not in _TABLE_UNIT_TYPES
             and second.unit_type not in _TABLE_UNIT_TYPES
-            and first.heading_path == second.heading_path
         )
-    return first.boundary_key == second.boundary_key
+    return True
 
 
 def _neighbor_context(

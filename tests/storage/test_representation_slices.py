@@ -3,12 +3,28 @@
 import pytest
 
 from tests.helpers.corpus import add_manual
+from tests.helpers.eligibility import revision_attempt, revision_view
 from tests.helpers.legacy import OutputCounter
 from tests.helpers.owner import on_owner, owner_row, owner_rows
 from tychora import Tychora
+from tychora.application.reranking import extraction_rows, prepare_rerank_facts
+from tychora.configuration.resolve import resolve_config
+from tychora.contracts.candidates import ChannelCandidate
 from tychora.contracts.errors import TychoraError
 from tychora.indexing.representations import prepare_extraction
 from tychora.ports.execution import ExecutionContext
+from tychora.retrieval.admission import Admission
+from tychora.retrieval.fusion import FusedCandidate
+from tychora.retrieval.rerank import RerankFacts, matches_from_channels, ranking_input
+
+
+class CharacterCounter:
+    model = "rerank-2.5"
+    tokenizer_id = "synthetic-character-counter"
+
+    def count(self, text: str) -> int:
+        return len(text)
+
 
 # Two paragraphs past radius 1 of "Inspect", so a radius-1 neighbourhood is a
 # strict part of its boundary.
@@ -55,7 +71,7 @@ def test_neighbours_stay_within_boundary_key(kb):
     assert {r[0] for r in rows if r[1] == boundary} == {row.unit_id for row in every}
 
 
-def test_slice_ownership_equals_prepared_extraction(kb, monkeypatch):
+def test_slice_ownership_equals_prepared_extraction(kb):
     owner = kb._workspace.owner
     extraction_id, unit_id = _inspect_row(owner, "extraction_id,unit_id")
     piece = _read(
@@ -119,3 +135,241 @@ def test_no_read_path_calls_prepare_extraction():
             if isinstance(node, ast.Name) and node.id == "prepare_extraction":
                 offenders.append(relative)
     assert offenders == []
+
+
+_FIRST_FILE = (
+    "import os\n\n\nclass Box:\n    def run(self):\n        return os.sep\n\n\n"
+    "def helper():\n    return 1\n"
+)
+_SECOND_FILE = "def other():\n    return 2\n\n\ndef another():\n    return 3\n"
+
+
+@pytest.fixture
+def repo_kb(tmp_path):
+    from tests.code.conftest import git
+
+    root = tmp_path / "repository"
+    root.mkdir()
+    git(root, "init", "-q")
+    git(root, "config", "user.name", "Synthetic Author")
+    git(root, "config", "user.email", "synthetic@example.invalid")
+    (root / "first.py").write_text(_FIRST_FILE)
+    (root / "second.py").write_text(_SECOND_FILE)
+    git(root, "add", "first.py", "second.py")
+    git(root, "commit", "-qm", "synthetic fixture")
+    settings = tmp_path / "settings.toml"
+    settings.write_text(
+        'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
+        '[configuration.extraction]\nparser="code"\n'
+        f'[configuration.acquisition]\nroots=["{tmp_path}"]\n'
+    )
+    config = resolve_config(settings, "test", {})
+    source = {
+        "type": "repository",
+        "path": str(root),
+        "source_key": "code",
+        "collection_id": "default",
+        "kind": "code_file@1",
+        "metadata": {"title": "Synthetic repository"},
+    }
+    with Tychora.open(
+        tmp_path / "ws", config=config, token_counter=OutputCounter()
+    ) as opened:
+        assert opened.jobs.wait(opened.sources.add(source).id).state == "succeeded"
+        yield opened
+
+
+def _code_unit(owner, relative_path):
+    """A symbol unit of one file and its extraction."""
+    row = owner_row(
+        owner,
+        "SELECT u.extraction_id,u.unit_id FROM evidence_units u JOIN locators c "
+        "USING(unit_id) WHERE c.locator_type='code' AND c.source_ref=? "
+        "AND u.unit_type='symbol' ORDER BY u.ordinal LIMIT 1",
+        (relative_path,),
+    )
+    assert row is not None
+    return row
+
+
+def test_code_unit_slice_reads_only_its_file_binding(repo_kb):
+    owner = repo_kb._workspace.owner
+    extraction_id, unit_id = _code_unit(owner, "first.py")
+    piece = _read(
+        repo_kb,
+        lambda tx: tx.representations.slice(extraction_id, unit_ids=(unit_id,)),
+    )
+    files = [
+        row.source_ref
+        for row in piece.rows.revision_artifacts
+        if row.role == "source_file"
+    ]
+    assert files == ["first.py"]
+    whole = _read(
+        repo_kb,
+        lambda tx: tx.representations.slice(extraction_id, relative_path="second.py"),
+    )
+    assert [
+        r.source_ref for r in whole.rows.revision_artifacts if r.role == "source_file"
+    ] == ["second.py"]
+
+
+def test_file_slice_over_its_bounds_is_refused(repo_kb, monkeypatch):
+    from tychora.adapters.sqlite.repositories import slices
+
+    owner = repo_kb._workspace.owner
+    extraction_id, _ = _code_unit(owner, "first.py")
+    monkeypatch.setattr(slices, "MAX_SLICE_UNITS", 1)
+    with pytest.raises(TychoraError) as units:
+        _read(
+            repo_kb,
+            lambda tx: tx.representations.slice(
+                extraction_id, relative_path="first.py"
+            ),
+        )
+    assert units.value.reason == "request.limit_exceeded"
+    monkeypatch.setattr(slices, "MAX_SLICE_UNITS", 20_000)
+    monkeypatch.setattr(slices, "MAX_SLICE_TEXT_BYTES", 8)
+    with pytest.raises(TychoraError) as text:
+        _read(
+            repo_kb,
+            lambda tx: tx.representations.slice(
+                extraction_id, relative_path="first.py"
+            ),
+        )
+    assert text.value.reason == "request.limit_exceeded"
+
+
+def test_slice_refuses_an_empty_or_unknown_request(kb):
+    owner = kb._workspace.owner
+    extraction_id, unit_id = _inspect_row(owner, "extraction_id,unit_id")
+    with pytest.raises(TychoraError) as empty:
+        _read(kb, lambda tx: tx.representations.slice(extraction_id))
+    assert empty.value.reason == "invariant.unexpected"
+    with pytest.raises(TychoraError) as unknown:
+        _read(
+            kb,
+            lambda tx: tx.representations.slice(
+                extraction_id, unit_ids=(unit_id, "absent-unit")
+            ),
+        )
+    assert unknown.value.reason == "canonical.row_invalid"
+
+
+def _candidates(kb):
+    """Every unit with windows, as a lexical candidate, with its extraction grants."""
+    owner = kb._workspace.owner
+    windows: dict[str, list[str]] = {}
+    grants: dict[str, str] = {}
+    for unit_id, chunk_id, extraction_id, revision_id in owner_rows(
+        owner,
+        "SELECT c.unit_id,c.chunk_id,u.extraction_id,e.revision_id FROM chunks c "
+        "JOIN evidence_units u USING(unit_id) JOIN extractions e "
+        "ON e.extraction_id=u.extraction_id ORDER BY u.ordinal,c.char_start",
+    ):
+        windows.setdefault(unit_id, []).append(chunk_id)
+        grants[revision_id] = extraction_id
+    candidates = tuple(
+        FusedCandidate(
+            ("unit", unit_id),
+            rank,
+            1.0 / rank,
+            {"lexical": rank},
+            matching_window_ids=tuple(ids),
+        )
+        for rank, (unit_id, ids) in enumerate(windows.items(), 1)
+    )
+    channels = {
+        "lexical": tuple(
+            ChannelCandidate(
+                key=candidate.key,
+                rank=candidate.rank,
+                matching_window_ids=candidate.matching_window_ids,
+            )
+            for candidate in candidates
+        )
+    }
+    return candidates, channels, revision_view(grants)
+
+
+def _sliced_facts(kb, candidates, channels, view):
+    owner = kb._workspace.owner
+    admission = Admission(candidates, (), {}, {}, (), {}, 64 - len(candidates))
+    attempt = revision_attempt(view, owner=owner)
+    return kb._workspace.bridge.call(
+        prepare_rerank_facts(owner, attempt, admission, channels, ExecutionContext())
+    )
+
+
+def _full_facts(kb, candidate, channels, view):
+    """The candidate's facts from its whole extraction, prepared from scratch."""
+    owner = kb._workspace.owner
+    found = owner_row(
+        owner,
+        "SELECT extraction_id FROM evidence_units WHERE unit_id=?",
+        (candidate.key[1],),
+    )
+    assert found is not None
+    (extraction_id,) = found
+    rows = on_owner(owner, lambda: extraction_rows(owner.db, extraction_id))
+    prepared = prepare_extraction(rows)
+    windows = candidate.matching_window_ids
+    chunks = _read(
+        kb, lambda tx: {row.chunk_id: row for row in tx.representations.chunks(windows)}
+    )
+    dependencies = _read(
+        kb,
+        lambda tx: tx.representations.dependencies(
+            (*(unit.unit_id for unit in rows.units), *windows)
+        ),
+    )
+    return RerankFacts(
+        rows,
+        prepared,
+        matches_from_channels(
+            candidate, channels, chunks, prepared, view, dependencies
+        ),
+        dependencies=dependencies,
+    )
+
+
+def _assert_parity(kb):
+    candidates, channels, view = _candidates(kb)
+    assert len(candidates) > 1
+    sliced = _sliced_facts(kb, candidates, channels, view)
+    for candidate in candidates:
+        piece = sliced[candidate.key]
+        full = _full_facts(kb, candidate, channels, view)
+        for rep in piece.prepared.units:
+            assert rep == full.prepared.representation(rep.unit.unit_id)
+        assert piece.matches == full.matches
+        spans = []
+        for facts in (piece, full):
+            units = {unit.unit_id: unit for unit in facts.rows.units}
+            item = ranking_input(
+                candidate, units, view, CharacterCounter(), facts=facts
+            )
+            spans.append(item.spans)
+        assert spans[0] == spans[1]
+
+
+def test_rerank_facts_from_slices_equal_whole_extraction_facts_for_a_manual(kb):
+    _assert_parity(kb)
+
+
+def test_rerank_facts_from_slices_equal_whole_extraction_facts_for_code(repo_kb):
+    _assert_parity(repo_kb)
+
+
+def test_rerank_facts_refuse_a_window_without_a_persisted_set(kb):
+    owner = kb._workspace.owner
+    candidates, channels, view = _candidates(kb)
+    candidate = candidates[0]
+    owner_rows(
+        owner,
+        "DELETE FROM representation_dependencies WHERE owner_id=?",
+        (candidate.matching_window_ids[0],),
+    )
+    with pytest.raises(TychoraError) as error:
+        _sliced_facts(kb, (candidate,), channels, view)
+    assert error.value.reason == "canonical.facts_missing"
