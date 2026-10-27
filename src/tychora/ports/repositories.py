@@ -229,6 +229,10 @@ class BatchRepository(Protocol):
         """Return the batch's vector record IDs in ID order."""
         ...
 
+    def bound_record_ids(self, record_ids: tuple[str, ...]) -> frozenset[str]:
+        """The listed vector record IDs that have a stored row in any batch."""
+        ...
+
     def purge(self, batch_ids: tuple[str, ...]) -> tuple[str, ...]:
         """Delete removed batches and their rows; return artifacts released for deletion."""
         ...

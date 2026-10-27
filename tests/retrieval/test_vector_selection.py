@@ -86,11 +86,14 @@ def test_filtered_search_below_512_revisions(tmp_path):
     index = _index(tmp_path, owners)
     view = revision_view({"r1": "r1-extraction"})
     result = index.search(view, _query(), 5, ExecutionContext())
+    # 40 stored records exceed the 20 wanted: the store filters, and every
+    # owner of the page comes back; the caller cuts per canonical kind.
     assert [owner.key for owner in result.owners] == [
-        ("unit", f"u{i}") for i in (1, 5, 9, 13, 17)
+        ("unit", f"u{i}") for i in range(1, 40, 4)
     ]
     assert not result.truncated
     assert result.detail["rescored"] == 0
+    assert result.detail["exhausted"] == 0
 
 
 def test_overfetch_returns_limit_or_truncated_above_512(tmp_path, monkeypatch):
@@ -107,6 +110,7 @@ def test_overfetch_returns_limit_or_truncated_above_512(tmp_path, monkeypatch):
         "u32",
         "u34",
         "u57",
+        "u59",
     ]
     assert not result.truncated
     assert result.detail["queries"] == 3
@@ -192,14 +196,14 @@ def _store(*facts):
     return SimpleNamespace(eligibility=SimpleNamespace(owner_facts=owner_facts)), reads
 
 
-def _ranked(*rows, truncated=False):
+def _ranked(*rows, exhausted=False):
     """Adapter owners as Chroma metadata gives them: ``(owner, score, records)``."""
     return RankedOwners(
         owners=tuple(
             RankedOwner(key=("unit", owner), rank=rank, score=score, window_ids=records)
             for rank, (owner, score, records) in enumerate(rows, 1)
         ),
-        truncated=truncated,
+        detail={"exhausted": int(exhausted)},
     )
 
 
@@ -220,7 +224,7 @@ def _text_corpus():
 
 def test_text_records_map_to_units_and_proxy_windows_to_their_asset():
     tx, reads = _store(*_text_corpus())
-    ranked = _ranked(("u1", -0.1, ("v1",)), ("p", -0.2, ("vp",)))
+    ranked = _ranked(("u1", -0.1, ("v1",)), ("p", -0.2, ("vp",)), exhausted=True)
     candidates, truncated = vector_candidates(tx, _view(), ranked, limit=2)
     assert [(c.key, c.rank, c.matching_window_ids) for c in candidates] == [
         (("unit", "u1"), 1, ("c1",)),
@@ -230,25 +234,123 @@ def test_text_records_map_to_units_and_proxy_windows_to_their_asset():
     assert reads[0] == ("v1", "vp")
 
 
-def test_dropped_records_below_the_limit_mark_the_channel_truncated():
-    unserved = _record("v-old", batch="collected", chunk="c1", unit="u1")
-    tx, _ = _store(*_text_corpus(), unserved)
-    ranked = _ranked(("u1", -0.1, ("v-old",)), ("p", -0.2, ("vp",)))
-    candidates, truncated = vector_candidates(tx, _view(), ranked, limit=2)
+def _unit_rows(i):
+    unit, chunk, record = f"u{i}", f"c{i}", f"v{i}"
+    return (
+        _fact(unit, "unit", unit_id=unit, citable=True),
+        _fact(chunk, "chunk", unit_id=unit, chunk_id=chunk, citable=True),
+        _record(record, chunk=chunk, unit=unit),
+    )
+
+
+def _proxy_rows(i):
+    proxy, chunk, record, asset = f"p{i}", f"cp{i}", f"vp{i}", f"a{i}"
+    return (
+        _fact(proxy, "unit", unit_id=proxy, asset_id=asset, proxy=True),
+        _fact(
+            chunk, "chunk", unit_id=proxy, chunk_id=chunk, asset_id=asset, proxy=True
+        ),
+        _record(record, chunk=chunk, unit=proxy, asset=asset),
+    )
+
+
+def test_nearer_proxies_never_crowd_units_out_of_their_slots():
+    rows = [row for i in range(3) for row in _proxy_rows(i)]
+    rows += [row for i in range(2) for row in _unit_rows(i)]
+    tx, _ = _store(*rows)
+    # Three proxy windows are nearer than both text units.
+    page = [(f"p{i}", -0.1 * (i + 1), (f"vp{i}",)) for i in range(3)]
+    page += [(f"u{i}", -0.5 - 0.1 * i, (f"v{i}",)) for i in range(2)]
+    candidates, truncated = vector_candidates(tx, _view(), _ranked(*page), limit=2)
+    assert [c.key for c in candidates] == [
+        ("unit", "u0"),
+        ("unit", "u1"),
+        ("asset", "a0"),
+        ("asset", "a1"),
+    ]
+    assert not truncated
+    short, cut = vector_candidates(tx, _view(), _ranked(*page[:4]), limit=2)
+    assert [c.key for c in short if c.key[0] == "unit"] == [("unit", "u0")]
+    assert cut
+
+
+def test_an_exhausted_store_with_dropped_stale_records_is_not_truncated():
+    stale = _record("v-old", batch="collected", chunk="c1", unit="u1")
+    tx, _ = _store(*_text_corpus(), stale)
+    page = (("u1", -0.1, ("v-old",)), ("p", -0.2, ("vp",)))
+    candidates, truncated = vector_candidates(
+        tx, _view(), _ranked(*page, exhausted=True), limit=80
+    )
     assert [c.key for c in candidates] == [("asset", "a")]
-    assert truncated
-    full, still = vector_candidates(tx, _view(), ranked, limit=1)
-    assert [c.key for c in full] == [("asset", "a")]
-    assert not still
+    assert not truncated
+    _, cut = vector_candidates(tx, _view(), _ranked(*page), limit=80)
+    assert cut
 
 
-def test_excluded_unit_record_is_dropped_and_truncates():
+def test_a_page_whose_kind_is_short_after_admission_is_truncated():
     tx, _ = _store(*_text_corpus())
     ranked = _ranked(("u1", -0.1, ("v1",)), ("p", -0.2, ("vp",)))
     view = _view(excluded_units=("u1",))
-    candidates, truncated = vector_candidates(tx, view, ranked, limit=80)
+    candidates, truncated = vector_candidates(tx, view, ranked, limit=1)
     assert [c.key for c in candidates] == [("asset", "a")]
-    assert truncated
+    assert not truncated
+    nothing, cut = vector_candidates(tx, view, _ranked(("u1", -0.1, ("v1",))), limit=1)
+    assert nothing == ()
+    assert cut
+
+
+def test_a_record_whose_group_names_an_excluded_neighbour_is_dropped():
+    tx, _ = _store(
+        _fact("u1", "unit", unit_id="u1", citable=True),
+        _fact("c1", "chunk", unit_id="u1", chunk_id="c1", citable=True),
+        _fact(
+            "v1",
+            "record",
+            deps=("revision", "u1", "u-neighbour"),
+            batch_id="batch",
+            chunk_id="c1",
+            unit_id="u1",
+        ),
+    )
+    ranked = _ranked(("u1", -0.1, ("v1",)), exhausted=True)
+    assert vector_candidates(tx, _view(), ranked, limit=1)[0] != ()
+    view = _view(excluded_units=("u-neighbour",))
+    assert vector_candidates(tx, view, ranked, limit=1) == ((), False)
+
+
+def test_a_record_of_another_extraction_of_a_granted_revision_is_dropped():
+    old = _fact(
+        "v-old",
+        "record",
+        batch_id="batch",
+        chunk_id="c1",
+        unit_id="u1",
+    ).model_copy(update={"extraction_id": "older-extraction"})
+    tx, _ = _store(*_text_corpus(), old)
+    ranked = _ranked(("u1", -0.1, ("v-old",)), exhausted=True)
+    assert vector_candidates(tx, _view(), ranked, limit=1) == ((), False)
+    unserved = _store(*_text_corpus(), _record("v-old", batch="older", chunk="c1"))[0]
+    assert vector_candidates(unserved, _view(), ranked, limit=1) == ((), False)
+
+
+def test_a_canonical_owner_scores_by_its_nearest_admitted_record():
+    stale = _record("v-old", batch="collected", chunk="c1", unit="u1")
+    tx, _ = _store(*_text_corpus(), stale)
+    ranked = RankedOwners(
+        owners=(
+            RankedOwner(
+                key=("unit", "u1"),
+                rank=1,
+                score=-0.1,
+                window_ids=("v-old", "v1"),
+                window_scores=(-0.1, -0.4),
+            ),
+        ),
+        detail={"exhausted": 1},
+    )
+    (candidate,), _ = vector_candidates(tx, _view(), ranked, limit=1)
+    assert candidate.score == -0.4
+    assert candidate.matching_window_ids == ("c1",)
 
 
 def test_filtered_query_keeps_an_eligible_image_asset():

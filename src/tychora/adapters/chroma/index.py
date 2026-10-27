@@ -8,7 +8,7 @@ import struct
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import chromadb
 from chromadb.api.collection_configuration import CreateHNSWConfiguration
@@ -18,6 +18,7 @@ from chromadb.errors import NotFoundError
 from tychora.contracts.candidates import CandidateKey
 from tychora.contracts.eligibility import EligibilityView
 from tychora.contracts.embeddings import EmbeddingRecord
+from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import digest, space_id
 from tychora.contracts.indexing import FamilySpec, IndexRecordDigest
 from tychora.contracts.vector_batches import vector_value_sha
@@ -58,7 +59,14 @@ type _Hit = tuple[str, float, Mapping[str, str]]
 
 def _owner_key(metadata: Mapping[str, str]) -> CandidateKey:
     """The unit or asset a record's metadata names as its owner."""
-    return cast(CandidateKey, (metadata["owner_kind"], metadata["owner_id"]))
+    kind = metadata.get("owner_kind")
+    if kind not in ("unit", "asset") or not metadata.get("owner_id"):
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "Vector record metadata names no unit or asset owner",
+            reason="canonical.binding_mismatch",
+        )
+    return (kind, metadata["owner_id"])
 
 
 def _kept(raw: Mapping[str, Any], revisions: Mapping[str, object]) -> list[_Hit]:
@@ -72,26 +80,40 @@ def _kept(raw: Mapping[str, Any], revisions: Mapping[str, object]) -> list[_Hit]
     ]
 
 
-def _owners(hits: Sequence[_Hit], limit: int) -> tuple[RankedOwner, ...]:
-    """Group hits by metadata owner, best distance first; ``limit`` owners per kind."""
+def _owners(hits: Sequence[_Hit]) -> tuple[RankedOwner, ...]:
+    """Every owner of the page, ranked per kind by its nearest record.
+
+    No cut here: admission can drop records, so the caller cuts each canonical
+    kind after it; the page itself is bounded by ``OVERFETCH_CAP``.
+    """
     grouped: dict[CandidateKey, list[tuple[float, str]]] = defaultdict(list)
     for record_id, distance, metadata in hits:
         grouped[_owner_key(metadata)].append((distance, record_id))
     ranked: list[RankedOwner] = []
     for kind in ("unit", "asset"):
         pool = sorted(
-            (min(rows)[0], key) for key, rows in grouped.items() if key[0] == kind
+            (sorted(rows), key) for key, rows in grouped.items() if key[0] == kind
         )
         ranked.extend(
             RankedOwner(
                 key=key,
                 rank=rank,
-                score=-distance,
-                window_ids=tuple(record for _, record in sorted(grouped[key])),
+                score=-rows[0][0],
+                window_ids=tuple(record for _, record in rows),
+                window_scores=tuple(-distance for distance, _ in rows),
             )
-            for rank, (distance, key) in enumerate(pool[:limit], 1)
+            for rank, (rows, key) in enumerate(pool, 1)
         )
     return tuple(ranked)
+
+
+def _enough(hits: Sequence[_Hit], limit: int) -> bool:
+    """Whether every owner kind in the page already has ``limit`` owners."""
+    counts: dict[str, set[str]] = defaultdict(set)
+    for _, _, metadata in hits:
+        kind, owner = _owner_key(metadata)
+        counts[kind].add(owner)
+    return bool(counts) and all(len(owners) >= limit for owners in counts.values())
 
 
 def _float32(raw: bytes, dimensions: int) -> tuple[float, ...]:
@@ -357,43 +379,47 @@ class ChromaVectorIndex:
     def search(
         self, view: EligibilityView, vector: bytes, limit: int, ctx: ExecutionContext
     ) -> RankedOwners:
-        """Owners nearest to ``vector`` among the view's revisions; ``limit`` per kind.
+        """Every owner of the nearest page among the view's revisions.
 
         The store filters by revision when the view lists at most
         ``REVISION_FILTER_LIMIT`` revisions; otherwise hits are kept by their
         metadata revision. The page over-fetches ``OVERFETCH_FACTOR`` records
-        per wanted owner and doubles while too few owners came back from a
-        full page; ``truncated`` when the doublings or the cap ran out first.
-        Canonical owners and admission are the caller's: this only selects.
+        per wanted owner and doubles while some owner kind has fewer than
+        ``limit`` owners and the page did not hold every stored record;
+        ``truncated`` when the doublings or the cap ran out first, and
+        ``detail["exhausted"]`` is 1 when the page held every stored record.
+        Canonical owners, admission and the per-kind cut are the caller's.
         """
         collection, handle = self._require()
         self._check_collection(collection, handle.spec)
         query = list(_float32(vector, handle.spec.dimensions))
         if not view.revisions or limit <= 0:
             return RankedOwners(
-                owners=(), detail={"returned": 0, "queries": 0, "rescored": 0}
+                owners=(),
+                detail={"returned": 0, "queries": 0, "rescored": 0, "exhausted": 1},
             )
         revisions = sorted(view.revisions)
-        where = (
-            {"revision_id": {"$in": revisions}}
-            if len(revisions) <= REVISION_FILTER_LIMIT
-            else None
-        )
+        stored = collection.count()
         wanted = min(OVERFETCH_FACTOR * limit, OVERFETCH_CAP)
         queries = 0
         while True:
             ctx.checkpoint()
+            # A filtered HNSW page can come back short while matching records
+            # remain, so a short page proves nothing. Exhaustion is proven only
+            # by a page holding every stored record: once the whole collection
+            # fits in the page it is queried unfiltered and filtered here.
+            filtered = len(revisions) <= REVISION_FILTER_LIMIT and stored > wanted
             raw = collection.query(
                 query_embeddings=[query],
                 n_results=wanted,
-                where=where,
+                where={"revision_id": {"$in": revisions}} if filtered else None,
                 include=["distances", "metadatas"],
             )
             queries += 1
             returned = len(raw["ids"][0])
             hits = _kept(raw, view.revisions)
-            enough = len({_owner_key(metadata) for _, _, metadata in hits}) >= limit
-            exhausted = returned < wanted
+            enough = _enough(hits, limit)
+            exhausted = returned >= stored
             if (
                 enough
                 or exhausted
@@ -403,9 +429,14 @@ class ChromaVectorIndex:
                 break
             wanted = min(2 * wanted, OVERFETCH_CAP)
         return RankedOwners(
-            owners=_owners(hits, limit),
+            owners=_owners(hits),
             truncated=not enough and not exhausted,
-            detail={"returned": returned, "queries": queries, "rescored": 0},
+            detail={
+                "returned": returned,
+                "queries": queries,
+                "rescored": 0,
+                "exhausted": int(exhausted),
+            },
         )
 
     def drop_records(self, record_ids: Sequence[str], ctx: ExecutionContext) -> None:

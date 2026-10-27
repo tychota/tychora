@@ -78,7 +78,12 @@ def test_empty_eligibility_stays_empty(vector_index, vector_family, execution):
         vector_family.view(), vector_family.query((1.0, 0.0)), 1, execution.ctx
     )
     assert result.owners == ()
-    assert result.detail == {"returned": 0, "queries": 0, "rescored": 0}
+    assert result.detail == {
+        "returned": 0,
+        "queries": 0,
+        "rescored": 0,
+        "exhausted": 1,
+    }
 
 
 def test_drop_records_invalidates_receipt(vector_index, vector_family, execution):
@@ -177,9 +182,8 @@ def test_overfetch_doublings_stop_and_truncate(
 def test_revision_filter_applies_up_to_its_limit(
     vector_index, vector_family, execution, monkeypatch
 ):
-    vector_index.upsert_batch(
-        vector_family.batch([("a", "u1", (1.0, 0.0))], revision="rev"), execution.ctx
-    )
+    rows = [(f"r{i}", f"u{i}", (1.0, 0.0)) for i in range(10)]
+    vector_index.upsert_batch(vector_family.batch(rows, revision="rev"), execution.ctx)
     collection, _ = vector_index._require()
     native_query = collection.query
     filters = []
@@ -193,7 +197,41 @@ def test_revision_filter_applies_up_to_its_limit(
     vector_index.search(vector_family.view("rev"), query, 1, execution.ctx)
     monkeypatch.setattr(chroma_index, "REVISION_FILTER_LIMIT", 0)
     vector_index.search(vector_family.view("rev"), query, 1, execution.ctx)
-    assert filters == [{"revision_id": {"$in": ["rev"]}}, None]
+    # Once the 10 stored records fit in the page, it is unfiltered and exact.
+    monkeypatch.setattr(chroma_index, "REVISION_FILTER_LIMIT", 512)
+    full = vector_index.search(vector_family.view("rev"), query, 3, execution.ctx)
+    assert filters == [{"revision_id": {"$in": ["rev"]}}, None, None]
+    assert full.detail["exhausted"] == 1
+
+
+def test_owner_metadata_without_a_known_kind_is_refused(
+    vector_index, vector_family, execution
+):
+    vector_index.upsert_batch(
+        vector_family.batch([("a", "u1", (1.0, 0.0))], revision="rev"), execution.ctx
+    )
+    collection, _ = vector_index._require()
+    collection.update(
+        ids=["a"],
+        metadatas=[
+            {
+                "input_sha": "a" * 64,
+                "value_sha": "b" * 64,
+                "revision_id": "rev",
+                "owner_kind": "chunk",
+                "owner_id": "u1",
+            }
+        ],
+    )
+    with pytest.raises(TychoraError) as refused:
+        vector_index.search(
+            vector_family.view("rev"),
+            vector_family.query((1.0, 0.0)),
+            1,
+            execution.ctx,
+        )
+    assert refused.value.code == "INTEGRITY_ERROR"
+    assert refused.value.reason == "canonical.binding_mismatch"
 
 
 def test_cancelled_search_does_not_query_store(vector_index, vector_family, execution):
@@ -346,7 +384,8 @@ def test_owner_pools_are_ranked_per_kind(
     result = vector_index.search(
         vector_family.view("rev"), vector_family.query((1.0, 0.0)), 80, execution.ctx
     )
-    assert len([o for o in result.owners if o.key[0] == strong_kind]) == 80
+    # The page returns every owner; the per-kind cut is the caller's.
+    assert len([o for o in result.owners if o.key[0] == strong_kind]) == 81
     assert (weak_kind, "weak-owner") in [o.key for o in result.owners]
     assert [o.rank for o in result.owners if o.key[0] == weak_kind] == [1]
     assert result.detail["returned"] == 82

@@ -314,6 +314,17 @@ class SqliteBatchRepository:
             )
         )
 
+    def bound_record_ids(self, record_ids: tuple[str, ...]) -> frozenset[str]:
+        """The listed vector record IDs that have a stored row in any batch."""
+        return frozenset(
+            row[0]
+            for row in self._db.execute(
+                "SELECT record_id FROM vector_records "
+                "WHERE record_id IN (SELECT value FROM json_each(?))",
+                (json.dumps(sorted(set(record_ids))),),
+            )
+        )
+
     def purge(self, batch_ids: tuple[str, ...]) -> tuple[str, ...]:
         """Delete removed batches and their rows; return artifacts released for deletion.
 

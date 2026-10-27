@@ -1532,6 +1532,23 @@ class ProjectionCoordinator:
         )
         return self.image_index, batch, spec.dimensions
 
+    def discard_unbound(
+        self, index: VectorIndex, batch: VectorBatch, ctx: ExecutionContext
+    ) -> None:
+        """Drop the batch's native records that no stored row binds.
+
+        Record IDs follow the input, not the vector, so the partitions an
+        interrupted add wrote would conflict with a retry whose provider
+        returned other values. A record with a row belongs to a written batch
+        and stays; dropping an absent record is a no-op.
+        """
+        ids = tuple(record.record_id for record in batch.records)
+        with self.store.uow.read() as tx:
+            bound = tx.batches.bound_record_ids(ids)
+        unbound = [record_id for record_id in ids if record_id not in bound]
+        if unbound:
+            index.drop_records(unbound, ctx)
+
     def finalize(
         self,
         prepared: PreparedProjection,
