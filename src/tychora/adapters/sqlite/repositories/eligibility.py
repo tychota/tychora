@@ -77,20 +77,25 @@ _DEPENDENTS = (
 )
 _OWNERS = (
     "SELECT 'unit',u.unit_id,u.extraction_id,u.unit_id,NULL,p.asset_id,u.citable,"
-    "NULL,u.unit_id FROM evidence_units u "
+    "NULL,u.unit_id,p.proxy_unit_id IS NOT NULL FROM evidence_units u "
     "LEFT JOIN asset_proxies p ON p.proxy_unit_id=u.unit_id "
     f"WHERE u.unit_id {_IN} "
     "UNION ALL SELECT 'asset',a.asset_id,a.extraction_id,NULL,NULL,a.asset_id,0,"
-    f"NULL,a.asset_id FROM assets a WHERE a.asset_id {_IN} "
+    f"NULL,a.asset_id,0 FROM assets a WHERE a.asset_id {_IN} "
     "UNION ALL SELECT 'chunk',c.chunk_id,c.extraction_id,c.unit_id,c.chunk_id,"
-    "p.asset_id,u.citable,NULL,c.chunk_id FROM chunks c "
+    "p.asset_id,u.citable,NULL,c.chunk_id,p.proxy_unit_id IS NOT NULL FROM chunks c "
     "JOIN evidence_units u ON u.unit_id=c.unit_id "
     "LEFT JOIN asset_proxies p ON p.proxy_unit_id=c.unit_id "
     f"WHERE c.chunk_id {_IN} "
+    # A proxy window's record is owned by the proxy's asset; the set is the
+    # record's context group (verified by native health) or its image asset.
     "UNION ALL SELECT 'record',v.record_id,b.extraction_id,c.unit_id,v.chunk_id,"
-    "v.asset_id,0,v.batch_id,COALESCE(v.group_id,v.asset_id) FROM vector_records v "
+    "COALESCE(v.asset_id,p.asset_id),0,v.batch_id,COALESCE(v.group_id,v.asset_id),"
+    "v.chunk_id IS NOT NULL AND p.proxy_unit_id IS NOT NULL FROM vector_records v "
     "JOIN index_batches b ON b.batch_id=v.batch_id "
-    f"LEFT JOIN chunks c ON c.chunk_id=v.chunk_id WHERE v.record_id {_IN}"
+    "LEFT JOIN chunks c ON c.chunk_id=v.chunk_id "
+    "LEFT JOIN asset_proxies p ON p.proxy_unit_id=c.unit_id "
+    f"WHERE v.record_id {_IN}"
 )
 
 _ASSET_SOURCES = (
@@ -287,6 +292,7 @@ class SqliteEligibilityRepository:
             citable,
             batch,
             set_owner,
+            proxy,
         ) in rows:
             dependencies = sets.get(set_owner) if set_owner is not None else None
             if not dependencies:
@@ -300,7 +306,7 @@ class SqliteEligibilityRepository:
                     unit_id=unit,
                     chunk_id=chunk,
                     asset_id=asset,
-                    proxy=kind in {"unit", "chunk"} and asset is not None,
+                    proxy=bool(proxy),
                     citable=bool(citable),
                     batch_id=batch,
                     source_owner_ids=frozenset(sources.get(owner, ())),

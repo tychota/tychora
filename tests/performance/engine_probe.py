@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 import tracemalloc
-from collections.abc import Hashable, Mapping
+from collections.abc import Hashable
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Literal
@@ -28,14 +28,12 @@ from tychora.application.query import QueryService
 from tychora.application.sources import SourceService
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.base import FrozenJsonMap
-from tychora.contracts.candidates import CandidateKey
 from tychora.contracts.eligibility import EligibilityView
 from tychora.contracts.embeddings import EmbeddingCapabilities
 from tychora.contracts.evidence import QueryResult
 from tychora.contracts.identity import digest
 from tychora.contracts.indexing import FamilySpec
 from tychora.contracts.requests import QueryRequest, RequestScope, SourceInput
-from tychora.contracts.vectors import CandidatePage, WorkLimits
 from tychora.evaluation.benchmarks import (
     BenchmarkConditions,
     BenchmarkIdentity,
@@ -320,22 +318,13 @@ class EngineSession:
             )
 
         def measured_vector(
-            query_vector: bytes,
-            eligible_records_and_owners: Mapping[str, CandidateKey],
-            candidate_limit: int,
-            work_limits: WorkLimits,
+            view: EligibilityView,
+            vector: bytes,
+            limit: int,
             ctx: ExecutionContext,
-        ) -> CandidatePage:
+        ) -> RankedOwners:
             self._bump(retrieval_calls=1)
-            return self._time(
-                "vector_search",
-                vector_search,
-                query_vector,
-                eligible_records_and_owners,
-                candidate_limit,
-                work_limits,
-                ctx,
-            )
+            return self._time("vector_search", vector_search, view, vector, limit, ctx)
 
         async def measured_revalidate(
             attempt: EligibilityAttempt, stage: Literal["provider", "delivery"]

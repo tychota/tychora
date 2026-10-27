@@ -1,11 +1,11 @@
 """Real vector storage contract."""
 
+import math
 import os
 import struct
 import subprocess
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -14,7 +14,7 @@ from tychora.adapters.chroma import index as chroma_index
 from tychora.adapters.chroma.index import ChromaVectorIndex
 from tychora.contracts.embeddings import EmbeddingRecord
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.vectors import VectorBatch, VectorOwner, WorkLimits
+from tychora.contracts.vectors import VectorBatch, VectorOwner
 
 
 def record(
@@ -29,55 +29,56 @@ def record(
     )
 
 
-def test_only_eligible_owners_enter_vector_candidates(
+def test_only_granted_revisions_enter_vector_owners(
     vector_index, vector_family, execution
 ):
     vector_index.upsert_batch(
-        vector_family.batch(
-            [("hidden", "u0", (1.0, 0.0)), ("visible", "u1", (0.8, 0.6))]
-        ),
+        vector_family.batch([("hidden", "u0", (1.0, 0.0))], revision="hidden-rev"),
         execution.ctx,
     )
-    page = vector_index.search(
+    vector_index.upsert_batch(
+        vector_family.batch([("visible", "u1", (0.8, 0.6))], revision="visible-rev"),
+        execution.ctx,
+    )
+    result = vector_index.search(
+        vector_family.view("visible-rev"),
         vector_family.query((1.0, 0.0)),
-        {"visible": ("unit", "u1")},
         1,
-        vector_family.limits,
         execution.ctx,
     )
-    assert [candidate.key for candidate in page.candidates] == [("unit", "u1")]
-    assert page.coverage_complete
-    assert not page.truncated
+    assert [owner.key for owner in result.owners] == [("unit", "u1")]
+    assert result.owners[0].window_ids == ("visible",)
+    assert not result.truncated
 
 
-def test_missing_expected_records_leave_incomplete_coverage(
-    vector_index, vector_family, execution
+def test_records_without_owner_metadata_are_never_returned(
+    vector_index, vector_family, execution, monkeypatch
 ):
     vector_index.upsert_batch(
-        vector_family.batch([("present", "u1", (1.0, 0.0))]), execution.ctx
+        vector_family.batch([("bare", "u0", (1.0, 0.0))]), execution.ctx
     )
-    page = vector_index.search(
-        vector_family.query((1.0, 0.0)),
-        {"present": ("unit", "u1"), "missing": ("unit", "u2")},
-        2,
-        vector_family.limits,
+    vector_index.upsert_batch(
+        vector_family.batch([("owned", "u1", (0.8, 0.6))], revision="rev"),
         execution.ctx,
     )
-    assert [candidate.key for candidate in page.candidates] == [("unit", "u1")]
-    assert page.missing_record_ids == ("missing",)
-    assert not page.coverage_complete
+    # Above the filter limit the store is queried unfiltered.
+    monkeypatch.setattr(chroma_index, "REVISION_FILTER_LIMIT", 0)
+    result = vector_index.search(
+        vector_family.view("rev"), vector_family.query((1.0, 0.0)), 2, execution.ctx
+    )
+    assert [owner.key for owner in result.owners] == [("unit", "u1")]
 
 
 def test_empty_eligibility_stays_empty(vector_index, vector_family, execution):
     vector_index.upsert_batch(
-        vector_family.batch([("stored", "u1", (1.0, 0.0))]), execution.ctx
+        vector_family.batch([("stored", "u1", (1.0, 0.0))], revision="rev"),
+        execution.ctx,
     )
-    page = vector_index.search(
-        vector_family.query((1.0, 0.0)), {}, 1, vector_family.limits, execution.ctx
+    result = vector_index.search(
+        vector_family.view(), vector_family.query((1.0, 0.0)), 1, execution.ctx
     )
-    assert page.candidates == ()
-    assert page.exhausted
-    assert page.returned_records == 0
+    assert result.owners == ()
+    assert result.detail == {"returned": 0, "queries": 0, "rescored": 0}
 
 
 def test_drop_records_invalidates_receipt(vector_index, vector_family, execution):
@@ -130,141 +131,144 @@ def test_receipt_rejects_tamper_and_backend_config_mismatch(
         ChromaVectorIndex(tmp_path / "vectors").create_family(vector_family.spec)
 
 
-def test_shared_return_budget_truncates_owner_pool(
-    vector_index, vector_family, execution
+def test_overfetch_cap_truncates_owner_pool(
+    vector_index, vector_family, execution, monkeypatch
 ):
     vector_index.upsert_batch(
         vector_family.batch(
             [(f"r{i}", "same", (1.0, 0.0)) for i in range(20)]
-            + [("unique", "other", (0.8, 0.6))]
+            + [("unique", "other", (0.8, 0.6))],
+            revision="rev",
         ),
         execution.ctx,
     )
-    eligible = {f"r{i}": ("unit", "same") for i in range(20)}
-    eligible["unique"] = ("unit", "other")
-    page = vector_index.search(
-        vector_family.query((1.0, 0.0)),
-        eligible,
-        2,
-        WorkLimits(max_returned_records=4),
-        execution.ctx,
+    monkeypatch.setattr(chroma_index, "OVERFETCH_CAP", 8)
+    result = vector_index.search(
+        vector_family.view("rev"), vector_family.query((1.0, 0.0)), 2, execution.ctx
     )
-    assert page.truncated
-    assert page.returned_records <= 4
+    assert [owner.key for owner in result.owners] == [("unit", "same")]
+    assert result.truncated
+    assert result.detail["returned"] == 8
+    assert result.detail["queries"] == 1
 
 
-def test_later_adaptive_request_reports_budget_clip(
-    vector_index, vector_family, execution
+def test_overfetch_doublings_stop_and_truncate(
+    vector_index, vector_family, execution, monkeypatch
 ):
-    rows = [(f"same-{i}", "same", (1.0, 0.0)) for i in range(4)]
+    rows = [(f"same-{i}", "same", (1.0, 0.0)) for i in range(20)]
     rows.append(("other", "other", (0.8, 0.6)))
-    rows.extend((f"worse-{i}", f"worse-{i}", (0.0, 1.0)) for i in range(16))
-    vector_index.upsert_batch(vector_family.batch(rows), execution.ctx)
-    page = vector_index.search(
-        vector_family.query((1.0, 0.0)),
-        {record_id: ("unit", owner) for record_id, owner, _ in rows},
-        2,
-        WorkLimits(max_returned_records=10),
-        execution.ctx,
+    vector_index.upsert_batch(vector_family.batch(rows, revision="rev"), execution.ctx)
+    monkeypatch.setattr(chroma_index, "OVERFETCH_DOUBLINGS", 1)
+    result = vector_index.search(
+        vector_family.view("rev"), vector_family.query((1.0, 0.0)), 2, execution.ctx
     )
-    assert page.truncated
-    assert page.returned_records == 10
+    # 8 then 16 records, all of one owner: the doublings ran out first.
+    assert result.detail["queries"] == 2
+    assert result.detail["returned"] == 16
+    assert result.truncated
+    monkeypatch.setattr(chroma_index, "OVERFETCH_DOUBLINGS", 2)
+    deeper = vector_index.search(
+        vector_family.view("rev"), vector_family.query((1.0, 0.0)), 2, execution.ctx
+    )
+    assert [owner.key[1] for owner in deeper.owners] == ["same", "other"]
+    assert not deeper.truncated
 
 
-def test_scope_above_partition_cap_is_rejected(vector_index, vector_family, execution):
-    eligible = {str(i): ("unit", str(i)) for i in range(320_001)}
-    with pytest.raises(ValueError, match="partition"):
-        vector_index.search(
-            vector_family.query((1.0, 0.0)),
-            eligible,
-            1,
-            vector_family.limits,
-            execution.ctx,
-        )
+def test_revision_filter_applies_up_to_its_limit(
+    vector_index, vector_family, execution, monkeypatch
+):
+    vector_index.upsert_batch(
+        vector_family.batch([("a", "u1", (1.0, 0.0))], revision="rev"), execution.ctx
+    )
+    collection, _ = vector_index._require()
+    native_query = collection.query
+    filters = []
+
+    def spy(*args, **kwargs):
+        filters.append(kwargs["where"])
+        return native_query(*args, **kwargs)
+
+    monkeypatch.setattr(collection, "query", spy)
+    query = vector_family.query((1.0, 0.0))
+    vector_index.search(vector_family.view("rev"), query, 1, execution.ctx)
+    monkeypatch.setattr(chroma_index, "REVISION_FILTER_LIMIT", 0)
+    vector_index.search(vector_family.view("rev"), query, 1, execution.ctx)
+    assert filters == [{"revision_id": {"$in": ["rev"]}}, None]
 
 
 def test_cancelled_search_does_not_query_store(vector_index, vector_family, execution):
     vector_index.upsert_batch(
-        vector_family.batch([("a", "u1", (1.0, 0.0))]), execution.ctx
+        vector_family.batch([("a", "u1", (1.0, 0.0))], revision="rev"), execution.ctx
     )
     execution.ctx.cancelled.set()
     with pytest.raises(TychoraError, match="cancelled"):
         vector_index.search(
+            vector_family.view("rev"),
             vector_family.query((1.0, 0.0)),
-            {"a": ("unit", "u1")},
             1,
-            vector_family.limits,
             execution.ctx,
         )
 
 
-def test_cancellation_stops_presence_scan_between_native_reads(
+def test_cancellation_stops_overfetch_between_native_queries(
     vector_index, vector_family, execution, monkeypatch
 ):
-    vector_index.upsert_batch(
-        vector_family.batch([("present", "u1", (1.0, 0.0))]), execution.ctx
-    )
-    eligible = {"present": ("unit", "u1")}
-    eligible.update({f"missing-{i}": ("unit", f"u{i}") for i in range(5_000)})
-    native_get = vector_index._collection.get
+    rows = [(f"same-{i}", "same", (1.0, 0.0)) for i in range(40)]
+    vector_index.upsert_batch(vector_family.batch(rows, revision="rev"), execution.ctx)
+    collection, _ = vector_index._require()
+    native_query = collection.query
     calls = 0
 
-    def cancel_after_first_read(*args, **kwargs):
+    def cancel_after_first_query(*args, **kwargs):
         nonlocal calls
-        result = native_get(*args, **kwargs)
+        result = native_query(*args, **kwargs)
         calls += 1
-        if calls == 1:
-            execution.ctx.cancelled.set()
+        execution.ctx.cancelled.set()
         return result
 
-    monkeypatch.setattr(vector_index._collection, "get", cancel_after_first_read)
+    monkeypatch.setattr(collection, "query", cancel_after_first_query)
     with pytest.raises(TychoraError, match="cancelled"):
         vector_index.search(
+            vector_family.view("rev"),
             vector_family.query((1.0, 0.0)),
-            eligible,
-            1,
-            vector_family.limits,
+            2,
             execution.ctx,
         )
     assert calls == 1
 
 
-def test_work_deadline_stops_presence_scan_without_claiming_coverage(
+def test_search_reads_no_presence(vector_index, vector_family, execution, monkeypatch):
+    vector_index.upsert_batch(
+        vector_family.batch([("a", "u1", (1.0, 0.0))], revision="rev"), execution.ctx
+    )
+    collection, _ = vector_index._require()
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("search fetched records by ID")
+
+    monkeypatch.setattr(collection, "get", refuse)
+    result = vector_index.search(
+        vector_family.view("rev"), vector_family.query((1.0, 0.0)), 1, execution.ctx
+    )
+    assert [owner.key for owner in result.owners] == [("unit", "u1")]
+
+
+def test_upsert_adds_one_partition_per_native_call(
     vector_index, vector_family, execution, monkeypatch
 ):
-    vector_index.upsert_batch(
-        vector_family.batch([("present", "u1", (1.0, 0.0))]), execution.ctx
-    )
-    eligible = {"present": ("unit", "u1")}
-    eligible.update({f"missing-{i}": ("unit", f"u{i}") for i in range(5_000)})
-    native_get = vector_index._collection.get
-    calls = 0
-    clock = [0.0]
-    monkeypatch.setattr(
-        chroma_index, "time", SimpleNamespace(monotonic=lambda: clock[0])
-    )
+    rows = [(f"r{i}", "u", (1.0, 0.0)) for i in range(5)]
+    collection, _ = vector_index._require()
+    native_add = collection.add
+    sizes = []
 
-    def expire_after_first_read(*args, **kwargs):
-        nonlocal calls
-        result = native_get(*args, **kwargs)
-        calls += 1
-        if calls == 1:
-            clock[0] = 2.0
-        return result
+    def spy(*args, **kwargs):
+        sizes.append(len(kwargs["ids"]))
+        return native_add(*args, **kwargs)
 
-    monkeypatch.setattr(vector_index._collection, "get", expire_after_first_read)
-    page = vector_index.search(
-        vector_family.query((1.0, 0.0)),
-        eligible,
-        1,
-        WorkLimits(deadline=1.0),
-        execution.ctx,
-    )
-    assert calls == 1
-    assert page.candidates == ()
-    assert page.truncated
-    assert not page.coverage_complete
-    assert not page.exhausted
+    monkeypatch.setattr(collection, "add", spy)
+    monkeypatch.setattr(chroma_index, "partition_size", lambda dimension: 2)
+    vector_index.upsert_batch(vector_family.batch(rows), execution.ctx)
+    assert sizes == [2, 2, 1]
 
 
 def test_writer_exit_then_reader_verifies_varied_float32_bytes(tmp_path, vector_family):
@@ -320,58 +324,33 @@ os._exit(0)
 
 
 @pytest.mark.parametrize("strong_kind", ["unit", "asset"])
-def test_text_pools_have_independent_admission_with_shared_work(
-    vector_index, vector_family, execution, strong_kind, monkeypatch
+def test_owner_pools_are_ranked_per_kind(
+    vector_index, vector_family, execution, strong_kind
 ):
     weak_kind = "asset" if strong_kind == "unit" else "unit"
-    strong = [(f"strong-{i:03}", f"strong-owner-{i:03}", (1.0, 0.0)) for i in range(81)]
-    weak = [("weak", "weak-owner", (0.6, 0.8))]
-    vector_index.upsert_batch(vector_family.batch(strong + weak), execution.ctx)
-    mapping = {record: (strong_kind, owner) for record, owner, _ in strong}
-    mapping["weak"] = (weak_kind, "weak-owner")
-    # Deterministic backend distances isolate admission/termination from ANN
-    # recall for a deliberately saturated pool of equal-distance records.
-    collection, _ = vector_index._require()
-    monkeypatch.setattr(
-        vector_index,
-        "_chunks",
-        lambda ids: [list(ids[i : i + 80]) for i in range(0, len(ids), 80)],
-    )
-
-    def query(self, *, query_embeddings, ids, n_results, include):
-        distance = lambda rid: (
-            0.4 if rid == "weak" else 0.0 if rid == "strong-080" else 0.1
+    # Distinct directions keep the approximate index exact at this size.
+    strong = [
+        (
+            f"strong-{i:03}",
+            f"strong-owner-{i:03}",
+            (math.cos(i / 1000), math.sin(i / 1000)),
         )
-        chosen = sorted(ids, key=lambda rid: (distance(rid), rid))[:n_results]
-        return {
-            "ids": [chosen],
-            "distances": [[distance(rid) for rid in chosen]],
-        }
-
-    monkeypatch.setattr(type(collection), "query", query)
-    page = vector_index.search(
-        vector_family.query((1.0, 0.0)),
-        mapping,
-        80,
-        vector_family.limits,
+        for i in range(81)
+    ]
+    weak = [("weak", "weak-owner", (0.6, 0.8))]
+    kinds = {record: strong_kind for record, _, _ in strong} | {"weak": weak_kind}
+    vector_index.upsert_batch(
+        vector_family.batch(strong + weak, revision="rev", kinds=kinds),
         execution.ctx,
     )
-    assert len([c for c in page.candidates if c.key[0] == strong_kind]) == 80
-    assert (weak_kind, "weak-owner") in [c.key for c in page.candidates], (
-        page.model_dump()
+    result = vector_index.search(
+        vector_family.view("rev"), vector_family.query((1.0, 0.0)), 80, execution.ctx
     )
-    assert (strong_kind, "strong-owner-080") in [c.key for c in page.candidates]
-    assert page.returned_records == 82
-    assert not page.truncated
-    limited = vector_index.search(
-        vector_family.query((1.0, 0.0)),
-        mapping,
-        80,
-        WorkLimits(max_returned_records=81),
-        execution.ctx,
-    )
-    assert limited.returned_records <= 81
-    assert limited.truncated
+    assert len([o for o in result.owners if o.key[0] == strong_kind]) == 80
+    assert (weak_kind, "weak-owner") in [o.key for o in result.owners]
+    assert [o.rank for o in result.owners if o.key[0] == weak_kind] == [1]
+    assert result.detail["returned"] == 82
+    assert not result.truncated
 
 
 def _owner(record_id: str) -> VectorOwner:

@@ -1,17 +1,21 @@
 """Explicit real vector family fixtures and a seeded lexical batch."""
 
 import struct
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from io import BytesIO
+from typing import Literal
 
 import pytest
 
 from tests.helpers.corpus import reader, registry, seed_bundle
+from tests.helpers.eligibility import revision_view
 from tychora.adapters.chroma.index import ChromaVectorIndex
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.adapters.sqlite.repositories import SqliteUnitOfWork
 from tychora.contracts.base import FrozenJsonMap
+from tychora.contracts.eligibility import EligibilityView
 from tychora.contracts.embeddings import EmbeddingRecord
 from tychora.contracts.identity import (
     canonical_bytes,
@@ -23,16 +27,24 @@ from tychora.contracts.identity import (
 from tychora.contracts.indexing import FamilySpec
 from tychora.contracts.publication import LexicalBatchReceipt, NewBatch
 from tychora.contracts.snapshots import IndexFamily
-from tychora.contracts.vectors import VectorBatch, WorkLimits
+from tychora.contracts.vectors import VectorBatch, VectorOwner
 from tychora.ports.execution import ExecutionContext
 
 
 @dataclass(frozen=True)
 class _Family:
     spec: FamilySpec
-    limits: WorkLimits = field(default_factory=WorkLimits)
 
-    def batch(self, rows: list[tuple[str, str, tuple[float, float]]]) -> VectorBatch:
+    def batch(
+        self,
+        rows: list[tuple[str, str, tuple[float, float]]],
+        revision: str | None = None,
+        kinds: Mapping[str, Literal["unit", "asset"]] | None = None,
+    ) -> VectorBatch:
+        """Records at the given values; owned by ``revision`` when it is given.
+
+        ``kinds`` names the owner kind of a record ID, ``unit`` by default.
+        """
         records = tuple(
             EmbeddingRecord.from_normalized_bytes(
                 record_id=record_id,
@@ -49,7 +61,30 @@ class _Family:
             )
             for record_id, _owner_id, values in rows
         )
-        return VectorBatch(family_id=self.spec.family_id, records=records)
+        owners = (
+            ()
+            if revision is None
+            else tuple(
+                VectorOwner(
+                    record_id=record_id,
+                    revision_id=revision,
+                    extraction_id=f"{revision}-extraction",
+                    owner_kind=(kinds or {}).get(record_id, "unit"),
+                    owner_id=owner_id,
+                )
+                for record_id, owner_id, _values in rows
+            )
+        )
+        return VectorBatch(
+            family_id=self.spec.family_id, records=records, owners=owners
+        )
+
+    @staticmethod
+    def view(*revisions: str) -> EligibilityView:
+        """A view granting each revision the batches were owned by."""
+        return revision_view(
+            {revision: f"{revision}-extraction" for revision in revisions}
+        )
 
     def query(self, values: tuple[float, float]) -> bytes:
         return struct.pack("<ff", *values)

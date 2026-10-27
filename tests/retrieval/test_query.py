@@ -2,7 +2,6 @@
 
 import json
 import os
-import sqlite3
 import struct
 from hashlib import sha256
 from io import BytesIO
@@ -32,15 +31,10 @@ from tychora.adapters.voyage.runtime import VoyageRuntime
 from tychora.adapters.voyage.text import VoyageTextEmbedder
 from tychora.adapters.voyage.validation import qualify_voyage_visual_capabilities
 from tychora.application.owner import WorkspaceOwner
-from tychora.application.query import (
-    QueryService,
-    linked_visual_context,
-    query_binding_from_owner,
-)
+from tychora.application.query import QueryService, query_binding_from_owner
 from tychora.application.sources import SourceService
 from tychora.application.visual import create_visual_embedder
 from tychora.configuration.resolve import resolve_config
-from tychora.contracts.candidates import ChannelCandidate
 from tychora.contracts.corpus import AssetRow, RevisionArtifactRow, UnitAssetRow
 from tychora.contracts.embeddings import EmbeddingRecord, QueryEmbeddingProbe
 from tychora.contracts.errors import TychoraError
@@ -228,50 +222,6 @@ def test_query_upload_binding_uses_actual_owner_scope_and_epoch(tmp_path) -> Non
                 requested.model_copy(update={"principal_id": "other"}),
                 7,
             )
-
-
-def test_image_match_links_only_pinned_canonical_source_units() -> None:
-    db = sqlite3.connect(":memory:")
-    db.execute("CREATE TABLE unit_assets(unit_id TEXT, asset_id TEXT, role TEXT)")
-    db.executemany(
-        "INSERT INTO unit_assets VALUES (?,?,?)",
-        [
-            ("eligible", "image", "source"),
-            ("hidden", "image", "source"),
-            ("caption", "image", "caption"),
-        ],
-    )
-    linked = linked_visual_context(
-        db,
-        (ChannelCandidate(key=("asset", "image"), rank=1),),
-        frozenset({"eligible"}),
-    )
-    assert [candidate.key for candidate in linked] == [("unit", "eligible")]
-    db.close()
-
-
-def test_text_vector_proxy_maps_to_eligible_canonical_asset() -> None:
-    db = sqlite3.connect(":memory:")
-    db.execute(
-        "CREATE TABLE vector_records(record_id TEXT, chunk_id TEXT, asset_id TEXT)"
-    )
-    db.execute("CREATE TABLE chunks(chunk_id TEXT, unit_id TEXT)")
-    db.execute("CREATE TABLE asset_proxies(proxy_unit_id TEXT, asset_id TEXT)")
-    db.execute("INSERT INTO vector_records VALUES ('record', 'chunk', NULL)")
-    db.execute("INSERT INTO chunks VALUES ('chunk', 'proxy')")
-    db.execute("INSERT INTO asset_proxies VALUES ('proxy', 'asset')")
-    service = QueryService.__new__(QueryService)
-    vars(service)["owner"] = SimpleNamespace(db=db)
-    view = eligibility_view().model_copy(
-        update={
-            "vector_record_ids": frozenset({"record"}),
-            "proxy_unit_ids": frozenset({"proxy"}),
-            "asset_ids": frozenset({"asset"}),
-        }
-    )
-    attempt = legacy_attempt(view)
-    assert service._vector_owners(attempt, "unit") == {"record": ("asset", "asset")}
-    db.close()
 
 
 def test_image_query_descriptor_uses_registered_pixels_and_source_links(tmp_path):
@@ -919,7 +869,7 @@ async def test_vector_only_tail_window_reaches_reranker_and_delivery(
 ):
     from tests.providers.test_reranker import LengthCounter, RecordingRerankTransport
     from tychora.application.reranking import _create_injected_reranker
-    from tychora.contracts.vectors import CandidatePage, DenseCandidate
+    from tychora.ports.search import RankedOwner, RankedOwners
 
     settings = tmp_path / "workspace.toml"
     settings.write_text(
@@ -1001,22 +951,18 @@ async def test_vector_only_tail_window_reaches_reranker_and_delivery(
             ExecutionContext(),
         )
 
-        def tail_search(query, mapping, limit, work, ctx):
-            assert mapping[record_id] == ("unit", unit_id)
-            return CandidatePage(
-                candidates=(
-                    DenseCandidate(
+        def tail_search(view, vector, limit, ctx, *, truncated=False):
+            assert limit == 80
+            return RankedOwners(
+                owners=(
+                    RankedOwner(
                         key=("unit", unit_id),
-                        distance=0.0,
-                        record_ids=(record_id, prefix_record),
+                        rank=1,
+                        score=0.0,
+                        window_ids=(record_id, prefix_record),
                     ),
                 ),
-                missing_record_ids=(),
-                coverage_complete=True,
-                truncated=False,
-                exhausted=True,
-                returned_records=1,
-                queried_partitions=1,
+                truncated=truncated,
             )
 
         monkeypatch.setattr(index, "search", tail_search)
@@ -1061,8 +1007,8 @@ async def test_vector_only_tail_window_reaches_reranker_and_delivery(
             for anchor in segment.anchors
         )
 
-        # Shared ANN work exhaustion must remain an explicit strict-coverage
-        # failure, even when it has already returned a usable source candidate.
+        # An over-fetch bound that cut the page is a truncation, not an
+        # incomplete channel: strict mode still delivers what was admitted.
         owner.config = owner.config.model_copy(
             update={
                 "values": owner.config.values.model_copy(
@@ -1075,18 +1021,13 @@ async def test_vector_only_tail_window_reaches_reranker_and_delivery(
             }
         )
 
-        def truncated_search(*args):
-            return tail_search(*args).model_copy(
-                update={"truncated": True, "exhausted": False}
-            )
+        def truncated_search(view, vector, limit, ctx):
+            return tail_search(view, vector, limit, ctx, truncated=True)
 
         monkeypatch.setattr(index, "search", truncated_search)
-        with pytest.raises(TychoraError) as incomplete:
-            await service.search(
-                QueryRequest.from_mapping(
-                    {"question": "nebula", "modalities": ["text"]}
-                ),
-                scope,
-                ExecutionContext(),
-            )
-        assert incomplete.value.code == "INDEX_INCOMPLETE"
+        cut = await service.search(
+            QueryRequest.from_mapping({"question": "nebula", "modalities": ["text"]}),
+            scope,
+            ExecutionContext(),
+        )
+        assert "text" in cut.result.coverage.completed_channels

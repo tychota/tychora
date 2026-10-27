@@ -1,12 +1,10 @@
-"""Backend-independent vector batch, receipt, and candidate contracts."""
+"""Backend-independent vector batch, receipt and partition contracts."""
 
-import math
 from typing import Literal, Self
 
 from pydantic import Field, model_validator
 
-from .base import Contract, Identifier, NonNegativeInt, PositiveInt, Sha256
-from .candidates import CandidateKey
+from .base import Contract, Identifier, NonNegativeInt, Sha256
 from .embeddings import EmbeddingRecord
 from .indexing import FamilySpec, IndexRecordDigest
 
@@ -42,6 +40,31 @@ class VectorBatch(Contract):
             raise ValueError("Vector owners must cover each record once")
         return self
 
+    def partitions(self, dimension: int) -> tuple["VectorBatch", ...]:
+        """Split into batches of at most ``partition_size(dimension)`` records with their owners."""
+        size = partition_size(dimension)
+        owners = {owner.record_id: owner for owner in self.owners}
+        return tuple(
+            VectorBatch(
+                family_id=self.family_id,
+                records=self.records[start : start + size],
+                owners=tuple(
+                    owners[record.record_id]
+                    for record in self.records[start : start + size]
+                    if record.record_id in owners
+                ),
+            )
+            for start in range(0, len(self.records), size)
+        )
+
+
+PARTITION_BYTES = 2_000_000
+
+
+def partition_size(dimension: int) -> int:
+    """Records per native write so that one call carries at most 2 MB of float32."""
+    return max(1, PARTITION_BYTES // (4 * dimension))
+
 
 class BatchReceipt(Contract):
     family_id: Sha256
@@ -57,31 +80,3 @@ class Verification(Contract):
     missing_record_ids: tuple[Identifier, ...] = ()
     mismatched_record_ids: tuple[Identifier, ...] = ()
     config_matches: bool = True
-
-
-class WorkLimits(Contract):
-    max_partitions: PositiveInt = Field(default=64, le=64)
-    max_returned_records: PositiveInt = Field(default=20_000, le=20_000)
-    deadline: float | None = None
-
-    @model_validator(mode="after")
-    def valid_deadline(self) -> Self:
-        if self.deadline is not None and not math.isfinite(self.deadline):
-            raise ValueError("Work deadline must be finite")
-        return self
-
-
-class DenseCandidate(Contract):
-    key: CandidateKey
-    distance: float
-    record_ids: tuple[Identifier, ...]
-
-
-class CandidatePage(Contract):
-    candidates: tuple[DenseCandidate, ...]
-    missing_record_ids: tuple[Identifier, ...]
-    coverage_complete: bool
-    truncated: bool
-    exhausted: bool
-    returned_records: NonNegativeInt
-    queried_partitions: NonNegativeInt

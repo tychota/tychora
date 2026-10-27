@@ -125,21 +125,8 @@ class RecordingVector:
     def verify_batch(self, receipt):
         return self.inner.verify_batch(receipt)
 
-    def search(
-        self,
-        query_vector,
-        eligible_records_and_owners,
-        candidate_limit,
-        work_limits,
-        ctx,
-    ):
-        return self.inner.search(
-            query_vector,
-            eligible_records_and_owners,
-            candidate_limit,
-            work_limits,
-            ctx,
-        )
+    def search(self, view, vector, limit, ctx):
+        return self.inner.search(view, vector, limit, ctx)
 
     def drop_records(self, record_ids, ctx):
         return self.inner.drop_records(record_ids, ctx)

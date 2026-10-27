@@ -234,3 +234,30 @@ def test_cancelled_queued_future_is_skipped_and_the_next_call_runs():
     worker.close()
     assert skipped.cancelled()
     assert order == ["next"]
+
+
+def test_interactive_query_waits_at_most_one_partition():
+    worker = PriorityWorker()
+    finished: list[str] = []
+    started, release = threading.Event(), threading.Event()
+
+    def first_partition():
+        started.set()
+        assert release.wait(5)
+        finished.append("p0")
+
+    first = worker.submit(first_partition, "background")
+    assert started.wait(5)
+    try:
+        rest = [
+            worker.submit(lambda i=i: finished.append(f"p{i}"), "background")
+            for i in range(1, 6)
+        ]
+        query = worker.submit(lambda: finished.append("query"), "interactive")
+    finally:
+        release.set()
+    query.result(5)
+    for future in (first, *rest):
+        future.result(5)
+    worker.close()
+    assert finished.index("query") == 1

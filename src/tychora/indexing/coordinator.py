@@ -752,6 +752,43 @@ class ProjectionCoordinator:
         self.store.vector_indexes[spec.family_id] = index
         return family, spec
 
+    def _text_stored(
+        self,
+        family: IndexFamily,
+        spec: FamilySpec,
+        groups: tuple[ContextGroup, ...],
+        records: tuple[EmbeddingRecord, ...],
+    ) -> tuple[list[EmbeddingRecord], dict[str, tuple[str, ContextGroup]]]:
+        """Provider records checked against the requested groups, with family record IDs."""
+        assert self.text_embedder is not None
+        space = self.text_embedder.capabilities.space_id
+        expected = {
+            digest("embedding-record-v1", window_id, group.input_sha, space): (
+                window_id,
+                group,
+            )
+            for group in groups
+            for window_id in group.window_ids
+        }
+        if len(records) != len(expected) or {r.record_id for r in records} != set(
+            expected
+        ):
+            _fail("Text provider returned incomplete or foreign window vectors")
+        stored = []
+        owners = {}
+        for item in records:
+            window_id, group = expected[item.record_id]
+            if (
+                item.input_sha != group.input_sha
+                or item.space_id != space
+                or len(item.values) != spec.dimensions
+            ):
+                _fail("Text provider vector differs from exact requested input")
+            record_id = vector_record_id(family.family_id, window_id, item.input_sha)
+            stored.append(item.model_copy(update={"record_id": record_id}))
+            owners[record_id] = (window_id, group)
+        return stored, owners
+
     def _text_batch(
         self,
         bundle: ExtractionBundle,
@@ -763,34 +800,8 @@ class ProjectionCoordinator:
         ctx: ExecutionContext,
     ) -> NewBatch:
         assert self.text_embedder is not None and self.text_index is not None
-        expected = {
-            digest(
-                "embedding-record-v1",
-                window_id,
-                group.input_sha,
-                self.text_embedder.capabilities.space_id,
-            ): (window_id, group)
-            for group in groups
-            for window_id in group.window_ids
-        }
         ctx.checkpoint()
-        if len(records) != len(expected) or {item.record_id for item in records} != set(
-            expected
-        ):
-            _fail("Text provider returned incomplete or foreign window vectors")
-        stored = []
-        owners = {}
-        for item in records:
-            window_id, group = expected[item.record_id]
-            if (
-                item.input_sha != group.input_sha
-                or item.space_id != self.text_embedder.capabilities.space_id
-                or len(item.values) != spec.dimensions
-            ):
-                _fail("Text provider vector differs from exact requested input")
-            record_id = vector_record_id(family.family_id, window_id, item.input_sha)
-            stored.append(item.model_copy(update={"record_id": record_id}))
-            owners[record_id] = (window_id, group)
+        stored, owners = self._text_stored(family, spec, groups, records)
         vectors, positions = self._vector_artifact(family, spec.dimensions, stored)
         bindings = _text_bindings(stored, owners, positions)
         receipt = self._native_receipt(
@@ -854,7 +865,15 @@ class ProjectionCoordinator:
         ctx: ExecutionContext,
         owners: tuple[VectorOwner, ...] = (),
     ) -> BatchReceipt:
-        """Upsert family-keyed records in ID order; an empty batch proves the family."""
+        """Upsert family-keyed records in ID order; an empty batch proves the family.
+
+        On the source-add path every partition was already written as its own
+        writer task (``native_batches``), so this whole-batch upsert adds
+        nothing: it checks every record's presence and bytes and returns the
+        receipt. That presence check is still one writer task as long as the
+        whole batch; accepted, since it only reads and never inserts into the
+        HNSW graph.
+        """
         if records:
             ordered = tuple(sorted(records, key=lambda item: item.record_id))
             return index.upsert_batch(
@@ -976,6 +995,37 @@ class ProjectionCoordinator:
         ctx: ExecutionContext,
     ) -> NewBatch:
         assert self.visual_embedder is not None and self.image_index is not None
+        stored, assets = self._image_stored(family, spec, inputs, records)
+        vectors, positions = self._vector_artifact(family, spec.dimensions, stored)
+        bindings = [
+            VectorRecordBinding(
+                record_id=row.record_id,
+                asset_id=assets[row.record_id],
+                input_sha=row.input_sha,
+                value_sha=row.value_sha,
+                row_index=positions[row.record_id],
+            )
+            for row in sorted(stored, key=lambda row: row.record_id)
+        ]
+        receipt = self._native_receipt(
+            self.image_index, spec, stored, ctx, _asset_owners(bundle, assets)
+        )
+        manifest = _input_manifest(
+            self.artifacts, tuple(row.record_id for row in bindings)
+        )
+        return self._vector_batch(
+            "image", bundle, manifest, _VectorOutput(receipt, vectors, bindings)
+        )
+
+    def _image_stored(
+        self,
+        family: IndexFamily,
+        spec: FamilySpec,
+        inputs: tuple[VisualInput, ...],
+        records: tuple[EmbeddingRecord, ...],
+    ) -> tuple[list[EmbeddingRecord], dict[str, str]]:
+        """Provider records checked against the requested assets, with family record IDs."""
+        assert self.visual_embedder is not None
         expected = {
             digest(
                 "visual-embedding-record-v1",
@@ -1016,26 +1066,7 @@ class ProjectionCoordinator:
             )
             stored.append(record.model_copy(update={"record_id": record_id}))
             assets[record_id] = item.asset.asset_id
-        vectors, positions = self._vector_artifact(family, spec.dimensions, stored)
-        bindings = [
-            VectorRecordBinding(
-                record_id=row.record_id,
-                asset_id=assets[row.record_id],
-                input_sha=row.input_sha,
-                value_sha=row.value_sha,
-                row_index=positions[row.record_id],
-            )
-            for row in sorted(stored, key=lambda row: row.record_id)
-        ]
-        receipt = self._native_receipt(
-            self.image_index, spec, stored, ctx, _asset_owners(bundle, assets)
-        )
-        manifest = _input_manifest(
-            self.artifacts, tuple(row.record_id for row in bindings)
-        )
-        return self._vector_batch(
-            "image", bundle, manifest, _VectorOutput(receipt, vectors, bindings)
-        )
+        return stored, assets
 
     def _graph_family(
         self, workspace_id: str, config_sha: str, created_at: str
@@ -1430,6 +1461,76 @@ class ProjectionCoordinator:
                 )
             )
         return families, batches
+
+    def native_batches(
+        self,
+        prepared: PreparedProjection,
+        text_records: tuple[EmbeddingRecord, ...],
+        visual_records: tuple[EmbeddingRecord, ...] = (),
+    ) -> tuple[tuple[VectorIndex, VectorBatch, int], ...]:
+        """The native vector writes ``finalize`` will verify, for slots this add writes.
+
+        Each entry is ``(index, batch, dimension)``; a slot whose batch is
+        already ready, or that has no records, writes nothing.
+        """
+        output = []
+        text = self._native_text(prepared, text_records)
+        if text is not None:
+            output.append(text)
+        image = self._native_image(prepared, visual_records)
+        if image is not None:
+            output.append(image)
+        return tuple(output)
+
+    def _native_text(
+        self, prepared: PreparedProjection, records: tuple[EmbeddingRecord, ...]
+    ) -> tuple[VectorIndex, VectorBatch, int] | None:
+        """The text slot's native batch, or ``None`` when the add writes none."""
+        family, spec, bundle = prepared.text_family, prepared.text_spec, prepared.bundle
+        if (
+            family is None
+            or spec is None
+            or not records
+            or self.text_index is None
+            or self._ready_batch(family, bundle) is not None
+        ):
+            return None
+        stored, owners = self._text_stored(family, spec, prepared.text_groups, records)
+        batch = VectorBatch(
+            family_id=spec.family_id,
+            records=tuple(sorted(stored, key=lambda item: item.record_id)),
+            owners=_text_owners(
+                bundle, prepared.windows, {k: v[0] for k, v in owners.items()}
+            ),
+        )
+        return self.text_index, batch, spec.dimensions
+
+    def _native_image(
+        self, prepared: PreparedProjection, records: tuple[EmbeddingRecord, ...]
+    ) -> tuple[VectorIndex, VectorBatch, int] | None:
+        """The image slot's native batch, or ``None`` when the add writes none."""
+        family, spec, bundle = (
+            prepared.image_family,
+            prepared.image_spec,
+            prepared.bundle,
+        )
+        if (
+            family is None
+            or spec is None
+            or not records
+            or self.image_index is None
+            or self._ready_batch(family, bundle) is not None
+        ):
+            return None
+        stored, assets = self._image_stored(
+            family, spec, prepared.visual_inputs, records
+        )
+        batch = VectorBatch(
+            family_id=spec.family_id,
+            records=tuple(sorted(stored, key=lambda item: item.record_id)),
+            owners=_asset_owners(bundle, assets),
+        )
+        return self.image_index, batch, spec.dimensions
 
     def finalize(
         self,
