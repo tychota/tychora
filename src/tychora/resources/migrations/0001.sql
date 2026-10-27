@@ -527,6 +527,7 @@ CREATE INDEX vector_asset ON vector_records(asset_id,batch_id);
 CREATE INDEX queries_expiration ON query_runs(expires_at);
 CREATE INDEX representation_dependencies_dependency ON representation_dependencies(dependency_id,owner_id);
 CREATE INDEX units_declared_review ON evidence_units(declared_review_state,extraction_id);
+CREATE INDEX unit_assets_asset ON unit_assets(asset_id,role,unit_id);
 
 CREATE VIEW snapshot_members AS
   SELECT sp.snapshot_id, m.source_id, m.revision_id, m.extraction_id, m.is_default

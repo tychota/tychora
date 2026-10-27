@@ -93,6 +93,10 @@ _OWNERS = (
     f"LEFT JOIN chunks c ON c.chunk_id=v.chunk_id WHERE v.record_id {_IN}"
 )
 
+_ASSET_SOURCES = (
+    f"SELECT asset_id,unit_id FROM unit_assets WHERE role='source' AND asset_id {_IN}"
+)
+
 
 def _ids(values) -> str:
     return json.dumps(sorted(set(values)))
@@ -252,6 +256,16 @@ class SqliteEligibilityRepository:
             )
         )
 
+    def _asset_sources(self, asset_ids: tuple[str, ...]) -> Mapping[str, set[str]]:
+        """The source units of each listed asset; no query without assets."""
+        sources: dict[str, set[str]] = defaultdict(set)
+        if asset_ids:
+            for asset_id, unit_id in self._db.execute(
+                _ASSET_SOURCES, (_ids(asset_ids),)
+            ):
+                sources[asset_id].add(unit_id)
+        return sources
+
     def owner_facts(self, owner_ids: tuple[str, ...]) -> tuple[OwnerFact, ...]:
         """Facts of the listed owners; a known owner without a set is refused."""
         ids = _ids(owner_ids)
@@ -259,13 +273,9 @@ class SqliteEligibilityRepository:
         sets = SqliteRepresentationRepository(self._db).dependencies(
             tuple({row[8] for row in rows if row[8] is not None})
         )
-        sources: dict[str, set[str]] = defaultdict(set)
-        for asset_id, unit_id in self._db.execute(
-            "SELECT asset_id,unit_id FROM unit_assets "
-            f"WHERE role='source' AND asset_id {_IN}",
-            (ids,),
-        ):
-            sources[asset_id].add(unit_id)
+        sources = self._asset_sources(
+            tuple(row[1] for row in rows if row[0] == "asset")
+        )
         facts = []
         for (
             kind,

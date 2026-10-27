@@ -9,7 +9,7 @@ from pathlib import Path
 from tychora.contracts.errors import TychoraError
 
 SCHEMA_VERSION = 2
-SCHEMA_CHECKSUM = "4cf58b4d899f23f85727bbc37af67cc050c2ccb0989df39679f2dee54ac26775"
+SCHEMA_CHECKSUM = "e2ab72ca8381f75b3f66edb2c3b021c841a2ca48d3a60a6f80328dbe513893c7"
 # Receipts of earlier format-2 schemas, oldest first: a rebuild, not a foreign
 # database. Each is the sha256 of a 0001.sql that main shipped.
 EARLIER_FORMAT_TWO_CHECKSUMS = (
