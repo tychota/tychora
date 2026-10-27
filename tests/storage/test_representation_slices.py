@@ -214,30 +214,42 @@ def test_code_unit_slice_reads_only_its_file_binding(repo_kb):
     ] == ["second.py"]
 
 
-def test_file_slice_over_its_bounds_is_refused(repo_kb, monkeypatch):
+@pytest.mark.parametrize("measure", ["units", "rows", "text_bytes", "row_bytes"])
+def test_file_slice_over_its_bounds_is_refused(repo_kb, monkeypatch, measure):
     from tychora.adapters.sqlite.repositories import slices
 
     owner = repo_kb._workspace.owner
     extraction_id, _ = _code_unit(owner, "first.py")
-    monkeypatch.setattr(slices, "MAX_SLICE_UNITS", 1)
-    with pytest.raises(TychoraError) as units:
+    whole = _read(
+        repo_kb,
+        lambda tx: tx.representations.slice(extraction_id, relative_path="first.py"),
+    )
+    assert getattr(whole.footprint, measure) > 1
+    monkeypatch.setattr(
+        slices, "MAX_SLICE", slices.MAX_SLICE.model_copy(update={measure: 1})
+    )
+    with pytest.raises(TychoraError) as error:
         _read(
             repo_kb,
             lambda tx: tx.representations.slice(
                 extraction_id, relative_path="first.py"
             ),
         )
-    assert units.value.reason == "request.limit_exceeded"
-    monkeypatch.setattr(slices, "MAX_SLICE_UNITS", 20_000)
-    monkeypatch.setattr(slices, "MAX_SLICE_TEXT_BYTES", 8)
-    with pytest.raises(TychoraError) as text:
-        _read(
-            repo_kb,
-            lambda tx: tx.representations.slice(
-                extraction_id, relative_path="first.py"
-            ),
-        )
-    assert text.value.reason == "request.limit_exceeded"
+    assert error.value.reason == "request.limit_exceeded"
+
+
+def test_many_small_slices_together_exceed_the_operation_bound(kb, monkeypatch):
+    from tychora.application import reranking
+
+    candidates, channels, view = _candidates(kb)
+    limit = reranking.MAX_OPERATION.model_copy(update={"units": 6})
+    monkeypatch.setattr(reranking, "MAX_OPERATION", limit)
+    # Each slice alone fits: the refusal comes from their sum.
+    for candidate in candidates:
+        _sliced_facts(kb, (candidate,), channels, view)
+    with pytest.raises(TychoraError) as error:
+        _sliced_facts(kb, candidates, channels, view)
+    assert error.value.reason == "request.limit_exceeded"
 
 
 def test_slice_refuses_an_empty_or_unknown_request(kb):
@@ -292,12 +304,14 @@ def _candidates(kb):
     return candidates, channels, revision_view(grants)
 
 
-def _sliced_facts(kb, candidates, channels, view):
+def _sliced_facts(kb, candidates, channels, view, paths=()):
     owner = kb._workspace.owner
     admission = Admission(candidates, (), {}, {}, (), {}, 64 - len(candidates))
     attempt = revision_attempt(view, owner=owner)
     return kb._workspace.bridge.call(
-        prepare_rerank_facts(owner, attempt, admission, channels, ExecutionContext())
+        prepare_rerank_facts(
+            owner, attempt, admission, channels, ExecutionContext(), paths=paths
+        )
     )
 
 
@@ -373,3 +387,23 @@ def test_rerank_facts_refuse_a_window_without_a_persisted_set(kb):
     with pytest.raises(TychoraError) as error:
         _sliced_facts(kb, (candidate,), channels, view)
     assert error.value.reason == "canonical.facts_missing"
+
+
+def test_missing_continuation_target_is_an_integrity_failure(kb):
+    from tychora.contracts.graph import GraphPath
+
+    candidates, channels, view = _candidates(kb)
+    unit_id = candidates[0].key[1]
+    path = GraphPath(
+        assertion_ids=("a" * 64,),
+        required_support_ids=frozenset({unit_id, "absent-unit"}),
+        predicate="continues_table@1",
+        status="recorded",
+        confidence=0.9,
+        source_unit_id=unit_id,
+        target_unit_id="absent-unit",
+    )
+    with pytest.raises(TychoraError) as error:
+        _sliced_facts(kb, candidates[:1], channels, view, (path,))
+    assert error.value.code == "INTEGRITY_ERROR"
+    assert error.value.reason == "canonical.row_invalid"
