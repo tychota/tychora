@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import struct
 import threading
 from contextlib import asynccontextmanager
 from io import BytesIO
@@ -29,7 +30,11 @@ from tychora.configuration.resolve import resolve_config
 from tychora.contracts import vectors as vector_contracts
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
-from tychora.contracts.embeddings import EmbeddingCapabilities, VisualEmbeddingLimits
+from tychora.contracts.embeddings import (
+    EmbeddingCapabilities,
+    EmbeddingRecord,
+    VisualEmbeddingLimits,
+)
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.graph import GraphBatchReceipt
 from tychora.contracts.identity import canonical_bytes, space_id
@@ -1376,3 +1381,112 @@ async def test_add_writes_native_vectors_one_partition_per_writer_task(
     assert records > 1
     # One single-record write per partition, then finalize's whole-batch check.
     assert writes == [(1, True)] * records + [(records, True)]
+
+
+@pytest.mark.asyncio
+async def test_retry_drops_partitions_an_interrupted_add_left(
+    tmp_path, config_factory, monkeypatch
+):
+    config = config_factory(dimensions=2)
+    collection = "55825936-6a6a-4d29-945a-327d771a76b7"
+    scope = RequestScope(
+        principal_id="writer",
+        collection_ids=frozenset({collection}),
+        capabilities=frozenset({"write", "manage", "read"}),
+        uses=frozenset({"lookup"}),
+        upload_providers=frozenset({"voyage"}),
+    )
+    monkeypatch.setattr(vector_contracts, "partition_size", lambda dimension: 1)
+
+    class PerturbedEmbedder(RecordingEmbedder):
+        perturbed = False
+
+        def embed_groups(self, groups, ctx):
+            records = super().embed_groups(groups, ctx)
+            if not self.perturbed:
+                return records
+            return tuple(
+                EmbeddingRecord.from_normalized_bytes(
+                    record_id=record.record_id,
+                    input_sha=record.input_sha,
+                    space_id=record.space_id,
+                    stored=struct.pack("<ff", 0.6, 0.8),
+                )
+                for record in records
+            )
+
+    with WorkspaceOwner.open(tmp_path / "data", config, scope) as owner:
+        await owner.run_write(
+            lambda: owner.db.execute(
+                "INSERT INTO collections (collection_id,workspace_id,slug,title,access_floor,policy_json) VALUES (?,?,?,?,0,?)",
+                (
+                    collection,
+                    owner.workspace_id,
+                    "manuals",
+                    "Manuals",
+                    '{"schema_version":1,"upload_providers":["voyage"]}',
+                ),
+            ),
+            ExecutionContext(),
+        )
+        index = ChromaVectorIndex(tmp_path / "vectors")
+        native_add = index.upsert_batch
+        failing = {"after": 2}
+
+        def interrupted_upsert(batch, ctx):
+            if failing["after"] == 0:
+                raise TychoraError("PROVIDER_FAILURE", "Injected native write failure")
+            failing["after"] -= 1
+            return native_add(batch, ctx)
+
+        monkeypatch.setattr(index, "upsert_batch", interrupted_upsert)
+        counter = RecordingCounter()
+        embedder = PerturbedEmbedder(counter)
+        service = SourceService(
+            owner,
+            ProjectionCoordinator(
+                store=owner.store,
+                artifacts=owner.artifacts,
+                config=config,
+                counter=counter,
+                text_embedder=embedder,
+                text_index=index,
+            ),
+        )
+        source = SourceInput.from_mapping(
+            {
+                "type": "text",
+                "text": "\n\n".join(
+                    f"Paragraph {i} on seals. " * 120 for i in range(4)
+                ),
+                "format": "text",
+                "kind": "manual@1",
+                "metadata": {
+                    "title": "Interrupted",
+                    "publisher": "Example Team",
+                    "edition": "1",
+                },
+                "source_key": "interrupted.txt",
+                "collection_id": collection,
+            }
+        )
+        with pytest.raises(TychoraError):
+            await service.add(source, scope)
+        assert index._collection.count() == 2
+        failing["after"] = 10_000
+        embedder.perturbed = True
+        handle = await service.add(source, scope)
+        assert handle.state == "succeeded"
+        rows = await owner.run_write(
+            lambda: owner.db.execute("SELECT COUNT(*) FROM vector_records").fetchone()[
+                0
+            ],
+            ExecutionContext(),
+        )
+    assert rows > 2
+    assert index._collection.count() == rows
+    stored = index._present(
+        [record_id for record_id in index._collection.get(include=[])["ids"]],
+        embeddings=True,
+    )
+    assert {raw for _, _, raw in stored.values()} == {struct.pack("<ff", 0.6, 0.8)}

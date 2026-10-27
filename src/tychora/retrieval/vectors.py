@@ -17,16 +17,17 @@ type _Best = dict[CandidateKey, tuple[float, list[str]]]
 
 
 def _record_scores(ranked: RankedOwners) -> list[tuple[str, float]]:
-    """Every record the adapter returned with its owner's score, best owner first.
+    """Every record of the page with its own score, nearest first.
 
-    Within an owner the adapter's nearest-first window order is kept, so a
-    canonical owner's first matching window stays its nearest one.
+    An owner without per-window scores lends its score to each window; the
+    sort is stable, so the adapter's nearest-first order breaks ties.
     """
     scores: dict[str, float] = {}
-    for owner in sorted(ranked.owners, key=lambda owner: -owner.score):
-        for record in owner.window_ids:
-            scores.setdefault(record, owner.score)
-    return list(scores.items())
+    for owner in ranked.owners:
+        own = owner.window_scores or (owner.score,) * len(owner.window_ids)
+        for record, score in zip(owner.window_ids, own, strict=True):
+            scores[record] = max(scores.get(record, score), score)
+    return sorted(scores.items(), key=lambda item: -item[1])
 
 
 def _canonical_key(fact: OwnerFact) -> CandidateKey:
@@ -36,33 +37,40 @@ def _canonical_key(fact: OwnerFact) -> CandidateKey:
     return ("unit", fact.unit_id or "")
 
 
+def _admitted(
+    view: EligibilityView, fact: OwnerFact, facts: Mapping[str, OwnerFact]
+) -> bool:
+    """A record of a selected extraction that the view admits."""
+    return fact.extraction_id in view.revision_of_extraction and is_admitted_record(
+        view, fact, facts
+    )
+
+
 def _group(
     view: EligibilityView,
     facts: Mapping[str, OwnerFact],
     records: Iterable[tuple[str, float]],
-) -> tuple[_Best, int]:
-    """Admitted records grouped by canonical owner, and how many were dropped.
+) -> _Best:
+    """Admitted records grouped by canonical owner, scored by the nearest one.
 
     A record the store does not know, or of a batch the snapshot does not
     serve (unpublished or collected, still in the family's collection), is
     dropped rather than refused.
     """
     best: _Best = {}
-    dropped = 0
     for record, score in records:
         fact = facts.get(record)
-        if fact is None or not is_admitted_record(view, fact, facts):
-            dropped += 1
+        if fact is None or not _admitted(view, fact, facts):
             continue
         windows = best.setdefault(_canonical_key(fact), (score, []))[1]
         if fact.chunk_id is not None and fact.chunk_id not in windows:
             windows.append(fact.chunk_id)
-    return best, dropped
+    return best
 
 
-def _ranked(best: _Best) -> tuple[ChannelCandidate, ...]:
-    """Dense ranks per kind, units first, best score then key."""
-    candidates: list[ChannelCandidate] = []
+def _ranked(best: _Best, limit: int) -> dict[str, tuple[ChannelCandidate, ...]]:
+    """Per canonical kind, the best ``limit`` owners with dense ranks."""
+    output: dict[str, tuple[ChannelCandidate, ...]] = {}
     for kind in ("unit", "asset"):
         pool = sorted(
             (
@@ -72,13 +80,14 @@ def _ranked(best: _Best) -> tuple[ChannelCandidate, ...]:
             ),
             key=lambda item: (-item[0], item[1]),
         )
-        candidates.extend(
-            ChannelCandidate(
-                key=key, rank=rank, score=score, matching_window_ids=tuple(windows)
+        if pool:
+            output[kind] = tuple(
+                ChannelCandidate(
+                    key=key, rank=rank, score=score, matching_window_ids=tuple(windows)
+                )
+                for rank, (score, key, windows) in enumerate(pool[:limit], 1)
             )
-            for rank, (score, key, windows) in enumerate(pool, 1)
-        )
-    return tuple(candidates)
+    return output
 
 
 def vector_candidates(
@@ -87,18 +96,19 @@ def vector_candidates(
     ranked: RankedOwners,
     limit: int = CHANNEL_LIMIT,
 ) -> tuple[tuple[ChannelCandidate, ...], bool]:
-    """Canonical owners of the admitted records and the channel's ``truncated``.
+    """Canonical owners of the admitted records, ``limit`` per kind, and ``truncated``.
 
-    Records dropped after the adapter can leave fewer than ``limit`` owners
-    while nearer admitted ones lie past the page; the channel is then
-    ``truncated`` as well as when the adapter's over-fetch ran out.
+    Admission can leave a kind short while nearer admitted owners lie past
+    the page, so unless the page held every stored record the channel is
+    ``truncated`` when no kind survived or a surviving kind is short.
     """
     records = _record_scores(ranked)
     facts = load_facts(tx, (record for record, _ in records))
-    best, dropped = _group(view, facts, records)
-    candidates = _ranked(best)
-    truncated = ranked.truncated or (dropped > 0 and len(candidates) < limit)
-    return candidates, truncated
+    kinds = _ranked(_group(view, facts, records), limit)
+    exhausted = bool(ranked.detail.get("exhausted", 0))
+    short = not kinds or any(len(pool) < limit for pool in kinds.values())
+    candidates = tuple(c for pool in kinds.values() for c in pool)
+    return candidates, not exhausted and short
 
 
 def _linked_sources(
@@ -142,3 +152,14 @@ def linked_visual_context(
             (u for u in linked if u in units and is_source_unit(view, units[u])), 1
         )
     )
+
+
+def visual_candidates(
+    tx: ReadTransaction,
+    view: EligibilityView,
+    ranked: RankedOwners,
+    limit: int = CHANNEL_LIMIT,
+) -> tuple[tuple[ChannelCandidate, ...], bool]:
+    """Matched assets and the unit votes of their linked sources, in one read."""
+    assets, truncated = vector_candidates(tx, view, ranked, limit)
+    return (*assets, *linked_visual_context(tx, view, assets)), truncated

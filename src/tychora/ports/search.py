@@ -10,12 +10,17 @@ from tychora.ports.execution import ExecutionContext
 
 
 class RankedOwner(Contract):
-    """One evidence owner, its dense rank within its kind and its matching windows."""
+    """One evidence owner, its dense rank within its kind and its matching windows.
+
+    ``window_scores``, when given, holds each window's own score in
+    ``window_ids`` order; ``score`` is the best of them.
+    """
 
     key: CandidateKey
     rank: PositiveInt
     score: float
     window_ids: tuple[Identifier, ...] = ()
+    window_scores: tuple[float, ...] = ()
 
 
 class RankedOwners(Contract):

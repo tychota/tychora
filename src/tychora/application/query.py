@@ -81,8 +81,8 @@ from tychora.retrieval.segments import Selection, assemble_segments
 from tychora.retrieval.survivors import load_survivors
 from tychora.retrieval.vectors import (
     CHANNEL_LIMIT,
-    linked_visual_context,
     vector_candidates,
+    visual_candidates,
 )
 from tychora.retrieval.visuals import prepare_visual_candidates, select_visuals
 
@@ -1023,8 +1023,9 @@ class QueryService:
         attempt: EligibilityAttempt,
         values: tuple[float, ...],
         ctx: ExecutionContext,
+        candidates: Callable[..., _VectorChannel] = vector_candidates,
     ) -> _VectorChannel:
-        """Search through the view on the writer, then map owners on the read pool."""
+        """Search through the view on the writer, then map owners in one pooled read."""
         payload = struct.pack("<" + "f" * len(values), *values)
         ranked = await self.owner.run_write(
             lambda: index.search(attempt.view, payload, CHANNEL_LIMIT, ctx),
@@ -1032,7 +1033,7 @@ class QueryService:
             "interactive",
         )
         return await self.owner.run_read(
-            lambda tx: vector_candidates(tx, attempt.view, ranked, CHANNEL_LIMIT), ctx
+            lambda tx: candidates(tx, attempt.view, ranked, CHANNEL_LIMIT), ctx
         )
 
     async def _visual_candidates(
@@ -1072,11 +1073,9 @@ class QueryService:
         vector = await attempt.owner_provider(
             lambda: self.owner.embed_visual_query(current, query, ctx, scope=scope)
         )
-        assets, cut = await self._vector_channel(index, attempt, vector.values, ctx)
-        linked = await self.owner.run_read(
-            lambda tx: linked_visual_context(tx, attempt.view, assets), ctx
+        return await self._vector_channel(
+            index, attempt, vector.values, ctx, visual_candidates
         )
-        return (*assets, *linked), cut
 
     def _registered_image_query(
         self, asset_id: str, attempt: EligibilityAttempt

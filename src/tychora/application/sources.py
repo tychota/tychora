@@ -917,13 +917,18 @@ class SourceService:
     ) -> None:
         """Add the native vectors one partition per background writer task.
 
-        An interactive query then waits behind at most one partition's HNSW
-        inserts; ``finalize`` finds every record present and only verifies.
+        Records an interrupted earlier attempt left without rows are dropped
+        first. An interactive query then waits behind at most one partition's
+        HNSW inserts; ``finalize`` finds every record present and only verifies.
         """
-        native = await self.owner.run_write(
-            lambda: self.coordinator.native_batches(prepared, records, visual_records),
-            ctx,
-        )
+
+        def batches():
+            native = self.coordinator.native_batches(prepared, records, visual_records)
+            for index, batch, _dimension in native:
+                self.coordinator.discard_unbound(index, batch, ctx)
+            return native
+
+        native = await self.owner.run_write(batches, ctx)
         for index, batch, dimension in native:
             for part in batch.partitions(dimension):
                 await self.owner.run_write(
