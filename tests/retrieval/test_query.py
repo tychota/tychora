@@ -664,13 +664,11 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
         class CountingLexical:
             def __init__(self):
                 self.calls = 0
-                original = SqliteLexicalSearch.search
+                self.original = SqliteLexicalSearch.search
 
-                def search(adapter, view, query, limit, ctx):
-                    self.calls += 1
-                    return original(adapter, view, query, limit, ctx)
-
-                monkeypatch.setattr(SqliteLexicalSearch, "search", search)
+            def search(self, adapter, view, query, limit, ctx):
+                self.calls += 1
+                return self.original(adapter, view, query, limit, ctx)
 
         transport = Transport()
         caches = QueryCaches()
@@ -687,6 +685,13 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
             authorize_document=lambda payload_sha, dependencies, ctx: None,
         )
         lexical = CountingLexical()
+        monkeypatch.setattr(
+            SqliteLexicalSearch,
+            "search",
+            lambda adapter, view, query, limit, ctx: lexical.search(
+                adapter, view, query, limit, ctx
+            ),
+        )
         service = QueryService(
             owner,
             output_counter=OutputTokenCounter(asset_path("TYCHORA_TEST_MODEL_CACHE")),
