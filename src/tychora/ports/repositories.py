@@ -386,9 +386,13 @@ class RepresentationRepository(Protocol):
         extraction_id: str,
         *,
         unit_ids: tuple[str, ...] = (),
+        asset_ids: tuple[str, ...] = (),
         relative_path: str | None = None,
     ) -> RepresentationSlice:
-        """Retained rows and persisted ownership of the listed units or of one code file."""
+        """Retained rows and persisted ownership of the listed units, assets or one code file.
+
+        An asset slice holds the listed assets, the units linked to them and their proxies.
+        """
         ...
 
     def write(self, facts: RepresentationFacts) -> None:

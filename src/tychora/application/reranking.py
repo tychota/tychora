@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sqlite3
 from collections import defaultdict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -10,11 +9,9 @@ from hashlib import sha256
 from pathlib import Path
 from threading import Lock, get_ident
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 from tychora.adapters.sqlite.repositories.errors import facts_missing
-from tychora.adapters.sqlite.repositories.slices import retained_rows
-from tychora.adapters.sqlite.retained_bindings import BindingScope
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.candidates import CandidateKey, ChannelCandidate
 from tychora.contracts.corpus import (
@@ -27,7 +24,7 @@ from tychora.contracts.corpus import (
 from tychora.contracts.embeddings import QueryUploadAuthorization
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.graph import GraphPath
-from tychora.contracts.identity import canonical_bytes, digest
+from tychora.contracts.identity import digest
 from tychora.contracts.indexing import PreparedExtraction, RepresentationUnit
 from tychora.contracts.requests import RequestScope
 from tychora.ports.execution import ExecutionContext
@@ -45,48 +42,6 @@ if TYPE_CHECKING:
     from tychora.retrieval.attempt import EligibilityAttempt
     from tychora.retrieval.fusion import FusedCandidate
     from tychora.retrieval.rerank import RerankFacts
-
-
-@dataclass(slots=True)
-class RetainedReadBudget:
-    """One shared operation budget across all touched extractions."""
-
-    units: int = 0
-    rows: int = 0
-    text_bytes: int = 0
-    row_bytes: int = 0
-
-    def accept(self, row: dict[str, Any], *, unit: bool = False) -> None:
-        self.rows += 1
-        self.row_bytes += len(canonical_bytes(row))
-        if unit:
-            self.units += 1
-            self.text_bytes += len(row["text"].encode("utf-8"))
-        if (
-            self.units > 20_000
-            or self.rows > 100_000
-            or self.text_bytes > 16 * 1024 * 1024
-            or self.row_bytes > 32 * 1024 * 1024
-        ):
-            raise TychoraError(
-                "INVALID_REQUEST", "Rerank preparation exceeds its resource limit."
-            )
-
-
-def extraction_rows(
-    db: sqlite3.Connection, extraction_id: str
-) -> RetainedRepresentationRows:
-    """One whole extraction's retained rows; interim until visuals read slices."""
-    row = db.execute(
-        "SELECT revision_id FROM extractions WHERE extraction_id=?", (extraction_id,)
-    ).fetchone()
-    if row is None:
-        raise TychoraError(
-            "INTEGRITY_ERROR",
-            "Retained extraction is unavailable.",
-            reason="canonical.row_invalid",
-        )
-    return retained_rows(db, BindingScope(extraction_id, row[0]))
 
 
 class RerankAttestationError(TychoraError):

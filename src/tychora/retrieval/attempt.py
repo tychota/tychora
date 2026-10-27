@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -278,6 +278,26 @@ async def _attempt(pinned: _Pinned) -> EligibilityAttempt | None:
         owner=owner,
         ctx=pinned.ctx,
     )
+
+
+def readable_units(
+    tx: ReadTransaction, view: EligibilityView, unit_ids: Iterable[str]
+) -> frozenset[str]:
+    """The listed units whose persisted sets the view allows."""
+    wanted = tuple(sorted(set(unit_ids)))
+    if not wanted:
+        return frozenset()
+    return frozenset(
+        fact.owner_id
+        for fact in tx.eligibility.owner_facts(wanted)
+        if is_eligible_unit(view, fact)
+    )
+
+
+def require_epoch(tx: ReadTransaction, view: EligibilityView) -> None:
+    """Refuse delivery when the policy epoch moved since the view was compiled."""
+    if tx.workspace.policy_epoch() != view.policy_epoch:
+        raise _changed()
 
 
 def _candidate_filter(view: EligibilityView, unit_id: str) -> bool:

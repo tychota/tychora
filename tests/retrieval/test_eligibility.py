@@ -396,8 +396,10 @@ def _request(mode="audit", **updates):
 
 def test_reviewed_child_blocks_ancestor_representation_and_proxy(config, scope):
     reader = _Reader(config, _facts(child_review="rejected"))
-    view = LegacyEligibilityCompiler(reader).compile_eligibility(
-        _snapshot(config), scope, _request(), config
+    view = (
+        LegacyEligibilityCompiler(reader)
+        .compile_attempt(_snapshot(config), scope, _request(), config)
+        .view
     )
     assert view.revision_ids == frozenset({"revision"})
     assert view.source_unit_ids == frozenset()
@@ -411,7 +413,7 @@ def test_snapshot_semantic_digest_cannot_substitute_retained_artifact(config, sc
     reader = _Reader(config, _facts())
     snapshot = _snapshot(config).model_copy(update={"config_sha": config.config_sha})
     with pytest.raises(TychoraError) as error:
-        LegacyEligibilityCompiler(reader).compile_eligibility(
+        LegacyEligibilityCompiler(reader).compile_attempt(
             snapshot, scope, _request(), config
         )
     assert error.value.code == "INVALID_REQUEST"
@@ -420,13 +422,17 @@ def test_snapshot_semantic_digest_cannot_substitute_retained_artifact(config, sc
 def test_access_floor_and_withdrawal_remove_every_channel(config, scope):
     snapshot = _snapshot(config)
     reader = _Reader(config, _facts(source_floor=3))
-    denied = LegacyEligibilityCompiler(reader).compile_eligibility(
-        snapshot, scope, _request(), config
+    denied = (
+        LegacyEligibilityCompiler(reader)
+        .compile_attempt(snapshot, scope, _request(), config)
+        .view
     )
     assert denied.revision_ids == frozenset()
     reader.facts = replace(_facts(), revisions=(_revision(withdrawn=True),))
-    withdrawn = LegacyEligibilityCompiler(reader).compile_eligibility(
-        snapshot, scope, _request(), config
+    withdrawn = (
+        LegacyEligibilityCompiler(reader)
+        .compile_attempt(snapshot, scope, _request(), config)
+        .view
     )
     assert withdrawn.revision_ids == frozenset()
 
@@ -435,8 +441,10 @@ def test_mode_policy_changes_cache_identity_on_same_snapshot(config, scope):
     reader = _Reader(config, _facts())
     compiler = LegacyEligibilityCompiler(reader)
     snapshot = _snapshot(config)
-    audit = compiler.compile_eligibility(snapshot, scope, _request("audit"), config)
-    compose = compiler.compile_eligibility(snapshot, scope, _request("compose"), config)
+    audit = compiler.compile_attempt(snapshot, scope, _request("audit"), config).view
+    compose = compiler.compile_attempt(
+        snapshot, scope, _request("compose"), config
+    ).view
     assert audit.snapshot_id == compose.snapshot_id
     assert audit.scope_digest == compose.scope_digest
     assert audit.eligibility_policy_digest != compose.eligibility_policy_digest
@@ -446,7 +454,7 @@ def test_mode_policy_changes_cache_identity_on_same_snapshot(config, scope):
 def test_provider_and_delivery_boundaries_detect_new_policy_epoch(config, scope):
     reader = _Reader(config, _facts())
     compiler = LegacyEligibilityCompiler(reader)
-    view = compiler.compile_eligibility(_snapshot(config), scope, _request(), config)
+    view = compiler.compile_attempt(_snapshot(config), scope, _request(), config).view
     compiler.revalidate_epoch(view, "provider")
     reader.epoch += 1
     for stage in ("provider", "delivery"):
@@ -530,11 +538,15 @@ def test_all_unit_filter_removes_context_and_group_dependent_chunks(config, scop
         ),
     )
     reader = _Reader(config, facts)
-    view = LegacyEligibilityCompiler(reader).compile_eligibility(
-        _snapshot(config),
-        scope,
-        _request(filters=EqFilter(field="scope.project", value="alpha")),
-        config,
+    view = (
+        LegacyEligibilityCompiler(reader)
+        .compile_attempt(
+            _snapshot(config),
+            scope,
+            _request(filters=EqFilter(field="scope.project", value="alpha")),
+            config,
+        )
+        .view
     )
     assert "child" not in view.context_unit_ids
     assert "parent" not in view.context_unit_ids
@@ -551,7 +563,7 @@ def test_mixed_scope_or_is_rejected_before_eligibility(config, scope):
         )
     )
     with pytest.raises(TychoraError) as error:
-        LegacyEligibilityCompiler(_Reader(config, _facts())).compile_eligibility(
+        LegacyEligibilityCompiler(_Reader(config, _facts())).compile_attempt(
             _snapshot(config),
             scope,
             _request(filters=expression),
@@ -573,11 +585,15 @@ def test_candidate_filter_preserves_allowed_context(config, scope):
             for unit in original.units
         ),
     )
-    view = LegacyEligibilityCompiler(_Reader(config, facts)).compile_eligibility(
-        _snapshot(config),
-        scope,
-        _request(filters=EqFilter(field="code.symbol_kind", value="function")),
-        config,
+    view = (
+        LegacyEligibilityCompiler(_Reader(config, facts))
+        .compile_attempt(
+            _snapshot(config),
+            scope,
+            _request(filters=EqFilter(field="code.symbol_kind", value="function")),
+            config,
+        )
+        .view
     )
     assert view.source_unit_ids == frozenset({"child"})
     assert {"parent", "child"} <= view.context_unit_ids
@@ -606,18 +622,18 @@ def test_candidate_filter_limits_proxy_lexical_without_removing_context(config, 
     )
     compiler = LegacyEligibilityCompiler(_Reader(config, facts))
     snapshot = _snapshot(config, chunks=("child-chunk", "proxy-chunk"))
-    matching = compiler.compile_eligibility(
+    matching = compiler.compile_attempt(
         snapshot,
         scope,
         _request(filters=EqFilter(field="code.symbol_kind", value="function")),
         config,
-    )
-    nonmatching = compiler.compile_eligibility(
+    ).view
+    nonmatching = compiler.compile_attempt(
         snapshot,
         scope,
         _request(filters=EqFilter(field="code.symbol_kind", value="class")),
         config,
-    )
+    ).view
     assert "proxy-chunk" in matching.chunk_ids
     assert "proxy-chunk" not in nonmatching.chunk_ids
     assert "proxy" in matching.context_unit_ids & nonmatching.context_unit_ids
@@ -652,7 +668,7 @@ def test_candidate_filter_limits_image_vector_per_complete_source_owner(config, 
     )
     compiler = LegacyEligibilityCompiler(_Reader(config, facts))
     snapshot = _snapshot(config, images=(("image-vector", "asset"),))
-    matching = compiler.compile_eligibility(
+    matching = compiler.compile_attempt(
         snapshot,
         scope,
         _request(
@@ -664,13 +680,13 @@ def test_candidate_filter_limits_image_vector_per_complete_source_owner(config, 
             )
         ),
         config,
-    )
-    nonmatching = compiler.compile_eligibility(
+    ).view
+    nonmatching = compiler.compile_attempt(
         snapshot,
         scope,
         _request(filters=EqFilter(field="code.symbol_kind", value="class")),
         config,
-    )
+    ).view
     assert "image-vector" in matching.vector_record_ids
     assert "image-vector" not in nonmatching.vector_record_ids
     assert "asset" in matching.asset_ids & nonmatching.asset_ids
@@ -734,8 +750,10 @@ def test_image_candidate_requires_one_owner_to_match_entire_expression(config, s
                 ),
             ),
         )
-        return LegacyEligibilityCompiler(_Reader(config, facts)).compile_eligibility(
-            snapshot, scope, query, config
+        return (
+            LegacyEligibilityCompiler(_Reader(config, facts))
+            .compile_attempt(snapshot, scope, query, config)
+            .view
         )
 
     whole = view(
@@ -785,11 +803,17 @@ def test_rejected_overlapping_child_does_not_remove_unrelated_source(config, sco
             ),
         ),
     )
-    view = LegacyEligibilityCompiler(_Reader(config, facts)).compile_eligibility(
-        _snapshot(config, chunks=("parent-chunk", "child-chunk", "independent-chunk")),
-        scope,
-        _request(),
-        config,
+    view = (
+        LegacyEligibilityCompiler(_Reader(config, facts))
+        .compile_attempt(
+            _snapshot(
+                config, chunks=("parent-chunk", "child-chunk", "independent-chunk")
+            ),
+            scope,
+            _request(),
+            config,
+        )
+        .view
     )
     assert view.source_unit_ids == frozenset({"independent"})
     assert view.chunk_ids == frozenset({"independent-chunk"})
@@ -799,11 +823,15 @@ def test_original_kind_use_restriction_is_part_of_readability(config, scope):
     facts = replace(
         _facts(), revisions=(_revision(kind_allowed_uses=frozenset({"lookup"})),)
     )
-    view = LegacyEligibilityCompiler(_Reader(config, facts)).compile_eligibility(
-        _snapshot(config),
-        scope,
-        _request("audit"),
-        config,
+    view = (
+        LegacyEligibilityCompiler(_Reader(config, facts))
+        .compile_attempt(
+            _snapshot(config),
+            scope,
+            _request("audit"),
+            config,
+        )
+        .view
     )
     assert view.revision_ids == frozenset()
 
@@ -1283,7 +1311,7 @@ async def test_retired_original_is_not_reopened_for_range_ownership(tmp_path):
 
 def test_request_cannot_exceed_resolved_limit(config, scope):
     with pytest.raises(TychoraError) as error:
-        LegacyEligibilityCompiler(_Reader(config, _facts())).compile_eligibility(
+        LegacyEligibilityCompiler(_Reader(config, _facts())).compile_attempt(
             _snapshot(config),
             scope,
             _request(limit=config.values.limits.limit + 1),
@@ -1301,12 +1329,16 @@ def test_only_explicit_global_revision_matches_missing_scoped_facet(config, scop
     global_facts = replace(
         _facts(), revisions=(_revision(global_facets=frozenset({"scope.project"})),)
     )
-    normal = LegacyEligibilityCompiler(_Reader(config, _facts())).compile_eligibility(
-        _snapshot(config), scope, request, config
+    normal = (
+        LegacyEligibilityCompiler(_Reader(config, _facts()))
+        .compile_attempt(_snapshot(config), scope, request, config)
+        .view
     )
-    global_view = LegacyEligibilityCompiler(
-        _Reader(config, global_facts)
-    ).compile_eligibility(_snapshot(config), scope, request, config)
+    global_view = (
+        LegacyEligibilityCompiler(_Reader(config, global_facts))
+        .compile_attempt(_snapshot(config), scope, request, config)
+        .view
+    )
     assert normal.context_unit_ids == frozenset()
     assert "child" in global_view.context_unit_ids
 
@@ -1353,8 +1385,10 @@ def test_new_decision_blocks_every_assertion_after_the_watermark(config, scope):
             (earlier_assertion, 1),
         ),
     )
-    view = LegacyEligibilityCompiler(_Reader(config, facts)).compile_eligibility(
-        snapshot, scope, _request(), config
+    view = (
+        LegacyEligibilityCompiler(_Reader(config, facts))
+        .compile_attempt(snapshot, scope, _request(), config)
+        .view
     )
     assert view.graph_generation_id == "generation"
     assert "generation" in view.selected_batch_ids
@@ -1628,14 +1662,18 @@ def test_worklist_handles_cyclic_and_cross_kind_dependencies(config, scope):
         chunks=(),
         assets=(AssetFact("asset", "revision", "accepted", revision | {"asset", "c"}),),
     )
-    view = LegacyEligibilityCompiler(_Reader(config, facts)).compile_eligibility(
-        _snapshot(config, chunks=()), scope, _request(), config
+    view = (
+        LegacyEligibilityCompiler(_Reader(config, facts))
+        .compile_attempt(_snapshot(config, chunks=()), scope, _request(), config)
+        .view
     )
     assert view.context_unit_ids == frozenset({"a", "b", "c"})
     assert view.asset_ids == frozenset({"asset"})
     broken = replace(facts, assets=(replace(facts.assets[0], review_state="rejected"),))
-    view = LegacyEligibilityCompiler(_Reader(config, broken)).compile_eligibility(
-        _snapshot(config, chunks=()), scope, _request(), config
+    view = (
+        LegacyEligibilityCompiler(_Reader(config, broken))
+        .compile_attempt(_snapshot(config, chunks=()), scope, _request(), config)
+        .view
     )
     assert view.context_unit_ids == frozenset({"a", "b"})
     assert view.asset_ids == frozenset()
@@ -1672,7 +1710,7 @@ def test_compile_work_stays_linear_in_unit_count(config, scope):
         runs = []
         for _ in range(5):
             started = time.perf_counter()
-            view = compiler.compile_eligibility(snapshot, scope, _request(), config)
+            view = compiler.compile_attempt(snapshot, scope, _request(), config).view
             runs.append(time.perf_counter() - started)
         assert len(view.source_unit_ids) == count - 4 * (count // 20)
         return min(runs)

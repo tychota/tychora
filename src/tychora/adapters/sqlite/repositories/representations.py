@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pydantic import ValidationError
 
 from tychora.contracts.base import Contract
-from tychora.contracts.corpus import RepresentationSlice
+from tychora.contracts.corpus import RepresentationSlice, RetainedRepresentationRows
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.indexing import IntervalRow, RepresentationFacts
 from tychora.ports.repositories import ChunkRow, UnitRow
@@ -16,6 +16,9 @@ from tychora.ports.repositories import ChunkRow, UnitRow
 from ..retained_bindings import BindingScope
 from .slices import prepared_slice, require_bounded, retained_rows
 from .workspace import require_write
+
+# The listed units or assets of one slice request.
+type _Ids = tuple[str, ...]
 
 _IN_IDS = "IN (SELECT value FROM json_each(?))"
 _UNITS = (
@@ -84,6 +87,49 @@ def _slice_differs(message: str) -> TychoraError:
     return TychoraError("INTEGRITY_ERROR", message, reason="canonical.row_invalid")
 
 
+def _require_request(
+    unit_ids: _Ids, asset_ids: _Ids, relative_path: str | None
+) -> None:
+    """Refuse a slice naming nothing, or naming both assets and units or a file."""
+    if (not unit_ids and not asset_ids and relative_path is None) or (
+        asset_ids and (unit_ids or relative_path is not None)
+    ):
+        raise TychoraError(
+            "INTEGRITY_ERROR",
+            "A slice names units, assets or one file.",
+            reason="invariant.unexpected",
+        )
+
+
+def _scope(
+    extraction_id: str,
+    revision_id: str,
+    unit_ids: _Ids,
+    asset_ids: _Ids,
+    relative_path: str | None,
+) -> BindingScope:
+    """One file, the listed assets or the listed units; an empty list is never a scope."""
+    if relative_path is not None:
+        return BindingScope(extraction_id, revision_id, relative_path)
+    if asset_ids:
+        return BindingScope(extraction_id, revision_id, asset_ids=asset_ids)
+    return BindingScope(extraction_id, revision_id, unit_ids=unit_ids)
+
+
+def _require_listed(
+    rows: RetainedRepresentationRows,
+    unit_ids: _Ids,
+    asset_ids: _Ids,
+) -> None:
+    """Refuse a slice missing a listed asset, or whose units differ from those listed."""
+    if asset_ids:
+        if not set(asset_ids) <= {asset.asset_id for asset in rows.assets}:
+            raise _slice_differs("Slice assets differ from the request.")
+        return
+    if not rows.units or (unit_ids and len(set(unit_ids)) != len(rows.units)):
+        raise _slice_differs("Slice units differ from the request.")
+
+
 class SqliteRepresentationRepository:
     """Reads by ID tuples and idempotent writes of representation facts."""
 
@@ -130,37 +176,28 @@ class SqliteRepresentationRepository:
         self,
         extraction_id: str,
         *,
-        unit_ids: tuple[str, ...] = (),
+        unit_ids: _Ids = (),
+        asset_ids: _Ids = (),
         relative_path: str | None = None,
     ) -> RepresentationSlice:
-        """Retained rows and persisted ownership of the listed units or of one code file.
+        """Retained rows and persisted ownership of the listed units, assets or one code file.
 
-        An empty request is refused, as is a listed unit the extraction lacks; a
-        scope over the slice bounds is ``request.limit_exceeded``.
+        An asset slice holds the listed assets, the units linked to them and
+        their proxies. An empty request is refused, as is a listed unit or asset
+        the extraction lacks; a scope over the slice bounds is
+        ``request.limit_exceeded``.
         """
-        if not unit_ids and relative_path is None:
-            raise TychoraError(
-                "INTEGRITY_ERROR",
-                "A slice names no unit and no file.",
-                reason="invariant.unexpected",
-            )
+        _require_request(unit_ids, asset_ids, relative_path)
         row = self._db.execute(
             "SELECT revision_id FROM extractions WHERE extraction_id=?",
             (extraction_id,),
         ).fetchone()
         if row is None:
             raise _slice_differs("Slice extraction is not registered.")
-        scope = BindingScope(
-            extraction_id,
-            row[0],
-            relative_path,
-            None if relative_path is not None else unit_ids,
-        )
+        scope = _scope(extraction_id, row[0], unit_ids, asset_ids, relative_path)
         footprint = require_bounded(self._db, scope)
         rows = retained_rows(self._db, scope)
-        expected = len(set(unit_ids)) if relative_path is None else None
-        if not rows.units or expected not in (None, len(rows.units)):
-            raise _slice_differs("Slice units differ from the request.")
+        _require_listed(rows, unit_ids, asset_ids)
         intervals = self.intervals(tuple(unit.unit_id for unit in rows.units))
         sets = self.dependencies(tuple({item.dependency_digest for item in intervals}))
         return RepresentationSlice(

@@ -10,10 +10,11 @@ from typing import TYPE_CHECKING, cast
 
 from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.application.discovery import (
+    _exact_request,
+    _mentioned_units,
     _permitted_resolutions,
     _scoped_resolution_rates,
 )
-from tychora.application.reranking import extraction_rows
 from tychora.configuration.graph_policy import resolve_graph_traversal_policy
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import CodepointRange, FrozenJsonMap
@@ -38,15 +39,23 @@ from tychora.contracts.requests import (
     RequestScope,
     query_run_scope_matches,
 )
-from tychora.indexing.representations import prepare_extraction
 from tychora.ports.execution import ExecutionContext
+from tychora.retrieval.attempt import (
+    is_eligible_asset,
+    is_eligible_unit,
+    readable_units,
+    require_epoch,
+)
+from tychora.retrieval.compiler import EligibilityCompiler
 from tychora.retrieval.eligibility import LegacyEligibilityCompiler
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from tychora.application.owner import WorkspaceOwner
+    from tychora.contracts.eligibility import EligibilityView
     from tychora.ports.graph import GraphStore
+    from tychora.ports.repositories import ReadTransaction
 
 MAX_INSPECTION_PAYLOAD_BYTES = 16 * 1024 * 1024
 MAX_DIAGNOSTIC_BYTES = 1024 * 1024
@@ -72,6 +81,11 @@ def _ranges(request: InspectRequest, length: int) -> tuple[CodepointRange, ...]:
     return selected
 
 
+def _all_readable(tx: ReadTransaction, view: EligibilityView, units: set[str]) -> bool:
+    """Whether there are units and the view allows each one's persisted set."""
+    return bool(units) and readable_units(tx, view, units) == units
+
+
 @dataclass(frozen=True)
 class RetainedPin:
     """A pinned active snapshot narrowed to the retained members one read covers."""
@@ -84,54 +98,50 @@ class InspectionService:
     def __init__(self, owner: WorkspaceOwner, graph: GraphStore | None = None) -> None:
         self.owner = owner
         self.graph = graph
-        self.compiler = LegacyEligibilityCompiler(owner.store)
+        self.compiler = EligibilityCompiler(owner.store.registry, owner.artifacts)
+        # Relation inspection reads the unit-level graph view until the graph moves.
+        self.legacy = LegacyEligibilityCompiler(owner.store)
         # Opaque continuations never disclose excluded row IDs or positions.
         self._content_cursors: dict[str, tuple[str, int]] = {}
 
+    def _exact_query(self, scope: RequestScope) -> QueryRequest:
+        """The exact-only request every inspection compiles its view for."""
+        query = _exact_request(self.owner, scope, "Exact inspection")
+        if query is None:
+            _deny()
+        return cast(QueryRequest, query)
+
     def _attempt(
         self,
+        tx: ReadTransaction,
         snapshot: SnapshotView,
         scope: RequestScope,
         members: tuple[SnapshotMember, ...] | None = None,
-    ):
-        preferred = (
-            self.owner.config.values.mode or self.owner.config.values.default_mode
+    ) -> EligibilityView:
+        """Compile the revision-level view inside the caller's read."""
+        query = self._exact_query(scope)
+        self.compiler.ensure_compatible(
+            snapshot,
+            self.owner.config,
+            lambda: self.owner.store.retained_config(snapshot),
         )
-        readable_modes = [
-            name
-            for name, definition in self.owner.store.registry.modes.items()
-            if set(
-                cast(tuple[str, ...], cast(FrozenJsonMap, definition)["allowed_uses"])
-            )
-            & scope.uses
-        ]
-        mode = (
-            preferred
-            if preferred in readable_modes
-            else next(iter(sorted(readable_modes)), None)
-        )
-        if mode is None:
-            _deny()
-        limits = self.owner.config.values.limits
-        query = QueryRequest.from_mapping(
-            {
-                "question": "Exact inspection",
-                "revision_selector": "all",
-                "exact_only": True,
-                "mode": mode,
-                "limit": min(8, limits.limit),
-                "budgets": {
-                    "max_tokens": min(6000, limits.max_tokens),
-                    "max_response_bytes": min(1048576, limits.max_response_bytes),
-                },
-            }
-        )
-        return self.compiler.compile_attempt(
+        return self.compiler.compile(
+            tx,
             snapshot,
             scope,
             query,
             self.owner.config,
             members=members,
+            include_archived=members is not None,
+        ).view
+
+    def _legacy_attempt(self, snapshot: SnapshotView, scope: RequestScope):
+        """The unit-level attempt relation inspection still reads."""
+        return self.legacy.compile_attempt(
+            snapshot,
+            scope,
+            self._exact_query(scope),
+            self.owner.config,
             _retained_inspection=True,
         )
 
@@ -230,14 +240,14 @@ class InspectionService:
             ),
         )
 
-    def _inspect_diagnostics(self, request, pin, attempt):
+    def _inspect_diagnostics(self, tx, request, pin, view):
         member = next(
             (item for item in pin.members if item.extraction_id == request.id),
             None,
         )
         if member is None:
             raise TychoraError("NOT_FOUND", "Diagnostic extraction is unavailable.")
-        if member.revision_id not in attempt.view.revision_ids:
+        if member.revision_id not in view.revisions:
             _deny()
         row = self.owner.db.execute(
             "SELECT e.diagnostics_artifact_sha,r.source_id FROM extractions e "
@@ -278,14 +288,13 @@ class InspectionService:
                     raise TychoraError(
                         "INTEGRITY_ERROR", "Retained diagnostics are invalid."
                     ) from None
-                eligible = attempt.view.graph_eligible_unit_ids
+                eligible = readable_units(tx, view, _mentioned_units(records))
+                revisions = frozenset(view.revisions)
                 permitted, limited = _permitted_resolutions(
-                    records, eligible, attempt.view.revision_ids, row[1]
+                    records, eligible, revisions, row[1]
                 )
                 summary = dict(
-                    _scoped_resolution_rates(
-                        records, eligible, attempt.view.revision_ids, row[1]
-                    )
+                    _scoped_resolution_rates(records, eligible, revisions, row[1])
                 )
                 summary["retained"] = True
                 for item in permitted:
@@ -321,7 +330,7 @@ class InspectionService:
                         raise TychoraError(
                             "INTEGRITY_ERROR", "Retained diagnostics are invalid."
                         ) from None
-                    if not file_units or not file_units <= eligible:
+                    if not _all_readable(tx, view, file_units):
                         limited = True
                         continue
                     detail.append(
@@ -386,7 +395,7 @@ class InspectionService:
             ),
         )
 
-    def _inspect_evidence(self, request, pin, attempt, *, prepared=None):
+    def _inspect_evidence(self, tx, request, pin, view, *, prepared=None):
         owner = self.owner
         row = owner.db.execute(
             "SELECT e.extraction_id,x.revision_id FROM evidence_units e "
@@ -404,19 +413,12 @@ class InspectionService:
             ),
             None,
         )
-        if member is None or revision not in attempt.view.revision_ids:
+        if member is None or revision not in view.revisions:
             _deny()
         unit = owner.store._hydrate((request.id,))[0]
         selected = _ranges(request, len(unit.text))
-        eligible = (
-            attempt.view.revision_ids
-            | attempt.view.context_unit_ids
-            | attempt.view.structural_unit_ids
-            | attempt.view.asset_ids
-        )
-        full_unit_readable = request.id in (
-            attempt.view.context_unit_ids | attempt.view.structural_unit_ids
-        )
+        (fact,) = tx.eligibility.owner_facts((request.id,))
+        full_unit_readable = is_eligible_unit(view, fact)
         if not selected:
             if not full_unit_readable:
                 _deny()
@@ -424,10 +426,11 @@ class InspectionService:
             partial_evidence = None
             excerpts = ()
         else:
-            # The retained representation validator reconstructs exact per-range
-            # ownership from canonical locators/source parts, never from originals.
+            # Per-range ownership comes from the unit's persisted intervals.
             if prepared is None:
-                prepared = prepare_extraction(extraction_rows(owner.db, extraction))
+                prepared = tx.representations.slice(
+                    extraction, unit_ids=(request.id,)
+                ).prepared
             representation = next(
                 (item for item in prepared.units if item.unit.unit_id == request.id),
                 None,
@@ -437,11 +440,11 @@ class InspectionService:
                     "INTEGRITY_ERROR", "Retained source range is unavailable."
                 )
             if unit.unit_type == "asset_proxy":
-                # The compiled retained attempt already applies the selected
-                # (including caller-use fallback) mode's derived review policy
-                # and the complete source/asset dependency closure. Proxies are
-                # atomic; a ranged read cannot bypass their admission.
-                if request.id not in attempt.view.proxy_unit_ids:
+                # The compiled view already applies the selected (including
+                # caller-use fallback) mode's derived review policy and the
+                # dependency closure. Proxies are atomic; a ranged read cannot
+                # bypass their admission.
+                if not (fact.proxy and full_unit_readable):
                     _deny()
             else:
                 mode_name = owner.config.values.mode or owner.config.values.default_mode
@@ -463,7 +466,7 @@ class InspectionService:
                     and interval.char_start < owned.char_end
                     for dependency in owned.dependency_ids
                 )
-                if not dependencies <= eligible | {request.id}:
+                if not view.allows(dependencies - {request.id}):
                     _deny()
             excerpts = tuple(
                 Excerpt(
@@ -500,55 +503,7 @@ class InspectionService:
             if unit.unit_type == "asset_proxy" and unit.attributes.get(
                 "proxy_kind"
             ) in {"ocr", "description"}:
-                proxy_row = owner.db.execute(
-                    "SELECT derivation_sha FROM asset_proxies WHERE proxy_unit_id=?",
-                    (request.id,),
-                ).fetchone()
-                if proxy_row is None:
-                    raise TychoraError(
-                        "INTEGRITY_ERROR", "Derived proxy binding is unavailable."
-                    )
-                payload, media_type = self._artifact(
-                    proxy_row[0], max_bytes=1024 * 1024
-                )
-                try:
-                    root = json.loads(payload)
-                    data = root["data"]
-                    result = data["result"]
-                    if (
-                        media_type != "application/json"
-                        or canonical_bytes(root) != payload
-                        or root.get("type") != "vision_derivation"
-                        or root.get("schema_version") != "1"
-                        or not isinstance(data, dict)
-                        or not isinstance(result, dict)
-                    ):
-                        raise ValueError
-                    details = {
-                        "task": data["task"],
-                        "model": data["model"],
-                        "prompt_identity": data["prompt_identity"],
-                        "image_sha256": data["image_sha256"],
-                        "source_context_sha256": data["source_context_sha256"],
-                        "dependency_ids": data["dependency_ids"],
-                        "target_id": result.get("target_id"),
-                        "literal_transcription": result.get("literal_transcription"),
-                        "interpretation": result.get("interpretation"),
-                        "uncertainties": result.get("uncertainties", []),
-                    }
-                except (ValueError, TypeError, KeyError):
-                    raise TychoraError(
-                        "INTEGRITY_ERROR", "Derived proxy receipt differs."
-                    ) from None
-                records = (
-                    *records,
-                    InspectionItem(
-                        id=request.id,
-                        record_type="vision_derivation",
-                        schema_id="vision-derivation@1",
-                        value=FrozenJsonMap(details),
-                    ),
-                )
+                records = (*records, self._vision_derivation(request.id))
         return InspectionResult(
             subject="evidence",
             id=request.id,
@@ -558,7 +513,54 @@ class InspectionService:
             records=records,
         )
 
-    def _inspect_asset(self, request, attempt):
+    def _vision_derivation(self, unit_id: str) -> InspectionItem:
+        """The verified vision derivation receipt behind a derived proxy unit."""
+        proxy_row = self.owner.db.execute(
+            "SELECT derivation_sha FROM asset_proxies WHERE proxy_unit_id=?",
+            (unit_id,),
+        ).fetchone()
+        if proxy_row is None:
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Derived proxy binding is unavailable."
+            )
+        payload, media_type = self._artifact(proxy_row[0], max_bytes=1024 * 1024)
+        try:
+            root = json.loads(payload)
+            data = root["data"]
+            result = data["result"]
+            if (
+                media_type != "application/json"
+                or canonical_bytes(root) != payload
+                or root.get("type") != "vision_derivation"
+                or root.get("schema_version") != "1"
+                or not isinstance(data, dict)
+                or not isinstance(result, dict)
+            ):
+                raise ValueError
+            details = {
+                "task": data["task"],
+                "model": data["model"],
+                "prompt_identity": data["prompt_identity"],
+                "image_sha256": data["image_sha256"],
+                "source_context_sha256": data["source_context_sha256"],
+                "dependency_ids": data["dependency_ids"],
+                "target_id": result.get("target_id"),
+                "literal_transcription": result.get("literal_transcription"),
+                "interpretation": result.get("interpretation"),
+                "uncertainties": result.get("uncertainties", []),
+            }
+        except (ValueError, TypeError, KeyError):
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Derived proxy receipt differs."
+            ) from None
+        return InspectionItem(
+            id=unit_id,
+            record_type="vision_derivation",
+            schema_id="vision-derivation@1",
+            value=FrozenJsonMap(details),
+        )
+
+    def _inspect_asset(self, tx, request, view):
         row = self.owner.db.execute(
             "SELECT a.artifact_sha,a.locator_json,x.revision_id "
             "FROM assets a JOIN extractions x USING(extraction_id) WHERE a.asset_id=?",
@@ -567,9 +569,9 @@ class InspectionService:
         if row is None:
             raise TychoraError("NOT_FOUND", "Registered asset is unavailable.")
         sha, locator, revision = row
-        if (
-            request.id not in attempt.view.asset_ids
-            or revision not in attempt.view.revision_ids
+        facts = tx.eligibility.owner_facts((request.id,))
+        if revision not in view.revisions or not any(
+            is_eligible_asset(view, fact) for fact in facts
         ):
             _deny()
         if self.owner.db.execute(
@@ -594,8 +596,8 @@ class InspectionService:
             ),
         )
 
-    def _inspect_revision(self, request, pin, attempt):
-        if request.id not in attempt.view.revision_ids:
+    def _inspect_revision(self, tx, request, pin, view):
+        if request.id not in view.revisions:
             _deny()
         row = self.owner.db.execute(
             "SELECT r.original_sha,r.title FROM revisions r WHERE r.revision_id=?",
@@ -610,16 +612,14 @@ class InspectionService:
                 for item in pin.members
                 if item.revision_id == request.id
             )
-            readable = attempt.view.context_unit_ids | attempt.view.structural_unit_ids
             for extraction in selected_extractions:
-                for (unit_id,) in self.owner.db.execute(
-                    "SELECT u.unit_id FROM evidence_units u "
-                    "LEFT JOIN asset_proxies p ON p.proxy_unit_id=u.unit_id "
-                    "WHERE u.extraction_id=? AND p.proxy_unit_id IS NULL",
-                    (extraction,),
-                ):
-                    if unit_id not in readable:
-                        _deny()
+                originals = frozenset(
+                    row.unit_id
+                    for row in tx.eligibility.unit_flags((extraction,))
+                    if not row.proxy
+                )
+                if readable_units(tx, view, originals) != originals:
+                    _deny()
             binding = self.owner.db.execute(
                 "SELECT 1 FROM revision_artifacts WHERE revision_id=? AND artifact_sha=? AND role='original'",
                 (request.id, sha),
@@ -760,24 +760,31 @@ class InspectionService:
                 ).fetchone()
             ):
                 raise TychoraError("ORIGINAL_REMOVED", "Original payload was removed.")
-        with self._pin_retained(request) as pin:
+        with self._pin_retained(request) as pin, self.owner.store.uow.read() as tx:
             ctx.checkpoint()
-            attempt = self._attempt(pin.view, granted, pin.members)
-            if request.subject == "evidence":
-                result = self._inspect_evidence(request, pin, attempt)
-            elif request.subject == "assets":
-                result = self._inspect_asset(request, attempt)
-            elif request.subject == "revisions":
-                result = self._inspect_revision(request, pin, attempt)
-            elif request.subject == "diagnostics":
-                result = self._inspect_diagnostics(request, pin, attempt)
-            else:
-                raise TychoraError(
-                    "INVALID_REQUEST", "Inspection subject is unavailable."
-                )
-            self.compiler.revalidate_epoch(attempt.view, "delivery")
+            view = self._attempt(tx, pin.view, granted, pin.members)
+            result = self._inspect_subject(tx, request, pin, view)
+            require_epoch(tx, view)
             ctx.checkpoint()
             return result
+
+    def _inspect_subject(
+        self,
+        tx: ReadTransaction,
+        request: InspectRequest,
+        pin: RetainedPin,
+        view: EligibilityView,
+    ) -> InspectionResult:
+        """Inspect one retained subject under the pinned view."""
+        if request.subject == "evidence":
+            return self._inspect_evidence(tx, request, pin, view)
+        if request.subject == "assets":
+            return self._inspect_asset(tx, request, view)
+        if request.subject == "revisions":
+            return self._inspect_revision(tx, request, pin, view)
+        if request.subject == "diagnostics":
+            return self._inspect_diagnostics(tx, request, pin, view)
+        raise TychoraError("INVALID_REQUEST", "Inspection subject is unavailable.")
 
     async def inspect(
         self, request: InspectRequest, scope: RequestScope, ctx: ExecutionContext
@@ -829,7 +836,7 @@ class InspectionService:
             _deny()
         with self.owner.store.pin_snapshot(None) as snapshot:
             ctx.checkpoint()
-            attempt = self._attempt(snapshot, granted)
+            attempt = self._legacy_attempt(snapshot, granted)
             view = attempt.view
             eligible = view.graph_eligible_unit_ids
             if any(seed not in eligible for seed in request.unit_ids):
@@ -955,7 +962,7 @@ class InspectionService:
                     .decode()
                     .rstrip("=")
                 )
-            self.compiler.revalidate_epoch(view, "delivery")
+            self.legacy.revalidate_epoch(view, "delivery")
             ctx.checkpoint()
             return RelationResult(
                 paths=tuple(item for _, item in selected),

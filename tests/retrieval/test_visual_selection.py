@@ -2,8 +2,14 @@
 
 import pytest
 
-from tests.helpers.corpus import artifact, reader, registry, seed_bundle
-from tests.helpers.eligibility import eligibility_view, legacy_attempt
+from tests.helpers.corpus import (
+    artifact,
+    commit_with_facts,
+    reader,
+    registry,
+    seed_bundle,
+)
+from tests.helpers.eligibility import revision_attempt, revision_view
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.contracts.corpus import AssetRow, RevisionArtifactRow, UnitAssetRow
@@ -59,10 +65,8 @@ def visual_case(source_key="image.png", rank=1, score=0.01, *, visual=True):
             ),
         }
     )
-    view = eligibility_view(
-        revision_ids=frozenset({bundle.revision.revision_id}),
-        context_unit_ids=frozenset({source_unit.unit_id}),
-    ).model_copy(update={"asset_ids": frozenset({asset_id})})
+    revision_id = bundle.revision.revision_id
+    view = revision_view({revision_id: bundle.extraction.extraction_id})
     candidate = FusedCandidate(
         ("asset", asset_id),
         rank,
@@ -73,7 +77,8 @@ def visual_case(source_key="image.png", rank=1, score=0.01, *, visual=True):
         candidate,
         bundle,
         view,
-        frozenset({asset_id, bundle.revision.revision_id, source_unit.unit_id}),
+        frozenset({asset_id, revision_id, source_unit.unit_id}),
+        {source_unit.unit_id: frozenset({revision_id, source_unit.unit_id})},
         native_multimodal=visual,
     )
 
@@ -143,7 +148,7 @@ async def test_visual_producer_reads_retained_zero_text_original(tmp_path):
     fixture = visual_case("retained.png")
     db = open_corpus(tmp_path / "corpus.sqlite3", initialize=True)
     store = CorpusStore(db, registry=registry(), artifacts=reader())
-    store.commit_extraction(fixture.rows)
+    commit_with_facts(store, fixture.rows)
 
     class Owner:
         def __init__(self):
@@ -159,19 +164,9 @@ async def test_visual_producer_reads_retained_zero_text_original(tmp_path):
                 return call(tx)
 
     owner = Owner()
-    asset_id = fixture.candidate.key[1]
-    attempt = legacy_attempt(
+    attempt = revision_attempt(
         fixture.view,
         owner=owner,  # ty: ignore[invalid-argument-type] - isolated owner shim uses the same DB and blocking call
-        dependencies={
-            asset_id: frozenset(
-                {
-                    asset_id,
-                    fixture.rows.revision.revision_id,
-                    fixture.rows.units[0].unit_id,
-                }
-            )
-        },
     )
     ranked = RankedEvidence(
         (RankedEvidenceItem(fixture.candidate, None, None, "independent"),)
@@ -184,6 +179,11 @@ async def test_visual_producer_reads_retained_zero_text_original(tmp_path):
     )
     assert len(candidates) == 1
     assert candidates[0].rows.assets[0].asset_id == fixture.candidate.key[1]
+    # The asset slice carries the units linked to the asset and their persisted sets.
+    source_unit = fixture.rows.units[0].unit_id
+    assert [unit.unit_id for unit in candidates[0].rows.units] == [source_unit]
+    assert set(candidates[0].unit_dependencies) == {source_unit}
+    assert candidates[0].dependency_ids == fixture.dependency_ids
     selected = select_visuals(candidates, ())
     assert selected[0].citations[0].locators == (fixture.rows.assets[0].locator,)
     db.close()
@@ -216,25 +216,15 @@ def test_companion_reservation_requires_selected_text_revision():
             ),
         }
     )
-    current_view = type(
-        "View",
-        (),
-        {
-            "asset_ids": frozenset({new_asset}),
-            "revision_ids": frozenset({new_revision}),
-            "context_unit_ids": frozenset({current_rows.units[0].unit_id}),
-            "structural_unit_ids": frozenset(),
-            "proxy_unit_ids": frozenset(),
-        },
-    )()
+    current_view = revision_view({new_revision: new_extraction})
+    current_unit = current_rows.units[0].unit_id
     current = replace(
         current,
         candidate=replace(current.candidate, key=("asset", new_asset)),
         rows=current_rows,
         view=current_view,
-        dependency_ids=frozenset(
-            {new_asset, new_revision, current_rows.units[0].unit_id}
-        ),
+        dependency_ids=frozenset({new_asset, new_revision, current_unit}),
+        unit_dependencies={current_unit: frozenset({new_revision, current_unit})},
     )
     strongest = Segment(
         segment_id="current-text",

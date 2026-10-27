@@ -920,6 +920,7 @@ def test_streamed_complete_raw_replay_commit_backup_restore_and_inspection(
             case.owner.db, case.owner.artifacts, case.owner.config
         )
         inspection = InspectionService(case.owner)._inspect_diagnostics(
+            None,
             SimpleNamespace(id=result.bundle.extraction.extraction_id),
             SimpleNamespace(
                 members=(
@@ -929,9 +930,7 @@ def test_streamed_complete_raw_replay_commit_backup_restore_and_inspection(
                     ),
                 )
             ),
-            SimpleNamespace(
-                view=SimpleNamespace(revision_ids={result.bundle.revision.revision_id})
-            ),
+            SimpleNamespace(revisions={result.bundle.revision.revision_id: None}),
         )
         assert inspection.records[0].value["ocr_review_state"] == "needs_review"
         return result

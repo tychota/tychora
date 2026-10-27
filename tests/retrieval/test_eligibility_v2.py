@@ -392,7 +392,7 @@ def _compile_both(run, legacy, compiler, cache, scope, request):
     snapshot = run.snapshot
     try:
         v1 = owner.run_write_sync(
-            lambda: legacy.compile_eligibility(snapshot, scope, request, owner.config),
+            lambda: legacy.compile_attempt(snapshot, scope, request, owner.config).view,
             ExecutionContext(),
         )
     except TychoraError as error:
@@ -627,3 +627,58 @@ def test_compiler_never_imports_the_representation_derivation():
         importer="tychora.retrieval.compiler",
         imported="tychora.indexing.representations",
     )
+
+
+def test_only_retained_inspection_admits_archived_collections(stable):
+    kb, collections = stable
+    owner = kb._workspace.owner
+    compiler = EligibilityCompiler(owner.store.registry, owner.artifacts)
+    snapshot = on_owner(owner, lambda: owner.store.resolve_snapshot(None))
+    request = QueryRequest.from_mapping(
+        {"question": "seal", "revision_selector": "all"}
+    )
+    archived_revisions = {
+        revision
+        for (revision,) in owner_rows(
+            owner,
+            "SELECT r.revision_id FROM revisions r JOIN sources s USING(source_id) "
+            "WHERE s.collection_id=?",
+            (collections["second"],),
+        )
+    }
+
+    def archive(value):
+        kb._workspace.bridge.call(
+            kb._workspace.services.collections.set_archived(
+                collections["second"], value, kb.scope, ExecutionContext()
+            )
+        )
+
+    def compile_view(include_archived):
+        return kb._workspace.bridge.call(
+            owner.run_read(
+                lambda tx: (
+                    compiler.compile(
+                        tx,
+                        snapshot,
+                        owner.scope,
+                        request,
+                        owner.config,
+                        include_archived=include_archived,
+                    ).view
+                ),
+                ExecutionContext(),
+            )
+        )
+
+    readable = archived_revisions & set(compile_view(False).revisions)
+    assert readable
+    archive(True)
+    try:
+        plain = compile_view(False)
+        inspected = compile_view(True)
+    finally:
+        archive(False)
+    assert not archived_revisions & set(plain.revisions)
+    assert readable <= set(inspected.revisions)
+    assert inspected.eligibility_policy_digest != plain.eligibility_policy_digest
