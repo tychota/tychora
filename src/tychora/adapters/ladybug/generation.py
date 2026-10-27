@@ -73,6 +73,14 @@ class LadybugGraphStore:
             GraphTraversal(self, traversal_policy) if traversal_policy else None
         )
 
+    def _require_traversal(self) -> GraphTraversal:
+        """The active traversal; refused until a traversal policy is set."""
+        if self._traversal is None:
+            raise TychoraError(
+                "INDEX_INCOMPLETE", "Graph traversal policy is unavailable"
+            )
+        return self._traversal
+
     def expand(
         self,
         view: LegacyEligibilityView,
@@ -80,11 +88,7 @@ class LadybugGraphStore:
         limits: GraphBudget,
         ctx: ExecutionContext,
     ) -> GraphCandidates:
-        if self._traversal is None:
-            raise TychoraError(
-                "INDEX_INCOMPLETE", "Graph traversal policy is unavailable"
-            )
-        return self._traversal.expand(view, seed_unit_ids, limits, ctx)
+        return self._require_traversal().expand(view, seed_unit_ids, limits, ctx)
 
     def structural_context(
         self,
@@ -93,11 +97,9 @@ class LadybugGraphStore:
         limits: GraphBudget,
         ctx: ExecutionContext,
     ) -> GraphCandidates:
-        if self._traversal is None:
-            raise TychoraError(
-                "INDEX_INCOMPLETE", "Graph traversal policy is unavailable"
-            )
-        return self._traversal.structural_context(view, seed_unit_ids, limits, ctx)
+        return self._require_traversal().structural_context(
+            view, seed_unit_ids, limits, ctx
+        )
 
     def get_assertions(
         self,
@@ -110,11 +112,7 @@ class LadybugGraphStore:
         direction: Literal["outgoing", "incoming", "both"] | None = None,
         relation_view: Literal["semantic", "structural"] | None = None,
     ) -> AssertionPage:
-        if self._traversal is None:
-            raise TychoraError(
-                "INDEX_INCOMPLETE", "Graph traversal policy is unavailable"
-            )
-        return self._traversal.get_assertions(
+        return self._require_traversal().get_assertions(
             view,
             selected_unit_ids,
             predicates,
