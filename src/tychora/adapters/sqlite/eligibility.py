@@ -15,7 +15,7 @@ from tychora.adapters.sqlite.repositories import (
 )
 from tychora.adapters.sqlite.repositories.errors import facts_missing
 from tychora.adapters.sqlite.retained_bindings import SOURCE_COLUMNS, BindingScope
-from tychora.application.collection_policy import collection_is_active
+from tychora.configuration.collection_policy import collection_is_active
 from tychora.configuration.global_facets import (
     ROLE as GLOBAL_FACET_ROLE,
 )

@@ -7,16 +7,14 @@ import pytest
 
 from tests.code.conftest import code_registry
 from tests.code.test_structure import _registration
-from tests.formatting.test_record_attachment import RecordOnlyReader
 from tests.formatting.test_response_budget import segment
-from tests.helpers.eligibility import eligibility_view
+from tests.helpers.eligibility import eligibility_view, legacy_attempt
 from tests.typed_json import json_object
 from tychora.adapters.code.normalize import normalize_code, retain_code_extraction
 from tychora.contracts.base import FrozenJsonMap, thaw_json
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import digest
 from tychora.indexing.representations import prepare_extraction
-from tychora.retrieval.eligibility import EligibilityAttempt, EligibilityCompiler
 from tychora.retrieval.fusion import FusedCandidate
 from tychora.retrieval.rerank import RankedEvidence, RankedEvidenceItem, RerankFacts
 from tychora.retrieval.response import prepare_records
@@ -68,9 +66,8 @@ def test_code_symbol_alias_requires_exact_builtin_kind_schema_and_hash(tmp_path)
             selected,
             segments=(selected.segments[0].model_copy(update={"kind": kind}),),
         )
-        attempt = EligibilityAttempt(
-            view=view,
-            compiler=EligibilityCompiler(RecordOnlyReader(registry)),
+        attempt = legacy_attempt(
+            view,
             historical_kind_envelopes=MappingProxyType({kind: historical}),
         )
         return prepare_records(selection, ranked, attempt)

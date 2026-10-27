@@ -990,8 +990,8 @@ def test_historical_role_comes_from_validated_selected_attempt(tmp_path):
     from tychora.contracts.identity import canonical_bytes, digest
     from tychora.contracts.requests import RequestScope
     from tychora.retrieval.eligibility import (
-        EligibilityCompiler,
         EligibilityFacts,
+        LegacyEligibilityCompiler,
         RevisionFact,
         UnitFact,
     )
@@ -1061,7 +1061,7 @@ def test_historical_role_comes_from_validated_selected_attempt(tmp_path):
         uses=frozenset({"audit"}),
         capabilities=frozenset({"search"}),
     )
-    attempt = EligibilityCompiler(reader).compile_attempt(
+    attempt = LegacyEligibilityCompiler(reader).compile_attempt(
         _snapshot(cfg, chunks=()), scope, _request(), cfg
     )
     assert attempt.historical_kind_roles == {"manual@0": original_role}

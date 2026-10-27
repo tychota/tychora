@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from tychora.application.collection_policy import (
+from tychora.configuration.collection_policy import (
     collection_is_active,
     parse_collection_policy,
 )

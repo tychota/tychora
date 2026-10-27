@@ -1,9 +1,8 @@
 """Explicit managed-owner future-call authority; accepted scopes stay immutable."""
 
+from tychora.configuration.collection_policy import parse_collection_policy
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.requests import RequestScope
-
-from .collection_policy import parse_collection_policy
 
 
 def require_all_collections(owner, grant: RequestScope, operation: str) -> None:

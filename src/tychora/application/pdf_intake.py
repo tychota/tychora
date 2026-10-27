@@ -14,8 +14,8 @@ from contextlib import nullcontext
 from datetime import UTC, datetime
 from functools import wraps
 
-from tychora.application.collection_policy import require_active_collection
 from tychora.application.runtime import private_directory
+from tychora.configuration.collection_policy import require_active_collection
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.pdf_intake import PdfIntakeDescriptor, PdfIntakeStatus

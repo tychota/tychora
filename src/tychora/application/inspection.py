@@ -8,13 +8,13 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
-from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
 from tychora.adapters.sqlite.eligibility import retained_rows
 from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.application.discovery import (
     _permitted_resolutions,
     _scoped_resolution_rates,
 )
+from tychora.configuration.graph_policy import resolve_graph_traversal_policy
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import CodepointRange, FrozenJsonMap
 from tychora.contracts.errors import TychoraError
@@ -40,7 +40,7 @@ from tychora.contracts.requests import (
 )
 from tychora.indexing.representations import prepare_extraction
 from tychora.ports.execution import ExecutionContext
-from tychora.retrieval.eligibility import EligibilityCompiler
+from tychora.retrieval.eligibility import LegacyEligibilityCompiler
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -84,7 +84,7 @@ class InspectionService:
     def __init__(self, owner: WorkspaceOwner, graph: GraphStore | None = None) -> None:
         self.owner = owner
         self.graph = graph
-        self.compiler = EligibilityCompiler(owner.store)
+        self.compiler = LegacyEligibilityCompiler(owner.store)
         # Opaque continuations never disclose excluded row IDs or positions.
         self._content_cursors: dict[str, tuple[str, int]] = {}
 

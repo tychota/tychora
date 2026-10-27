@@ -16,7 +16,7 @@ from tychora.retrieval.rerank import RankedEvidence
 
 if TYPE_CHECKING:
     from tychora.application.owner import WorkspaceOwner
-    from tychora.retrieval.eligibility import EligibilityAttempt
+    from tychora.retrieval.attempt import EligibilityAttempt
 
 from tychora.contracts.corpus import ExtractionBundle, RetainedRepresentationRows
 from tychora.contracts.evidence import (
@@ -255,7 +255,7 @@ async def prepare_visual_candidates(
     """Read original assets through the bounded loader of retained facts."""
     if attempt.owner is not owner or len(ranked.items) > 64:
         raise TychoraError("INTEGRITY_ERROR", "Visual attempt owner differs.")
-    view = attempt.view
+    view = attempt.require_legacy()
     allowed = (
         view.revision_ids
         | view.context_unit_ids

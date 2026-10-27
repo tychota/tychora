@@ -37,6 +37,7 @@ from tychora.adapters.sqlite.connection import (
 )
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.adapters.sqlite.repositories import SqliteUnitOfWork, typed_storage_errors
+from tychora.configuration.collection_policy import require_active_collection
 from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
 from tychora.contracts.artifacts import ArtifactRef
@@ -74,9 +75,9 @@ from tychora.ports.vision import (
     RetainedDocumentRegionProof,
     pixel_identity,
 )
+from tychora.retrieval.cache import EligibilityCache
 from tychora.retrieval.catalog import SnapshotCatalog
 
-from .collection_policy import require_active_collection
 from .consent import enabled_upload_providers, parse_upload_policy
 from .leases import LeaseSet
 from .runtime import (
@@ -313,6 +314,7 @@ class WorkspaceOwner:
             leases=self.leases,
         )
         self.catalog = SnapshotCatalog()
+        self.eligibility_cache = EligibilityCache()
         self._reads = ReadPool(
             lambda: open_read_connection(database),
             workers=max(1, min(4, os.cpu_count() or 1)),

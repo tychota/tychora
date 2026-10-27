@@ -15,7 +15,7 @@ from tychora.adapters.sqlite.publication import (
     check_publication_target,
     register_fresh,
 )
-from tychora.application.collection_policy import (
+from tychora.configuration.collection_policy import (
     require_active_collection,
 )
 from tychora.configuration.indexed_representation import pinned_runtime_compatible

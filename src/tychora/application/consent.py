@@ -22,7 +22,10 @@ if TYPE_CHECKING:
     from tychora.configuration.models import ResolvedConfig
 
 
-from .collection_policy import REGISTERED_UPLOAD_PROVIDERS, parse_collection_policy
+from tychora.configuration.collection_policy import (
+    REGISTERED_UPLOAD_PROVIDERS,
+    parse_collection_policy,
+)
 
 
 def enabled_upload_providers(config: ResolvedConfig) -> frozenset[str]:

@@ -38,7 +38,7 @@ from tychora.retrieval.fusion import DEFAULT_WEIGHTS, FusedCandidate
 if TYPE_CHECKING:
     from tychora.adapters.voyage.rerank import VoyageReranker
     from tychora.application.owner import WorkspaceOwner
-    from tychora.retrieval.eligibility import EligibilityAttempt
+    from tychora.retrieval.attempt import EligibilityAttempt
 
 
 @dataclass(frozen=True)
@@ -176,6 +176,7 @@ async def rerank_candidates(
     query: QueryRequest, admission: Admission, ctx: RerankContext
 ) -> RankedEvidence:
     """Score one complete textual pool through the existing owner-authorized path."""
+    legacy = ctx.attempt.require_legacy()
     ctx.execution.checkpoint()
     if len(admission.selected) > 64:
         raise TychoraError("INVALID_REQUEST", "Rerank candidate count is invalid.")
@@ -218,10 +219,10 @@ async def rerank_candidates(
             continue
         facts = ctx.facts[candidate.key]
         allowed = (
-            ctx.attempt.view.revision_ids
-            | ctx.attempt.view.context_unit_ids
-            | ctx.attempt.view.structural_unit_ids
-            | ctx.attempt.view.asset_ids
+            legacy.revision_ids
+            | legacy.context_unit_ids
+            | legacy.structural_unit_ids
+            | legacy.asset_ids
         )
         source_ids = tuple(
             dict.fromkeys(
@@ -277,9 +278,7 @@ async def rerank_candidates(
             continue
         facts = ctx.facts[candidate.key]
         units = {unit.unit_id: unit for unit in facts.rows.units}
-        item = ranking_input(
-            candidate, units, ctx.attempt.view, ctx.counter, facts=facts
-        )
+        item = ranking_input(candidate, units, legacy, ctx.counter, facts=facts)
         match_ids = tuple(
             dict.fromkeys(
                 (
@@ -289,10 +288,10 @@ async def rerank_candidates(
             )
         )
         allowed = (
-            ctx.attempt.view.revision_ids
-            | ctx.attempt.view.context_unit_ids
-            | ctx.attempt.view.structural_unit_ids
-            | ctx.attempt.view.asset_ids
+            legacy.revision_ids
+            | legacy.context_unit_ids
+            | legacy.structural_unit_ids
+            | legacy.asset_ids
         )
         for representation_id in match_ids:
             if not ctx.attempt.dependencies_for(representation_id) <= allowed:

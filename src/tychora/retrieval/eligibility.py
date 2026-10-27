@@ -2,52 +2,31 @@
 
 from __future__ import annotations
 
-from tychora.contracts.graph import LegacyEligibilityView
-
-
-def eligible_cache_key(view: LegacyEligibilityView) -> tuple[str, int, str, str, str]:
-    """Separate eligibility by snapshot, current policy, caller and mode/request."""
-    return (
-        view.snapshot_id,
-        view.policy_epoch,
-        view.scope_digest,
-        view.eligibility_policy_digest,
-        view.eligibility_request_digest,
-    )
-
-
+from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
-from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
+from tychora.configuration.graph_policy import resolve_graph_traversal_policy
 from tychora.configuration.indexed_representation import pinned_runtime_compatible
 from tychora.configuration.registry import Registry, compile_filter
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.graph import GraphBatchReceipt
+from tychora.contracts.graph import GraphBatchReceipt, LegacyEligibilityView
 from tychora.contracts.identity import JsonValue, canonical_bytes, digest
 from tychora.contracts.publication import SnapshotMember, SnapshotView
 from tychora.contracts.requests import (
-    AndFilter,
-    EqFilter,
-    FilterExpr,
-    InFilter,
-    OrFilter,
     QueryRequest,
-    RangeFilter,
     RequestScope,
     canonical_scope_projection,
 )
-from tychora.ports.execution import ExecutionContext
+from tychora.retrieval.compiler import filter_matches
 from tychora.retrieval.selection import RevisionFact, select_temporal_revisions
 
 if TYPE_CHECKING:
-    from tychora.application.owner import WorkspaceOwner
     from tychora.configuration.models import ResolvedConfig
-    from tychora.ports.repositories import ReadTransaction
 
 
 @dataclass(frozen=True)
@@ -117,98 +96,6 @@ class EligibilityReader(Protocol):
 
     def policy_epoch(self, workspace_id: str) -> int: ...
 
-    def pin_snapshot(
-        self, selector: str | None
-    ) -> AbstractContextManager[SnapshotView]: ...
-
-
-def _filter_matches(
-    expr: FilterExpr,
-    registry: Registry,
-    source_values: dict[str, object],
-    child_values: dict[str, object],
-    *,
-    include_global: bool,
-    global_facets: frozenset[str],
-) -> bool:
-    if isinstance(expr, AndFilter):
-        return all(
-            _filter_matches(
-                child,
-                registry,
-                source_values,
-                child_values,
-                include_global=include_global,
-                global_facets=global_facets,
-            )
-            for child in expr.children
-        )
-    if isinstance(expr, OrFilter):
-        return any(
-            _filter_matches(
-                child,
-                registry,
-                source_values,
-                child_values,
-                include_global=include_global,
-                global_facets=global_facets,
-            )
-            for child in expr.children
-        )
-    facet = registry.facet(expr.field)
-    facet_key = facet["key"]
-    assert isinstance(facet_key, str)
-    explicit_global = facet_key in global_facets
-    source = cast(JsonValue, source_values.get(expr.field))
-    child = cast(JsonValue, child_values.get(expr.field))
-    if (
-        source is None
-        and child is not None
-        and not str(facet["source_binding"]).startswith("metadata.")
-    ):
-        source, child = child, None
-    if isinstance(expr, EqFilter):
-        return registry.facet_matches(
-            expr.field,
-            expr.value,
-            source,
-            explicit_global=explicit_global,
-            include_global=include_global,
-            child_value=child,
-        )
-    if isinstance(expr, InFilter):
-        return any(
-            registry.facet_matches(
-                expr.field,
-                value,
-                source,
-                explicit_global=explicit_global,
-                include_global=include_global,
-                child_value=child,
-            )
-            for value in expr.values
-        )
-    if isinstance(expr, RangeFilter):
-        if source is None:
-            return (
-                explicit_global
-                and include_global
-                and registry.facet(expr.field).get("allow_global") is True
-            )
-
-        def within(raw: object) -> bool:
-            value = cast(Any, raw)
-            if expr.lower is not None and (
-                value < expr.lower if expr.include_lower else value <= expr.lower
-            ):
-                return False
-            return expr.upper is None or not (
-                value > expr.upper if expr.include_upper else value >= expr.upper
-            )
-
-        return within(source) and (child is None or within(child))
-    raise TychoraError("INVALID_REQUEST", "Unsupported scoped filter")
-
 
 def _allowed_dependencies(
     dependencies: frozenset[str],
@@ -263,7 +150,7 @@ def _dependency_fixpoint(
     return frozenset(units), frozenset(assets)
 
 
-class EligibilityCompiler:
+class LegacyEligibilityCompiler:
     """Compile one pinned snapshot against detached current canonical facts."""
 
     def __init__(self, reader: EligibilityReader):
@@ -291,7 +178,7 @@ class EligibilityCompiler:
         *,
         members: tuple[SnapshotMember, ...] | None = None,
         _retained_inspection: bool = False,
-    ) -> EligibilityAttempt:
+    ) -> LegacyAttempt:
         facts = self.reader.read_eligibility_facts(snapshot, members)
         if _retained_inspection:
             # Exact retained inspection alone: these detached facts are never cached
@@ -331,7 +218,7 @@ class EligibilityCompiler:
                     "Selected historical kind role is unavailable",
                 )
             historical_roles[kind] = role
-        return EligibilityAttempt(
+        return LegacyAttempt(
             view=view,
             compiler=self,
             dependencies=MappingProxyType(_dependency_lookup(view, facts)),
@@ -466,7 +353,7 @@ class EligibilityCompiler:
             and (
                 selected_filter is None
                 or selected_filter.all_units is None
-                or _filter_matches(
+                or filter_matches(
                     selected_filter.all_units,
                     registry,
                     revision_facets.get(item.revision_id, {}),
@@ -495,7 +382,7 @@ class EligibilityCompiler:
             return (
                 selected_filter is None
                 or selected_filter.matched_candidates is None
-                or _filter_matches(
+                or filter_matches(
                     selected_filter.matched_candidates,
                     registry,
                     revision_facets.get(item.revision_id, {}),
@@ -642,10 +529,6 @@ class EligibilityCompiler:
             )
 
 
-from collections.abc import Awaitable, Callable, Mapping
-from contextlib import AbstractContextManager
-
-
 def _dependency_lookup(
     view: LegacyEligibilityView, facts: EligibilityFacts
 ) -> dict[str, frozenset[str]]:
@@ -681,119 +564,21 @@ def _dependency_lookup(
 
 
 @dataclass(frozen=True)
-class EligibilityAttempt:
-    """One compiled attempt whose external calls require a fresh policy epoch."""
+class LegacyAttempt:
+    """One unit-level compiled attempt and the dependency sets of what it admits."""
 
     view: LegacyEligibilityView
-    compiler: EligibilityCompiler
-    dependencies: Mapping[str, frozenset[str]] = field(default_factory=dict)
-    warnings: tuple[str, ...] = ()
-    owner: WorkspaceOwner | None = None
-    ctx: ExecutionContext | None = None
-    snapshot: SnapshotView | None = None
-    historical_kind_roles: Mapping[str, str] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    historical_kind_envelopes: Mapping[str, FrozenJsonMap] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
+    compiler: LegacyEligibilityCompiler
+    dependencies: Mapping[str, frozenset[str]]
+    warnings: tuple[str, ...]
+    historical_kind_roles: Mapping[str, str]
+    historical_kind_envelopes: Mapping[str, FrozenJsonMap]
 
     def dependencies_for(self, representation_id: str) -> frozenset[str]:
+        """The dependency set of an eligible representation."""
         try:
             return self.dependencies[representation_id]
         except KeyError:
             raise TychoraError(
                 "FORBIDDEN_SCOPE", "Representation is not eligible"
             ) from None
-
-    async def owner_provider[T](self, call: Callable[[], Awaitable[T]]) -> T:
-        """Recheck before an existing owner-authorized provider operation."""
-        if self.owner is None:
-            self.compiler.revalidate_epoch(self.view, "provider")
-        else:
-            assert self.ctx is not None
-            await self.owner.run_write(
-                lambda: self.compiler.revalidate_epoch(self.view, "provider"),
-                self.ctx,
-                "interactive",
-            )
-        return await call()
-
-
-async def run_pinned_eligibility[T](
-    compiler: EligibilityCompiler,
-    selector: str | None,
-    scope: RequestScope,
-    request: QueryRequest,
-    config: ResolvedConfig,
-    operation: Callable[[EligibilityAttempt], Awaitable[T]],
-    *,
-    owner: WorkspaceOwner | None = None,
-    ctx: ExecutionContext | None = None,
-    on_invalidated: Callable[[T], Awaitable[None]] | None = None,
-) -> T:
-    """Hold one pin through both attempts, provider operations and delivery."""
-    if owner is not None and (ctx is None or owner.store is not compiler.reader):
-        raise ValueError(
-            "Owner-backed eligibility requires its bound store and context"
-        )
-    if owner is not None:
-        scope = owner.scope.narrow(scope)
-    if owner is not None and ctx is not None:
-        catalog = owner.catalog
-
-        def resolve(tx: ReadTransaction) -> SnapshotView:
-            snapshot_id = selector or tx.snapshots.active_id()
-            if snapshot_id is None:
-                raise TychoraError(
-                    "NOT_FOUND",
-                    "No published snapshot is available",
-                    reason="snapshot.absent",
-                )
-            return catalog.get(tx, snapshot_id)
-
-        resolved: SnapshotView | None = await owner.run_read(resolve, ctx)
-        pin = owner.store.leases.pin(frozenset({resolved.snapshot_id}))
-    else:
-        pin = compiler.reader.pin_snapshot(selector)
-        resolved = None
-    with pin as pinned:
-        snapshot = resolved or pinned
-        assert snapshot is not None
-        for attempt_number in range(2):
-            compiled = (
-                await owner.run_write(
-                    lambda: compiler.compile_attempt(snapshot, scope, request, config),
-                    ctx,
-                    "interactive",
-                )
-                if owner is not None and ctx is not None
-                else compiler.compile_attempt(snapshot, scope, request, config)
-            )
-            attempt = replace(compiled, owner=owner, ctx=ctx, snapshot=snapshot)
-            completed_operation = False
-            try:
-                result = await operation(attempt)
-                completed_operation = True
-                if owner is not None and ctx is not None:
-                    await owner.run_write(
-                        lambda view=attempt.view: compiler.revalidate_epoch(
-                            view, "delivery"
-                        ),
-                        ctx,
-                        "interactive",
-                    )
-                else:
-                    compiler.revalidate_epoch(attempt.view, "delivery")
-            except TychoraError as error:
-                if (
-                    error.code == "SCOPE_CHANGED"
-                    and completed_operation
-                    and on_invalidated is not None
-                ):
-                    await on_invalidated(result)
-                if error.code != "SCOPE_CHANGED" or attempt_number:
-                    raise
-                continue
-            return result
-        raise AssertionError("Unreachable eligibility retry state")

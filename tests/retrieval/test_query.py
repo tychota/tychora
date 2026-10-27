@@ -15,7 +15,7 @@ from PIL import Image
 
 from tests.helpers.assets import asset_path
 from tests.helpers.corpus import artifact, reader, registry, seed_bundle
-from tests.helpers.eligibility import eligibility_view
+from tests.helpers.eligibility import eligibility_view, legacy_attempt
 from tests.indexing.test_publication import RecordingCounter, RecordingEmbedder
 from tests.providers.test_visual import CharacterCounter, RecordingRawTransport, _limits
 from tests.retrieval.test_segments import config as base_config
@@ -50,7 +50,6 @@ from tychora.contracts.requests import QueryRequest, RequestScope, SourceInput
 from tychora.indexing.coordinator import ProjectionCoordinator
 from tychora.ports.execution import ExecutionContext
 from tychora.retrieval.cache import QueryCaches
-from tychora.retrieval.eligibility import EligibilityAttempt, EligibilityCompiler
 from tychora.retrieval.query import result_cache_key, validate_query_text
 from tychora.retrieval.segments import OutputTokenCounter
 
@@ -270,12 +269,7 @@ def test_text_vector_proxy_maps_to_eligible_canonical_asset() -> None:
             "asset_ids": frozenset({"asset"}),
         }
     )
-    attempt = EligibilityAttempt(
-        view=view,
-        compiler=EligibilityCompiler(
-            CorpusStore(db, registry=registry(), artifacts=reader())
-        ),
-    )
+    attempt = legacy_attempt(view)
     assert service._vector_owners(attempt, "unit") == {"record": ("asset", "asset")}
     db.close()
 
@@ -328,11 +322,8 @@ def test_image_query_descriptor_uses_registered_pixels_and_source_links(tmp_path
         revision_ids=frozenset({bundle.revision.revision_id}),
         context_unit_ids=frozenset({unit.unit_id}),
     ).model_copy(update={"asset_ids": frozenset({asset_id})})
-    attempt = EligibilityAttempt(
-        view=view,
-        compiler=EligibilityCompiler(
-            CorpusStore(db, registry=registry(), artifacts=reader())
-        ),
+    attempt = legacy_attempt(
+        view,
         dependencies={
             asset_id: frozenset({asset_id, unit.unit_id, bundle.revision.revision_id})
         },

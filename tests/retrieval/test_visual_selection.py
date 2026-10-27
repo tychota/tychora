@@ -3,14 +3,13 @@
 import pytest
 
 from tests.helpers.corpus import artifact, reader, registry, seed_bundle
-from tests.helpers.eligibility import eligibility_view
+from tests.helpers.eligibility import eligibility_view, legacy_attempt
 from tychora.adapters.sqlite.connection import open_corpus
 from tychora.adapters.sqlite.corpus import CorpusStore
 from tychora.contracts.corpus import AssetRow, RevisionArtifactRow, UnitAssetRow
 from tychora.contracts.evidence import ImageLocator, Segment
 from tychora.contracts.identity import digest
 from tychora.ports.execution import ExecutionContext
-from tychora.retrieval.eligibility import EligibilityAttempt, EligibilityCompiler
 from tychora.retrieval.fusion import FusedCandidate
 from tychora.retrieval.rerank import RankedEvidence, RankedEvidenceItem
 from tychora.retrieval.visuals import (
@@ -154,12 +153,16 @@ async def test_visual_producer_reads_retained_zero_text_original(tmp_path):
             ctx.checkpoint()
             return call()
 
+        async def run_read(self, call, ctx):
+            ctx.checkpoint()
+            with store.uow.read() as tx:
+                return call(tx)
+
     owner = Owner()
     asset_id = fixture.candidate.key[1]
-    attempt = EligibilityAttempt(
+    attempt = legacy_attempt(
+        fixture.view,
         owner=owner,  # ty: ignore[invalid-argument-type] - isolated owner shim uses the same DB and blocking call
-        view=fixture.view,
-        compiler=EligibilityCompiler(store),
         dependencies={
             asset_id: frozenset(
                 {

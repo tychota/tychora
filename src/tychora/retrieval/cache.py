@@ -5,11 +5,18 @@ from __future__ import annotations
 import pickle
 import time
 from collections import OrderedDict
-from collections.abc import Hashable
+from collections.abc import Callable, Hashable
 from dataclasses import dataclass
 from hashlib import sha256
 from threading import RLock
 from typing import Protocol
+
+from tychora.contracts.errors import TychoraError
+from tychora.retrieval.compiler import (
+    CompiledEligibility,
+    EligibilityKey,
+    eligible_cache_key,
+)
 
 
 class MonotonicClock(Protocol):
@@ -130,4 +137,50 @@ class QueryCaches:
                 entries.clear()
             self._recency.clear()
             self._bytes = 0
+            return count
+
+
+ELIGIBILITY_CACHE_SIZE = 64
+
+
+class EligibilityCache:
+    """LRU of compiled views keyed by snapshot, policy epoch, scope, policy and request.
+
+    Two concurrent misses on one key may both compile; the second result
+    replaces the first, which is equal.
+    """
+
+    def __init__(self, capacity: int = ELIGIBILITY_CACHE_SIZE) -> None:
+        self._capacity = capacity
+        self._entries: OrderedDict[EligibilityKey, CompiledEligibility] = OrderedDict()
+        self._lock = RLock()
+
+    def get_or_compile(
+        self, key: EligibilityKey, compile: Callable[[], CompiledEligibility]
+    ) -> CompiledEligibility:
+        """Return the cached entry for ``key``, or compile, check and keep one."""
+        with self._lock:
+            entry = self._entries.get(key)
+            if entry is not None:
+                self._entries.move_to_end(key)
+                return entry
+        entry = compile()
+        if eligible_cache_key(entry.view) != key:
+            raise TychoraError(
+                "INTEGRITY_ERROR",
+                "Compiled view does not answer its cache key",
+                reason="invariant.unexpected",
+            )
+        with self._lock:
+            self._entries[key] = entry
+            self._entries.move_to_end(key)
+            while len(self._entries) > self._capacity:
+                self._entries.popitem(last=False)
+        return entry
+
+    def purge(self) -> int:
+        """Drop every entry; return how many there were."""
+        with self._lock:
+            count = len(self._entries)
+            self._entries.clear()
             return count

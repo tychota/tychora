@@ -15,11 +15,11 @@ from PIL import Image
 from tests.helpers.corpus import raw_review, refresh_facts
 from tests.retrieval.graph_fixture import assertion, sealed_graph, unit
 from tests.typed_json import json_array, json_object, json_string
-from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
 from tychora.application.discovery import DiscoveryService
 from tychora.application.inspection import InspectionService
 from tychora.application.owner import WorkspaceOwner
 from tychora.application.sources import SourceService
+from tychora.configuration.graph_policy import resolve_graph_traversal_policy
 from tychora.configuration.registry import Registry
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts import (

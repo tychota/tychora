@@ -59,7 +59,11 @@ CLASSIFIED_REASONS = {
     "FORBIDDEN_SCOPE": {"scope.whole_workspace", "scope.capability_missing"},
     "JOB_INTERRUPTED": {"job.orphaned"},
     "WORKSPACE_BUSY": {"owner.absent", "family.claimed", "storage.busy"},
-    "PROFILE_INCOMPATIBLE": {"workspace.schema_mismatch"},
+    "PROFILE_INCOMPATIBLE": {
+        "workspace.schema_mismatch",
+        "kind.historical_unavailable",
+        "facet.binding_unverified",
+    },
     "INTEGRITY_ERROR": {
         "workspace.database_invalid",
         "runtime.endpoint_unsafe",
@@ -78,7 +82,11 @@ CLASSIFIED_REASONS = {
         "tokens.atomic_limit",
         "policy.use_unknown",
         "policy.use_override_empty",
+        "request.limit_exceeded",
+        "mode.unavailable",
+        "profile.snapshot_mismatch",
     },
+    "SCOPE_CHANGED": {"policy.epoch_changed"},
 }
 
 
@@ -98,6 +106,7 @@ RETRYABLE = {
     "provider.unreachable",
     "provider.rate_limited",
     "provider.timeout",
+    "policy.epoch_changed",
 }
 
 

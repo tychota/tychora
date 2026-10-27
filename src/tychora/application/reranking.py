@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from tychora.adapters.voyage.runtime import VoyageRuntime
     from tychora.application.owner import WorkspaceOwner
     from tychora.retrieval.admission import Admission
-    from tychora.retrieval.eligibility import EligibilityAttempt
+    from tychora.retrieval.attempt import EligibilityAttempt
     from tychora.retrieval.rerank import RerankFacts
 
 
@@ -727,6 +727,7 @@ async def prepare_rerank_facts(
 
     if attempt.owner is not owner or len(admission.selected) > 64:
         raise TychoraError("INTEGRITY_ERROR", "Rerank attempt owner differs.")
+    legacy = attempt.require_legacy()
 
     def load() -> Mapping[CandidateKey, RerankFacts]:
         budget = RetainedReadBudget()
@@ -739,7 +740,7 @@ async def prepare_rerank_facts(
             kind, candidate_id = candidate.key
             if kind == "asset":
                 continue  # Native image ranking is independent of text reranking.
-            if candidate_id not in attempt.view.source_unit_ids:
+            if candidate_id not in legacy.source_unit_ids:
                 raise TychoraError(
                     "FORBIDDEN_SCOPE", "Rerank candidate is not eligible."
                 )
@@ -777,16 +778,16 @@ async def prepare_rerank_facts(
             chunks: dict[str, ChunkRow] = {}
             for window_id in window_ids:
                 ctx.checkpoint()
-                if window_id not in attempt.view.chunk_ids:
+                if window_id not in legacy.chunk_ids:
                     raise TychoraError(
                         "FORBIDDEN_SCOPE", "Ranking window is not eligible."
                     )
                 dependencies = attempt.dependencies_for(window_id)
                 allowed = (
-                    attempt.view.revision_ids
-                    | attempt.view.context_unit_ids
-                    | attempt.view.structural_unit_ids
-                    | attempt.view.asset_ids
+                    legacy.revision_ids
+                    | legacy.context_unit_ids
+                    | legacy.structural_unit_ids
+                    | legacy.asset_ids
                 )
                 if not dependencies <= allowed:
                     raise TychoraError(
@@ -821,9 +822,7 @@ async def prepare_rerank_facts(
             output[candidate.key] = RerankFacts(
                 rows,
                 prepared,
-                matches_from_channels(
-                    candidate, channels, chunks, prepared, attempt.view
-                ),
+                matches_from_channels(candidate, channels, chunks, prepared, legacy),
             )
         return MappingProxyType(output)
 

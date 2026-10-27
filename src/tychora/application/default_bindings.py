@@ -9,7 +9,6 @@ from pathlib import Path
 from secrets import token_hex
 from typing import TYPE_CHECKING
 
-from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
 from tychora.adapters.voyage.query import (
     VoyageTextQueryProvider,
     VoyageVisualQueryProvider,
@@ -32,6 +31,7 @@ from tychora.application.setup import (
     load_voyage_tokenizer,
 )
 from tychora.application.visual import OwnerVisualAccess
+from tychora.configuration.graph_policy import resolve_graph_traversal_policy
 from tychora.configuration.registry import Registry
 from tychora.contracts.embeddings import VisualEmbeddingLimits
 from tychora.contracts.errors import TychoraError

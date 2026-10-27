@@ -31,7 +31,7 @@ from tychora.indexing.representations import (
     prepare_extraction,
     project_code_excerpt_locator,
 )
-from tychora.retrieval.eligibility import eligible_cache_key
+from tychora.retrieval.compiler import eligible_cache_key
 
 if TYPE_CHECKING:
     from tychora.application.inspection import InspectionService

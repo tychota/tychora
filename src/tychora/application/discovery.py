@@ -1022,7 +1022,7 @@ class DiscoveryService:
         """Read typed retained rates only inside the current pinned eligibility view."""
         from tychora.contracts.code import Resolution
         from tychora.contracts.requests import QueryRequest
-        from tychora.retrieval.eligibility import EligibilityCompiler
+        from tychora.retrieval.eligibility import LegacyEligibilityCompiler
 
         assert self.owner is not None
         owner = self.owner
@@ -1065,7 +1065,7 @@ class DiscoveryService:
                     },
                 }
             )
-            compiler = EligibilityCompiler(owner.store)
+            compiler = LegacyEligibilityCompiler(owner.store)
             view = compiler.compile_eligibility(snapshot, scope, request, owner.config)
             row = owner.db.execute(
                 "SELECT e.revision_id,e.diagnostics_artifact_sha,r.source_id "

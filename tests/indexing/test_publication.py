@@ -875,7 +875,7 @@ def test_retained_vector_plan_rebinds_native_index(
 def test_archive_after_preparation_blocks_canonical_publication(projected_corpus):
     from datetime import UTC, datetime
 
-    from tychora.application.collection_policy import parse_collection_policy
+    from tychora.configuration.collection_policy import parse_collection_policy
 
     corpus = projected_corpus
     bundle, _, plan = corpus.prepare_revision("Archive during publication")

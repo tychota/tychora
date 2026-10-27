@@ -1,6 +1,5 @@
 """Temporal selection over retained snapshot editions."""
 
-from contextlib import contextmanager
 from datetime import date
 from hashlib import sha256
 
@@ -106,7 +105,10 @@ def test_compiled_attempt_exposes_overlap_warning(tmp_path):
     from tychora.contracts.identity import digest
     from tychora.contracts.publication import SnapshotMember, SnapshotView
     from tychora.contracts.requests import QueryRequest, RequestScope
-    from tychora.retrieval.eligibility import EligibilityCompiler, EligibilityFacts
+    from tychora.retrieval.eligibility import (
+        EligibilityFacts,
+        LegacyEligibilityCompiler,
+    )
 
     workspace = tmp_path / "workspace.toml"
     workspace.write_text(
@@ -141,8 +143,6 @@ def test_compiled_attempt_exposes_overlap_warning(tmp_path):
         families=(),
     )
 
-    snapshot_view = snapshot
-
     class Reader:
         registry = Registry.from_config(config)
 
@@ -155,16 +155,12 @@ def test_compiled_attempt_exposes_overlap_warning(tmp_path):
         def retained_config(self, snapshot):
             return config
 
-        @contextmanager
-        def pin_snapshot(self, selector):
-            yield snapshot_view
-
     scope = RequestScope(
         principal_id="principal",
         collection_ids=frozenset({"collection"}),
         uses=frozenset({"audit"}),
     )
-    attempt = EligibilityCompiler(Reader()).compile_attempt(
+    attempt = LegacyEligibilityCompiler(Reader()).compile_attempt(
         snapshot,
         scope,
         QueryRequest.from_mapping(
