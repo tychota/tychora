@@ -6,7 +6,7 @@ import pytest
 
 from tychora.adapters.files.cas import LocalArtifacts
 from tychora.adapters.ladybug.generation import LadybugGraphStore
-from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
+from tychora.configuration.graph_policy import resolve_graph_traversal_policy
 from tychora.configuration.registry import Registry
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.base import FrozenJsonMap

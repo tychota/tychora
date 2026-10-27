@@ -34,8 +34,8 @@ from tychora.adapters.code.syntax import base_syntax_result
 from tychora.adapters.docling.parser import DoclingParser
 from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.adapters.sqlite.publication import PublicationReceipts
-from tychora.application.collection_policy import require_active_collection
 from tychora.application.snapshot_gc import SnapshotGc
+from tychora.configuration.collection_policy import require_active_collection
 from tychora.configuration.global_facets import (
     ROLE as GLOBAL_FACET_ROLE,
 )

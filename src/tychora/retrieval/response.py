@@ -40,7 +40,7 @@ from tychora.retrieval.segments import Selection
 if TYPE_CHECKING:
     from tychora.ports.execution import ExecutionContext
     from tychora.ports.graph import GraphStore
-    from tychora.retrieval.eligibility import EligibilityAttempt
+    from tychora.retrieval.attempt import EligibilityAttempt
     from tychora.retrieval.rerank import RankedEvidence
 
 
@@ -641,7 +641,7 @@ def prepare_records(
     from tychora.contracts.base import thaw_json
     from tychora.contracts.identity import canonical_bytes
 
-    view = attempt.view
+    view = attempt.require_legacy()
     eligible = view.context_unit_ids | view.structural_unit_ids
     results: dict[str, StructuredRecord] = {}
     for segment in selection.segments:

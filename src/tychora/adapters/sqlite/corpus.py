@@ -11,8 +11,8 @@ from tychora.adapters.sqlite.repositories import (
     SqliteUnitOfWork,
     artifact_ref,
 )
-from tychora.application.collection_policy import require_active_collection
 from tychora.application.leases import LeaseSet
+from tychora.configuration.collection_policy import require_active_collection
 from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
 from tychora.contracts.base import Contract, FrozenJsonMap

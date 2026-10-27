@@ -394,7 +394,7 @@ def test_archived_member_is_exempt_only_when_its_prior_row_is_unchanged(projecte
 
     from tests.helpers.corpus import seed_bundle
     from tychora.adapters.sqlite.publication import _check_members
-    from tychora.application.collection_policy import parse_collection_policy
+    from tychora.configuration.collection_policy import parse_collection_policy
 
     f = projected
     x_key, y_key = _shared_bucket_keys()

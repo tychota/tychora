@@ -135,7 +135,7 @@ async def test_captured_bundle_cannot_overwrite_current_collection(
 
                 # Canonical consent may change during capture even with no remote dispatch.
                 def consent_change():
-                    from tychora.application.collection_policy import (
+                    from tychora.configuration.collection_policy import (
                         parse_collection_policy,
                     )
 
@@ -326,7 +326,7 @@ def test_commit_extraction_rechecks_archived_canonical_collection(tmp_path):
     from tests.helpers.corpus import reader, registry, seed_bundle
     from tychora.adapters.sqlite.connection import open_corpus
     from tychora.adapters.sqlite.corpus import CorpusStore
-    from tychora.application.collection_policy import parse_collection_policy
+    from tychora.configuration.collection_policy import parse_collection_policy
     from tychora.contracts.errors import TychoraError
 
     db = open_corpus(tmp_path / "corpus.sqlite3", initialize=True)

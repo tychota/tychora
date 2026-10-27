@@ -261,7 +261,7 @@ class SettingsService:
             if self.runtime.services is not candidate_services:
                 graph = getattr(owner, "_configured_graph_store", None)
                 if graph is not None and owner.config.values.index.graph == "ladybug":
-                    from tychora.adapters.ladybug.traversal import (
+                    from tychora.configuration.graph_policy import (
                         resolve_graph_traversal_policy,
                     )
 

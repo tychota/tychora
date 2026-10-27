@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.helpers.corpus import reader, seed_bundle
+from tests.helpers.eligibility import legacy_attempt
 from tests.providers.test_reranker import (
     LengthCounter,
     RecordingRerankTransport,
@@ -30,7 +31,6 @@ from tychora.contracts.requests import QueryRequest, QuestionInput
 from tychora.indexing.representations import prepare_extraction
 from tychora.ports.execution import ExecutionContext
 from tychora.retrieval.admission import Admission
-from tychora.retrieval.eligibility import EligibilityAttempt, EligibilityCompiler
 from tychora.retrieval.fusion import FusedCandidate
 from tychora.retrieval.rerank import (
     RerankContext,
@@ -82,7 +82,7 @@ def _case(*, offline: bool, degraded: bool, disabled: bool = False):
         chunk_ids=frozenset({bundle.chunks[0].chunk_id}),
     )
     attempt = SimpleNamespace(
-        view=view,
+        require_legacy=lambda: view,
         dependencies_for=lambda representation_id: frozenset(
             {unit.unit_id, bundle.revision.revision_id}
         ),
@@ -360,12 +360,9 @@ async def _owner_case(tmp_path: Path, *, upload: bool = True):
             vector_record_ids=frozenset(),
             blocked_assertion_ids=frozenset(),
         )
-        compiler = EligibilityCompiler(owner.store)
-        compiler._workspace_ids[view.snapshot_id] = owner.workspace_id
         execution = ExecutionContext()
-        attempt = EligibilityAttempt(
-            view=view,
-            compiler=compiler,
+        attempt = legacy_attempt(
+            view,
             dependencies={
                 representation_id: frozenset(
                     {bundle.revision.revision_id, bundle.units[0].unit_id}
@@ -565,15 +562,21 @@ async def test_owner_rejects_forged_index_window_before_transport(tmp_path):
             facts[candidate.key],
             matches=(replace(facts[candidate.key].matches[0], window_id=forged_id),),
         )
-        forged_view = context.attempt.view.model_copy(
-            update={"chunk_ids": context.attempt.view.chunk_ids | {forged_id}}
+        legacy = context.attempt.legacy
+        assert legacy is not None
+        forged_view = legacy.model_copy(
+            update={"chunk_ids": legacy.chunk_ids | {forged_id}}
         )
         forged_dependencies = {
-            **context.attempt.dependencies,
-            forged_id: context.attempt.dependencies[candidate.matching_window_ids[0]],
+            **context.attempt.legacy_dependencies,
+            forged_id: context.attempt.legacy_dependencies[
+                candidate.matching_window_ids[0]
+            ],
         }
         forged_attempt = replace(
-            context.attempt, view=forged_view, dependencies=forged_dependencies
+            context.attempt,
+            legacy=forged_view,
+            legacy_dependencies=forged_dependencies,
         )
         with pytest.raises(TychoraError) as error:
             await rerank_candidates(

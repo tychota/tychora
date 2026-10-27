@@ -1,7 +1,16 @@
-"""Complete synthetic eligibility views for retrieval unit tests."""
+"""Complete synthetic eligibility views and attempts for retrieval unit tests."""
 
+from collections.abc import Mapping
+from types import MappingProxyType
+
+from tychora.contracts.base import FrozenJsonMap
+from tychora.contracts.eligibility import EligibilityView
 from tychora.contracts.graph import LegacyEligibilityView
 from tychora.contracts.identity import digest
+from tychora.contracts.publication import SnapshotView
+from tychora.ports.execution import ExecutionContext
+from tychora.retrieval.attempt import AttemptOwner, EligibilityAttempt
+from tychora.retrieval.compiler import CompiledEligibility
 
 
 def eligibility_view(
@@ -36,4 +45,49 @@ def eligibility_view(
         graph_manifest_digest=digest("synthetic-graph-manifest")
         if graph_bound
         else None,
+    )
+
+
+def legacy_attempt(
+    view: LegacyEligibilityView,
+    *,
+    dependencies: Mapping[str, frozenset[str]] | None = None,
+    historical_kind_envelopes: Mapping[str, FrozenJsonMap] | None = None,
+    owner: AttemptOwner | None = None,
+    ctx: ExecutionContext | None = None,
+) -> EligibilityAttempt:
+    """An attempt whose legacy readers see ``view``.
+
+    Its revision-level view carries only ``view``'s snapshot, epoch and
+    digests, so epoch rechecks compare against the same policy epoch.
+    """
+    compiled = CompiledEligibility(
+        EligibilityView(
+            snapshot_id=view.snapshot_id,
+            policy_epoch=view.policy_epoch,
+            scope_digest=view.scope_digest,
+            eligibility_policy_digest=view.eligibility_policy_digest,
+            eligibility_request_digest=view.eligibility_request_digest,
+            revisions={},
+        ),
+        historical_kind_envelopes=MappingProxyType(
+            dict(historical_kind_envelopes or {})
+        ),
+    )
+    snapshot = SnapshotView(
+        snapshot_id=view.snapshot_id,
+        workspace_id="synthetic-workspace",
+        config_sha=digest("synthetic-config"),
+        membership_sha=digest("synthetic-membership"),
+        member_count=0,
+        page_ids=(),
+        families=(),
+    )
+    return EligibilityAttempt(
+        compiled=compiled,
+        snapshot=snapshot,
+        legacy=view,
+        legacy_dependencies=MappingProxyType(dict(dependencies or {})),
+        owner=owner,
+        ctx=ctx,
     )

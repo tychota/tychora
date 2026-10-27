@@ -20,6 +20,7 @@ from tychora.application.jobs import JobService
 from tychora.application.maintenance import MaintenanceService
 from tychora.application.query import QueryService
 from tychora.application.sources import SourceService
+from tychora.configuration.collection_policy import require_active_collection
 from tychora.configuration.registry import Registry
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.operations import JobHandle
@@ -232,8 +233,6 @@ class SourceJobScheduler:
             )
 
             def admit_retry():
-                from .collection_policy import require_active_collection
-
                 row = self.jobs.owner.db.execute(
                     "SELECT workspace_id,access_floor,policy_json FROM collections WHERE collection_id=?",
                     (str(source.root.collection_id),),

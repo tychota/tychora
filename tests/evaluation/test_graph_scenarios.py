@@ -9,10 +9,10 @@ from tests.evaluation.conftest import SyntheticCounter
 from tests.helpers.corpus import reader, seed_bundle
 from tests.helpers.publication import slots_of
 from tychora.adapters.ladybug.generation import LadybugGraphStore
-from tychora.adapters.ladybug.traversal import resolve_graph_traversal_policy
 from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.application.owner import WorkspaceOwner
 from tychora.application.query import QueryService
+from tychora.configuration.graph_policy import resolve_graph_traversal_policy
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.corpus import LocatorRow, ReviewTarget
 from tychora.contracts.evidence import EvidenceUnit, TextLocator

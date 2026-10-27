@@ -12,7 +12,7 @@ from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import digest
 from tychora.contracts.requests import AndFilter, EqFilter
-from tychora.retrieval.eligibility import _filter_matches
+from tychora.retrieval.compiler import filter_matches
 
 
 def _registry(tmp_path, *, remap_alias=False):
@@ -59,7 +59,7 @@ def test_only_declared_canonical_facet_is_global_and_child_can_narrow(tmp_path):
     region = EqFilter(field="scope.region", value="east")
 
     def matches(expr, source, child, include=True):
-        return _filter_matches(
+        return filter_matches(
             expr,
             registry,
             source,

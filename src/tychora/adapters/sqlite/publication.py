@@ -12,7 +12,7 @@ from uuid import UUID
 
 from tychora.adapters.files.references import MAX_MANIFEST_BYTES
 from tychora.adapters.sqlite.repositories import artifact_ref
-from tychora.application.collection_policy import (
+from tychora.configuration.collection_policy import (
     collection_is_active,
     require_active_collection,
 )

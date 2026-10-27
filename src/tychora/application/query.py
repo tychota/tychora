@@ -62,12 +62,10 @@ from tychora.ports.query import TextQueryProvider, VisualQueryProvider
 from tychora.ports.tokens import TokenCounter
 from tychora.ports.vectors import VectorIndex
 from tychora.retrieval.admission import LanePolicy, admit
+from tychora.retrieval.attempt import EligibilityAttempt, run_pinned_eligibility
 from tychora.retrieval.cache import QueryCaches
-from tychora.retrieval.eligibility import (
-    EligibilityAttempt,
-    EligibilityCompiler,
-    run_pinned_eligibility,
-)
+from tychora.retrieval.compiler import EligibilityCompiler
+from tychora.retrieval.eligibility import LegacyEligibilityCompiler
 from tychora.retrieval.fusion import FusedCandidate, fuse
 from tychora.retrieval.graph import augment
 from tychora.retrieval.lexical_query import retrieve_exact_lexical
@@ -235,7 +233,8 @@ class QueryService:
     ) -> None:
         self.owner = owner
         self.registry = owner.store.registry
-        self.compiler = EligibilityCompiler(owner.store)
+        self.compiler = EligibilityCompiler(self.registry, owner.artifacts)
+        self.legacy_compiler = LegacyEligibilityCompiler(owner.store)
         self.lexical = lexical or LexicalIndex(owner.db)
         self.graph = graph
         self.text_provider = text_provider
@@ -663,6 +662,7 @@ class QueryService:
 
         return await run_pinned_eligibility(
             self.compiler,
+            self.legacy_compiler,
             None,
             granted,
             request,
@@ -690,7 +690,7 @@ class QueryService:
         mode: FrozenJsonMap,
         ctx: ExecutionContext,
     ) -> tuple[_PreparedResult, int]:
-        view = attempt.view
+        view = attempt.require_legacy()
         plan = self.execution_plan
         if plan is not None and plan.text and not _needs_text(request):
             raise TychoraError(
@@ -1121,7 +1121,7 @@ class QueryService:
         )
 
     def _text_window_candidates(self, page, mapping, attempt):
-        view = attempt.view
+        view = attempt.require_legacy()
         ranks = {"unit": 0, "asset": 0}
         output = []
         for candidate in page.candidates:
@@ -1198,7 +1198,7 @@ class QueryService:
     def _vector_owners(
         self, attempt: EligibilityAttempt, kind: str
     ) -> dict[str, CandidateKey]:
-        view = attempt.view
+        view = attempt.require_legacy()
         output: dict[str, CandidateKey] = {}
         for record_id in view.vector_record_ids:
             row = self.owner.db.execute(
@@ -1278,7 +1278,7 @@ class QueryService:
     def _registered_image_query(
         self, asset_id: str, attempt: EligibilityAttempt
     ) -> RegisteredImageQuery:
-        view = attempt.view
+        view = attempt.require_legacy()
         if asset_id not in view.asset_ids:
             raise TychoraError("FORBIDDEN_SCOPE", "Image query asset is not eligible.")
         row = self.owner.db.execute(
@@ -1373,6 +1373,7 @@ class QueryService:
         mode: FrozenJsonMap,
         prepared: _PreparedResult,
     ) -> DeliveredResult:
+        legacy = attempt.require_legacy()
         return self.assembler.assemble(
             prepared.selection,
             prepared.records,
@@ -1384,8 +1385,8 @@ class QueryService:
                 scope=scope,
                 counter=self.counter,
                 profiles=self.profiles,
-                eligible_unit_ids=attempt.view.graph_eligible_unit_ids,
-                eligible_asset_ids=attempt.view.asset_ids,
+                eligible_unit_ids=legacy.graph_eligible_unit_ids,
+                eligible_asset_ids=legacy.asset_ids,
                 relations=prepared.relations,
                 visuals=prepared.visuals,
                 coverage=prepared.coverage,

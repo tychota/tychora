@@ -46,6 +46,7 @@ from tychora.evaluation.benchmarks import (
 )
 from tychora.indexing.coordinator import ProjectionCoordinator
 from tychora.ports.execution import ExecutionContext
+from tychora.retrieval.attempt import EligibilityAttempt
 from tychora.retrieval.cache import QueryCaches
 
 COLLECTION = "55825936-6a6a-4d29-945a-327d771a76b7"
@@ -304,7 +305,7 @@ class EngineSession:
     def _instrument(self) -> None:
         lexical_search = self.lexical.search
         vector_search = self.index.search
-        revalidate = self.service.compiler.revalidate_epoch
+        revalidate = EligibilityAttempt.revalidate
         cached_result = self.caches.get_result
 
         def measured_lexical(
@@ -336,11 +337,22 @@ class EngineSession:
                 ctx,
             )
 
-        def measured_revalidate(
-            view: LegacyEligibilityView, stage: Literal["provider", "delivery"]
+        async def measured_revalidate(
+            attempt: EligibilityAttempt, stage: Literal["provider", "delivery"]
         ) -> None:
+            if attempt.owner is not self.owner:
+                return await revalidate(attempt, stage)
             self._bump(policy_revalidations=1)
-            self._time("policy_revalidation", revalidate, view, stage)
+            began = time.monotonic()
+            try:
+                await revalidate(attempt, stage)
+            finally:
+                stages = dict(self.counts.stages_ms)
+                elapsed = (time.monotonic() - began) * 1000
+                stages["policy_revalidation"] = (
+                    stages.get("policy_revalidation", 0.0) + elapsed
+                )
+                self.counts = replace(self.counts, stages_ms=stages)
 
         def measured_result(key: Hashable) -> object | None:
             value = cached_result(key)
@@ -350,7 +362,9 @@ class EngineSession:
 
         vars(self.lexical)["search"] = measured_lexical
         vars(self.index)["search"] = measured_vector
-        vars(self.service.compiler)["revalidate_epoch"] = measured_revalidate
+        # Attempts are created per query, so the class method is wrapped until close.
+        self._revalidate = revalidate
+        EligibilityAttempt.revalidate = measured_revalidate  # ty: ignore[invalid-assignment]
         vars(self.caches)["get_result"] = measured_result
 
     def prepare(self, state: str) -> None:
@@ -385,6 +399,7 @@ class EngineSession:
         return process_memory()
 
     def close(self) -> None:
+        EligibilityAttempt.revalidate = self._revalidate
         self.owner_context.__exit__(None, None, None)
         if self._owns_trace:
             tracemalloc.stop()

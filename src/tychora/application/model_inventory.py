@@ -8,6 +8,7 @@ from hashlib import sha256
 from importlib.util import find_spec
 from pathlib import Path
 
+from tychora.configuration.collection_policy import parse_collection_policy
 from tychora.contracts.administration import (
     ModelCatalog,
     ModelReadiness,
@@ -20,7 +21,6 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.requests import RequestScope
 from tychora.ports.execution import ExecutionContext
 
-from .collection_policy import parse_collection_policy
 from .settings_draft import QUALIFIED_MODELS
 from .setup import ModelAssetPlan, SetupService, _open_directory
 from .workspace_authority import authorize_workspace

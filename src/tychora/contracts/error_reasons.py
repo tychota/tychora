@@ -188,6 +188,18 @@ _ENTRIES = (
         "Choose an index dtype that the configured vector store supports.",
     ),
     Reason(
+        "PROFILE_INCOMPATIBLE",
+        "kind.historical_unavailable",
+        False,
+        "Restore the retained kind definition or rebuild the workspace.",
+    ),
+    Reason(
+        "PROFILE_INCOMPATIBLE",
+        "facet.binding_unverified",
+        False,
+        "Publish a new edition of the source so its global facets are bound again.",
+    ),
+    Reason(
         "CAPABILITY_MISSING",
         "vectors.cache_absent",
         False,
@@ -352,6 +364,24 @@ _ENTRIES = (
         "Delete the destination directory and rerun `tychora manage rebuild workspace --from OLD`.",
     ),
     Reason(
+        "INVALID_REQUEST",
+        "request.limit_exceeded",
+        False,
+        "Lower the request's limit or budgets to the profile's limits.",
+    ),
+    Reason(
+        "INVALID_REQUEST",
+        "mode.unavailable",
+        False,
+        "Use a retrieval mode the profile defines.",
+    ),
+    Reason(
+        "INVALID_REQUEST",
+        "profile.snapshot_mismatch",
+        False,
+        "Open the workspace with the profile that published its snapshots.",
+    ),
+    Reason(
         "LIMIT_EXCEEDED",
         "evaluation.binding_budget",
         False,
@@ -386,6 +416,12 @@ _ENTRIES = (
         "provider.timeout",
         True,
         "Retry; the provider did not answer in time.",
+    ),
+    Reason(
+        "SCOPE_CHANGED",
+        "policy.epoch_changed",
+        True,
+        "Retry; workspace policy changed while the query ran.",
     ),
 )
 

@@ -1,52 +1,20 @@
 """Retained record rows are revalidated against the pinned eligibility view."""
 
-from contextlib import AbstractContextManager
 from dataclasses import replace
 from types import MappingProxyType
 
 import pytest
 
 from tests.formatting.test_response_budget import segment
+from tests.helpers.eligibility import legacy_attempt
 from tests.retrieval.test_segments import case, config
 from tests.typed_json import json_object, json_string
-from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.corpus import StructuredRecordRow
-from tychora.contracts.publication import SnapshotView
-from tychora.retrieval.eligibility import (
-    EligibilityAttempt,
-    EligibilityCompiler,
-    EligibilityFacts,
-)
 from tychora.retrieval.rerank import RankedEvidence
 from tychora.retrieval.response import prepare_records
 from tychora.retrieval.segments import Selection
-
-
-class RecordOnlyReader:
-    """Fail if record preparation unexpectedly starts querying eligibility state."""
-
-    def __init__(self, registry: Registry):
-        self.registry = registry
-
-    def read_eligibility_facts(
-        self, snapshot: SnapshotView, members=None
-    ) -> EligibilityFacts:
-        raise AssertionError(
-            "record preparation must use the supplied eligibility view"
-        )
-
-    def retained_config(self, snapshot: SnapshotView) -> ResolvedConfig:
-        raise AssertionError("record preparation must use the supplied envelope")
-
-    def policy_epoch(self, workspace_id: str) -> int:
-        raise AssertionError("record preparation must not read a policy epoch")
-
-    def pin_snapshot(
-        self, selector: str | None
-    ) -> AbstractContextManager[SnapshotView]:
-        raise AssertionError("record preparation must not pin a snapshot")
 
 
 def test_retained_feedback_record_has_complete_eligible_dependencies(tmp_path):
@@ -99,9 +67,8 @@ def test_retained_feedback_record_has_complete_eligible_dependencies(tmp_path):
         text_budget=900,
         visual_reserved_tokens=0,
     )
-    attempt = EligibilityAttempt(
-        view=view,
-        compiler=EligibilityCompiler(RecordOnlyReader(registry)),
+    attempt = legacy_attempt(
+        view,
         historical_kind_envelopes=MappingProxyType(
             {"feedback@1": json_object(registry.historical_definitions(), "feedback@1")}
         ),
@@ -215,9 +182,8 @@ def test_changed_original_schema_envelope_controls_retained_record(tmp_path):
         prepare_records(
             selection,
             RankedEvidence((retained,)),
-            EligibilityAttempt(
-                view=view,
-                compiler=EligibilityCompiler(RecordOnlyReader(registry)),
+            legacy_attempt(
+                view,
                 historical_kind_envelopes=MappingProxyType(
                     {"feedback@1": FrozenJsonMap(original)}
                 ),
@@ -229,9 +195,8 @@ def test_changed_original_schema_envelope_controls_retained_record(tmp_path):
         prepare_records(
             selection,
             RankedEvidence((retained,)),
-            EligibilityAttempt(
-                view=view,
-                compiler=EligibilityCompiler(RecordOnlyReader(registry)),
+            legacy_attempt(
+                view,
                 historical_kind_envelopes=MappingProxyType(
                     {"feedback@1": FrozenJsonMap(changed)}
                 ),

@@ -779,7 +779,7 @@ def test_archived_v2_collection_and_active_v1_survive_backup_restore(tmp_path):
         )
 
         def grant_retained_policy():
-            from tychora.application.collection_policy import parse_collection_policy
+            from tychora.configuration.collection_policy import parse_collection_policy
 
             raw = ws.owner.db.execute(
                 "SELECT policy_json FROM collections WHERE collection_id=?",

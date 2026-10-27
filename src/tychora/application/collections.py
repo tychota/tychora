@@ -7,6 +7,7 @@ import sqlite3
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from tychora.configuration.collection_policy import parse_collection_policy
 from tychora.contracts.collections import (
     CollectionConsentView,
     CollectionCreate,
@@ -23,7 +24,6 @@ from tychora.contracts.operations import SourceChannelCoverage
 from tychora.contracts.requests import RequestScope
 from tychora.ports.execution import ExecutionContext
 
-from .collection_policy import parse_collection_policy
 from .consent import enabled_upload_providers
 from .discovery import _scoped_after, _scoped_cursor
 from .workspace_authority import refresh_managed_owner
