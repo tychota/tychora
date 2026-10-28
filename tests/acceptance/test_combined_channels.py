@@ -244,9 +244,8 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
         # Degraded mode reports it instead. Re-publishing under a degraded
         # profile would need a second visual workspace, so the owner briefly
         # runs a degraded copy of its configuration on a service with no
-        # vector binding (no pinned family check). The copy differs from the
-        # pinned snapshot's configuration only in that flag, so that service
-        # treats the snapshot as serving it.
+        # vector binding (no pinned family check). Degraded mode is a
+        # query-time flag, so the pinned snapshot still serves the copy.
         saved = owner.config
         owner.config = saved.model_copy(
             update={
@@ -261,9 +260,6 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
         )
         try:
             degraded = QueryService(owner, output_counter=Counter(), caches=caches)
-            monkeypatch.setattr(
-                degraded.compiler, "knows_compatible", lambda snapshot, config: True
-            )
             reported = (
                 await degraded.search(text_and_image, scope, ExecutionContext())
             ).result

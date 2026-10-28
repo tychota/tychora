@@ -30,6 +30,7 @@ from tychora.application.reranking import (
     create_reranker,
     prepare_rerank_facts,
 )
+from tychora.configuration.indexed_representation import pinned_runtime_compatible
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.candidates import ChannelCandidate
@@ -685,6 +686,21 @@ def test_unmet_requirement_stays_partial_beside_a_delivery_truncation():
     assert (required.status, required.truncated_channels) == ("partial", ())
     checks = _delivered_coverage(complete, [], True)
     assert checks.status == "partial"
+
+
+def test_toggling_degraded_mode_keeps_the_pinned_snapshot_compatible(tmp_path):
+    configs = []
+    for flag in ("false", "true"):
+        path = tmp_path / f"degraded-{flag}.toml"
+        path.write_text(
+            'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
+            f"[configuration.retrieval]\nallow_degraded={flag}\n"
+        )
+        configs.append(resolve_config(path, "test", {}))
+    strict, degraded = configs
+    assert strict.retained_sha != degraded.retained_sha
+    assert pinned_runtime_compatible(strict, degraded)
+    assert pinned_runtime_compatible(degraded, strict)
 
 
 def test_a_lane_named_delivery_is_an_unmet_requirement_not_a_truncation():
