@@ -646,9 +646,9 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
                 self.calls = 0
                 self.original = SqliteLexicalSearch.search
 
-            def search(self, adapter, view, query, limit, ctx):
+            def search(self, adapter, view, query, limit, ctx, **kwargs):
                 self.calls += 1
-                return self.original(adapter, view, query, limit, ctx)
+                return self.original(adapter, view, query, limit, ctx, **kwargs)
 
         transport = Transport()
         caches = QueryCaches()
@@ -668,8 +668,8 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
         monkeypatch.setattr(
             SqliteLexicalSearch,
             "search",
-            lambda adapter, view, query, limit, ctx: lexical.search(
-                adapter, view, query, limit, ctx
+            lambda adapter, view, query, limit, ctx, **kwargs: lexical.search(
+                adapter, view, query, limit, ctx, **kwargs
             ),
         )
         service = QueryService(
