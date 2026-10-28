@@ -485,7 +485,7 @@
     },
     "integrity_raises_without_reason": {
       "direction": "lower",
-      "measured_at": "2a5b6008c23d",
+      "measured_at": "403b0d62e716",
       "per_key": {
         "src/tychora/adapters/code/capture.py": 3,
         "src/tychora/adapters/code/normalize.py": 3,
@@ -517,7 +517,7 @@
         "src/tychora/application/default_bindings.py": 1,
         "src/tychora/application/discovery.py": 10,
         "src/tychora/application/inspection.py": 8,
-        "src/tychora/application/owner.py": 15,
+        "src/tychora/application/owner.py": 14,
         "src/tychora/application/pdf_intake.py": 15,
         "src/tychora/application/pdf_processing.py": 2,
         "src/tychora/application/query.py": 10,
@@ -550,7 +550,7 @@
         "src/tychora/retrieval/response.py": 8,
         "src/tychora/retrieval/segments.py": 8
       },
-      "value": 319
+      "value": 318
     },
     "layering_exceptions": {
       "direction": "lower",

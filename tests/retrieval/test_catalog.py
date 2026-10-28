@@ -1,5 +1,7 @@
 """Snapshot views come from SQL once per snapshot and carry no members."""
 
+from typing import Any, cast
+
 import pytest
 
 from tests.helpers.legacy import OutputCounter
@@ -279,7 +281,7 @@ def test_a_view_read_across_a_discard_is_returned_but_not_cached():
     catalog = SnapshotCatalog()
     snapshots = _Snapshots(catalog)
     snapshots.during = lambda: catalog.discard(("collected",))
-    tx = type("Tx", (), {"snapshots": snapshots})()
+    tx = cast(Any, type("Tx", (), {"snapshots": snapshots})())
     assert catalog.get(tx, "s").snapshot_id == "s"
     snapshots.during = None
     catalog.get(tx, "s")
