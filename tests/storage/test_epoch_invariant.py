@@ -273,7 +273,7 @@ def test_allowed_uses_override_refuses_a_shape_that_is_not_a_use_list(
     with pytest.raises(TychoraError) as error:
         store.set_allowed_uses_override(bundle.source.source_id, override)
     assert error.value.code == "INVALID_REQUEST"
-    assert error.value.reason is None
+    assert error.value.reason == "policy.use_unknown"
     assert "list of uses" in str(error.value)
     assert _epoch(store) == before
 

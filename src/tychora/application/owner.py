@@ -158,7 +158,11 @@ def _read_defect(error: Exception) -> TychoraError:
 
 def _database_unopenable(error: Exception) -> TychoraError:
     """The typed refusal for a canonical database that cannot be opened."""
-    return TychoraError("INTEGRITY_ERROR", "Canonical database cannot be opened")
+    return TychoraError(
+        "INTEGRITY_ERROR",
+        "Canonical database cannot be opened",
+        reason="workspace.database_invalid",
+    )
 
 
 @contextmanager

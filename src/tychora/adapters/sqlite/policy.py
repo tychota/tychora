@@ -42,6 +42,7 @@ def _listed_uses(override: object, known: frozenset[str]) -> frozenset[str]:
             "INVALID_REQUEST",
             "An allowed-use override must be never_generate, reference_only "
             "or a list of uses",
+            reason="policy.use_unknown",
         )
     uses = frozenset(cast(Sequence[str], override))
     if not uses <= known:
