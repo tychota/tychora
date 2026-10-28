@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, PlainSerializer, model_validator
 
 from .base import (
     CodepointRange,
@@ -19,6 +19,11 @@ from .requests import BudgetContract, RequestScope
 
 ReviewState = Literal["unreviewed", "needs_review", "accepted", "rejected"]
 TextOrigin = Literal["source", "ocr", "derived"]
+# Identifier sets serialise as sorted lists, so equal values give equal JSON bytes.
+SortedIdentifiers = Annotated[
+    frozenset[Identifier],
+    PlainSerializer(sorted, return_type=list[str], when_used="json"),
+]
 
 
 class Geometry(Contract):
@@ -137,7 +142,7 @@ class StructuredRecord(Contract):
     record_type: NonEmptyStr
     schema_id: Identifier
     value: FrozenJsonMap
-    dependencies: frozenset[Identifier] = frozenset()
+    dependencies: SortedIdentifiers = frozenset()
 
 
 class Segment(Contract):
@@ -167,7 +172,7 @@ class LabelledProxy(Contract):
     label: NonEmptyStr
     text: str
     origin: TextOrigin
-    dependencies: frozenset[Identifier]
+    dependencies: SortedIdentifiers
     review_state: ReviewState
 
 
@@ -187,7 +192,7 @@ class RelationPath(Contract):
     unit_ids: tuple[Identifier, ...]
     assertion_ids: tuple[Identifier, ...]
     predicates: tuple[NonEmptyStr, ...]
-    support_unit_ids: frozenset[Identifier] = frozenset()
+    support_unit_ids: SortedIdentifiers = frozenset()
     provenance: FrozenJsonMap = Field(default_factory=FrozenJsonMap)
 
 

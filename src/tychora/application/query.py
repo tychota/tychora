@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import struct
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -106,6 +107,8 @@ if TYPE_CHECKING:
     from tychora.application.owner import WorkspaceOwner
     from tychora.ports.graph import GraphStore
 
+
+_LOG = logging.getLogger(__name__)
 
 type _VectorChannel = tuple[tuple[ChannelCandidate, ...], bool]
 
@@ -634,28 +637,52 @@ class QueryService:
         mode: FrozenJsonMap,
         ctx: ExecutionContext,
     ) -> tuple[CachedSelection, int, bool]:
-        """The cached entry for this request, or a fresh one cached when small.
+        """The cached entry for this request, or a fresh one cached when allowed.
 
         Returns the entry, the lexical epoch it was prepared at, and whether
         it came from the cache. An entry larger than the response bound plus
-        ``CACHE_OVERHEAD_BYTES`` is served uncached.
+        ``CACHE_OVERHEAD_BYTES`` is served uncached, and so is one degraded by
+        an unavailable channel, so a transient failure is never replayed.
+        Partial coverage from deterministic limits is still cached.
         """
         lexical_epoch = await self.owner.run_read(
             lambda tx: tx.workspace.lexical_epoch(), ctx
         )
-        raw = self.caches.get_result(
+        cached = self._cached_entry(
             self._result_key(request, attempt.view, lexical_epoch)
         )
-        if raw is not None:
-            return CachedSelection.from_bytes(raw), lexical_epoch, True
+        if cached is not None:
+            return cached, lexical_epoch, True
         prepared, actual_epoch = await self._prepare(request, scope, attempt, mode, ctx)
         entry = prepared.to_bytes()
-        limits = self.owner.config.values.limits
-        if len(entry) <= limits.max_response_bytes + CACHE_OVERHEAD_BYTES:
+        bound = self.owner.config.values.limits.max_response_bytes
+        if (
+            not prepared.coverage.unavailable_channels
+            and prepared.coverage.status != "unavailable"
+            and len(entry) <= bound + CACHE_OVERHEAD_BYTES
+        ):
             self.caches.put_result(
                 self._result_key(request, attempt.view, actual_epoch), entry
             )
         return prepared, actual_epoch, False
+
+    def _cached_entry(self, key: str) -> CachedSelection | None:
+        """The entry under ``key``; an unreadable one is dropped and is a miss."""
+        raw = self.caches.get_result(key)
+        if raw is None:
+            return None
+        try:
+            return CachedSelection.from_bytes(raw)
+        except ValueError as error:
+            self.caches.drop_result(key)
+            diagnostic = uuid4().hex
+            # The error text would quote cached evidence; log only its type.
+            _LOG.warning(
+                "Dropped an unreadable cached result [%s]: %s",
+                diagnostic,
+                type(error).__name__,
+            )
+            return None
 
     async def _prepare(
         self,

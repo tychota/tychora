@@ -51,7 +51,13 @@ class CachedSelection(Selection, PreparedEvidence):
 
     @classmethod
     def of(cls, selection: Selection, evidence: PreparedEvidence) -> CachedSelection:
-        """The entry for a selection and the rest of its prepared result."""
+        """The entry for a selection and the rest of its prepared result.
+
+        A ``CachedSelection`` given as ``selection`` contributes only its
+        selection; ``evidence`` supplies everything else.
+        """
+        if isinstance(selection, CachedSelection):
+            selection = selection.selection()
         return cls(**dict(selection), **dict(evidence))
 
     def selection(self) -> Selection:
