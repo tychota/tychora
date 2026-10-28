@@ -6,7 +6,7 @@ import tomllib
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from tests.transports.test_http import Counter
+from tests.helpers.legacy import OutputCounter
 from tychora import Tychora
 from tychora.interfaces.http.app import create_app
 from tychora.interfaces.http.auth import LocalAuth
@@ -16,7 +16,7 @@ from tychora.ports.execution import ExecutionContext
 @pytest.mark.asyncio
 async def test_ast_patch_preview_apply_inherit_and_stale(tmp_path):
     root = tmp_path / "workspace"
-    with Tychora.open(root, token_counter=Counter()) as kb:
+    with Tychora.open(root, token_counter=OutputCounter()) as kb:
         path = root / "workspace.toml"
         original = (
             path.read_text()
@@ -119,7 +119,7 @@ async def test_ast_patch_preview_apply_inherit_and_stale(tmp_path):
 async def test_guided_patch_rejects_non_allowlisted_or_invalid_values(
     tmp_path, changes
 ):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = create_app(
             kb._workspace.owner,
             kb._workspace.services,
@@ -145,7 +145,7 @@ async def test_guided_patch_rejects_non_allowlisted_or_invalid_values(
 async def test_draft_failed_runtime_preparation_rolls_back(tmp_path, monkeypatch):
     from tychora.contracts.errors import TychoraError
 
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         app = create_app(
             owner,
@@ -179,7 +179,7 @@ async def test_draft_failed_runtime_preparation_rolls_back(tmp_path, monkeypatch
 
 @pytest.mark.asyncio
 async def test_references_are_manager_only_and_preview_redacts_values(tmp_path):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         reader = kb.scope.model_copy(update={"capabilities": frozenset({"read"})})
         app = create_app(
@@ -222,7 +222,7 @@ async def test_references_are_manager_only_and_preview_redacts_values(tmp_path):
 
 @pytest.mark.asyncio
 async def test_activation_refreshes_only_managed_future_upload_authority(tmp_path):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         auth = LocalAuth(
             {"managed": kb.scope, "static": kb.scope},
@@ -315,7 +315,7 @@ async def test_fresh_remote_settings_apply_and_inherit_without_provider_io(
 
     cache = tmp_path / "missing-cache"
     monkeypatch.setenv("TYCHORA_MODEL_CACHE", str(cache))
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
 
         def forbidden(*args, **kwargs):
@@ -474,7 +474,7 @@ async def test_fresh_remote_settings_apply_and_inherit_without_provider_io(
     ],
 )
 async def test_remote_prerequisite_types_are_strict(tmp_path, path, value):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         app = create_app(
             owner,
@@ -545,7 +545,7 @@ async def test_populated_settings_reject_edits_that_strand_pinned_queries(
 ):
     import tomlkit
 
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         app = create_app(
             owner,
@@ -619,7 +619,7 @@ async def test_settings_compatibility_uses_snapshot_origin_after_offline_tighten
         'schema_version=1\n[profiles.local]\nbuiltin="general-documents@1"\n'
         '[defaults]\nprofile="local"\n[configuration]\noffline=false\n'
     )
-    with Tychora.open(root, token_counter=Counter()) as kb:
+    with Tychora.open(root, token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         app = create_app(
             owner,

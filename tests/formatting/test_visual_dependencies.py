@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from tests.transports.test_http import Counter
+from tests.helpers.legacy import OutputCounter
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import (
     ImageLocator,
@@ -40,7 +40,7 @@ def test_visual_proxy_dependencies_keep_asset_and_source_authority_distinct(deni
         run_id="run",
         snapshot_id="snapshot",
         scope=RequestScope(principal_id="synthetic"),
-        counter=Counter(),
+        counter=OutputCounter(),
         eligible_unit_ids=frozenset()
         if denied == "source"
         else frozenset({"pixel-owner"}),

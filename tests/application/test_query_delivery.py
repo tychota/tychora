@@ -6,7 +6,7 @@ from typing import Any, cast
 import pytest
 
 from tests.helpers.eligibility import revision_attempt, revision_view
-from tests.transports.test_http import Counter
+from tests.helpers.legacy import OutputCounter
 from tychora.application.query import (
     QueryExecutionPlan,
     QueryService,
@@ -115,7 +115,7 @@ def test_delivery_refuses_an_excluded_relation_unit_or_visual_dependency(kind, m
         run_id="run",
         snapshot_id="snapshot",
         scope=RequestScope(principal_id="synthetic"),
-        counter=Counter(),
+        counter=OutputCounter(),
         eligible_unit_ids=units,
         eligible_asset_ids=assets,
         relations=prepared.relations if kind == "relation" else (),

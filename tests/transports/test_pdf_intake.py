@@ -11,7 +11,7 @@ from PIL import Image
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen.canvas import Canvas
 
-from tests.transports.test_http import Counter
+from tests.helpers.legacy import OutputCounter
 from tychora import Tychora
 from tychora.interfaces.http.app import create_app
 from tychora.interfaces.http.auth import LocalAuth
@@ -78,7 +78,7 @@ def test_pdf_contracts_import_without_cycles():
 
 @pytest.mark.asyncio
 async def test_binary_intake_preserves_json_gate(tmp_path):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         async with client_for(app) as client:
             rejected = await client.post("/v1/sources", content=b" " * (1048576 + 1))
@@ -144,7 +144,7 @@ async def raw_request(app, path, headers, receive):
     ],
 )
 async def test_binary_denied_before_receive(tmp_path, extra):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         async with client_for(app) as client:
             prepared = await client.post("/v1/pdf-intakes", json=descriptor(kb, 2048))
@@ -170,7 +170,7 @@ async def test_binary_denied_before_receive(tmp_path, extra):
 async def test_analysis_is_local_all_page_and_does_not_mutate_configuration(
     tmp_path, monkeypatch
 ):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         original_config = kb._workspace.owner.config.config_sha
         monkeypatch.setattr(kb._workspace.services.sources, "docling_models", None)
@@ -206,7 +206,7 @@ async def test_analysis_is_local_all_page_and_does_not_mutate_configuration(
 async def test_streamed_actual_reserved_and_declared_lengths(
     tmp_path, actual_delta, declared_delta
 ):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         async with client_for(app) as client:
             prepared = await client.post("/v1/pdf-intakes", json=descriptor(kb, 128))
@@ -239,7 +239,7 @@ async def test_receipt_inode_replacement_and_expiry_fail_without_census(tmp_path
 
     from tychora.ports.execution import ExecutionContext
 
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         async with client_for(app) as client:
             data = make_pdf(tmp_path)
@@ -277,7 +277,7 @@ async def test_receipt_inode_replacement_and_expiry_fail_without_census(tmp_path
 async def test_reservations_abort_and_cancelled_receive_release_capacity(tmp_path):
     import asyncio
 
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         async with client_for(app) as client:
             paths = []
@@ -305,7 +305,7 @@ async def test_reservations_abort_and_cancelled_receive_release_capacity(tmp_pat
 
 @pytest.mark.asyncio
 async def test_exact_configured_cap_and_missing_content_length(tmp_path):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         config = owner.config
         limits = config.values.acquisition.limits.model_copy(
@@ -338,7 +338,7 @@ async def test_restart_aborts_incomplete_receive(tmp_path):
     from tychora.ports.execution import ExecutionContext
 
     workspace = tmp_path / "workspace"
-    with Tychora.open(workspace, token_counter=Counter()) as kb:
+    with Tychora.open(workspace, token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         async with client_for(app) as client:
             response = await client.post("/v1/pdf-intakes", json=descriptor(kb, 128))
@@ -352,7 +352,7 @@ async def test_restart_aborts_incomplete_receive(tmp_path):
                 (service.directory / (receipt + ".pdf")).write_bytes(b"partial")
 
             await kb._workspace.owner.run_write(interrupted, ExecutionContext())
-    with Tychora.open(workspace, token_counter=Counter()) as kb:
+    with Tychora.open(workspace, token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         async with client_for(app) as client:
             response = await client.get("/v1/pdf-intakes/" + receipt)
@@ -367,7 +367,7 @@ async def test_cancellation_at_receive_handoff_closes_staging(tmp_path, monkeypa
     from tychora.contracts.pdf_intake import PdfIntakeDescriptor
     from tychora.ports.execution import ExecutionContext
 
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         service = app_for(kb).state.pdf_intakes
         status = await service.prepare(
             PdfIntakeDescriptor.model_validate_json(
@@ -405,7 +405,7 @@ async def test_direct_intake_calls_share_activation_gate(tmp_path):
     from tychora.contracts.pdf_intake import PdfIntakeDescriptor
     from tychora.ports.execution import ExecutionContext
 
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         runtime = app.state.runtime
         runtime.admit(activation=True)
@@ -425,7 +425,7 @@ async def test_direct_intake_calls_share_activation_gate(tmp_path):
 
 @pytest.mark.asyncio
 async def test_invalid_credential_precedes_binary_length_admission(tmp_path):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = app_for(kb)
 
         async def no_read():
@@ -448,7 +448,7 @@ async def test_invalid_credential_precedes_binary_length_admission(tmp_path):
 async def test_new_reservations_do_not_read_completed_receipt_history(
     tmp_path, monkeypatch
 ):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         async with client_for(app) as client:
             response = await client.post("/v1/pdf-intakes", json=descriptor(kb, 128))
@@ -472,7 +472,7 @@ async def test_direct_duplicate_receive_preserves_completed_original(tmp_path):
     from tychora.contracts.errors import TychoraError
     from tychora.ports.execution import ExecutionContext
 
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         service = app.state.pdf_intakes
         async with client_for(app) as client:
@@ -497,7 +497,7 @@ async def test_direct_duplicate_receive_preserves_completed_original(tmp_path):
 async def test_owner_processing_budget_also_bounds_original_reservations(tmp_path):
     from tychora.application.pdf_intake import PdfIntakeService
 
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         PdfIntakeService(
             kb._workspace.owner, kb._workspace.services, max_retained_bytes=128
         )
@@ -509,7 +509,7 @@ async def test_owner_processing_budget_also_bounds_original_reservations(tmp_pat
 @pytest.mark.asyncio
 async def test_restart_with_unknown_analysis_copy_blocks_new_admission(tmp_path):
     workspace = tmp_path / "workspace"
-    with Tychora.open(workspace, token_counter=Counter()) as kb:
+    with Tychora.open(workspace, token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         async with client_for(app) as client:
             data = make_pdf(tmp_path)
@@ -521,7 +521,7 @@ async def test_restart_with_unknown_analysis_copy_blocks_new_admission(tmp_path)
             orphan = app.state.pdf_intakes.directory / ".analysis-synthetic-orphan"
             orphan.mkdir()
             (orphan / "original.pdf").write_bytes(data)
-    with Tychora.open(workspace, token_counter=Counter()) as kb:
+    with Tychora.open(workspace, token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         async with client_for(app) as client:
             assert (await client.get(path)).json()["state"] == "staged"
@@ -536,7 +536,7 @@ async def test_restart_with_unknown_analysis_copy_blocks_new_admission(tmp_path)
 
 @pytest.mark.asyncio
 async def test_unsupported_content_patch_uses_ordinary_body_limit(tmp_path):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         async with client_for(app) as client:
             # A nonexistent receipt must not be inspected before the ordinary

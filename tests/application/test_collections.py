@@ -70,12 +70,12 @@ def test_title_trim_and_omission_semantics():
 async def test_bounded_inventory_hidden_revision_and_cursor_epoch(
     tmp_path, monkeypatch
 ):
-    from tests.transports.test_http import Counter
+    from tests.helpers.legacy import OutputCounter
     from tychora import Tychora
     from tychora.contracts.collections import CollectionCreate
     from tychora.ports.execution import ExecutionContext
 
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         service = kb._workspace.services.collections
         source = {
@@ -163,11 +163,11 @@ async def test_bounded_inventory_hidden_revision_and_cursor_epoch(
 
 @pytest.mark.asyncio
 async def test_edit_kind_omission_null_and_reserved_default(tmp_path):
-    from tests.transports.test_http import Counter
+    from tests.helpers.legacy import OutputCounter
     from tychora import Tychora
     from tychora.ports.execution import ExecutionContext
 
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         service = kb._workspace.services.collections
         cid = str(kb.default_collection_id)
 
@@ -221,11 +221,11 @@ def test_actual_http_fixture_contracts():
 
 @pytest.mark.asyncio
 async def test_source_page_filters_hidden_rows_before_sql_limit(tmp_path):
-    from tests.transports.test_http import Counter
+    from tests.helpers.legacy import OutputCounter
     from tychora import Tychora
     from tychora.ports.execution import ExecutionContext
 
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         service = kb._workspace.services.collections
         hidden = await service.create(

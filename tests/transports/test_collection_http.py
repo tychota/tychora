@@ -3,7 +3,7 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from tests.transports.test_http import Counter
+from tests.helpers.legacy import OutputCounter
 from tychora import Tychora
 from tychora.interfaces.http.app import create_app
 from tychora.interfaces.http.auth import LocalAuth
@@ -12,7 +12,7 @@ from tychora.interfaces.http.auth import LocalAuth
 @pytest.mark.asyncio
 async def test_managed_create_refresh_archive_and_reopen(tmp_path):
     path = tmp_path / "workspace"
-    with Tychora.open(path, token_counter=Counter()) as kb:
+    with Tychora.open(path, token_counter=OutputCounter()) as kb:
         original = kb.scope
         reader = original.model_copy(update={"capabilities": frozenset({"read"})})
         auth = LocalAuth(
@@ -112,7 +112,7 @@ async def test_managed_create_refresh_archive_and_reopen(tmp_path):
                 reactivated["collection_id"] == cid
                 and reactivated["archived_at"] is None
             )
-    with Tychora.open(path, token_counter=Counter()) as reopened:
+    with Tychora.open(path, token_counter=OutputCounter()) as reopened:
         assert cid in reopened.scope.collection_ids
 
 
@@ -120,7 +120,7 @@ async def test_managed_create_refresh_archive_and_reopen(tmp_path):
 async def test_pdf_archive_between_analysis_and_submit_retains_receipt(tmp_path):
     from tests.transports.test_pdf_intake import descriptor, make_pdf
 
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = create_app(
             kb._workspace.owner,
             kb._workspace.services,

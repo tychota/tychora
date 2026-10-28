@@ -5,19 +5,12 @@ from uuid import UUID
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from tests.helpers.legacy import OutputCounter
 from tychora import Tychora
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.requests import RequestScope
 from tychora.interfaces.http.app import create_app
 from tychora.interfaces.http.auth import LocalAuth
-
-
-class Counter:
-    model = "synthetic-output-test-counter"
-    tokenizer_id = "cl100k_base"
-
-    def count(self, text: str) -> int:
-        return len(text)
 
 
 @pytest.mark.asyncio
@@ -69,7 +62,7 @@ async def test_maintenance_health_and_migration_use_scoped_http_service(tmp_path
 
 @pytest.mark.asyncio
 async def test_reader_cannot_add_sources(tmp_path):
-    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "knowledge", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         services = kb._workspace.services
         reader = RequestScope(
@@ -113,7 +106,7 @@ async def test_revision_cursor_skips_hidden_first_and_is_scope_bound(tmp_path):
 
     from tychora.ports.execution import ExecutionContext
 
-    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "knowledge", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         reader = owner.scope.model_copy(update={"access_ceiling": 0})
         narrower = reader.model_copy(update={"uses": frozenset({"lookup"})})
@@ -220,7 +213,7 @@ async def test_extraction_and_channel_coverage_continue_in_bounded_pages(tmp_pat
 
     from tychora.ports.execution import ExecutionContext
 
-    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "knowledge", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         app = create_app(
             owner,
@@ -339,7 +332,7 @@ async def test_extraction_and_channel_coverage_continue_in_bounded_pages(tmp_pat
 
 @pytest.mark.asyncio
 async def test_add_is_durable_and_idempotent_with_scoped_cancel(tmp_path):
-    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "knowledge", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         services = kb._workspace.services
         reader = owner.scope.model_copy(update={"capabilities": frozenset({"read"})})
@@ -404,7 +397,7 @@ async def test_add_is_durable_and_idempotent_with_scoped_cancel(tmp_path):
 
 @pytest.mark.asyncio
 async def test_raw_gate_rejects_ambiguous_headers_and_streamed_oversize(tmp_path):
-    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "knowledge", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         app = create_app(
             owner,
@@ -456,7 +449,7 @@ async def test_raw_gate_rejects_ambiguous_headers_and_streamed_oversize(tmp_path
 
 @pytest.mark.asyncio
 async def test_discovery_source_listing_query_and_inspection(tmp_path):
-    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "knowledge", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         app = create_app(
             owner,
@@ -523,7 +516,7 @@ async def test_discovery_source_listing_query_and_inspection(tmp_path):
 
 @pytest.mark.asyncio
 async def test_writer_sync_and_query_replay_boundaries(tmp_path):
-    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "knowledge", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         writer = owner.scope.model_copy(
             update={"capabilities": frozenset({"read", "write"})}
@@ -601,7 +594,7 @@ async def test_writer_sync_and_query_replay_boundaries(tmp_path):
 
 @pytest.mark.asyncio
 async def test_requested_scope_can_only_narrow_token_and_length_is_strict(tmp_path):
-    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "knowledge", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         app = create_app(
             owner,
@@ -708,7 +701,7 @@ async def test_settings_activation_persists_and_invalid_candidate_keeps_previous
     tmp_path,
 ):
     root = tmp_path / "knowledge"
-    with Tychora.open(root, token_counter=Counter()) as kb:
+    with Tychora.open(root, token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         app = create_app(
             owner,
@@ -741,14 +734,14 @@ async def test_settings_activation_persists_and_invalid_candidate_keeps_previous
             assert after.json()["config_sha"] == changed.json()["config_sha"]
             assert (root / "workspace.toml").read_text() == candidate
         await app.state.runtime.services.source_jobs.aclose()
-    with Tychora.open(root, token_counter=Counter()) as reopened:
+    with Tychora.open(root, token_counter=OutputCounter()) as reopened:
         assert reopened._workspace.config.config_sha == changed.json()["config_sha"]
 
 
 @pytest.mark.asyncio
 async def test_nonlocal_profile_selection_survives_restart_and_mismatch_fails(tmp_path):
     root = tmp_path / "knowledge"
-    with Tychora.open(root, token_counter=Counter()) as kb:
+    with Tychora.open(root, token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         app = create_app(
             owner,
@@ -775,7 +768,7 @@ async def test_nonlocal_profile_selection_survives_restart_and_mismatch_fails(tm
             assert activated.status_code == 200, activated.text
             assert activated.json()["profile"] == "alternate"
         await app.state.runtime.services.source_jobs.aclose()
-    with Tychora.open(root, token_counter=Counter()) as reopened:
+    with Tychora.open(root, token_counter=OutputCounter()) as reopened:
         assert reopened._workspace.config.profile == "alternate"
         assert reopened._workspace.config.config_sha == activated.json()["config_sha"]
 
@@ -785,7 +778,7 @@ async def test_settings_failed_construction_restores_owner_and_current_services(
     tmp_path, monkeypatch
 ):
     root = tmp_path / "knowledge"
-    with Tychora.open(root, token_counter=Counter()) as kb:
+    with Tychora.open(root, token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         previous_config, previous_store = owner.config, owner.store
         previous_services = kb._workspace.services
@@ -826,7 +819,7 @@ async def test_settings_committed_activation_survives_old_bridge_close_failure(
     tmp_path, monkeypatch
 ):
     root = tmp_path / "knowledge"
-    with Tychora.open(root, token_counter=Counter()) as kb:
+    with Tychora.open(root, token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         old_services = kb._workspace.services
         app = create_app(
@@ -880,7 +873,7 @@ async def test_settings_post_commit_cancellation_finishes_cleanup_and_returns_su
     from tychora.contracts.operations import SettingsActivation
 
     root = tmp_path / "knowledge"
-    with Tychora.open(root, token_counter=Counter()) as kb:
+    with Tychora.open(root, token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         old_services = kb._workspace.services
         app = create_app(
@@ -927,7 +920,7 @@ async def test_settings_cancellation_during_cleanup_fallback_is_committed_succes
     from tychora.contracts.operations import SettingsActivation
 
     root = tmp_path / "knowledge"
-    with Tychora.open(root, token_counter=Counter()) as kb:
+    with Tychora.open(root, token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         old_services = kb._workspace.services
         app = create_app(
@@ -975,7 +968,7 @@ async def test_indexed_settings_allow_credential_and_rerank_but_reject_represent
     from tychora.ports.execution import ExecutionContext
 
     root = tmp_path / "knowledge"
-    with Tychora.open(root, token_counter=Counter()) as kb:
+    with Tychora.open(root, token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         app = create_app(
             owner,
@@ -1051,7 +1044,7 @@ async def test_settings_activation_rejects_active_accepted_job(tmp_path):
     from threading import Event
 
     root = tmp_path / "knowledge"
-    with Tychora.open(root, token_counter=Counter()) as kb:
+    with Tychora.open(root, token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         services = kb._workspace.services
         app = create_app(
@@ -1134,7 +1127,7 @@ async def test_retry_resumes_retained_transient_source_and_denies_manage_job(tmp
     from tychora.contracts.errors import TychoraError
     from tychora.ports.execution import ExecutionContext
 
-    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "knowledge", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         services = kb._workspace.services
         writer = owner.scope.model_copy(
@@ -1222,7 +1215,7 @@ async def test_denied_cancel_does_not_signal_active_source(tmp_path):
 
     from tychora.ports.execution import ExecutionContext
 
-    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "knowledge", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         services = kb._workspace.services
         reader = owner.scope.model_copy(update={"capabilities": frozenset({"read"})})
@@ -1291,7 +1284,7 @@ async def test_expired_sse_cursor_requests_authoritative_refresh(tmp_path):
 
     from tychora.ports.execution import ExecutionContext
 
-    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "knowledge", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         services = kb._workspace.services
         app = create_app(
@@ -1344,7 +1337,7 @@ async def test_expired_sse_cursor_requests_authoritative_refresh(tmp_path):
 
 @pytest.mark.asyncio
 async def test_local_file_source_requires_registered_root(tmp_path):
-    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "knowledge", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         app = create_app(
             owner,
@@ -1391,7 +1384,7 @@ async def test_settings_rejects_missing_retained_kind_and_preserves_active_profi
     from tychora.ports.execution import ExecutionContext
 
     root = tmp_path / "knowledge"
-    with Tychora.open(root, token_counter=Counter()) as kb:
+    with Tychora.open(root, token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         services = kb._workspace.services
         app = create_app(
@@ -1459,7 +1452,7 @@ async def test_settings_rejects_missing_retained_kind_and_preserves_active_profi
 
 @pytest.mark.asyncio
 async def test_invalid_route_query_uses_sanitized_400(tmp_path):
-    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "knowledge", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         app = create_app(
             owner,
@@ -1489,7 +1482,7 @@ async def test_invalid_route_query_uses_sanitized_400(tmp_path):
 def test_app_lifespan_drains_jobs_before_borrowed_owner_closes(tmp_path):
     from fastapi.testclient import TestClient
 
-    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "knowledge", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         services = kb._workspace.services
         app = create_app(
@@ -1530,7 +1523,7 @@ async def test_settings_activation_rejects_inflight_query(tmp_path):
     from tychora.ports.execution import ExecutionContext
 
     root = tmp_path / "knowledge"
-    with Tychora.open(root, token_counter=Counter()) as kb:
+    with Tychora.open(root, token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         services = kb._workspace.services
         app = create_app(
@@ -1603,7 +1596,7 @@ async def test_settings_gate_counts_held_public_python_query(tmp_path):
     from tychora.ports.execution import ExecutionContext
 
     root = tmp_path / "knowledge"
-    with Tychora.open(root, token_counter=Counter()) as kb:
+    with Tychora.open(root, token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         services = kb._workspace.services
         app = create_app(
@@ -1671,7 +1664,7 @@ async def test_settings_final_idle_check_excludes_public_python_submission(
     from tychora import AsyncTychora
 
     root = tmp_path / "knowledge"
-    with Tychora.open(root, token_counter=Counter()) as kb:
+    with Tychora.open(root, token_counter=OutputCounter()) as kb:
         async_kb = AsyncTychora(kb._workspace)
         owner = kb._workspace.owner
         old_services = kb._workspace.services
@@ -1748,7 +1741,7 @@ async def test_source_and_revision_history_use_bounded_database_pages(tmp_path):
     from tychora.ports.execution import ExecutionContext
 
     root = tmp_path / "knowledge"
-    with Tychora.open(root, token_counter=Counter()) as kb:
+    with Tychora.open(root, token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         app = create_app(
             owner,
@@ -1892,7 +1885,7 @@ async def test_health_requires_proven_whole_workspace_read(
     from tychora.application.recovery import RecoveryService
     from tychora.ports.execution import ExecutionContext
 
-    with Tychora.open(tmp_path / "kb", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "kb", token_counter=OutputCounter()) as kb:
         job = kb.sources.add(
             {
                 "type": "text",
@@ -1970,7 +1963,7 @@ async def test_health_requires_proven_whole_workspace_read(
 async def test_retained_content_routes_return_exact_windows_and_gate_read(tmp_path):
     from tychora.ports.execution import ExecutionContext
 
-    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "knowledge", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         app = create_app(
             owner,

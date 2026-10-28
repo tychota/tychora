@@ -5,9 +5,9 @@ import time
 
 import pytest
 
+from tests.helpers.legacy import OutputCounter
 from tests.helpers.timing import scaled
 from tests.jobs.test_acquired_sources import synthetic_policy_resolver
-from tests.transports.test_http import Counter
 from tests.transports.test_pdf_intake import app_for, client_for, descriptor, make_pdf
 from tychora import Tychora
 from tychora.application.pdf_intake import PdfIntakeService
@@ -24,7 +24,7 @@ from tychora.ports.execution import ExecutionContext
 @pytest.mark.asyncio
 @pytest.mark.parametrize("next_chunk", [b"", b"b"])
 async def test_receive_rejects_expiry_between_chunks(tmp_path, next_chunk):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         service = PdfIntakeService(kb._workspace.owner, kb._workspace.services)
         receipt = await service.prepare(
             PdfIntakeDescriptor.model_validate_json(canonical_bytes(descriptor(kb, 3))),
@@ -60,7 +60,7 @@ async def test_receive_rejects_expiry_between_chunks(tmp_path, next_chunk):
 async def test_receive_absolute_lifetime_bounds_waits_and_trickle(
     tmp_path, monkeypatch, stream
 ):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         service = PdfIntakeService(kb._workspace.owner, kb._workspace.services)
         receipt = await service.prepare(
             PdfIntakeDescriptor.model_validate_json(
@@ -171,7 +171,7 @@ async def test_intent_only_handoff_with_existing_job_is_recoverable(
             assert response.json()["code"] == "IDEMPOTENCY_CONFLICT"
             assert (await client.delete(path)).json()["state"] == "aborted"
 
-    with Tychora.open(workspace, token_counter=Counter()) as kb:
+    with Tychora.open(workspace, token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         service = app.state.pdf_intakes
         monkeypatch.setattr(kb._workspace.services.sources, "_extract", parser)
@@ -203,7 +203,7 @@ async def test_intent_only_handoff_with_existing_job_is_recoverable(
                 await verify(client, kb, path, submission, job_id)
         await kb._workspace.services.source_jobs.aclose()
     if restart:
-        with Tychora.open(workspace, token_counter=Counter()) as kb:
+        with Tychora.open(workspace, token_counter=OutputCounter()) as kb:
             async with client_for(app_for(kb)) as client:
                 await verify(client, kb, path, submission, job_id)
             await kb._workspace.services.source_jobs.aclose()
@@ -214,7 +214,7 @@ async def test_intent_only_handoff_with_existing_job_is_recoverable(
 async def test_receipt_rejects_foreign_or_changed_effective_grant(
     tmp_path, qualified, change
 ):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         changes = {
             "collections": {"collection_ids": frozenset()},
             "grant": {"capabilities": frozenset({"write"})},
@@ -249,7 +249,7 @@ async def test_receipt_rejects_foreign_or_changed_effective_grant(
 async def test_receipt_service_rejects_foreign_principal(tmp_path, qualified):
     # HTTP app construction already forbids foreign-principal token grants.
     # Exercise the private receipt entry points that still require this check.
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         async with client_for(app) as client:
             path, submission = await analysed(client, kb, make_pdf(tmp_path))
@@ -274,8 +274,8 @@ async def test_receipt_service_rejects_foreign_principal(tmp_path, qualified):
 @pytest.mark.asyncio
 async def test_foreign_workspace_cannot_inspect_or_submit_receipt(tmp_path, qualified):
     with (
-        Tychora.open(tmp_path / "first", token_counter=Counter()) as first,
-        Tychora.open(tmp_path / "second", token_counter=Counter()) as second,
+        Tychora.open(tmp_path / "first", token_counter=OutputCounter()) as first,
+        Tychora.open(tmp_path / "second", token_counter=OutputCounter()) as second,
     ):
         async with client_for(app_for(first)) as client:
             path, submission = await analysed(client, first, make_pdf(tmp_path))
@@ -294,7 +294,7 @@ async def test_submit_rejects_stale_analysis_policy_or_configuration(
     tmp_path, qualified, change
 ):
     workspace = tmp_path / "workspace"
-    with Tychora.open(workspace, token_counter=Counter()) as kb:
+    with Tychora.open(workspace, token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         async with client_for(app) as client:
             path, submission = await analysed(client, kb, make_pdf(tmp_path))
