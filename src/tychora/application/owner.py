@@ -636,8 +636,13 @@ class WorkspaceOwner:
         scope: RequestScope,
         dependencies: frozenset[str],
         policy_epoch: int,
+        priority: Priority = "background",
     ) -> T:
-        """Run an already-injected provider after fresh queued authorization."""
+        """Run an already-injected provider after fresh queued authorization.
+
+        The authorization runs on the writer under ``priority``: a query's
+        provider call passes ``interactive`` so it never waits behind ingestion.
+        """
         ctx.checkpoint()
         lane = self._authorized_provider_lane(provider, scope)
 
@@ -646,7 +651,8 @@ class WorkspaceOwner:
             self._worker.submit(
                 lambda: self.upload_policy.authorize(
                     scope, provider, dependencies, policy_epoch
-                )
+                ),
+                priority,
             ).result()
             ctx.checkpoint()
             binding = _DOCUMENT_UPLOAD.set((scope, policy_epoch))

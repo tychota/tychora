@@ -423,6 +423,7 @@ async def rank_with_owner(
             scope=access.scope,
             dependencies=dependencies,
             policy_epoch=access.epoch,
+            priority="interactive",
         )
     finally:
         access.close_operation()
