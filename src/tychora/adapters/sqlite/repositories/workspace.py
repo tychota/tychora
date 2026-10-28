@@ -74,3 +74,10 @@ class SqliteWorkspaceRepository:
         return frozenset(
             row[0] for row in self._db.execute("SELECT collection_id FROM collections")
         )
+
+    def collection(self, collection_id: str) -> tuple[str, int] | None:
+        """Return the collection's workspace ID and access floor, or ``None``."""
+        return self._db.execute(
+            "SELECT workspace_id,access_floor FROM collections WHERE collection_id=?",
+            (collection_id,),
+        ).fetchone()

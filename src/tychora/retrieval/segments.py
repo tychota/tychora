@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from tychora.configuration.models import ResolvedConfig
 from tychora.contracts.base import FrozenJsonMap
@@ -899,11 +899,8 @@ def assemble_segments(
     if policy == "one_per_required_lane":
         mode = config.values.mode or config.values.default_mode
         if mode is not None:
-            required = set(
-                config.model_dump(mode="json")["registry"]["modes"][mode].get(
-                    "required_lanes", ()
-                )
-            )
+            modes = cast(Mapping[str, Mapping[str, Any]], config.registry["modes"])
+            required = set(modes[mode].get("required_lanes", ()))
     if policy == "one_per_available_lane":
         required = {segment.lane for _, _, segment in options}
     priority: list[tuple[int, int, Segment]] = []

@@ -80,6 +80,35 @@ def test_artifact_register_and_get(db):
     assert error.value.reason == "canonical.binding_mismatch"
 
 
+def test_require_refuses_an_absent_or_released_payload(db):
+    uow = SqliteUnitOfWork(db)
+    with uow.write() as tx:
+        tx.artifacts.register(REF)
+    with uow.read() as tx:
+        assert tx.artifacts.require(SHA) == REF
+    db.execute(
+        "UPDATE artifacts SET payload_state='delete_pending' WHERE artifact_sha=?",
+        (SHA,),
+    )
+    for sha in (SHA, "b" * 64):
+        with uow.read() as tx, pytest.raises(TychoraError) as error:
+            tx.artifacts.require(sha)
+        assert (error.value.code, error.value.reason) == (
+            "INTEGRITY_ERROR",
+            "payload.missing",
+        )
+
+
+def test_collection_reads_its_workspace_and_floor(db):
+    db.execute(
+        "INSERT INTO collections(collection_id,workspace_id,slug,title,access_floor,policy_json) "
+        "VALUES ('docs','workspace','docs','Docs',2,'{\"schema_version\":1}')"
+    )
+    with SqliteUnitOfWork(db).read() as tx:
+        assert tx.workspace.collection("docs") == ("workspace", 2)
+        assert tx.workspace.collection("absent") is None
+
+
 def test_ambiguous_workspace_row_is_a_typed_error(db):
     db.execute(
         "INSERT INTO workspaces(workspace_id,schema_version,created_at) "

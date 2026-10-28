@@ -55,7 +55,7 @@ if TYPE_CHECKING:
     from tychora.application.owner import WorkspaceOwner
     from tychora.contracts.eligibility import EligibilityView
     from tychora.ports.graph import GraphStore
-    from tychora.ports.repositories import ReadTransaction
+    from tychora.ports.repositories import ReadTransaction, RetainedSubject
 
 MAX_INSPECTION_PAYLOAD_BYTES = 16 * 1024 * 1024
 MAX_DIAGNOSTIC_BYTES = 1024 * 1024
@@ -143,24 +143,27 @@ class InspectionService:
         original: bool = False,
         max_bytes: int = MAX_INSPECTION_PAYLOAD_BYTES,
     ) -> tuple[bytes, str]:
-        row = self.owner.db.execute(
-            "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
-            (sha,),
-        ).fetchone()
-        if row is None or row[2] != sha or row[3] != "present":
+        ref: ArtifactRef | None
+        with self.owner.store.uow.read() as tx:
+            try:
+                ref = tx.artifacts.require(sha)
+            except TychoraError as error:
+                if error.reason != "payload.missing":
+                    raise
+                ref = None
+        if ref is None or ref.storage_key != sha:
             raise TychoraError(
                 "ORIGINAL_REMOVED" if original else "NOT_FOUND",
                 "Original payload was removed."
                 if original
                 else "Registered asset is unavailable.",
             )
-        if row[0] > max_bytes:
+        if ref.size_bytes > max_bytes:
             raise TychoraError(
                 "INVALID_REQUEST", "Inspection payload exceeds its limit."
             )
-        ref = ArtifactRef.from_row((sha, *row[:3]))
         with self.owner.artifacts.open_verified(ref) as stream:
-            return stream.read(), row[1]
+            return stream.read(), ref.media_type
 
     def _inspect_job(
         self, request: InspectRequest, scope: RequestScope
@@ -171,10 +174,8 @@ class InspectionService:
             workspace_id=self.owner.workspace_id,
         )
         repository.authorize(request.id, scope, write=False)
-        row = self.owner.db.execute(
-            "SELECT operation,state,created_at,updated_at FROM jobs WHERE job_id=?",
-            (request.id,),
-        ).fetchone()
+        with self.owner.store.uow.read() as tx:
+            row = tx.inspection.job_summary(request.id)
         if row is None:
             raise TychoraError("NOT_FOUND", "Job is unavailable.")
         return InspectionResult(
@@ -197,11 +198,8 @@ class InspectionService:
     def _inspect_run(
         self, request: InspectRequest, scope: RequestScope
     ) -> InspectionResult:
-        row = self.owner.db.execute(
-            "SELECT principal_id,scope_digest,state,created_at,snapshot_id,retained_payload_sha "
-            "FROM query_runs WHERE run_id=?",
-            (request.id,),
-        ).fetchone()
+        with self.owner.store.uow.read() as tx:
+            row = tx.inspection.run_summary(request.id)
         if row is None:
             raise TychoraError("NOT_FOUND", "Run is unavailable.")
         if (
@@ -240,11 +238,7 @@ class InspectionService:
             raise TychoraError("NOT_FOUND", "Diagnostic extraction is unavailable.")
         if member.revision_id not in view.revisions:
             _deny()
-        row = self.owner.db.execute(
-            "SELECT e.diagnostics_artifact_sha,r.source_id FROM extractions e "
-            "JOIN revisions r USING(revision_id) WHERE e.extraction_id=?",
-            (request.id,),
-        ).fetchone()
+        row = tx.inspection.extraction_diagnostics(request.id)
         if row is None:
             raise TychoraError("NOT_FOUND", "Diagnostic extraction is unavailable.")
         retained = row[0] is not None
@@ -300,16 +294,9 @@ class InspectionService:
                 for entry in syntax:
                     try:
                         path = entry["relative_path"]
-                        file_units = {
-                            unit_id
-                            for (unit_id,) in self.owner.db.execute(
-                                "SELECT DISTINCT l.unit_id FROM locators l "
-                                "JOIN evidence_units u USING(unit_id) "
-                                "WHERE u.extraction_id=? AND l.locator_type='code' "
-                                "AND l.source_ref=?",
-                                (request.id, path),
-                            )
-                        }
+                        file_units = set(
+                            tx.inspection.code_file_units(request.id, path)
+                        )
                         diagnostics = tuple(
                             SyntaxDiagnostic.from_mapping(value)
                             for value in entry["diagnostics"]
@@ -388,11 +375,7 @@ class InspectionService:
 
     def _inspect_evidence(self, tx, request, pin, view, *, prepared=None):
         owner = self.owner
-        row = owner.db.execute(
-            "SELECT e.extraction_id,x.revision_id FROM evidence_units e "
-            "JOIN extractions x USING(extraction_id) WHERE e.unit_id=?",
-            (request.id,),
-        ).fetchone()
+        row = tx.inspection.unit_owner(request.id)
         if row is None:
             raise TychoraError("NOT_FOUND", "Evidence unit is unavailable.")
         extraction, revision = row
@@ -478,10 +461,7 @@ class InspectionService:
             )
         records = ()
         if not selected:
-            rows = owner.db.execute(
-                "SELECT record_type,schema_hash,data_json FROM structured_records WHERE unit_id=?",
-                (request.id,),
-            ).fetchall()
+            rows = tx.inspection.unit_records(request.id)
             records = tuple(
                 InspectionItem(
                     id=request.id,
@@ -494,7 +474,7 @@ class InspectionService:
             if unit.unit_type == "asset_proxy" and unit.attributes.get(
                 "proxy_kind"
             ) in {"ocr", "description"}:
-                records = (*records, self._vision_derivation(request.id))
+                records = (*records, self._vision_derivation(tx, request.id))
         return InspectionResult(
             subject="evidence",
             id=request.id,
@@ -504,17 +484,14 @@ class InspectionService:
             records=records,
         )
 
-    def _vision_derivation(self, unit_id: str) -> InspectionItem:
+    def _vision_derivation(self, tx: ReadTransaction, unit_id: str) -> InspectionItem:
         """The verified vision derivation receipt behind a derived proxy unit."""
-        proxy_row = self.owner.db.execute(
-            "SELECT derivation_sha FROM asset_proxies WHERE proxy_unit_id=?",
-            (unit_id,),
-        ).fetchone()
-        if proxy_row is None:
+        derivation_sha = tx.inspection.proxy_derivation(unit_id)
+        if derivation_sha is None:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Derived proxy binding is unavailable."
             )
-        payload, media_type = self._artifact(proxy_row[0], max_bytes=1024 * 1024)
+        payload, media_type = self._artifact(derivation_sha, max_bytes=1024 * 1024)
         try:
             root = json.loads(payload)
             data = root["data"]
@@ -552,11 +529,7 @@ class InspectionService:
         )
 
     def _inspect_asset(self, tx, request, view):
-        row = self.owner.db.execute(
-            "SELECT a.artifact_sha,a.locator_json,x.revision_id "
-            "FROM assets a JOIN extractions x USING(extraction_id) WHERE a.asset_id=?",
-            (request.id,),
-        ).fetchone()
+        row = tx.inspection.asset_summary(request.id)
         if row is None:
             raise TychoraError("NOT_FOUND", "Registered asset is unavailable.")
         sha, locator, revision = row
@@ -565,10 +538,7 @@ class InspectionService:
             is_eligible_asset(view, fact) for fact in facts
         ):
             _deny()
-        if self.owner.db.execute(
-            "SELECT 1 FROM original_payload_tombstones WHERE revision_id=? AND artifact_sha=?",
-            (revision, sha),
-        ).fetchone():
+        if tx.inspection.tombstoned(revision, sha):
             raise TychoraError("ORIGINAL_REMOVED", "Original payload was removed.")
         payload, media_type = self._artifact(sha, original=True)
         return InspectionResult(
@@ -590,10 +560,7 @@ class InspectionService:
     def _inspect_revision(self, tx, request, pin, view):
         if request.id not in view.revisions:
             _deny()
-        row = self.owner.db.execute(
-            "SELECT r.original_sha,r.title FROM revisions r WHERE r.revision_id=?",
-            (request.id,),
-        ).fetchone()
+        row = tx.inspection.revision_summary(request.id)
         if row is None:
             raise TychoraError("NOT_FOUND", "Revision is unavailable.")
         sha, title = row
@@ -611,15 +578,9 @@ class InspectionService:
                 )
                 if readable_units(tx, view, originals) != originals:
                     _deny()
-            binding = self.owner.db.execute(
-                "SELECT 1 FROM revision_artifacts WHERE revision_id=? AND artifact_sha=? AND role='original'",
-                (request.id, sha),
-            ).fetchone()
-            removed = self.owner.db.execute(
-                "SELECT 1 FROM original_payload_tombstones WHERE revision_id=? AND artifact_sha=?",
-                (request.id, sha),
-            ).fetchone()
-            if binding is None or removed:
+            if not tx.inspection.original_bound(
+                request.id, sha
+            ) or tx.inspection.tombstoned(request.id, sha):
                 raise TychoraError("ORIGINAL_REMOVED", "Original payload was removed.")
             payload, media = self._artifact(sha, original=True)
             return InspectionResult(
@@ -652,46 +613,26 @@ class InspectionService:
         same-epoch read. Owner serialization and leases hold these identities and
         their payloads through delivery.
         """
-        selectors = {
-            "evidence": "e.extraction_id=(SELECT extraction_id FROM evidence_units WHERE unit_id=?)",
-            "assets": "e.extraction_id=(SELECT extraction_id FROM assets WHERE asset_id=?)",
-            "diagnostics": "e.extraction_id=?",
-            "revisions": "e.revision_id=?",
-        }
-        rows = self.owner.db.execute(
-            "SELECT s.source_id,e.revision_id,e.extraction_id FROM extractions e "
-            "JOIN revisions r USING(revision_id) JOIN sources s USING(source_id) "
-            "JOIN collections c USING(collection_id) WHERE c.workspace_id=? AND "
-            + selectors[request.subject]
-            + " ORDER BY e.extraction_id",
-            (self.owner.workspace_id, request.id),
-        ).fetchall()
-        if not rows:
+        subject = cast("RetainedSubject", request.subject)
+        with self.owner.store.uow.read() as tx:
+            members = tx.inspection.retained_members(
+                subject, request.id, self.owner.workspace_id
+            )
+            payloads = frozenset().union(
+                *(tx.inspection.member_payloads(member) for member in members)
+            )
+        if not members:
             if request.subject == "revisions":
                 _deny()
             raise TychoraError("NOT_FOUND", "Retained identity is unavailable.")
-        members = tuple(
-            SnapshotMember(source_id=s, revision_id=r, extraction_id=e)
-            for s, r, e in rows
+        keys = frozenset(
+            value
+            for member in members
+            for value in (member.source_id, member.revision_id, member.extraction_id)
         )
-        keys = frozenset(value for row in rows for value in row)
-        payloads = set()
-        for member in members:
-            payloads.update(
-                row[0]
-                for row in self.owner.db.execute(
-                    "SELECT artifact_sha FROM revision_artifacts WHERE revision_id=? "
-                    "UNION SELECT document_artifact_sha FROM extractions WHERE extraction_id=? "
-                    "UNION SELECT assertions_artifact_sha FROM extractions WHERE extraction_id=? "
-                    "UNION SELECT diagnostics_artifact_sha FROM extractions WHERE extraction_id=? "
-                    "UNION SELECT artifact_sha FROM assets WHERE extraction_id=?",
-                    (member.revision_id, *(member.extraction_id,) * 4),
-                )
-                if row[0] is not None
-            )
         with (
             self.owner.store.leases.pin(keys),
-            self.owner.artifacts.pin_payloads(frozenset(payloads)),
+            self.owner.artifacts.pin_payloads(payloads),
             self.owner.store.pin_snapshot(None) as active,
         ):
             membership = digest(
@@ -732,24 +673,16 @@ class InspectionService:
             # A collection manager may distinguish a removed original binding
             # after withdrawal. Ordinary readers still pass through eligibility
             # below, so the tombstone is never disclosed to a hidden reader.
-            row = self.owner.db.execute(
-                "SELECT c.collection_id,c.access_floor,s.access_floor,r.access_rank,"
-                "r.original_sha,s.withdrawn_at FROM revisions r "
-                "JOIN sources s USING(source_id) JOIN collections c USING(collection_id) "
-                "WHERE r.revision_id=? AND c.workspace_id=?",
-                (request.id, self.owner.workspace_id),
-            ).fetchone()
-            if (
-                row is not None
-                and row[0] in granted.collection_ids
-                and max(row[1:4]) <= granted.access_ceiling
-                and row[5] is not None
-                and self.owner.db.execute(
-                    "SELECT 1 FROM original_payload_tombstones "
-                    "WHERE revision_id=? AND artifact_sha=?",
-                    (request.id, row[4]),
-                ).fetchone()
-            ):
+            with self.owner.store.uow.read() as tx:
+                row = tx.inspection.revision_policy(request.id, self.owner.workspace_id)
+                removed = (
+                    row is not None
+                    and row[0] in granted.collection_ids
+                    and max(row[1:4]) <= granted.access_ceiling
+                    and row[5] is not None
+                    and tx.inspection.tombstoned(request.id, row[4])
+                )
+            if removed:
                 raise TychoraError("ORIGINAL_REMOVED", "Original payload was removed.")
         with self._pin_retained(request) as pin, self.owner.store.uow.read() as tx:
             ctx.checkpoint()

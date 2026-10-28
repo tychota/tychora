@@ -7,9 +7,11 @@ from contextlib import contextmanager
 from tychora.contracts.errors import TychoraError
 from tychora.ports.repositories import (
     ArtifactRepository,
+    AssetRepository,
     BatchRepository,
     EligibilityRepository,
     FamilyRepository,
+    InspectionRepository,
     ReadTransaction,
     RepresentationRepository,
     SnapshotRepository,
@@ -20,9 +22,11 @@ from tychora.ports.search import LexicalSearch
 
 from ..lexical import SqliteLexicalSearch
 from .artifacts import SqliteArtifactRepository
+from .assets import SqliteAssetRepository
 from .batches import SqliteBatchRepository
 from .eligibility import SqliteEligibilityRepository
 from .families import SqliteFamilyRepository
+from .inspection import SqliteInspectionRepository
 from .representations import SqliteRepresentationRepository
 from .snapshots import SqliteSnapshotRepository
 from .workspace import SqliteWorkspaceRepository
@@ -78,6 +82,8 @@ class SqliteTransaction:
     representations: RepresentationRepository
     eligibility: EligibilityRepository
     lexical: LexicalSearch
+    assets: AssetRepository
+    inspection: InspectionRepository
 
     def __init__(self, db: sqlite3.Connection, *, writable: bool) -> None:
         self.workspace = SqliteWorkspaceRepository(db, writable=writable)
@@ -88,6 +94,8 @@ class SqliteTransaction:
         self.representations = SqliteRepresentationRepository(db, writable=writable)
         self.eligibility = SqliteEligibilityRepository(db)
         self.lexical = SqliteLexicalSearch(db)
+        self.assets = SqliteAssetRepository(db)
+        self.inspection = SqliteInspectionRepository(db)
 
 
 class SqliteUnitOfWork:

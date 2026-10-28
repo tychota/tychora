@@ -240,19 +240,35 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
         )
         with pytest.raises(TychoraError) as strict:
             await text_only.search(text_and_image, scope, ExecutionContext())
-        assert strict.value.code != "INVALID_REQUEST"
+        assert strict.value.code == "CAPABILITY_MISSING"
         # Degraded mode reports it instead. Re-publishing under a degraded
-        # profile would need a second visual workspace, so the flag is flipped
-        # in place on a service with no vector binding (no pinned family check).
-        retrieval = owner.config.values.retrieval
-        object.__setattr__(retrieval, "allow_degraded", True)
+        # profile would need a second visual workspace, so the owner briefly
+        # runs a degraded copy of its configuration on a service with no
+        # vector binding (no pinned family check). The copy differs from the
+        # pinned snapshot's configuration only in that flag, so that service
+        # treats the snapshot as serving it.
+        saved = owner.config
+        owner.config = saved.model_copy(
+            update={
+                "values": saved.values.model_copy(
+                    update={
+                        "retrieval": saved.values.retrieval.model_copy(
+                            update={"allow_degraded": True}
+                        )
+                    }
+                )
+            }
+        )
         try:
             degraded = QueryService(owner, output_counter=Counter(), caches=caches)
+            monkeypatch.setattr(
+                degraded.compiler, "knows_compatible", lambda snapshot, config: True
+            )
             reported = (
                 await degraded.search(text_and_image, scope, ExecutionContext())
             ).result
         finally:
-            object.__setattr__(retrieval, "allow_degraded", False)
+            owner.config = saved
         assert reported.coverage.status == "partial"
         assert "visual" in reported.coverage.unavailable_channels
         assert set(reported.coverage.unavailable_channels) == {"text", "visual"}

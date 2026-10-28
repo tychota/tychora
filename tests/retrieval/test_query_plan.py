@@ -1,5 +1,7 @@
 """A request narrows the configured channels, reranking and review states."""
 
+from typing import Any
+
 import pytest
 
 from tests.helpers.legacy import OutputCounter
@@ -11,6 +13,9 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.requests import QueryRequest
 from tychora.retrieval.compiler import request_digest
 from tychora.retrieval.query import result_cache_key
+
+# A bound collaborator the plan only checks for presence.
+BOUND: Any = object()
 
 
 @pytest.fixture
@@ -91,9 +96,7 @@ def test_a_configured_but_unbound_channel_stays_in_the_default_plan(image_config
 
 
 def test_explicit_holds_only_the_channels_the_request_selected(image_config):
-    bindings = QueryBindings(
-        visual_provider=object(), visual_index=object(), graph=object()
-    )
+    bindings = QueryBindings(visual_provider=BOUND, visual_index=BOUND, graph=BOUND)
     request = QueryRequest.from_mapping(
         {
             "question": "seal",
@@ -112,7 +115,7 @@ def test_explicit_holds_only_the_channels_the_request_selected(image_config):
 
 
 def test_an_explicit_channel_the_query_cannot_use_is_refused(image_config):
-    bindings = QueryBindings(visual_provider=object(), visual_index=object())
+    bindings = QueryBindings(visual_provider=BOUND, visual_index=BOUND)
     lexical_only = {"question": "seal", "modalities": ["lexical"]}
     assert plan_for(
         QueryRequest.from_mapping(lexical_only), image_config, bindings
@@ -134,12 +137,12 @@ def test_explicit_rerank_needs_an_available_reranker_and_a_ranked_query(tmp_path
         'credential_ref="env:SYNTHETIC_UNSET"\n'
     )
     config = resolve_config(path, "test", {})
-    ready = QueryBindings(reranker=object(), rerank_counter=object())
+    ready = QueryBindings(reranker=BOUND, rerank_counter=BOUND)
     on = {"question": "seal", "rerank": "on"}
     assert plan_for(QueryRequest.from_mapping(on), config, ready).rerank
     unavailable = QueryBindings(
-        reranker=object(),
-        rerank_counter=object(),
+        reranker=BOUND,
+        rerank_counter=BOUND,
         rerank_unavailable=TychoraError("PROVIDER_FAILURE", "synthetic"),
     )
     for request, bindings, reason in (

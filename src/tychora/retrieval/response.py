@@ -49,6 +49,8 @@ if TYPE_CHECKING:
 
 STUB_IDENTITY_FIELDS = ("definition_key", "qualified_name", "relative_path")
 _STUB_FIELD_CHARS = 512
+# The code of the gap delivery records when the output budget omits evidence.
+_DELIVERY_OMISSION = "output_budget_omission"
 
 
 def budget_stub(record: StructuredRecord) -> StructuredRecord:
@@ -301,7 +303,7 @@ class ResponseAssembler:
             if "owner" in omitted or "visual" in omitted:
                 gaps.append(
                     CoverageGap(
-                        code="output_budget_omission",
+                        code=_DELIVERY_OMISSION,
                         channel="delivery",
                         message="selected_evidence_omitted",
                     )
@@ -508,13 +510,15 @@ def _delivered_coverage(
 ) -> Coverage:
     """Coverage after delivery: an output-budget omission alone is a truncation.
 
-    The ``delivery`` gap is kept and ``delivery`` joins the truncated channels;
-    an unmet requirement or failed checks still make a complete result partial.
+    The omission gap is recognised by its code, so a lane or kind named
+    ``delivery`` is never misread. It is kept and ``delivery`` joins the
+    truncated channels; an unmet requirement or failed checks still make a
+    complete result partial.
     """
     truncated = coverage.truncated_channels
-    if any(gap.channel == "delivery" for gap in gaps):
+    if any(gap.code == _DELIVERY_OMISSION for gap in gaps):
         truncated = tuple(dict.fromkeys((*truncated, "delivery")))
-    unmet = any(gap.channel != "delivery" for gap in gaps)
+    unmet = any(gap.code != _DELIVERY_OMISSION for gap in gaps)
     status = coverage.status
     if (unmet or checks_failed) and status == "complete":
         status = "partial"
