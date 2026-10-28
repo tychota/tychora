@@ -81,6 +81,9 @@ class OracleView(Contract):
     blocked_assertion_ids: frozenset[Sha256]
     # Selected revisions whose every unit the all-units filter rejects.
     filter_excluded_revision_ids: frozenset[Identifier] = frozenset()
+    # Selected revisions whose metadata alone (no unit values) fails the
+    # all-units filter; v1 still admits their owners that no unit reaches.
+    metadata_failing_revision_ids: frozenset[Identifier] = frozenset()
     graph_generation_id: Identifier | None = None
     graph_family_id: Sha256 | None = None
     graph_config_sha: Sha256 | None = None
@@ -550,6 +553,22 @@ class OracleCompiler:
                 for revision in revision_ids
                 if (owned := {u for u, i in units.items() if i.revision_id == revision})
                 and owned <= filter_failed_units
+            ),
+            metadata_failing_revision_ids=frozenset(
+                revision
+                for revision in revision_ids
+                if selected_filter is not None
+                and selected_filter.all_units is not None
+                and not filter_matches(
+                    selected_filter.all_units,
+                    registry,
+                    FacetSubject(
+                        revision_facets.get(revision, {}),
+                        {},
+                        request.include_global,
+                        revisions_by_id[revision].global_facets,
+                    ),
+                )
             ),
             **graph_kwargs,
         )

@@ -37,7 +37,13 @@ from tychora.contracts.requests import (
     canonical_scope_projection,
 )
 from tychora.ports.artifacts import ArtifactReader
-from tychora.ports.repositories import FacetValue, MemberRow, ReadTransaction, ReviewRow
+from tychora.ports.repositories import (
+    FacetValue,
+    MemberRow,
+    ReadTransaction,
+    ReviewRow,
+    UnitFlags,
+)
 from tychora.retrieval.selection import (
     RevisionFact,
     TemporalSelector,
@@ -277,6 +283,17 @@ def split_revision_filter(
     revision = [item for item in conjuncts if _metadata_bound(item, registry)]
     unit = [item for item in conjuncts if not _metadata_bound(item, registry)]
     return _conjunction(revision), _conjunction(unit)
+
+
+def _unreached(
+    tx: ReadTransaction, judged_out: set[str], units: Iterable[UnitFlags]
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Of extractions whose revision metadata fails the filter: those without
+    units, and the assets of the others that no unit links to."""
+    with_units = {unit.extraction_id for unit in units}
+    linked = tuple(sorted(judged_out & with_units))
+    unlinked = tx.eligibility.unlinked_assets(linked) if linked else frozenset()
+    return frozenset(judged_out - with_units), unlinked
 
 
 def _grouped(rows: Iterable[FacetValue]) -> dict[str, dict[str, object]]:
@@ -655,6 +672,10 @@ class EligibilityCompiler:
         chosen, selected = self._revision_filter(
             tx, job.selected, request, edition, facets
         )
+        failing, unit_filter, empty = self._filter_sets(
+            tx, selected, request, chosen, facets
+        )
+        chosen = [row for row in chosen if row.extraction_id not in empty]
         grants = {
             row.revision_id: RevisionGrant(
                 extraction_id=row.extraction_id,
@@ -665,7 +686,6 @@ class EligibilityCompiler:
             )
             for row in chosen
         }
-        failing, unit_filter = self._filter_sets(tx, selected, request, chosen, facets)
         units, assets = _exclusions(tx, chosen, job.mode, failing)
         batches = _selected_batches(
             tx.eligibility.batches(snapshot.snapshot_id),
@@ -717,7 +737,7 @@ class EligibilityCompiler:
             return chosen, selected
         keys = tuple(sorted(_filter_keys(revision_part)))
         extractions = tuple(sorted(row.extraction_id for row in chosen))
-        if tx.eligibility.unit_facets(extractions, keys):
+        if tx.eligibility.has_unit_facets(extractions, keys):
             return chosen, selected
         by_revision = _grouped(
             tx.eligibility.revision_facets(
@@ -747,12 +767,17 @@ class EligibilityCompiler:
         request: QueryRequest,
         chosen: list[MemberRow],
         global_facets: Mapping[str, frozenset[str]],
-    ) -> tuple[frozenset[str], frozenset[str] | None]:
-        """Units failing the all-units filter, and units passing the candidate filter."""
+    ) -> tuple[frozenset[str], frozenset[str] | None, frozenset[str]]:
+        """Owners failing the all-units filter, units passing the candidate filter,
+        and the extractions without units whose revision fails the filter.
+
+        An owner no unit reaches (an unlinked asset, or anything of a revision
+        without units) is judged by its revision's metadata alone.
+        """
         if selected is None or (
             selected.all_units is None and selected.matched_candidates is None
         ):
-            return frozenset(), None
+            return frozenset(), None, frozenset()
         revision_of = {row.extraction_id: row.revision_id for row in chosen}
         keys: set[str] = set()
         for expr in (selected.all_units, selected.matched_candidates):
@@ -768,31 +793,42 @@ class EligibilityCompiler:
             )
         )
 
-        def matches(expr: FilterExpr, unit_id: str, extraction_id: str) -> bool:
+        def matches(expr: FilterExpr, unit_id: str | None, extraction_id: str) -> bool:
             revision = revision_of[extraction_id]
             return filter_matches(
                 expr,
                 self.registry,
                 FacetSubject(
                     by_revision.get(revision, {}),
-                    by_unit.get(unit_id, {}),
+                    by_unit.get(unit_id, {}) if unit_id is not None else {},
                     request.include_global,
                     global_facets.get(revision, frozenset()),
                 ),
             )
 
-        failing = frozenset(
+        all_units = selected.all_units
+        judged_out = {
+            extraction
+            for extraction in extractions
+            if all_units is not None and not matches(all_units, None, extraction)
+        }
+        empty, unlinked = _unreached(tx, judged_out, units)
+        failing = unlinked | frozenset(
             u.unit_id
             for u in units
-            if selected.all_units is not None
-            and not matches(selected.all_units, u.unit_id, u.extraction_id)
+            if all_units is not None
+            and not matches(all_units, u.unit_id, u.extraction_id)
         )
         if selected.matched_candidates is None:
-            return failing, None
-        return failing, frozenset(
-            u.unit_id
-            for u in units
-            if matches(selected.matched_candidates, u.unit_id, u.extraction_id)
+            return failing, None, empty
+        return (
+            failing,
+            frozenset(
+                u.unit_id
+                for u in units
+                if matches(selected.matched_candidates, u.unit_id, u.extraction_id)
+            ),
+            empty,
         )
 
     def _kind_envelopes(

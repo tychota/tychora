@@ -11,7 +11,8 @@ lookup, which keep their proxy/original state split:
 It also adds a date range facet over ``publication_date``. The corpus holds
 dated and undated editions, a source with an explicit global facet, a
 repository of Python code (non-citable file roots, unit-bound language facets
-and record-bound symbol kinds) and text vectors from a local embedder.
+and record-bound symbol kinds), text vectors from a local embedder, an empty
+edition with no units, and assets no unit links to.
 """
 
 from __future__ import annotations
@@ -247,6 +248,50 @@ def _add_figure(owner, collection_id: str) -> Figure:
     )
 
 
+EMPTY_KEY = "empty.md"
+# Assets no unit links to: one in the beta manual, one in the empty beta edition.
+UNLINKED = (("manual.md", "asset-unlinked-beta"), (EMPTY_KEY, "asset-unlinked-empty"))
+
+
+def _add_unlinked(owner, collection_id: str) -> None:
+    """Give two beta extractions an image asset that no unit links to.
+
+    The empty edition has no units at all, so every owner it has is one no
+    unit reaches. Each asset depends only on itself and its revision.
+    """
+    rows = []
+    for key, asset in UNLINKED:
+        ((extraction, revision, sha),) = owner_rows(
+            owner,
+            "SELECT e.extraction_id,e.revision_id,r.original_sha FROM extractions e "
+            "JOIN revisions r USING(revision_id) JOIN sources s USING(source_id) "
+            "WHERE s.source_key=? AND s.collection_id=?",
+            (key, collection_id),
+        )
+        locator = TextLocator(
+            artifact_ref=sha, native_ref="figure:unlinked", char_start=0, char_end=0
+        ).model_dump_json()
+        rows.append((asset, extraction, revision, sha, locator))
+
+    def write() -> None:
+        db = owner.store.db
+        with owner.store.immediate_transaction():
+            for asset, extraction, revision, sha, locator in rows:
+                db.execute(
+                    "INSERT INTO assets(asset_id,extraction_id,artifact_sha,asset_type,"
+                    "native_ref,locator_json,declared_review_state) "
+                    "VALUES (?,?,?,'image','figure:unlinked',?,'unreviewed')",
+                    (asset, extraction, sha, locator),
+                )
+                db.executemany(
+                    "INSERT INTO representation_dependencies(owner_id,dependency_id) "
+                    "VALUES (?,?)",
+                    [(asset, revision), (asset, asset)],
+                )
+
+    on_owner(owner, write)
+
+
 @dataclass(frozen=True)
 class Corpus:
     """An open workspace, its collections and the injected figure."""
@@ -293,7 +338,17 @@ def build(root: Path) -> Corpus:
         _GLOBAL_TEXT,
         global_metadata(1, True),
     )
+    # Production ingestion of an empty markdown text yields no units.
+    add_text(
+        kb,
+        collections["default"],
+        EMPTY_KEY,
+        "manual@1",
+        "",
+        {"publisher": "Acme", "edition": "1", "scope": {"project": "beta"}},
+    )
     _add_code(kb, root, collections["default"])
+    _add_unlinked(workspace.owner, collections["default"])
     return Corpus(kb, collections, _add_figure(workspace.owner, collections["default"]))
 
 

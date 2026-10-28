@@ -518,6 +518,16 @@ class EligibilityRepository(Protocol):
         """Unit-level values of the listed facets for units of these extractions."""
         ...
 
+    def has_unit_facets(
+        self, extraction_ids: tuple[str, ...], facet_keys: tuple[str, ...]
+    ) -> bool:
+        """Whether any unit of these extractions carries a value of a listed facet."""
+        ...
+
+    def unlinked_assets(self, extraction_ids: tuple[str, ...]) -> frozenset[str]:
+        """Assets of these extractions that no unit links to."""
+        ...
+
     def revision_metadata(
         self, revision_ids: tuple[str, ...]
     ) -> tuple[tuple[str, str, str], ...]:

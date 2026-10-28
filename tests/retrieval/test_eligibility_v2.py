@@ -51,6 +51,7 @@ from tychora.retrieval.compiler import (
 from tychora.retrieval.graph_scope import graph_scope
 
 ITERATIONS = 500
+_EDITIONS = 8  # the shared source's last edition a facet-binding mutation adds
 _REVIEW_STATES = ("unreviewed", "needs_review", "accepted", "rejected")
 _FILTERS = (
     {"op": "eq", "field": "project", "value": "alpha"},
@@ -66,7 +67,6 @@ _FILTERS = (
         ],
     },
 )
-# Drawn from their own generator, so the main draws (and mutations) replay.
 _MIXED_FILTERS = (
     # A metadata conjunct drops revisions; the unit conjunct stays per unit.
     {
@@ -105,6 +105,8 @@ _MINIMUMS = {
     "records": 100,
     "closure": 10,
     "filtered_revisions": 20,
+    "unreached_refused": 10,
+    "empty_revision_dropped": 10,
     "rejected_revision_proxy": 3,
     "request.limit_exceeded": 3,
     "mode.unavailable": 3,
@@ -127,13 +129,13 @@ def _scope(rng, collections):
     )
 
 
-def _request(rng, revision_ids, mixed):
+def _request(rng, revision_ids):
     value = {"question": "seal inspection", "mode": rng.choice(MODES)}
     if rng.random() < 0.45:
         value["filters"] = rng.choice(_FILTERS)
         value["include_global"] = rng.random() < 0.5
-        if mixed.random() < 0.4:
-            value["filters"] = mixed.choice(_MIXED_FILTERS)
+        if rng.random() < 0.4:
+            value["filters"] = rng.choice(_MIXED_FILTERS)
     if rng.random() < 0.3:
         value["as_of"] = date(
             rng.randint(2019, 2025), rng.randint(1, 12), 1
@@ -193,7 +195,7 @@ class _Run:
 # a stable order (collection slug, source key, edition, ordinal) and a seed
 # replays the same run.
 _SOURCES_SQL = (
-    "SELECT s.source_id,s.access_floor FROM sources s "
+    "SELECT s.source_id,s.access_floor,s.source_key FROM sources s "
     "JOIN collections c USING(collection_id) ORDER BY c.slug,s.source_key"
 )
 _REVISIONS_SQL = (
@@ -239,7 +241,12 @@ def _review(run):
 
 
 def _source_floor(run):
-    source, floor = run.rng.choice(owner_rows(run.owner, _SOURCES_SQL))
+    # The shared source keeps its floor: above the caller's ceiling, the
+    # facet-binding mutation could no longer publish its next edition.
+    sources = [
+        row for row in owner_rows(run.owner, _SOURCES_SQL) if row[2] != GLOBAL_KEY
+    ]
+    source, floor, _ = run.rng.choice(sources)
     revision = owner_row(
         run.owner, "SELECT revision_id FROM revisions WHERE source_id=?", (source,)
     )
@@ -262,7 +269,21 @@ def _withdraw(run):
     if run.withdrawn:
         return _override(run)
     run.withdrawn = True
-    source = run.rng.choice(_ids(run, _SOURCES_SQL))
+    # Withdrawing the figure's source would starve every figure counter for
+    # the rest of the run, and a withdrawn shared source takes no new edition;
+    # any other source exercises withdrawal.
+    figure = owner_row(
+        run.owner,
+        "SELECT source_id FROM revisions WHERE revision_id=?",
+        (run.corpus.figure.revision,),
+    )
+    source = run.rng.choice(
+        [
+            item
+            for item, _, key in owner_rows(run.owner, _SOURCES_SQL)
+            if (item,) != figure and key != GLOBAL_KEY
+        ]
+    )
     return run.write(lambda: run.owner.store.withdraw_source(source))
 
 
@@ -333,7 +354,7 @@ _MUTATIONS = (
 def _mutate(run):
     names, weights = zip(*_MUTATIONS, strict=True)
     mutation = run.rng.choices(names, weights)[0]
-    if mutation is _facet_binding and (run.edition >= 4 or run.archived):
+    if mutation is _facet_binding and (run.edition >= _EDITIONS or run.archived):
         mutation = _review  # an archived collection admits no new edition
     mutation(run)
     run.counts[f"mutation:{mutation.__name__}"] += 1
@@ -359,6 +380,27 @@ _GRAPH = GraphBinding(
 )
 
 
+def _unreached(v1, units, assets, records):
+    """Owners no unit reaches, of revisions whose metadata fails the filter.
+
+    These are the unlinked assets, the records over them and every owner of a
+    revision without units. v1 admitted them; v2 judges them by their
+    revision's metadata alone. Also returns the failing revisions without units.
+    """
+    failing = v1.metadata_failing_revision_ids
+    unit_ids = {f.owner_id for f in units}
+    with_units = {r for f in units for r in f.dependency_ids & failing}
+    unlinked = {
+        f.owner_id
+        for f in assets
+        if f.dependency_ids & failing and not f.dependency_ids & unit_ids
+    }
+    over = {
+        f.owner_id for f in records if f.chunk_id is None and f.asset_id in unlinked
+    }
+    return frozenset(unlinked | over), frozenset(failing - with_units)
+
+
 def _compare(run, v1, v2, request, registry, context):
     facts = run.facts
     units = [f for f in facts.values() if f.kind == "unit"]
@@ -373,14 +415,17 @@ def _compare(run, v1, v2, request, registry, context):
     # units; v2 drops a revision whose metadata fails the filter. Admission is
     # compared owner by owner below.
     selected = compile_filter(request.filters, registry) if request.filters else None
+    unreached, empty = _unreached(v1, units, assets, records)
     dropped = v1.revision_ids - set(v2.revisions)
     assert set(v2.revisions) <= v1.revision_ids, context
-    assert dropped <= v1.filter_excluded_revision_ids, context
+    assert empty <= dropped <= v1.filter_excluded_revision_ids | empty, context
     if selected is not None and selected.all_units is not None:
         _, unit_part = split_revision_filter(selected.all_units, registry)
         if unit_part is None:
-            assert dropped == v1.filter_excluded_revision_ids, context
+            assert dropped == v1.filter_excluded_revision_ids | empty, context
     run.counts["filtered_revisions"] += bool(dropped)
+    run.counts["unreached_refused"] += bool(unreached & v1.asset_ids)
+    run.counts["empty_revision_dropped"] += bool(empty)
     assert admitted(is_source_unit, units) == v1.source_unit_ids, context
     # The graph scope a traversal reads splits the eligible units as v1 did.
     scope = run.call(
@@ -397,8 +442,10 @@ def _compare(run, v1, v2, request, registry, context):
     }
     assert eligible_proxies == v1.proxy_unit_ids, context
     assert admitted(is_admitted_chunk, chunks) == v1.chunk_ids, context
-    assert admitted(is_eligible_asset, assets) == v1.asset_ids, context
-    assert admitted(is_admitted_record, records) == v1.vector_record_ids, context
+    assert admitted(is_eligible_asset, assets) == v1.asset_ids - unreached, context
+    assert admitted(is_admitted_record, records) == v1.vector_record_ids - unreached, (
+        context
+    )
     # v1 keeps candidate proxies and assets internal: a candidate proxy is one
     # whose windows it admits, and a candidate asset has an eligible source
     # unit passing the candidate filter (the figure's source unit is citable).
@@ -423,7 +470,9 @@ def _compare(run, v1, v2, request, registry, context):
             )
         )
     }
-    assert admitted(is_candidate_asset, assets) == v1_candidate_assets, context
+    assert admitted(is_candidate_asset, assets) == v1_candidate_assets - unreached, (
+        context
+    )
     return candidate_proxies
 
 
@@ -512,8 +561,7 @@ def test_v2_admits_exactly_what_v1_admitted_on_500_randomized_fixtures(corpus):
     compiler = EligibilityCompiler(owner.store.registry, owner.artifacts)
     legacy = OracleCompiler(owner.store)
     cache = EligibilityCache()
-    run = _Run(corpus, random.Random(20261023))
-    mixed = random.Random(20261028)
+    run = _Run(corpus, random.Random(20261030))
     run.refresh()
     next_mutation = run.rng.randint(3, 5)
     for iteration in range(ITERATIONS):
@@ -522,7 +570,7 @@ def test_v2_admits_exactly_what_v1_admitted_on_500_randomized_fixtures(corpus):
             next_mutation += run.rng.randint(3, 5)
         revision_ids = _ids(run, _REVISIONS_SQL)
         scope = _scope(run.rng, corpus.collections)
-        request = _request(run.rng, revision_ids, mixed)
+        request = _request(run.rng, revision_ids)
         both = _compile_both(run, legacy, compiler, cache, scope, request)
         if both is None:
             continue
@@ -877,3 +925,73 @@ def test_mixed_or_falls_back_to_the_per_unit_path(stable, monkeypatch):
     assert set(view.revisions) - alpha
     for revision in set(view.revisions) - alpha:
         assert units_of[revision] <= view.excluded_unit_ids
+
+
+def test_unit_value_for_a_metadata_facet_keeps_the_per_unit_path(stable, monkeypatch):
+    """One unit's own failing project value falls back to the per-unit path."""
+    kb, collections = stable
+    owner = kb._workspace.owner
+    snapshot = on_owner(owner, lambda: owner.store.resolve_snapshot(None))
+    # A unit of an alpha edition the unfiltered compile selects.
+    plain, _, units_of = _filtered_view(
+        kb, collections, monkeypatch, {"op": "eq", "field": "language", "value": "x"}
+    )
+    selected = sorted(set(plain.revisions) & _project_revisions(kb, "alpha"))
+    row = (min(units_of[selected[0]]),) if selected else None
+    assert row is not None
+    (unit,) = row
+
+    def write(sql, args):
+        with owner.store.immediate_transaction():
+            owner.store.db.execute(sql, args)
+
+    on_owner(
+        owner,
+        lambda: write(
+            "INSERT INTO facet_values(unit_id,facet_key,text_value) "
+            "VALUES (?,'scope.project','beta')",
+            (unit,),
+        ),
+    )
+    try:
+        filters = {"op": "eq", "field": "project", "value": "alpha"}
+        view, reads, _ = _filtered_view(kb, collections, monkeypatch, filters)
+        scope = owner.scope.model_copy(
+            update={
+                "collection_ids": frozenset(collections.values()),
+                "access_ceiling": 3,
+            }
+        )
+        request = QueryRequest.from_mapping(
+            {"question": "seal", "revision_selector": "all", "filters": filters}
+        )
+        v1 = owner.run_write_sync(
+            lambda: OracleCompiler(owner.store).compile_eligibility(
+                snapshot, scope, request, owner.config
+            ),
+            ExecutionContext(),
+        )
+        facts = kb._workspace.bridge.call(
+            owner.run_read(
+                lambda tx: snapshot_facts(tx, snapshot.snapshot_id),
+                ExecutionContext(),
+            )
+        )
+    finally:
+        on_owner(
+            owner,
+            lambda: write(
+                "DELETE FROM facet_values WHERE unit_id=? AND facet_key='scope.project'",
+                (unit,),
+            ),
+        )
+    units = [f for f in facts.values() if f.kind == "unit"]
+    assert set(view.revisions) == v1.revision_ids
+    assert {f.owner_id for f in units if is_source_unit(view, f, facts)} == (
+        v1.source_unit_ids
+    )
+    assert {f.owner_id for f in units if is_eligible_unit(view, f)} == (
+        v1.context_unit_ids | v1.structural_unit_ids
+    )
+    assert unit in view.excluded_unit_ids
+    assert reads == [tuple(sorted(view.extraction_ids))]

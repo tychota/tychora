@@ -98,6 +98,17 @@ _OWNERS = (
     f"WHERE v.record_id {_IN}"
 )
 
+# Bounded existence check; the partial unit index needs ``unit_id IS NOT NULL``.
+_UNIT_FACET_EXISTS = (
+    "SELECT EXISTS(SELECT 1 FROM facet_values f "
+    "JOIN evidence_units u ON u.unit_id=f.unit_id "
+    f"WHERE f.unit_id IS NOT NULL AND f.facet_key {_IN} "
+    f"AND u.extraction_id {_IN} LIMIT 1)"
+)
+_UNLINKED_ASSETS = (
+    f"SELECT a.asset_id FROM assets a WHERE a.extraction_id {_IN} "
+    "AND NOT EXISTS (SELECT 1 FROM unit_assets ua WHERE ua.asset_id=a.asset_id)"
+)
 _ASSET_SOURCES = (
     f"SELECT asset_id,unit_id FROM unit_assets WHERE role='source' AND asset_id {_IN}"
 )
@@ -238,6 +249,23 @@ class SqliteEligibilityRepository:
             "ORDER BY f.unit_id,f.facet_key,f.ordinal",
             facet_keys,
             extraction_ids,
+        )
+
+    def has_unit_facets(
+        self, extraction_ids: tuple[str, ...], facet_keys: tuple[str, ...]
+    ) -> bool:
+        """Whether any unit of these extractions carries a value of a listed facet."""
+        # fetchall finishes the statement, so no read snapshot outlives the call.
+        ((found,),) = self._db.execute(
+            _UNIT_FACET_EXISTS, (_ids(facet_keys), _ids(extraction_ids))
+        ).fetchall()
+        return bool(found)
+
+    def unlinked_assets(self, extraction_ids: tuple[str, ...]) -> frozenset[str]:
+        """Assets of these extractions that no unit links to."""
+        return frozenset(
+            row[0]
+            for row in self._db.execute(_UNLINKED_ASSETS, (_ids(extraction_ids),))
         )
 
     def revision_metadata(
