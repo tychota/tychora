@@ -158,14 +158,32 @@ class EligibilityCache:
     """LRU of compiled views keyed by snapshot, policy epoch, scope, policy and request.
 
     Two concurrent misses on one key may both compile; the second result
-    replaces the first, which is equal.
+    replaces the first, which is equal. The policy epoch only grows, so an
+    entry of an older epoch can never be hit again: storing an epoch evicts
+    every older one, views and graph scopes alike, and an entry compiled for
+    an epoch older than the newest stored one is returned but not kept.
     """
 
     def __init__(self, capacity: int = ELIGIBILITY_CACHE_SIZE) -> None:
         self._capacity = capacity
         self._entries: OrderedDict[EligibilityKey, CompiledEligibility] = OrderedDict()
         self._graphs: OrderedDict[EligibilityKey, GraphScope | None] = OrderedDict()
+        self._epoch = 0
         self._lock = RLock()
+
+    def _admit_epoch(self, key: EligibilityKey) -> bool:
+        """Whether ``key`` may be stored; a newer epoch evicts the older ones.
+
+        Called with the lock held.
+        """
+        if key.policy_epoch < self._epoch:
+            return False
+        if key.policy_epoch > self._epoch:
+            self._epoch = key.policy_epoch
+            for entries in (self._entries, self._graphs):
+                for stale in [k for k in entries if k.policy_epoch < self._epoch]:
+                    del entries[stale]
+        return True
 
     def get_or_compile(
         self, key: EligibilityKey, compile: Callable[[], CompiledEligibility]
@@ -184,6 +202,8 @@ class EligibilityCache:
                 reason="invariant.unexpected",
             )
         with self._lock:
+            if not self._admit_epoch(key):
+                return entry
             self._entries[key] = entry
             self._entries.move_to_end(key)
             while len(self._entries) > self._capacity:
@@ -200,6 +220,8 @@ class EligibilityCache:
                 return self._graphs[key]
         scope = build()
         with self._lock:
+            if not self._admit_epoch(key):
+                return scope
             self._graphs[key] = scope
             while len(self._graphs) > self._capacity:
                 self._graphs.popitem(last=False)

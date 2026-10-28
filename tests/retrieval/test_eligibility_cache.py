@@ -74,3 +74,32 @@ def test_graph_scope_is_built_once_per_key_and_purged_with_views():
     cache.purge()
     cache.graph_scope(first, build)
     assert len(builds) == 4
+
+
+def test_storing_a_newer_epoch_evicts_every_older_epoch_and_its_graph():
+    cache = EligibilityCache()
+    old = [_compiled(epoch=1, request=r) for r in "ab"]
+    for compiled in old:
+        key = eligible_cache_key(compiled.view)
+        cache.get_or_compile(key, lambda compiled=compiled: compiled)
+        cache.graph_scope(key, lambda: None)
+    same = _compiled(epoch=2, request="a")
+    cache.get_or_compile(eligible_cache_key(same.view), lambda: same)
+    # Only the epoch-2 view is left; the epoch-1 views and graphs are gone.
+    assert cache.purge() == 1
+    builds = []
+    cache.graph_scope(eligible_cache_key(old[0].view), lambda: builds.append(1))
+    assert builds == [1]
+
+
+def test_a_stale_epoch_compiled_late_is_returned_but_not_kept():
+    cache = EligibilityCache()
+    newer = _compiled(epoch=3)
+    cache.get_or_compile(eligible_cache_key(newer.view), lambda: newer)
+    stale = _compiled(epoch=2)
+    key = eligible_cache_key(stale.view)
+    assert cache.get_or_compile(key, lambda: stale) is stale
+    again = _compiled(epoch=2)
+    assert cache.get_or_compile(key, lambda: again) is again
+    cache.graph_scope(key, lambda: None)
+    assert cache.purge() == 1
