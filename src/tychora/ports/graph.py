@@ -1,10 +1,11 @@
 """Native graph generation boundary."""
 
-from typing import Literal, Protocol
+from typing import Protocol
 
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.graph import (
     AssertionPage,
+    AssertionQuery,
     GraphBatchReceipt,
     GraphBudget,
     GraphCandidates,
@@ -54,11 +55,7 @@ class GraphStore(Protocol):
     def get_assertions(
         self,
         view: GraphScope,
-        selected_unit_ids: tuple[str, ...],
-        predicates: tuple[str, ...],
+        query: AssertionQuery,
         limits: GraphBudget,
         ctx: ExecutionContext,
-        *,
-        direction: Literal["outgoing", "incoming", "both"] | None = None,
-        relation_view: Literal["semantic", "structural"] | None = None,
     ) -> AssertionPage: ...

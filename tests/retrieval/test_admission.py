@@ -6,6 +6,7 @@ from tychora.configuration.models import ResolvedConfig
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.graph import (
     AssertionPage,
+    AssertionQuery,
     GraphBatchReceipt,
     GraphBudget,
     GraphGenerationSpec,
@@ -120,13 +121,9 @@ class _TraversalGraph:
     def get_assertions(
         self,
         view: GraphScope,
-        selected_unit_ids: tuple[str, ...],
-        predicates: tuple[str, ...],
+        query: AssertionQuery,
         limits: GraphBudget,
         ctx: ExecutionContext,
-        *,
-        direction: str | None = None,
-        relation_view: str | None = None,
     ) -> AssertionPage:
         raise AssertionError("query traversal must not inspect assertions")
 
