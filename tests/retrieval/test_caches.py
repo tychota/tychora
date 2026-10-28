@@ -79,19 +79,12 @@ def test_provider_runtime_shares_query_cache_memory_ceiling() -> None:
     assert caches.get_result("result") == b"abc"
 
 
-def test_nested_prepared_result_is_serialized_and_all_retained_bytes_are_bounded() -> (
-    None
-):
+def test_result_entries_are_bytes_and_all_retained_bytes_are_bounded() -> None:
     caches = QueryCaches(clock=Clock(), max_bytes=4096)
     large_key = ("query" * 2000, "scope")
-    nested = {"segments": [{"id": str(i), "parts": [i, i + 1]} for i in range(60)]}
-    caches.put_result(large_key, nested)
-    nested["segments"].clear()
-    stored = caches.get_result(large_key)
-    assert isinstance(stored, dict)
-    segments = stored["segments"]
-    assert isinstance(segments, list)
-    assert len(segments) == 60
+    entry = b'{"segments":[' + b",".join(b'{"id":"%d"}' % i for i in range(60)) + b"]}"
+    caches.put_result(large_key, entry)
+    assert caches.get_result(large_key) == entry
     assert caches.retained_bytes <= 4096
     assert all(len(key) == 64 for key in caches._entries[1])
     assert all(isinstance(entry.value, bytes) for entry in caches._entries[1].values())

@@ -343,7 +343,7 @@ class EngineSession:
                 )
                 self.counts = replace(self.counts, stages_ms=stages)
 
-        def measured_result(key: Hashable) -> object | None:
+        def measured_result(key: Hashable) -> bytes | None:
             value = cached_result(key)
             if value is not None:
                 self._bump(cache_hits=1)
