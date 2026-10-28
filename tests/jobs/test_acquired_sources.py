@@ -4,7 +4,7 @@ import hashlib
 
 import pytest
 
-from tests.transports.test_http import Counter
+from tests.helpers.legacy import OutputCounter
 from tests.transports.test_pdf_intake import app_for, client_for, descriptor, make_pdf
 from tychora import Tychora
 from tychora.contracts.errors import TychoraError
@@ -32,7 +32,7 @@ def synthetic_policy_resolver(
 
 @pytest.mark.asyncio
 async def test_public_upload_descriptor_cannot_open_arbitrary_cas(tmp_path):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         async with client_for(app) as client:
             value = descriptor(kb, 128)
@@ -67,7 +67,7 @@ async def test_capture_precedes_parser_and_retry_uses_same_immutable_original(
     import tychora.application.pdf_processing as processing
 
     monkeypatch.setattr(processing, "resolve_pdf_policy", synthetic_policy_resolver)
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         sources = kb._workspace.services.sources
         seen = []
@@ -234,7 +234,7 @@ async def test_restart_reconciles_acceptance_before_response_even_after_ttl(
 
     monkeypatch.setattr(processing, "resolve_pdf_policy", synthetic_policy_resolver)
     workspace = tmp_path / "workspace"
-    with Tychora.open(workspace, token_counter=Counter()) as kb:
+    with Tychora.open(workspace, token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         service = app.state.pdf_intakes
 
@@ -289,7 +289,7 @@ async def test_restart_reconciles_acceptance_before_response_even_after_ttl(
             job_id = await kb._workspace.owner.run_write(expire, ExecutionContext())
             await kb._workspace.services.jobs.wait(job_id, ExecutionContext())
         await kb._workspace.services.source_jobs.aclose()
-    with Tychora.open(workspace, token_counter=Counter()) as kb:
+    with Tychora.open(workspace, token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         async with client_for(app) as client:
             inspected = await client.get(path)
@@ -321,7 +321,7 @@ async def test_concurrent_submit_preserves_each_inflight_trusted_binding(
     from tychora.contracts.pdf_policy import PdfProcessingPolicy
 
     monkeypatch.setattr(processing, "resolve_pdf_policy", synthetic_policy_resolver)
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = app_for(kb)
         scheduler = kb._workspace.services.source_jobs
         original = scheduler.add_acquired_async
@@ -382,7 +382,7 @@ async def test_standard_source_scheduler_preserves_existing_execution_intercepto
 ):
     from tychora.contracts.requests import SourceInput
 
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         sources = kb._workspace.services.sources
         original = sources.execute_accepted
 
@@ -410,7 +410,7 @@ def test_replay_policy_cannot_raise_current_owner_processing_budget(
     from tychora.contracts.pdf_intake import PdfIntakeDescriptor
 
     monkeypatch.setattr(processing, "resolve_pdf_policy", synthetic_policy_resolver)
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         PdfIntakeService(
             kb._workspace.owner, kb._workspace.services, max_retained_bytes=128
         )

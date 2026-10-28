@@ -2,8 +2,8 @@
 
 import pytest
 
+from tests.helpers.legacy import OutputCounter
 from tests.security.test_upload_consent import _config, _dispatch, _request
-from tests.transports.test_http import Counter
 from tychora import ProviderBindings, Tychora
 from tychora.contracts.collections import CollectionEdit
 from tychora.contracts.errors import TychoraError
@@ -13,7 +13,7 @@ from tychora.ports.execution import ExecutionContext
 
 
 def test_invalid_and_duplicate_managed_binding_rejected(tmp_path):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         services = kb._workspace.services
         partial = kb.scope.model_copy(update={"capabilities": frozenset({"read"})})
@@ -49,7 +49,7 @@ async def test_consent_preserves_lifecycle_default_and_refreshes_only_managed_sl
         tmp_path / "workspace",
         config=_config(tmp_path),
         providers=ProviderBindings(),
-        token_counter=Counter(),
+        token_counter=OutputCounter(),
     ) as kb:
         owner = kb._workspace.owner
         original = kb.scope

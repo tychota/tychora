@@ -3,9 +3,9 @@
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from tests.helpers.legacy import OutputCounter
 from tests.helpers.publication import members_of
 from tests.helpers.timing import scaled
-from tests.transports.test_http import Counter
 from tychora import Tychora
 from tychora.interfaces.http.app import create_app
 from tychora.interfaces.http.auth import LocalAuth
@@ -14,7 +14,7 @@ from tychora.ports.execution import ExecutionContext
 
 @pytest.mark.asyncio
 async def test_archive_blocks_work_hides_cached_query_and_retains_inspection(tmp_path):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         services = kb._workspace.services
         app = create_app(
@@ -90,7 +90,7 @@ async def test_captured_bundle_cannot_overwrite_current_collection(
 
     from tychora.contracts.collections import CollectionCreate, CollectionEdit
 
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         services = kb._workspace.services
         collection = await services.collections.create(
@@ -186,7 +186,7 @@ async def test_captured_bundle_cannot_overwrite_current_collection(
             assert consent.collection_upload_providers == ("voyage",)
 
 
-class SparseCounter(Counter):
+class SparseCounter(OutputCounter):
     """Counts a token per four characters so the small response budget holds a section."""
 
     def count(self, text: str) -> int:
@@ -275,7 +275,7 @@ async def test_reuse_target_archived_after_prepared_plan_is_denied(
     import asyncio
     from threading import Event
 
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         services = kb._workspace.services
         source = {
             "type": "text",

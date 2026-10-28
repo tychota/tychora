@@ -6,7 +6,7 @@ from hashlib import sha256
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from tests.transports.test_http import Counter
+from tests.helpers.legacy import OutputCounter
 from tychora import Tychora
 from tychora.application.setup import SetupService
 from tychora.interfaces.http.app import create_app
@@ -45,7 +45,7 @@ async def test_models_http_catalog_plan_readiness_is_read_only(tmp_path, monkeyp
     manifest(tmp_path, monkeypatch)
     cache = tmp_path / "absent"
     monkeypatch.setenv("TYCHORA_MODEL_CACHE", str(cache))
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = create_app(
             kb._workspace.owner,
             kb._workspace.services,
@@ -179,7 +179,7 @@ async def test_explicit_setup_receipt_is_historical_not_current_readiness(
     target.write_bytes(payload)
     monkeypatch.setenv("TYCHORA_MODEL_CACHE", str(cache))
     original_verify = SetupService.verify_bounded
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = create_app(
             kb._workspace.owner,
             kb._workspace.services,

@@ -2,9 +2,9 @@
 
 import pytest
 
+from tests.helpers.legacy import OutputCounter
 from tests.ingestion import test_docling_mapping as mapping_fixtures
 from tests.jobs.test_acquired_sources import synthetic_policy_resolver
-from tests.transports.test_http import Counter
 from tests.transports.test_pdf_intake import app_for, client_for, descriptor, make_pdf
 from tychora import Tychora
 from tychora.contracts.base import FrozenJsonMap
@@ -32,7 +32,7 @@ async def test_http_analysis_issues_exact_policy_confirmation_hash(
         ), blockers
 
     monkeypatch.setattr(pdf_processing, "resolve_pdf_policy", resolver)
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
 
         async def unavailable(*args, **kwargs):
             raise TychoraError("CAPABILITY_MISSING", "Synthetic extraction stop")
@@ -108,7 +108,7 @@ async def test_qualified_http_pdf_submission_publishes_and_reports_batches(tmp_p
         indexed_representation_identity,
     )
 
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         original_config = owner.config
         assert original_config.values.extraction.parser == "markdown"
@@ -173,7 +173,7 @@ async def test_pdf_composition_limit_is_durable_nonretryable_job_failure(
     from tychora.ingestion.composition import _input_references
 
     monkeypatch.setattr(pdf_processing, "resolve_pdf_policy", synthetic_policy_resolver)
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
 
         async def oversized_parser_output(*args, **kwargs):
             if fault == "wrapped-lineage":

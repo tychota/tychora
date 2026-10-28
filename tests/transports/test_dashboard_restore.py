@@ -5,7 +5,7 @@ import hashlib
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from tests.transports.test_http import Counter
+from tests.helpers.legacy import OutputCounter
 from tychora import Tychora
 from tychora.contracts.collections import CollectionCreate
 from tychora.interfaces.http.app import create_app
@@ -17,7 +17,7 @@ from tychora.ports.execution import ExecutionContext
 async def test_missing_restore_archive_is_typed_and_authorized_before_path_lookup(
     tmp_path,
 ):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         narrow = kb.scope
         await kb._workspace.services.collections.create(
             CollectionCreate(title="Second", slug="second"),

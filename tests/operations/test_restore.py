@@ -755,11 +755,11 @@ def test_native_recovery_on_empty_synthetic_workspace_is_an_explicit_manage_acti
 
 
 def test_archived_v2_collection_and_active_v1_survive_backup_restore(tmp_path):
-    from tests.transports.test_http import Counter
+    from tests.helpers.legacy import OutputCounter
     from tychora import Tychora
     from tychora.contracts.collections import CollectionCreate
 
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         ws = kb._workspace
         service = ws.services.collections
         created = ws.bridge.call(

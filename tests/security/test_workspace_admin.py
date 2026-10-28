@@ -5,7 +5,7 @@ import hashlib
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from tests.transports.test_http import Counter
+from tests.helpers.legacy import OutputCounter
 from tychora import Tychora
 from tychora.contracts.collections import CollectionCreate
 from tychora.contracts.errors import TychoraError
@@ -17,7 +17,7 @@ from tychora.ports.execution import ExecutionContext
 
 @pytest.mark.asyncio
 async def test_full_static_manager_and_narrow_tokens_across_global_routes(tmp_path):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         owner = kb._workspace.owner
         narrow = kb.scope
         await kb._workspace.services.collections.create(
@@ -162,7 +162,7 @@ async def test_full_static_manager_and_narrow_tokens_across_global_routes(tmp_pa
 
 @pytest.mark.asyncio
 async def test_direct_settings_admission_and_scope_are_not_http_only(tmp_path):
-    with Tychora.open(tmp_path / "workspace", token_counter=Counter()) as kb:
+    with Tychora.open(tmp_path / "workspace", token_counter=OutputCounter()) as kb:
         app = create_app(
             kb._workspace.owner,
             kb._workspace.services,
