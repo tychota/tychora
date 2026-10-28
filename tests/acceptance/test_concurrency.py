@@ -108,13 +108,15 @@ def _p95(values):
 @pytest.mark.slow
 @pytest.mark.asyncio
 async def test_add_of_300_pages_with_20_queries(tmp_path):
-    """No busy refusals, and query p95 stays within 1.5x of idle during the add."""
+    """No busy refusals; 20 concurrent queries keep p95 within 1.5x of idle during the add."""
     async with AsyncTychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
         for index in range(5):
             job = await kb.sources.add(_source(f"seed-{index}.md", 3))
             assert (await kb.jobs.wait(job.id)).state == "succeeded"
         await _timed(kb, "pump seal")
-        idle = [await _timed(kb, "verification outcome") for _ in range(20)]
+        idle = await asyncio.gather(
+            *(_timed(kb, "verification outcome") for _ in range(20))
+        )
         job = await kb.sources.add(_source("book.md", 300))
         busy = await asyncio.gather(
             *(_timed(kb, "verification outcome") for _ in range(20))
