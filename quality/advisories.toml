@@ -61,14 +61,6 @@ approved = 2026-10-22
 expires = 2026-11-05
 
 [[advisory]]
-id = "CVE-2026-112392"
-package = "pillow"
-reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
-reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
-approved = 2026-10-22
-expires = 2026-11-05
-
-[[advisory]]
 id = "CVE-2026-112393"
 package = "pillow"
 reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
@@ -78,22 +70,6 @@ expires = 2026-11-05
 
 [[advisory]]
 id = "CVE-2026-112395"
-package = "pillow"
-reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
-reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
-approved = 2026-10-22
-expires = 2026-11-05
-
-[[advisory]]
-id = "CVE-2026-112396"
-package = "pillow"
-reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
-reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
-approved = 2026-10-22
-expires = 2026-11-05
-
-[[advisory]]
-id = "CVE-2026-112397"
 package = "pillow"
 reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
 reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
@@ -125,23 +101,7 @@ approved = 2026-10-22
 expires = 2026-11-05
 
 [[advisory]]
-id = "CVE-2026-112402"
-package = "pillow"
-reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
-reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
-approved = 2026-10-22
-expires = 2026-11-05
-
-[[advisory]]
 id = "CVE-2026-112404"
-package = "pillow"
-reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
-reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
-approved = 2026-10-22
-expires = 2026-11-05
-
-[[advisory]]
-id = "CVE-2026-112405"
 package = "pillow"
 reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
 reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
@@ -197,14 +157,6 @@ approved = 2026-10-22
 expires = 2026-11-05
 
 [[advisory]]
-id = "CVE-2026-112896"
-package = "pillow"
-reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
-reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
-approved = 2026-10-22
-expires = 2026-11-05
-
-[[advisory]]
 id = "CVE-2026-112897"
 package = "pillow"
 reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
@@ -222,14 +174,6 @@ expires = 2026-11-05
 
 [[advisory]]
 id = "CVE-2026-112900"
-package = "pillow"
-reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
-reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
-approved = 2026-10-22
-expires = 2026-11-05
-
-[[advisory]]
-id = "CVE-2026-112901"
 package = "pillow"
 reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
 reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
@@ -293,22 +237,6 @@ approved = 2026-10-22
 expires = 2026-11-05
 
 [[advisory]]
-id = "CVE-2026-96636"
-package = "pillow"
-reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
-reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
-approved = 2026-10-22
-expires = 2026-11-05
-
-[[advisory]]
-id = "CVE-2026-96637"
-package = "pillow"
-reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
-reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
-approved = 2026-10-22
-expires = 2026-11-05
-
-[[advisory]]
 id = "CVE-2026-96638"
 package = "pillow"
 reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
@@ -317,47 +245,7 @@ approved = 2026-10-22
 expires = 2026-11-05
 
 [[advisory]]
-id = "CVE-2026-96639"
-package = "pillow"
-reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
-reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
-approved = 2026-10-22
-expires = 2026-11-05
-
-[[advisory]]
 id = "CVE-2026-96640"
-package = "pillow"
-reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
-reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
-approved = 2026-10-22
-expires = 2026-11-05
-
-[[advisory]]
-id = "CVE-2026-96641"
-package = "pillow"
-reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
-reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
-approved = 2026-10-22
-expires = 2026-11-05
-
-[[advisory]]
-id = "CVE-2026-96642"
-package = "pillow"
-reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
-reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
-approved = 2026-10-22
-expires = 2026-11-05
-
-[[advisory]]
-id = "CVE-2026-96643"
-package = "pillow"
-reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
-reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
-approved = 2026-10-22
-expires = 2026-11-05
-
-[[advisory]]
-id = "CVE-2026-96644"
 package = "pillow"
 reason = "Fixed in Pillow 13.0.0, held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
 reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
@@ -403,3 +291,203 @@ reason = "Fixed in pypdf 6.21.0, held back only by the 14-day minimum release ag
 reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
 approved = 2026-10-22
 expires = 2026-11-05
+
+[[advisory]]
+id = "CVE-2026-112907"
+package = "filelock"
+reason = "Fixed in filelock 4.2.1 (released 2026-10-17), held back only by the 14-day minimum release age."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-31
+
+[[advisory]]
+id = "CVE-2026-112913"
+package = "filelock"
+reason = "Fixed in filelock 4.2.1 (released 2026-10-17), held back only by the 14-day minimum release age."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-31
+
+[[advisory]]
+id = "CVE-2026-112940"
+package = "filelock"
+reason = "Fixed in filelock 4.2.1 (released 2026-10-17), held back only by the 14-day minimum release age."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-31
+
+[[advisory]]
+id = "PYSEC-2026-4326"
+package = "pillow"
+reason = "Fixed in Pillow 13.0.0 (released 2026-10-16), held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-30
+
+[[advisory]]
+id = "PYSEC-2026-4327"
+package = "pillow"
+reason = "Fixed in Pillow 13.0.0 (released 2026-10-16), held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-30
+
+[[advisory]]
+id = "PYSEC-2026-4328"
+package = "pillow"
+reason = "Fixed in Pillow 13.0.0 (released 2026-10-16), held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-30
+
+[[advisory]]
+id = "CVE-2026-115572"
+package = "pypdf"
+reason = "Fixed in pypdf 6.21.2 (released 2026-10-21), held back only by the 14-day minimum release age."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-11-04
+
+[[advisory]]
+id = "CVE-2026-115580"
+package = "pypdf"
+reason = "Fixed in pypdf 6.21.2 (released 2026-10-21), held back only by the 14-day minimum release age."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-11-04
+
+[[advisory]]
+id = "CVE-2026-115585"
+package = "pypdf"
+reason = "Fixed in pypdf 6.21.2 (released 2026-10-21), held back only by the 14-day minimum release age."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-11-04
+
+[[advisory]]
+id = "GHSA-xmj3-9gf7-h52w"
+package = "setuptools"
+reason = "Fixed in setuptools 84.1.0 (released 2026-10-19), held back only by the 14-day minimum release age."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-11-02
+
+[[advisory]]
+id = "PYSEC-2026-4329"
+package = "pillow"
+reason = "Fixed in Pillow 13.0.0 (released 2026-10-16), held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-30
+
+[[advisory]]
+id = "PYSEC-2026-4330"
+package = "pillow"
+reason = "Fixed in Pillow 13.0.0 (released 2026-10-16), held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-30
+
+[[advisory]]
+id = "PYSEC-2026-4331"
+package = "pillow"
+reason = "Fixed in Pillow 13.0.0 (released 2026-10-16), held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-30
+
+[[advisory]]
+id = "PYSEC-2026-4332"
+package = "pillow"
+reason = "Fixed in Pillow 13.0.0 (released 2026-10-16), held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-30
+
+[[advisory]]
+id = "PYSEC-2026-4333"
+package = "pillow"
+reason = "Fixed in Pillow 13.0.0 (released 2026-10-16), held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-30
+
+[[advisory]]
+id = "PYSEC-2026-4334"
+package = "pillow"
+reason = "Fixed in Pillow 13.0.0 (released 2026-10-16), held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-30
+
+[[advisory]]
+id = "PYSEC-2026-4335"
+package = "pillow"
+reason = "Fixed in Pillow 13.0.0 (released 2026-10-16), held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-30
+
+[[advisory]]
+id = "PYSEC-2026-4336"
+package = "pillow"
+reason = "Fixed in Pillow 13.0.0 (released 2026-10-16), held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-30
+
+[[advisory]]
+id = "PYSEC-2026-4337"
+package = "pillow"
+reason = "Fixed in Pillow 13.0.0 (released 2026-10-16), held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-30
+
+[[advisory]]
+id = "PYSEC-2026-4338"
+package = "pillow"
+reason = "Fixed in Pillow 13.0.0 (released 2026-10-16), held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-30
+
+[[advisory]]
+id = "PYSEC-2026-4339"
+package = "pillow"
+reason = "Fixed in Pillow 13.0.0 (released 2026-10-16), held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-30
+
+[[advisory]]
+id = "PYSEC-2026-4340"
+package = "pillow"
+reason = "Fixed in Pillow 13.0.0 (released 2026-10-16), held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-30
+
+[[advisory]]
+id = "PYSEC-2026-4341"
+package = "pillow"
+reason = "Fixed in Pillow 13.0.0 (released 2026-10-16), held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-30
+
+[[advisory]]
+id = "PYSEC-2026-4342"
+package = "pillow"
+reason = "Fixed in Pillow 13.0.0 (released 2026-10-16), held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-30
+
+[[advisory]]
+id = "PYSEC-2026-4343"
+package = "pillow"
+reason = "Fixed in Pillow 13.0.0 (released 2026-10-16), held back only by the 14-day minimum release age; 13.0.0 is a major version, to verify before the bump."
+reviewer = "product owner, decision 2026-10-22 (wait for fixed releases to age 14 days)"
+approved = 2026-10-28
+expires = 2026-10-30
