@@ -59,7 +59,6 @@ CLASSIFIED_REASONS = {
     "FORBIDDEN_SCOPE": {
         "scope.whole_workspace",
         "scope.capability_missing",
-        "representation.ineligible",
         "scope.dependency_ineligible",
     },
     "JOB_INTERRUPTED": {"job.orphaned"},

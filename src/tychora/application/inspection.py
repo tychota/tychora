@@ -851,11 +851,7 @@ class InspectionService:
         with self.owner.store.pin_snapshot(None) as snapshot:
             ctx.checkpoint()
             view, graph = self._relation_scope(snapshot, granted, request.unit_ids)
-            if self.graph is None:
-                raise TychoraError(
-                    "INDEX_INCOMPLETE",
-                    "Graph inspection requires a rebuilt ready generation.",
-                )
+            assert self.graph is not None  # a graphless owner has no graph scope
             policy = resolve_graph_traversal_policy(
                 self.owner.config, self.owner.store.registry
             )
