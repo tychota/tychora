@@ -832,6 +832,7 @@ async def test_image_only_query_uses_registered_original_and_visual_channel(
             runtime=runtime,
             scope=scope,
             ctx=ExecutionContext(),
+            priority="interactive",
         )
         index = ChromaVectorIndex(tmp_path / "images")
         sources = SourceService(

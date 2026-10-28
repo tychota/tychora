@@ -1084,6 +1084,7 @@ class SourceService:
                     runtime=embedder._runtime,
                     scope=scope,
                     ctx=ctx,
+                    priority="background",
                 )
         return await self.owner.embed_visual_assets(
             embedder,

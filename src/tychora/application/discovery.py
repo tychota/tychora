@@ -490,7 +490,7 @@ class DiscoveryService:
                 sources.setdefault(kind, set()).add(source)
             return {kind: len(ids) for kind, ids in sources.items()}
 
-        return owner.run_write_sync(read, ExecutionContext())
+        return owner.run_write_sync(read, ExecutionContext(), "interactive")
 
     def _source_rows(
         self,
@@ -534,7 +534,7 @@ class DiscoveryService:
                 ).fetchall()
             )
 
-        return owner.run_write_sync(read, ExecutionContext())
+        return owner.run_write_sync(read, ExecutionContext(), "interactive")
 
     def _revision_page(
         self,
@@ -633,7 +633,7 @@ class DiscoveryService:
                 scope_limited=limited,
             )
 
-        return owner.run_write_sync(read, ExecutionContext())
+        return owner.run_write_sync(read, ExecutionContext(), "interactive")
 
     def _extraction_coverage(
         self, extraction: str, kind: str, scope: RequestScope
@@ -736,7 +736,7 @@ class DiscoveryService:
                 ) from None
             return row[0]
 
-        return owner.run_write_sync(read, ExecutionContext())
+        return owner.run_write_sync(read, ExecutionContext(), "interactive")
 
     def source_extractions(
         self,
@@ -773,7 +773,7 @@ class DiscoveryService:
                 next_cursor=_page_cursor(owner, subject, rows, granted, limit),
             )
 
-        return owner.run_write_sync(read, ExecutionContext())
+        return owner.run_write_sync(read, ExecutionContext(), "interactive")
 
     def source_channels(
         self,
@@ -823,7 +823,7 @@ class DiscoveryService:
                 next_cursor=_page_cursor(owner, subject, rows, granted, limit),
             )
 
-        return owner.run_write_sync(read, ExecutionContext())
+        return owner.run_write_sync(read, ExecutionContext(), "interactive")
 
     def source_selections(
         self,
@@ -992,7 +992,7 @@ class DiscoveryService:
                 else None,
             )
 
-        return owner.run_write_sync(read, ExecutionContext())
+        return owner.run_write_sync(read, ExecutionContext(), "interactive")
 
     def source_revisions(
         self,
@@ -1095,7 +1095,7 @@ class DiscoveryService:
             )
             return definitions, next_cursor
 
-        return owner.run_write_sync(read, ExecutionContext())
+        return owner.run_write_sync(read, ExecutionContext(), "interactive")
 
     def _code_resolution(self, extraction: str, scope: RequestScope) -> FrozenJsonMap:
         """Read typed retained rates only inside the current pinned eligibility view."""
@@ -1254,7 +1254,7 @@ class DiscoveryService:
                 )
             return form
 
-        return await owner.run_write(read, ctx)
+        return await owner.run_write(read, ctx, "interactive")
 
     def definition(
         self, subject: str, item_id: str, scope: RequestScope

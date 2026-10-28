@@ -114,4 +114,5 @@ class VoyageVisualQueryProvider:
             runtime=self._base._runtime,
             scope=scope,
             ctx=ctx,
+            priority="interactive",
         )
