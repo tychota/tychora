@@ -36,8 +36,6 @@ from tychora.contracts.evidence import (
     DecisionRequirement,
     RelationChecks,
     RelationPath,
-    StructuredRecord,
-    VisualEvidence,
 )
 from tychora.contracts.graph import GraphCandidates, GraphPath, GraphScope
 from tychora.contracts.identity import canonical_bytes, digest
@@ -66,6 +64,11 @@ from tychora.retrieval.attempt import (
     run_pinned_eligibility,
 )
 from tychora.retrieval.cache import QueryCaches
+from tychora.retrieval.cached_selection import (
+    CACHE_OVERHEAD_BYTES,
+    CachedSelection,
+    PreparedEvidence,
+)
 from tychora.retrieval.compiler import (
     EligibilityCompiler,
     EligibilityInputs,
@@ -89,7 +92,7 @@ from tychora.retrieval.response import (
     inspect_relations,
     prepare_records,
 )
-from tychora.retrieval.segments import Selection, assemble_segments
+from tychora.retrieval.segments import assemble_segments
 from tychora.retrieval.survivors import load_survivors
 from tychora.retrieval.vectors import (
     CHANNEL_LIMIT,
@@ -105,19 +108,6 @@ if TYPE_CHECKING:
 
 
 type _VectorChannel = tuple[tuple[ChannelCandidate, ...], bool]
-
-
-@dataclass(frozen=True)
-class _PreparedResult:
-    selection: Selection
-    records: tuple[StructuredRecord, ...]
-    checks: RelationChecks
-    relations: tuple[RelationPath, ...]
-    visuals: tuple[VisualEvidence, ...]
-    coverage: Coverage
-    warnings: tuple[str, ...]
-    decisions: tuple[DecisionRequirement, ...]
-    candidate_count: int
 
 
 @dataclass(frozen=True)
@@ -570,40 +560,9 @@ class QueryService:
                 ctx,
                 "interactive",
             )
-            lexical_epoch = await self.owner.run_read(
-                lambda tx: tx.workspace.lexical_epoch(), ctx
+            prepared, lexical_epoch, cache_hit = await self._cached_prepare(
+                request, granted, attempt, mode, ctx
             )
-            key = result_cache_key(
-                request,
-                attempt.view.snapshot_id,
-                attempt.view.policy_epoch,
-                lexical_epoch,
-                attempt.view.scope_digest,
-                self.owner.config.config_sha,
-                self._provider_fingerprint(),
-                self._projection_fingerprint(),
-            )
-            cached = self.caches.get_result(key)
-            if isinstance(cached, _PreparedResult):
-                prepared = cached
-                cache_hit = True
-            else:
-                prepared, actual_epoch = await self._prepare(
-                    request, granted, attempt, mode, ctx
-                )
-                key = result_cache_key(
-                    request,
-                    attempt.view.snapshot_id,
-                    attempt.view.policy_epoch,
-                    actual_epoch,
-                    attempt.view.scope_digest,
-                    self.owner.config.config_sha,
-                    self._provider_fingerprint(),
-                    self._projection_fingerprint(),
-                )
-                self.caches.put_result(key, prepared)
-                lexical_epoch = actual_epoch
-                cache_hit = False
             eligible = await self.owner.run_read(
                 lambda tx: _delivered_eligibility(tx, attempt.view, prepared), ctx
             )
@@ -655,6 +614,49 @@ class QueryService:
             on_invalidated=supersede,
         )
 
+    def _result_key(
+        self, request: QueryRequest, view: EligibilityView, lexical_epoch: int
+    ) -> str:
+        return result_cache_key(
+            request,
+            eligible_cache_key(view),
+            lexical_epoch,
+            self.owner.config.config_sha,
+            self._provider_fingerprint(),
+            self._projection_fingerprint(),
+        )
+
+    async def _cached_prepare(
+        self,
+        request: QueryRequest,
+        scope: RequestScope,
+        attempt: EligibilityAttempt,
+        mode: FrozenJsonMap,
+        ctx: ExecutionContext,
+    ) -> tuple[CachedSelection, int, bool]:
+        """The cached entry for this request, or a fresh one cached when small.
+
+        Returns the entry, the lexical epoch it was prepared at, and whether
+        it came from the cache. An entry larger than the response bound plus
+        ``CACHE_OVERHEAD_BYTES`` is served uncached.
+        """
+        lexical_epoch = await self.owner.run_read(
+            lambda tx: tx.workspace.lexical_epoch(), ctx
+        )
+        raw = self.caches.get_result(
+            self._result_key(request, attempt.view, lexical_epoch)
+        )
+        if raw is not None:
+            return CachedSelection.from_bytes(raw), lexical_epoch, True
+        prepared, actual_epoch = await self._prepare(request, scope, attempt, mode, ctx)
+        entry = prepared.to_bytes()
+        limits = self.owner.config.values.limits
+        if len(entry) <= limits.max_response_bytes + CACHE_OVERHEAD_BYTES:
+            self.caches.put_result(
+                self._result_key(request, attempt.view, actual_epoch), entry
+            )
+        return prepared, actual_epoch, False
+
     async def _prepare(
         self,
         request: QueryRequest,
@@ -662,7 +664,7 @@ class QueryService:
         attempt: EligibilityAttempt,
         mode: FrozenJsonMap,
         ctx: ExecutionContext,
-    ) -> tuple[_PreparedResult, int]:
+    ) -> tuple[CachedSelection, int]:
         plan = self.execution_plan
         if plan is not None and plan.text and not _needs_text(request):
             raise TychoraError(
@@ -915,25 +917,19 @@ class QueryService:
             completed_channels=tuple(completed),
             unavailable_channels=unavailable,
         )
-        decisions = tuple(
-            DecisionRequirement(
-                requirement_id=digest("applicable-version-decision-v1", warning),
-                reason=warning,
-            )
-            for warning in attempt.warnings
-            if warning.startswith("Overlapping retained editions")
-        )
         return (
-            _PreparedResult(
+            CachedSelection.of(
                 selection,
-                records,
-                checks,
-                tuple(relations),
-                visuals,
-                coverage,
-                attempt.warnings,
-                decisions,
-                len(fused),
+                PreparedEvidence(
+                    records=records,
+                    checks=checks,
+                    relations=tuple(relations),
+                    visuals=visuals,
+                    coverage=coverage,
+                    warnings=attempt.warnings,
+                    decisions=_edition_decisions(attempt.warnings),
+                    candidate_count=len(fused),
+                ),
             ),
             lexical_epoch,
         )
@@ -1177,11 +1173,11 @@ class QueryService:
         attempt: EligibilityAttempt,
         requirements: tuple[ResponseRequirement, ...],
         mode: FrozenJsonMap,
-        prepared: _PreparedResult,
+        prepared: CachedSelection,
         eligible: tuple[frozenset[str], frozenset[str]],
     ) -> DeliveredResult:
         return self.assembler.assemble(
-            prepared.selection,
+            prepared.selection(),
             prepared.records,
             prepared.checks,
             request,
@@ -1281,7 +1277,7 @@ def _graph_relations(
 
 
 def _delivered_eligibility(
-    tx: ReadTransaction, view: EligibilityView, prepared: _PreparedResult
+    tx: ReadTransaction, view: EligibilityView, prepared: CachedSelection
 ) -> tuple[frozenset[str], frozenset[str]]:
     """The units and assets a delivery names that the view still admits."""
     units = {
@@ -1300,6 +1296,18 @@ def _delivered_eligibility(
     return (
         frozenset(f.owner_id for f in facts if is_eligible_unit(view, f)),
         frozenset(f.owner_id for f in facts if is_eligible_asset(view, f)),
+    )
+
+
+def _edition_decisions(warnings: tuple[str, ...]) -> tuple[DecisionRequirement, ...]:
+    """A version decision for each overlapping-editions warning."""
+    return tuple(
+        DecisionRequirement(
+            requirement_id=digest("applicable-version-decision-v1", warning),
+            reason=warning,
+        )
+        for warning in warnings
+        if warning.startswith("Overlapping retained editions")
     )
 
 

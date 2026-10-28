@@ -8,21 +8,21 @@ from tychora.ports.tokens import TokenCounter
 
 def result_cache_key(
     request: QueryRequest,
-    snapshot_id: str,
-    policy_epoch: int,
+    eligibility: tuple[str | int, ...],
     lexical_statistics_epoch: int,
-    scope_digest: str,
     config_sha: str,
     provider_fingerprint: str = "",
     projection_fingerprint: str = "",
 ) -> str:
-    """Bind result reuse to every requested, rendered and indexed dimension."""
+    """Bind result reuse to every requested, rendered and indexed dimension.
+
+    ``eligibility`` is the eligibility cache key of the view the result was
+    admitted through: snapshot, policy epoch, scope, policy and request.
+    """
     return digest(
-        "query-result-cache-v1",
-        snapshot_id,
-        policy_epoch,
+        "query-result-cache-v2",
+        list(eligibility),
         lexical_statistics_epoch,
-        scope_digest,
         config_sha,
         provider_fingerprint,
         projection_fingerprint,

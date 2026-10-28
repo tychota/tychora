@@ -136,17 +136,22 @@ def test_full_result_identity_changes_with_filters_context_and_lexical_epoch() -
     contextual = QueryRequest.from_mapping(
         {"question": "verification", "context": {"code": "sensitive"}}
     )
-    key = result_cache_key(base, "snapshot", 1, 5, "scope", "config")
-    assert key != result_cache_key(filtered, "snapshot", 1, 5, "scope", "config")
-    assert key != result_cache_key(contextual, "snapshot", 1, 5, "scope", "config")
-    assert key != result_cache_key(base, "snapshot", 1, 6, "scope", "config")
-    assert key != result_cache_key(base, "snapshot", 2, 5, "scope", "config")
-    assert key != result_cache_key(
-        base, "snapshot", 1, 5, "scope", "config", "new credential"
-    )
-    assert key != result_cache_key(
-        base, "snapshot", 1, 5, "scope", "config", "", "new output"
-    )
+    eligibility = ("snapshot", 1, "scope", "policy", "request")
+    key = result_cache_key(base, eligibility, 5, "config")
+    assert key != result_cache_key(filtered, eligibility, 5, "config")
+    assert key != result_cache_key(contextual, eligibility, 5, "config")
+    assert key != result_cache_key(base, eligibility, 6, "config")
+    assert key != result_cache_key(base, eligibility, 5, "new config")
+    for changed in range(len(eligibility)):
+        other = tuple(
+            f"{part}-changed" if isinstance(part, str) else part + 1
+            for index, part in enumerate(eligibility)
+            if index == changed
+        )
+        moved = eligibility[:changed] + other + eligibility[changed + 1 :]
+        assert key != result_cache_key(base, moved, 5, "config")
+    assert key != result_cache_key(base, eligibility, 5, "config", "new credential")
+    assert key != result_cache_key(base, eligibility, 5, "config", "", "new output")
 
 
 def test_over_2000_provider_tokens_fails_before_search() -> None:

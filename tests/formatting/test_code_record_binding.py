@@ -68,9 +68,10 @@ def test_code_symbol_alias_requires_exact_builtin_kind_schema_and_hash(tmp_path)
         rows = bundle.model_copy(update={"records": (row,)})
         assert item.facts is not None
         ranked = RankedEvidence((replace(item, facts=replace(item.facts, rows=rows)),))
-        selection = replace(
-            selected,
-            segments=(selected.segments[0].model_copy(update={"kind": kind}),),
+        selection = selected.model_copy(
+            update={
+                "segments": (selected.segments[0].model_copy(update={"kind": kind}),)
+            }
         )
         attempt = revision_attempt(
             view,

@@ -27,6 +27,7 @@ from tychora.indexing.representations import project_code_excerpt_locator
 from tychora.ingestion.tables import continuation_context_allowed
 from tychora.ports.tokens import TokenCounter
 from tychora.retrieval.anchors import permitted_ranges, source_anchors
+from tychora.retrieval.cached_selection import Selection
 from tychora.retrieval.rerank import RankedEvidence, RankedEvidenceItem
 
 
@@ -43,16 +44,6 @@ class OutputTokenCounter:
 
     def count(self, text: str) -> int:
         return len(self._encoding.encode(text, disallowed_special=()))
-
-
-@dataclass(frozen=True)
-class Selection:
-    segments: tuple[Segment, ...]
-    reservation_priority: tuple[str, ...]
-    omitted_anchors: tuple[AnchorRange, ...]
-    lane_coverage: tuple[str, ...]
-    text_budget: int
-    visual_reserved_tokens: int
 
 
 def _lane(config: ResolvedConfig, kind: str) -> str:
