@@ -164,6 +164,7 @@ def test_scale_suite_measures_each_checkpoint(tmp_path):
         ("E3.bytes_ratio", False),
         ("E3.artifact_ceiling", True),
         ("E3.publication_p90", False),
+        ("E4.latency_ratio", False),
     ]
 
 
@@ -225,10 +226,11 @@ def test_scale_suite_stops_at_the_wall_limit(tmp_path):
         "E3.bytes_ratio",
         "E3.artifact_ceiling",
         "E3.publication_p90",
+        "E4.latency_ratio",
     }
     assert verdicts["E3.artifact_ceiling"].measured
     assert verdicts["E3.artifact_ceiling"].passed
-    for name in ("E3.bytes_ratio", "E3.publication_p90"):
+    for name in ("E3.bytes_ratio", "E3.publication_p90", "E4.latency_ratio"):
         assert not verdicts[name].measured
         assert verdicts[name].detail == (
             f"not measured: stopped at {len(client.added)} documents"
@@ -249,7 +251,11 @@ def test_run_smaller_by_design_reports_not_measured_without_failing(tmp_path):
     result = _stopped_run(tmp_path, client, max_wall_seconds=1000.0)
     assert not result.aborted
     unreached = [a for a in result.assertions if not a.measured]
-    assert [a.name for a in unreached] == ["E3.bytes_ratio", "E3.publication_p90"]
+    assert [a.name for a in unreached] == [
+        "E3.bytes_ratio",
+        "E3.publication_p90",
+        "E4.latency_ratio",
+    ]
     assert all(a.passed and "stopped at 10 documents" in a.detail for a in unreached)
 
 

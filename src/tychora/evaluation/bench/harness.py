@@ -372,6 +372,28 @@ def e3_assertions(points: list[ScalePoint], reached: int) -> list[Assertion]:
     return [ratio, ceiling, p90_verdict]
 
 
+E4_LATENCY_RATIO = 1.5
+
+
+def e4_assertions(points: list[ScalePoint], reached: int) -> list[Assertion]:
+    """E4: search p95 at 10,000 documents within 1.5x of p95 at 1,000."""
+    by_size = {point.documents: point for point in points}
+    if 1000 not in by_size or 10_000 not in by_size:
+        return [_not_measured("E4.latency_ratio", reached)]
+    small, large = by_size[1000].search_p95_ms, by_size[10_000].search_p95_ms
+    return [
+        Assertion(
+            name="E4.latency_ratio",
+            passed=large <= E4_LATENCY_RATIO * max(small, 1.0),
+            detail=f"search p95: {small:.1f} ms at 1000, {large:.1f} ms at 10000",
+        )
+    ]
+
+
+def _scale_assertions(points: list[ScalePoint], reached: int) -> list[Assertion]:
+    return [*e3_assertions(points, reached), *e4_assertions(points, reached)]
+
+
 def run_scale(
     client: BenchClient,
     spec: SynthSpec,
@@ -390,7 +412,7 @@ def run_scale(
         growth.failures.clear()
         if growth.aborted:
             samples.aborted = True
-            samples.assertions.extend(e3_assertions(samples.scale, growth.added))
+            samples.assertions.extend(_scale_assertions(samples.scale, growth.added))
             return samples
         added = checkpoint
         if latencies:
@@ -408,7 +430,7 @@ def run_scale(
             samples.scale.append(
                 _with_publication(point, client, stage_source, growth.jobs)
             )
-    samples.assertions.extend(e3_assertions(samples.scale, growth.added))
+    samples.assertions.extend(_scale_assertions(samples.scale, growth.added))
     return samples
 
 
