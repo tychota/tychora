@@ -84,7 +84,6 @@ def test_changing_lists_changes_the_result_cache_inputs(tmp_path):
     service.visual_provider = None
     service.visual_index = None
     service.reranker = None
-    service.execution_plan = None
     assert service._provider_fingerprint(builtin) != service._provider_fingerprint(none)
 
 

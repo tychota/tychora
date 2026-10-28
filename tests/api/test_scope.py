@@ -316,7 +316,6 @@ def test_actual_factory_space_and_locality_change_result_identity(tmp_path):
     service.visual_provider = None
     service.visual_index = None
     service.reranker = None
-    service.execution_plan = None
     first = service._provider_fingerprint()
     provider.capabilities = capabilities.model_copy(
         update={

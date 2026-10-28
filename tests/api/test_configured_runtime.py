@@ -709,7 +709,6 @@ def test_public_rerank_uses_default_binding_and_narrow_scope(tmp_path, monkeypat
     from types import SimpleNamespace
 
     from tychora.adapters.voyage.request_types import RawVoyageResponse
-    from tychora.application.query import QueryExecutionPlan, QueryService
     from tychora.contracts.errors import TychoraError
     from tychora.contracts.requests import QueryRequest, RequestScope
     from tychora.ports.execution import ExecutionContext
@@ -821,20 +820,10 @@ def test_public_rerank_uses_default_binding_and_narrow_scope(tmp_path, monkeypat
         request = QueryRequest.from_mapping(
             {"question": "valve", "modalities": ["lexical"], "limit": 2}
         )
-        plain_service = QueryService(
-            owner,
-            output_counter=kb._workspace.services.query.counter,
-            execution_plan=QueryExecutionPlan(
-                lexical=True,
-                text=False,
-                image=False,
-                graph_structural=False,
-                graph_semantic=False,
-                rerank=False,
-            ),
-        )
         plain = kb._workspace.bridge.call(
-            plain_service.search(request, scope, ExecutionContext())
+            kb._workspace.services.query.search(
+                request.model_copy(update={"rerank": "off"}), scope, ExecutionContext()
+            )
         ).result
         assert len(plain.segments) == 2
         assert posts == []

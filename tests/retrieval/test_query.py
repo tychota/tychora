@@ -38,6 +38,7 @@ from tychora.adapters.voyage.text import VoyageTextEmbedder
 from tychora.adapters.voyage.validation import qualify_voyage_visual_capabilities
 from tychora.application.owner import WorkspaceOwner
 from tychora.application.query import QueryService, query_binding_from_owner
+from tychora.application.query_plan import QueryBindings
 from tychora.application.sources import SourceService
 from tychora.application.visual import create_visual_embedder
 from tychora.configuration.resolve import resolve_config
@@ -675,8 +676,9 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
             owner,
             output_counter=OutputTokenCounter(asset_path("TYCHORA_TEST_MODEL_CACHE")),
             caches=caches,
-            text_provider=VoyageTextQueryProvider(embedder),
-            text_index=index,
+            bindings=QueryBindings(
+                text_provider=VoyageTextQueryProvider(embedder), text_index=index
+            ),
         )
         results = []
         for project in ("alpha", "beta"):
@@ -721,11 +723,13 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
         local = QueryService(
             owner,
             output_counter=service.counter,
-            text_provider=LocalTextQueryProvider(
-                owner, scope, embedder.capabilities, counter, caches
-            ),
-            text_index=index,
             caches=caches,
+            bindings=QueryBindings(
+                text_provider=LocalTextQueryProvider(
+                    owner, scope, embedder.capabilities, counter, caches
+                ),
+                text_index=index,
+            ),
         )
         local_result = await local.search(
             QueryRequest.from_mapping(
@@ -745,11 +749,12 @@ async def test_filter_change_reuses_authorized_query_vector_but_retrieves_again(
         retained_service = QueryService(
             owner,
             output_counter=service.counter,
-            text_provider=VoyageTextQueryProvider(embedder),
-            text_index=index,
             caches=caches,
             history=HistoryRepository(
                 owner.db, artifacts=owner.artifacts, retain_payloads=True
+            ),
+            bindings=QueryBindings(
+                text_provider=VoyageTextQueryProvider(embedder), text_index=index
             ),
         )
         retained = await retained_service.search(
@@ -870,9 +875,10 @@ async def test_image_only_query_uses_registered_original_and_visual_channel(
         service = QueryService(
             owner,
             output_counter=OutputTokenCounter(asset_path("TYCHORA_TEST_MODEL_CACHE")),
-            visual_provider=VoyageVisualQueryProvider(provider),
-            visual_index=index,
             caches=caches,
+            bindings=QueryBindings(
+                visual_provider=VoyageVisualQueryProvider(provider), visual_index=index
+            ),
         )
         before = len(transport.calls)
         result = await service.search(
@@ -1013,13 +1019,19 @@ async def test_vector_only_tail_window_reaches_reranker_and_delivery(
         service = QueryService(
             owner,
             output_counter=OutputTokenCounter(asset_path("TYCHORA_TEST_MODEL_CACHE")),
-            text_provider=LocalTextQueryProvider(
-                owner, scope, RecordingEmbedder(counter).capabilities, counter, caches
-            ),
-            text_index=index,
-            reranker=reranker,
-            rerank_counter=rerank_counter,
             caches=caches,
+            bindings=QueryBindings(
+                text_provider=LocalTextQueryProvider(
+                    owner,
+                    scope,
+                    RecordingEmbedder(counter).capabilities,
+                    counter,
+                    caches,
+                ),
+                text_index=index,
+                reranker=reranker,
+                rerank_counter=rerank_counter,
+            ),
         )
         result = await service.search(
             QueryRequest.from_mapping({"question": "quasar", "modalities": ["text"]}),

@@ -12,6 +12,7 @@ from tychora.adapters.ladybug.generation import LadybugGraphStore
 from tychora.adapters.sqlite.jobs import JobRepository
 from tychora.application.owner import WorkspaceOwner
 from tychora.application.query import QueryService
+from tychora.application.query_plan import QueryBindings
 from tychora.configuration.graph_policy import resolve_graph_traversal_policy
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.corpus import LocatorRow, ReviewTarget
@@ -253,7 +254,11 @@ async def test_published_decisions_and_hidden_parent_support_are_excluded(tmp_pa
         assert graph_batch.receipt.assertion_count == 3
         assert graph_batch.graph_manifest is not None
         graph = graphs[graph_batch.graph_manifest.spec.generation_id]
-        query = QueryService(owner, output_counter=SyntheticCounter(), graph=graph)
+        query = QueryService(
+            owner,
+            output_counter=SyntheticCounter(),
+            bindings=QueryBindings(graph=graph),
+        )
         request = QueryRequest.from_mapping(
             {
                 "question": "SeedAlpha",

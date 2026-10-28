@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import platform
 from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime
 from io import BytesIO
 from threading import Lock
+from typing import Literal
 
 from tychora.adapters.sqlite.evaluations import EvaluationRepository
 from tychora.adapters.sqlite.gold_labels import SqliteGoldLabelResolver
@@ -23,7 +23,7 @@ from tychora.contracts.operations import (
     MetricSet,
     MetricValue,
 )
-from tychora.contracts.requests import QueryRequest, RequestScope
+from tychora.contracts.requests import ChannelSelection, QueryRequest, RequestScope
 from tychora.evaluation.dataset import (
     GoldCase,
     LabelFailure,
@@ -60,15 +60,15 @@ def validate_retained_size(current_bytes: int, additional_bytes: int) -> int:
     return total
 
 
-def execution_plan(variant: ConfigurationVariant):
-    """Parse explicit ablation controls without relying on a variant's label."""
-    from tychora.application.query import QueryExecutionPlan
-
+def variant_channels(
+    variant: ConfigurationVariant,
+) -> tuple[ChannelSelection | None, Literal["auto", "on", "off"]]:
+    """Explicit ablation controls as request fields, never from a variant's label."""
     controls = dict(variant.overrides)
     if "channels" not in controls:
         if "rerank" in controls:
             raise ValueError("Rerank override requires explicit channels")
-        return None
+        return None, "auto"
     channels = controls["channels"]
     if (
         not isinstance(channels, tuple)
@@ -81,14 +81,43 @@ def execution_plan(variant: ConfigurationVariant):
     rerank = controls.get("rerank", False)
     if type(rerank) is not bool:
         raise ValueError("Rerank override must be boolean")
-    return QueryExecutionPlan(
-        lexical="lexical" in channels,
-        text="text" in channels,
-        image="image" in channels,
-        graph_structural="structural_graph" in channels,
-        graph_semantic="semantic_graph" in channels,
-        rerank=rerank,
+    strategies = frozenset(
+        name
+        for name, channel in (
+            ("structural", "structural_graph"),
+            ("semantic", "semantic_graph"),
+        )
+        if channel in channels
     )
+    return (
+        ChannelSelection(
+            lexical="lexical" in channels,
+            text="text" in channels,
+            image="image" in channels,
+            graph=bool(strategies),
+            graph_strategies=strategies or None,
+        ),
+        "on" if rerank else "off",
+    )
+
+
+def _ablation_modalities(
+    selection: ChannelSelection, query_overrides: dict, exact_only: bool, rerank: str
+) -> tuple[str, ...]:
+    """The modalities an ablation's channels imply; a differing override is refused."""
+    modalities = tuple(
+        name
+        for name, selected in (("text", selection.text), ("image", selection.image))
+        if selected
+    ) or ("lexical",)
+    declared = query_overrides.get("modalities", modalities)
+    if not isinstance(declared, tuple) or tuple(declared) != modalities:
+        raise ValueError("Modalities override differs from selected ablation channels")
+    if (
+        selection.text or selection.image or selection.graph or rerank == "on"
+    ) and exact_only:
+        raise ValueError("Exact-only query cannot execute selected ablation channels")
+    return modalities
 
 
 def variant_query(
@@ -100,41 +129,23 @@ def variant_query(
     overrides = dict(variant.overrides)
     if set(overrides) - (_QUERY_CONTROLS | _EXECUTION_CONTROLS):
         raise ValueError("Unsupported evaluation variant override")
-    plan = execution_plan(variant)
-    if (
-        plan is not None
-        and plan.graph_strategies
-        and not (plan.lexical or plan.text or plan.image)
-    ):
-        raise ValueError("Graph ablation requires an explicit seed channel")
+    selection, rerank = variant_channels(variant)
     query_overrides = {
         key: value for key, value in overrides.items() if key in _QUERY_CONTROLS
     }
-    if plan is not None:
-        modalities = tuple(
-            name
-            for name, selected in (
-                ("text", plan.text),
-                ("image", plan.image),
-            )
-            if selected
-        ) or ("lexical",)
-        if "modalities" in query_overrides:
-            declared_modalities = query_overrides["modalities"]
-            if (
-                not isinstance(declared_modalities, tuple)
-                or tuple(declared_modalities) != modalities
-            ):
-                raise ValueError(
-                    "Modalities override differs from selected ablation channels"
-                )
-        query_overrides["modalities"] = modalities
-        if (
-            plan.text or plan.image or plan.graph_strategies or plan.rerank
-        ) and query_overrides.get("exact_only", case.query.exact_only):
-            raise ValueError(
-                "Exact-only query cannot execute selected ablation channels"
-            )
+    if selection is not None:
+        if selection.graph and not (
+            selection.lexical or selection.text or selection.image
+        ):
+            raise ValueError("Graph ablation requires an explicit seed channel")
+        query_overrides["modalities"] = _ablation_modalities(
+            selection,
+            query_overrides,
+            bool(query_overrides.get("exact_only", case.query.exact_only)),
+            rerank,
+        )
+        query_overrides["channels"] = selection.model_dump(mode="json")
+        query_overrides["rerank"] = rerank
     return QueryRequest.from_mapping(
         {
             **case.query.model_dump(mode="json"),
@@ -234,6 +245,13 @@ def _aggregate(sets: list[MetricSet]) -> MetricSet:
             )
         )
     return MetricSet(metrics=tuple(aggregate))
+
+
+def _execution_plan(query: QueryRequest) -> dict | None:
+    """The ablation a run executed, as its request selected it; none by default."""
+    if query.channels is None:
+        return None
+    return {"channels": query.channels.model_dump(mode="json"), "rerank": query.rerank}
 
 
 def _integrity_check(case: GoldCase, scored: MetricSet) -> None:
@@ -434,19 +452,13 @@ class EvaluationService:
                     lambda: RetainedBindingCache(self.owner, request.snapshot_id), ctx
                 )
                 for variant in request.variants:
-                    plan = execution_plan(variant)
-                    query_service = (
-                        copy.copy(self.query) if plan is not None else self.query
-                    )
-                    if plan is not None:
-                        query_service.execution_plan = plan
                     for repetition in range(request.repetitions):
                         for case in cases:
                             ctx.checkpoint()
                             query = variant_query(
                                 case, variant, profile=self.owner.config.profile
                             )
-                            delivered = await query_service.search(query, grant, ctx)
+                            delivered = await self.query.search(query, grant, ctx)
                             if delivered.result.snapshot_id != request.snapshot_id:
                                 raise TychoraError(
                                     "SCOPE_CHANGED", "Evaluation snapshot changed"
@@ -476,9 +488,7 @@ class EvaluationService:
                                 "repetition": repetition,
                                 "seed": request.seed + repetition,
                                 "config_sha": config_sha,
-                                "execution_plan": plan.__dict__
-                                if plan is not None
-                                else None,
+                                "execution_plan": _execution_plan(query),
                                 "request": query.model_dump(mode="json"),
                                 "run_id": delivered.result.run_id,
                                 "result": delivered.result.model_dump(mode="json"),

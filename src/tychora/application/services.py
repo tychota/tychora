@@ -19,6 +19,7 @@ from tychora.application.inspection import InspectionService
 from tychora.application.jobs import JobService
 from tychora.application.maintenance import MaintenanceService
 from tychora.application.query import QueryService
+from tychora.application.query_plan import QueryBindings
 from tychora.application.sources import SourceService
 from tychora.configuration.collection_policy import require_active_collection
 from tychora.configuration.registry import Registry
@@ -340,6 +341,19 @@ class SourceJobScheduler:
             raise
 
 
+def _query_bindings(providers: ProviderBindings) -> QueryBindings:
+    """The query collaborators among the workspace's provider bindings."""
+    return QueryBindings(
+        text_provider=providers.text_query,
+        text_index=providers.text_index,
+        visual_provider=providers.visual_query,
+        visual_index=providers.visual_index,
+        reranker=providers.reranker,
+        rerank_counter=providers.rerank_counter,
+        graph=providers.graph,
+    )
+
+
 def build_services(
     owner: WorkspaceOwner,
     config: ResolvedConfig,
@@ -427,14 +441,8 @@ def build_services(
     query = QueryService(
         owner,
         output_counter=counter,
-        text_provider=providers.text_query,
-        text_index=providers.text_index,
-        visual_provider=providers.visual_query,
-        visual_index=providers.visual_index,
-        reranker=providers.reranker,
-        rerank_counter=providers.rerank_counter,
+        bindings=_query_bindings(providers),
         caches=caches,
-        graph=providers.graph,
         auto_rerank=bool(owned_runtimes),
     )
     evaluations = EvaluationService(owner, query, repository)

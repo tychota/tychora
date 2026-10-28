@@ -6,15 +6,15 @@ import pytest
 
 from tests.helpers.timing import scaled
 from tychora.contracts.operations import ConfigurationVariant
-from tychora.contracts.requests import QueryRequest
+from tychora.contracts.requests import ChannelSelection, QueryRequest
 from tychora.evaluation.dataset import GoldCase
 from tychora.evaluation.runner import (
     ComparisonAdmission,
     EvaluationService,
     _integrity_check,
-    execution_plan,
     validate_retained_size,
     validate_workload,
+    variant_channels,
     variant_query,
 )
 
@@ -255,15 +255,19 @@ def test_six_ablation_plans_have_distinct_executed_channels():
                 "overrides": overrides,
             }
         )
-        plan = execution_plan(variant)
+        selection, rerank = variant_channels(variant)
+        assert selection is not None
+        strategies = selection.graph_strategies or frozenset()
         assert (
-            plan.lexical,
-            plan.text,
-            plan.image,
-            plan.graph_structural,
-            plan.graph_semantic,
-            plan.rerank,
+            selection.lexical,
+            selection.text,
+            selection.image,
+            "structural" in strategies,
+            "semantic" in strategies,
+            rerank == "on",
         ) == expected[name]
+        # Every field is explicit, so each is checked against the configuration.
+        assert selection.model_fields_set == set(type(selection).model_fields)
 
 
 def test_graph_variant_without_explicit_seed_channel_is_rejected():
@@ -311,11 +315,7 @@ def test_limit_error_maps_consistently_to_http_and_cli():
 
 
 def test_disabled_lexical_votes_do_not_escape_graph_seed_path(tmp_path, monkeypatch):
-    from copy import copy
-
     from tychora import Tychora
-    from tychora.application.query import QueryExecutionPlan
-    from tychora.ports.execution import ExecutionContext
 
     class Counter:
         model = "synthetic-output"
@@ -352,18 +352,15 @@ def test_disabled_lexical_votes_do_not_escape_graph_seed_path(tmp_path, monkeypa
         monkeypatch.setattr(
             "tychora.application.query.QueryService._text_candidates", forbidden_text
         )
-        lexical_only = copy(kb._workspace.services.query)
-        lexical_only.execution_plan = QueryExecutionPlan(
-            True, False, False, False, False, False
-        )
         text_requested = QueryRequest.from_mapping(
-            {"question": "saffron marker", "modalities": ["lexical", "text"]}
+            {
+                "question": "saffron marker",
+                "modalities": ["lexical", "text"],
+                "channels": {"text": False, "image": False, "graph": False},
+                "rerank": "off",
+            }
         )
-        assert kb._workspace.bridge.call(
-            lexical_only.search(
-                text_requested, kb._workspace.owner.scope, ExecutionContext()
-            )
-        ).result.segments
+        assert kb.search(text_requested).segments
 
         def forbidden_lexical(*args, **kwargs):
             raise AssertionError("disabled lexical channel executed")
@@ -371,14 +368,23 @@ def test_disabled_lexical_votes_do_not_escape_graph_seed_path(tmp_path, monkeypa
         monkeypatch.setattr(
             "tychora.application.query.retrieve_exact_lexical", forbidden_lexical
         )
-        isolated = copy(kb._workspace.services.query)
-        isolated.execution_plan = QueryExecutionPlan(
-            False, False, False, False, False, False
+        isolated = request.model_copy(
+            update={
+                "channels": ChannelSelection(
+                    lexical=False, text=False, image=False, graph=False
+                ),
+                "rerank": "off",
+            }
         )
-        result = kb._workspace.bridge.call(
-            isolated.search(request, kb._workspace.owner.scope, ExecutionContext())
+        result = kb.search(isolated)
+        assert result.segments == ()
+        assert result.coverage.skipped_channels == (
+            "lexical",
+            "text",
+            "image",
+            "graph",
+            "rerank",
         )
-        assert result.result.segments == ()
 
 
 @pytest.mark.asyncio
@@ -560,3 +566,34 @@ async def test_runner_persists_each_variant_and_repetition(tmp_path):
             )
             == 1
         )
+
+
+def test_a_variant_naming_an_unconfigured_channel_is_refused(tmp_path):
+    from tychora.application.query_plan import QueryBindings, plan_for
+    from tychora.configuration.resolve import resolve_config
+    from tychora.contracts.errors import TychoraError
+
+    settings = tmp_path / "settings.toml"
+    settings.write_text('schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n')
+    config = resolve_config(settings, "test", {})
+    case = GoldCase(
+        case_id="case",
+        family_key="family",
+        split="test",
+        query=QueryRequest.from_mapping({"question": "Find evidence"}),
+    )
+    variant = ConfigurationVariant.from_mapping(
+        {
+            "name": "hybrid",
+            "profile": "test",
+            "overrides": {"channels": ["lexical", "text"]},
+        }
+    )
+    query = variant_query(case, variant, profile="test")
+    assert query.channels is not None and query.rerank == "off"
+    with pytest.raises(TychoraError) as error:
+        plan_for(query, config, QueryBindings())
+    assert (error.value.code, error.value.reason) == (
+        "INVALID_REQUEST",
+        "channel.not_configured",
+    )

@@ -21,6 +21,7 @@ from tychora.adapters.voyage.runtime import VoyageRuntime
 from tychora.adapters.voyage.validation import qualify_voyage_visual_capabilities
 from tychora.application.owner import WorkspaceOwner
 from tychora.application.query import QueryService
+from tychora.application.query_plan import QueryBindings
 from tychora.application.visual import create_visual_embedder
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.base import FrozenJsonMap
@@ -273,8 +274,10 @@ async def test_declared_png_proxy_enters_visual_query_and_evaluation(tmp_path):
             owner,
             output_counter=SyntheticCounter(),
             caches=caches,
-            visual_provider=VoyageVisualQueryProvider(embedder),
-            visual_index=image_index,
+            bindings=QueryBindings(
+                visual_provider=VoyageVisualQueryProvider(embedder),
+                visual_index=image_index,
+            ),
         )
         delivered = await query.search(
             QueryRequest.from_mapping(

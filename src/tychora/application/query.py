@@ -15,6 +15,13 @@ from uuid import uuid4
 
 from tychora.adapters.sqlite.history import HistoryRepository, RunMetrics
 from tychora.adapters.voyage.text import QueryOperationBinding
+from tychora.application.query_plan import (
+    QueryBindings,
+    QueryPlan,
+    needs_text,
+    needs_visual,
+    plan_for,
+)
 from tychora.application.reranking import prepare_rerank_facts
 from tychora.configuration.indexed_representation import pinned_runtime_compatible
 from tychora.configuration.models import ResolvedConfig
@@ -122,26 +129,13 @@ type _VectorChannel = tuple[tuple[ChannelCandidate, ...], bool]
 
 
 @dataclass(frozen=True)
-class QueryExecutionPlan:
-    """Internal, immutable ablation controls; public search uses the configured path."""
+class _QueryJob:
+    """One authorized request with its mode and plan, as preparation reads it."""
 
-    lexical: bool
-    text: bool
-    image: bool
-    graph_structural: bool
-    graph_semantic: bool
-    rerank: bool
-
-    @property
-    def graph_strategies(self) -> frozenset[str]:
-        return frozenset(
-            name
-            for name, enabled in (
-                ("structural", self.graph_structural),
-                ("semantic", self.graph_semantic),
-            )
-            if enabled
-        )
+    request: QueryRequest
+    scope: RequestScope
+    mode: FrozenJsonMap
+    plan: QueryPlan
 
 
 async def _run_independent_channels[T](
@@ -205,41 +199,35 @@ class QueryService:
         owner: WorkspaceOwner,
         *,
         output_counter: TokenCounter,
-        graph: GraphStore | None = None,
-        text_provider: TextQueryProvider | None = None,
-        text_index: VectorIndex | None = None,
-        visual_provider: VisualQueryProvider | None = None,
-        visual_index: VectorIndex | None = None,
-        reranker: VoyageReranker | None = None,
-        rerank_counter: TokenCounter | None = None,
-        rerank_unavailable: TychoraError | None = None,
+        bindings: QueryBindings | None = None,
         auto_rerank: bool = False,
         caches: QueryCaches | None = None,
         history: HistoryRepository | None = None,
         profiles: tuple[OutputProfile, ...] | None = None,
-        execution_plan: QueryExecutionPlan | None = None,
     ) -> None:
+        bindings = bindings or QueryBindings()
+        self.bindings = bindings
         self.owner = owner
         self.registry = owner.store.registry
         lexical = owner.config.values.retrieval.lexical
         self.stopwords = load_stopwords(lexical.languages, lexical.stopwords).words
         self.compiler = EligibilityCompiler(self.registry, owner.artifacts)
-        self.graph = graph
-        self.text_provider = text_provider
-        self.text_index = text_index
-        self.visual_provider = visual_provider
-        self.visual_index = visual_index
-        self.reranker = reranker
-        self.rerank_counter = rerank_counter
-        self.rerank_unavailable = rerank_unavailable
+        self.graph: GraphStore | None = bindings.graph
+        self.text_provider: TextQueryProvider | None = bindings.text_provider
+        self.text_index: VectorIndex | None = bindings.text_index
+        self.visual_provider: VisualQueryProvider | None = bindings.visual_provider
+        self.visual_index: VectorIndex | None = bindings.visual_index
+        self.reranker: VoyageReranker | None = bindings.reranker
+        self.rerank_counter: TokenCounter | None = bindings.rerank_counter
+        self.rerank_unavailable = bindings.rerank_unavailable
         self.auto_rerank = auto_rerank
         self.counter = output_counter
         self.caches = caches or QueryCaches()
+        bindings.validate(owner.config, self.caches)
         self.history = history or HistoryRepository(owner.db, artifacts=owner.artifacts)
         self.profiles = profiles or (_default_profile(owner.config, self.registry),)
         self.assembler = ResponseAssembler()
         self.delivery_serializer = None
-        self.execution_plan = execution_plan
         self.delivery_serialization = None
 
     def _projection_fingerprint(self, config: ResolvedConfig | None = None) -> str:
@@ -280,41 +268,15 @@ class QueryService:
             self.text_index is not None,
             self.visual_index is not None,
             self.reranker.credential_binding_id if self.reranker else None,
-            self.execution_plan.__dict__ if self.execution_plan else None,
         )
 
-    def _validate_provider_families(self, snapshot: SnapshotView) -> None:
-        """Check actual factory identity against configured and pinned family before cache reuse."""
-        plan = self.execution_plan
-        if plan is not None:
-            if plan.text and (self.text_provider is None or self.text_index is None):
-                raise TychoraError(
-                    "CAPABILITY_MISSING", "Text ablation requires a pinned query family"
-                )
-            if plan.image and (
-                self.visual_provider is None or self.visual_index is None
-            ):
-                raise TychoraError(
-                    "CAPABILITY_MISSING",
-                    "Visual ablation requires a pinned query family",
-                )
-            graph_settings = self.owner.config.values.retrieval.graph
-            if plan.graph_strategies and self.graph is None:
-                raise TychoraError(
-                    "CAPABILITY_MISSING", "Graph ablation requires a pinned graph index"
-                )
-            if plan.graph_structural and graph_settings.structural != "code_context@1":
-                raise TychoraError(
-                    "CAPABILITY_MISSING", "Structural graph strategy is unavailable"
-                )
-            if plan.graph_semantic and not graph_settings.semantic:
-                raise TychoraError(
-                    "CAPABILITY_MISSING", "Semantic graph strategy is unavailable"
-                )
-            if plan.rerank and (self.reranker is None or self.rerank_counter is None):
-                raise TychoraError(
-                    "CAPABILITY_MISSING", "Reranked ablation requires a reranker"
-                )
+    def _validate_provider_families(
+        self, snapshot: SnapshotView, plan: QueryPlan
+    ) -> None:
+        """Check each planned channel's provider against its pinned family before cache reuse.
+
+        The provider's own identity was checked once, by ``QueryBindings.validate``.
+        """
         retained_configs: dict[str, ResolvedConfig] = {}
         current_artifact_sha = sha256(
             canonical_bytes(
@@ -341,25 +303,13 @@ class QueryService:
                 "visual",
             ),
         ):
-            if provider is None:
-                continue
-            if plan is not None and not getattr(plan, channel):
+            if provider is None or not getattr(plan, channel):
                 continue
             caps = provider.capabilities
-            if (
-                provider.caches is not self.caches
-                or caps.provider != settings.provider
-                or caps.model != settings.model
-                or caps.dimensions != settings.dimensions
-                or caps.modality != modality
-            ):
-                raise TychoraError(
-                    "INTEGRITY_ERROR",
-                    "Query provider binding differs from configuration.",
-                )
             slot = snapshot.family(channel)
             if slot is None:
-                if plan is not None and getattr(plan, channel):
+                # Only a channel the request selected itself is refused.
+                if channel in plan.explicit:
                     raise TychoraError(
                         "CAPABILITY_MISSING", "Pinned vector family is unavailable."
                     )
@@ -451,7 +401,7 @@ class QueryService:
             return True
         offline = self.owner.config.values.offline
         if (
-            _needs_text(request)
+            needs_text(request)
             and self.owner.config.values.index.text.backend != "disabled"
         ):
             provider = self.text_provider
@@ -464,7 +414,7 @@ class QueryService:
             ):
                 return False
         if (
-            _needs_visual(request)
+            needs_visual(request)
             and self.owner.config.values.index.image.backend != "disabled"
         ):
             visual = self.visual_provider
@@ -477,7 +427,7 @@ class QueryService:
             ):
                 return False
         return not (
-            _needs_text(request)
+            needs_text(request)
             and self.owner.config.values.providers.rerank.provider != "disabled"
             and not self.owner.config.values.retrieval.allow_degraded
             and (
@@ -562,6 +512,9 @@ class QueryService:
             for value in cast(tuple[object, ...], mode.get("requirements", ()))
         )
         active_requirements(requirements, request)
+        job = _QueryJob(
+            request, granted, mode, plan_for(request, self.owner.config, self.bindings)
+        )
 
         async def operation(
             attempt: EligibilityAttempt,
@@ -569,12 +522,12 @@ class QueryService:
             snapshot = attempt.snapshot
             assert snapshot is not None
             await self.owner.run_write(
-                lambda: self._validate_provider_families(snapshot),
+                lambda: self._validate_provider_families(snapshot, job.plan),
                 ctx,
                 "interactive",
             )
             prepared, lexical_epoch, cache_hit = await self._cached_prepare(
-                request, granted, attempt, mode, ctx
+                job, attempt, ctx
             )
             eligible = await self.owner.run_read(
                 lambda tx: _delivered_eligibility(tx, attempt.view, prepared), ctx
@@ -640,12 +593,7 @@ class QueryService:
         )
 
     async def _cached_prepare(
-        self,
-        request: QueryRequest,
-        scope: RequestScope,
-        attempt: EligibilityAttempt,
-        mode: FrozenJsonMap,
-        ctx: ExecutionContext,
+        self, job: _QueryJob, attempt: EligibilityAttempt, ctx: ExecutionContext
     ) -> tuple[CachedSelection, int, bool]:
         """The cached entry for this request, or a fresh one cached when allowed.
 
@@ -660,11 +608,11 @@ class QueryService:
             lambda tx: tx.workspace.lexical_epoch(), ctx
         )
         cached = self._cached_entry(
-            self._result_key(request, attempt.view, lexical_epoch)
+            self._result_key(job.request, attempt.view, lexical_epoch)
         )
         if cached is not None:
             return cached, lexical_epoch, True
-        prepared, actual_epoch = await self._prepare(request, scope, attempt, mode, ctx)
+        prepared, actual_epoch = await self._prepare(job, attempt, ctx)
         entry = prepared.to_bytes()
         bound = self.owner.config.values.limits.max_response_bytes
         if (
@@ -673,7 +621,7 @@ class QueryService:
             and len(entry) <= bound + CACHE_OVERHEAD_BYTES
         ):
             self.caches.put_result(
-                self._result_key(request, attempt.view, actual_epoch), entry
+                self._result_key(job.request, attempt.view, actual_epoch), entry
             )
         return prepared, actual_epoch, False
 
@@ -696,25 +644,12 @@ class QueryService:
             return None
 
     async def _prepare(
-        self,
-        request: QueryRequest,
-        scope: RequestScope,
-        attempt: EligibilityAttempt,
-        mode: FrozenJsonMap,
-        ctx: ExecutionContext,
+        self, job: _QueryJob, attempt: EligibilityAttempt, ctx: ExecutionContext
     ) -> tuple[CachedSelection, int]:
-        plan = self.execution_plan
-        if plan is not None and plan.text and not _needs_text(request):
-            raise TychoraError(
-                "INVALID_REQUEST", "Selected text channel cannot run for this query"
-            )
-        if plan is not None and plan.image and not _needs_visual(request):
-            raise TychoraError(
-                "INVALID_REQUEST", "Selected image channel cannot run for this query"
-            )
+        request, scope, mode, plan = job.request, job.scope, job.mode, job.plan
         # Exact reads no lexical batch: a missing one skips lexical alone.
         incomplete: list[str] = []
-        lexical_runs = (plan is None or plan.lexical) and runs_lexical(request)
+        lexical_runs = plan.lexical and runs_lexical(request)
         lexical_missing = self._missing_batches(
             attempt.view, ("lexical",) if lexical_runs else (), incomplete
         )
@@ -732,7 +667,7 @@ class QueryService:
                 ),
                 ctx,
             )
-            if plan is None or plan.lexical
+            if plan.lexical
             else ()
         )
         lexical_epoch = next(
@@ -761,7 +696,7 @@ class QueryService:
             channel.channel: (*channel.source_candidates, *channel.asset_candidates)
             for channel in channels
         }
-        votes = lexical_votes.copy() if plan is None or plan.lexical else {}
+        votes = lexical_votes.copy() if plan.lexical else {}
         vector_calls: list[
             tuple[str, Callable[[], Awaitable[_VectorChannel | TychoraError]]]
         ] = []
@@ -779,13 +714,13 @@ class QueryService:
                 return error
 
         text_runs = (
-            (plan is None or plan.text)
-            and _needs_text(request)
+            plan.text
+            and needs_text(request)
             and self.owner.config.values.index.text.backend != "disabled"
         )
         image_runs = (
-            (plan is None or plan.image)
-            and _needs_visual(request)
+            plan.image
+            and needs_visual(request)
             and self.owner.config.values.index.image.backend != "disabled"
         )
         # Strict mode refuses a missing batch; degraded mode records it.
@@ -825,7 +760,7 @@ class QueryService:
         fused = fuse(votes)
         graph = self.graph
         graph_view, graph_candidates, graph_votes = await self._augment_graph(
-            request, attempt, fused, ctx
+            request, attempt, fused, plan, ctx
         )
         if graph_votes:
             votes["graph"] = graph_votes
@@ -850,7 +785,7 @@ class QueryService:
         admission = admit(
             survivors.candidates,
             tuple(item.key for item in channels[0].source_candidates)
-            if channels and (plan is None or plan.lexical)
+            if channels and plan.lexical
             else (),
             {
                 strategy: tuple(
@@ -876,7 +811,7 @@ class QueryService:
         facts = await prepare_rerank_facts(
             self.owner, attempt, admission, votes, ctx, paths=paths
         )
-        if request.exact_only or plan is not None and not plan.rerank:
+        if request.exact_only or not plan.rerank:
             ranked = RankedEvidence(
                 tuple(
                     RankedEvidenceItem(
@@ -943,7 +878,7 @@ class QueryService:
             not request.exact_only
             and check_settings.enabled
             and graph is not None
-            and (plan is None or plan.graph_strategies)
+            and "graph" not in plan.skipped
         ):
             checks = await self.owner.run_write(
                 lambda: inspect_relations(
@@ -972,7 +907,7 @@ class QueryService:
             truncated=truncated,
             rerank_failed=ranked.failure is not None,
             graph_exhausted=graph_candidates.exhausted,
-        )
+        ).model_copy(update={"skipped_channels": plan.skipped})
         return (
             CachedSelection.of(
                 selection,
@@ -1118,19 +1053,17 @@ class QueryService:
         request: QueryRequest,
         attempt: EligibilityAttempt,
         fused: Sequence[FusedCandidate],
+        plan: QueryPlan,
         ctx: ExecutionContext,
     ) -> tuple[GraphScope | None, GraphCandidates, tuple[ChannelCandidate, ...]]:
         """The graph scope, candidates and source votes, when a graph channel runs."""
-        graph, plan = self.graph, self.execution_plan
-        if (
-            request.exact_only
-            or graph is None
-            or (plan is not None and not plan.graph_strategies)
-        ):
+        graph = self.graph
+        if request.exact_only or graph is None or "graph" in plan.skipped:
             return None, GraphCandidates(), ()
         scoped = await self._graph_scope(attempt, ctx)
         if scoped is None:
-            if plan is not None:
+            # Only a graph the request selected itself is refused.
+            if "graph" in plan.explicit:
                 raise TychoraError(
                     "CAPABILITY_MISSING",
                     "Pinned graph generation is unavailable",
@@ -1144,7 +1077,7 @@ class QueryService:
                 self.owner.config,
                 graph,
                 ctx,
-                plan.graph_strategies if plan is not None else None,
+                plan.graph_strategies,
             ),
             ctx,
             "interactive",
@@ -1397,20 +1330,6 @@ def _edition_decisions(
             revision_ids=decision.revision_ids,
         )
         for decision in decisions
-    )
-
-
-def _needs_text(request: QueryRequest) -> bool:
-    return (
-        not request.exact_only
-        and "text" in request.modalities
-        and isinstance(request.input, (QuestionInput, PassageInput))
-    )
-
-
-def _needs_visual(request: QueryRequest) -> bool:
-    return not request.exact_only and (
-        "image" in request.modalities or isinstance(request.input, ImageInput)
     )
 
 
