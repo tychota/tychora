@@ -428,19 +428,22 @@ def test_scanned_mixed_pdf_retains_exact_inputs_and_replays(tmp_path, mode):
             pdf_coverage = coverage.stages["pdf_coverage"]
             assert isinstance(pdf_coverage, FrozenJsonMap)
             assert pdf_coverage["page_count"] == 17
-            inspection = InspectionService(owner)._inspect_diagnostics(
-                None,
-                SimpleNamespace(id=extraction),
-                SimpleNamespace(
-                    members=(
-                        SimpleNamespace(
-                            extraction_id=extraction,
-                            revision_id=registration.revision.revision_id,
-                        ),
-                    )
-                ),
-                SimpleNamespace(revisions={registration.revision.revision_id: None}),
-            )
+            with owner.store.uow.read() as tx:
+                inspection = InspectionService(owner)._inspect_diagnostics(
+                    tx,
+                    SimpleNamespace(id=extraction),
+                    SimpleNamespace(
+                        members=(
+                            SimpleNamespace(
+                                extraction_id=extraction,
+                                revision_id=registration.revision.revision_id,
+                            ),
+                        )
+                    ),
+                    SimpleNamespace(
+                        revisions={registration.revision.revision_id: None}
+                    ),
+                )
             if mode != "native":
                 assert inspection.records[0].value["ocr_review_state"] == "needs_review"
             else:

@@ -919,19 +919,20 @@ def test_streamed_complete_raw_replay_commit_backup_restore_and_inspection(
         _validate_retained_documents(
             case.owner.db, case.owner.artifacts, case.owner.config
         )
-        inspection = InspectionService(case.owner)._inspect_diagnostics(
-            None,
-            SimpleNamespace(id=result.bundle.extraction.extraction_id),
-            SimpleNamespace(
-                members=(
-                    SimpleNamespace(
-                        extraction_id=result.bundle.extraction.extraction_id,
-                        revision_id=result.bundle.revision.revision_id,
-                    ),
-                )
-            ),
-            SimpleNamespace(revisions={result.bundle.revision.revision_id: None}),
-        )
+        with case.owner.store.uow.read() as tx:
+            inspection = InspectionService(case.owner)._inspect_diagnostics(
+                tx,
+                SimpleNamespace(id=result.bundle.extraction.extraction_id),
+                SimpleNamespace(
+                    members=(
+                        SimpleNamespace(
+                            extraction_id=result.bundle.extraction.extraction_id,
+                            revision_id=result.bundle.revision.revision_id,
+                        ),
+                    )
+                ),
+                SimpleNamespace(revisions={result.bundle.revision.revision_id: None}),
+            )
         assert inspection.records[0].value["ocr_review_state"] == "needs_review"
         return result
 

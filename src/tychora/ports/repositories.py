@@ -20,7 +20,7 @@ from tychora.contracts.base import (
     NonNegativeInt,
     Sha256,
 )
-from tychora.contracts.corpus import RepresentationSlice
+from tychora.contracts.corpus import AssetRow, RepresentationSlice
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.indexing import IntervalRow, RepresentationFacts
@@ -106,12 +106,24 @@ class WorkspaceRepository(Protocol):
         """Return every collection of the workspace."""
         ...
 
+    def collection(self, collection_id: str) -> tuple[str, int] | None:
+        """Return the collection's workspace ID and access floor, or ``None``."""
+        ...
+
 
 class ArtifactRepository(Protocol):
     """Registered content-addressed artifacts."""
 
     def get(self, sha256: str) -> ArtifactRef | None:
         """Return the registered artifact, or ``None`` when absent."""
+        ...
+
+    def require(self, sha256: str) -> ArtifactRef:
+        """Return the present artifact.
+
+        An absent artifact, or one whose payload is not ``present``, is refused
+        with ``INTEGRITY_ERROR`` reason ``payload.missing``.
+        """
         ...
 
     def register(self, ref: ArtifactRef) -> bool:
@@ -549,6 +561,110 @@ class EligibilityRepository(Protocol):
         ...
 
 
+class RegisteredAsset(Contract):
+    """A registered asset, its revision and its stored payload."""
+
+    asset: AssetRow
+    revision_id: Identifier
+    ref: ArtifactRef
+    payload_state: Literal["present", "delete_pending", "deleted"]
+
+
+class AssetLink(Contract):
+    """A unit linked to an asset in a role."""
+
+    unit_id: Identifier
+    role: NonEmptyStr
+    extraction_id: Identifier
+    text_origin: NonEmptyStr
+    citable: bool
+
+
+class AssetRepository(Protocol):
+    """Registered assets and their unit links."""
+
+    def registered(self, asset_id: str) -> RegisteredAsset | None:
+        """The asset with its revision and payload, or ``None``."""
+        ...
+
+    def links(
+        self, asset_id: str, roles: tuple[str, ...], limit: int
+    ) -> tuple[AssetLink, ...]:
+        """Up to ``limit`` units linked to the asset in the given roles, by unit ID."""
+        ...
+
+
+type RetainedSubject = Literal["evidence", "assets", "diagnostics", "revisions"]
+
+
+class InspectionRepository(Protocol):
+    """The rows exact inspection reads, one method per statement."""
+
+    def job_summary(self, job_id: str) -> tuple[str, str, str, str] | None:
+        """``(operation, state, created_at, updated_at)`` of the job, or ``None``."""
+        ...
+
+    def run_summary(
+        self, run_id: str
+    ) -> tuple[str, str, str, str, str, str | None] | None:
+        """``(principal, scope digest, state, created_at, snapshot, retained payload)``."""
+        ...
+
+    def extraction_diagnostics(
+        self, extraction_id: str
+    ) -> tuple[str | None, str] | None:
+        """``(diagnostics artifact SHA, source ID)`` of the extraction, or ``None``."""
+        ...
+
+    def code_file_units(self, extraction_id: str, relative_path: str) -> frozenset[str]:
+        """The units of the extraction with a code locator into the file."""
+        ...
+
+    def unit_owner(self, unit_id: str) -> tuple[str, str] | None:
+        """``(extraction_id, revision_id)`` of the unit, or ``None``."""
+        ...
+
+    def unit_records(self, unit_id: str) -> tuple[tuple[str, str, str], ...]:
+        """``(record_type, schema_hash, data_json)`` of each structured record."""
+        ...
+
+    def proxy_derivation(self, unit_id: str) -> str | None:
+        """The derivation artifact SHA behind a derived proxy unit, or ``None``."""
+        ...
+
+    def asset_summary(self, asset_id: str) -> tuple[str, str, str] | None:
+        """``(artifact_sha, locator_json, revision_id)`` of the asset, or ``None``."""
+        ...
+
+    def tombstoned(self, revision_id: str, artifact_sha: str) -> bool:
+        """Whether the revision's original payload was removed."""
+        ...
+
+    def revision_summary(self, revision_id: str) -> tuple[str, str] | None:
+        """``(original_sha, title)`` of the revision, or ``None``."""
+        ...
+
+    def original_bound(self, revision_id: str, artifact_sha: str) -> bool:
+        """Whether the revision binds the artifact as its original."""
+        ...
+
+    def retained_members(
+        self, subject: RetainedSubject, item_id: str, workspace_id: str
+    ) -> tuple[SnapshotMember, ...]:
+        """The retained extractions that hold the subject, by extraction ID."""
+        ...
+
+    def member_payloads(self, member: SnapshotMember) -> frozenset[str]:
+        """Every payload SHA the member's revision and extraction bind."""
+        ...
+
+    def revision_policy(
+        self, revision_id: str, workspace_id: str
+    ) -> tuple[str, int, int, int, str, str | None] | None:
+        """``(collection, collection floor, source floor, access rank, original, withdrawn)``."""
+        ...
+
+
 class ReadTransaction(Protocol):
     """Repositories bound to one read transaction; writes through them are refused."""
 
@@ -560,6 +676,8 @@ class ReadTransaction(Protocol):
     representations: RepresentationRepository
     eligibility: EligibilityRepository
     lexical: LexicalSearch
+    assets: AssetRepository
+    inspection: InspectionRepository
 
 
 class WriteTransaction(ReadTransaction, Protocol):

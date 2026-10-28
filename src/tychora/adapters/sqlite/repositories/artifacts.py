@@ -31,6 +31,17 @@ class SqliteArtifactRepository:
         ).fetchone()
         return None if row is None else artifact_ref(row)
 
+    def require(self, sha256: str) -> ArtifactRef:
+        """Return the present artifact; an absent or released one is refused."""
+        ref = self.get(sha256)
+        if ref is None:
+            raise TychoraError(
+                "INTEGRITY_ERROR",
+                "A required artifact payload is missing.",
+                reason="payload.missing",
+            )
+        return ref
+
     def register(self, ref: ArtifactRef) -> bool:
         """Register an artifact; return whether it was newly added."""
         require_write(self._db, self._writable)

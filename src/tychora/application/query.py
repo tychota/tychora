@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import struct
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import cached_property, partial
 from hashlib import sha256
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from uuid import uuid4
 
 from tychora.adapters.sqlite.history import HistoryRepository, RunMetrics
@@ -24,13 +24,12 @@ from tychora.application.query_plan import (
 )
 from tychora.application.reranking import prepare_rerank_facts
 from tychora.configuration.indexed_representation import pinned_runtime_compatible
-from tychora.configuration.models import ResolvedConfig
+from tychora.configuration.models import EmbeddingSettings, ResolvedConfig
 from tychora.configuration.registry import Registry
 from tychora.configuration.stopwords import load_stopwords
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
-from tychora.contracts.candidates import ChannelCandidate
-from tychora.contracts.corpus import AssetRow
+from tychora.contracts.candidates import ChannelCandidate, ChannelCandidates
 from tychora.contracts.eligibility import EligibilityView
 from tychora.contracts.embeddings import (
     EmbeddingCapabilities,
@@ -44,9 +43,11 @@ from tychora.contracts.evidence import (
     DecisionRequirement,
     RelationChecks,
     RelationPath,
+    StructuredRecord,
+    VisualEvidence,
 )
 from tychora.contracts.graph import GraphCandidates, GraphPath, GraphScope
-from tychora.contracts.identity import canonical_bytes, digest
+from tychora.contracts.identity import JsonValue, canonical_bytes, digest
 from tychora.contracts.indexing import FamilySpec
 from tychora.contracts.publication import SnapshotView
 from tychora.contracts.requests import (
@@ -57,18 +58,20 @@ from tychora.contracts.requests import (
     RequestScope,
 )
 from tychora.contracts.requirements import ResponseRequirement, active_requirements
+from tychora.contracts.snapshots import IndexFamily
 from tychora.formatting.render import OutputProfile
 from tychora.ports.execution import ExecutionContext
 from tychora.ports.query import TextQueryProvider, VisualQueryProvider
 from tychora.ports.repositories import ReadTransaction
 from tychora.ports.tokens import TokenCounter
 from tychora.ports.vectors import VectorIndex
-from tychora.retrieval.admission import LanePolicy, admit
+from tychora.retrieval.admission import Admission, LanePolicy, admit
 from tychora.retrieval.attempt import (
     AttemptHost,
     EligibilityAttempt,
     is_eligible_asset,
     is_eligible_unit,
+    resolve_snapshot,
     run_pinned_eligibility,
 )
 from tychora.retrieval.cache import QueryCaches
@@ -76,6 +79,7 @@ from tychora.retrieval.cached_selection import (
     CACHE_OVERHEAD_BYTES,
     CachedSelection,
     PreparedEvidence,
+    Selection,
 )
 from tychora.retrieval.compiler import (
     EligibilityCompiler,
@@ -112,6 +116,9 @@ from tychora.retrieval.vectors import (
 from tychora.retrieval.visuals import prepare_visual_candidates, select_visuals
 
 if TYPE_CHECKING:
+    from PIL.Image import Image as PillowImage
+
+    from tychora.adapters.voyage.rerank import VoyageReranker
     from tychora.application.owner import WorkspaceOwner
 
 
@@ -124,16 +131,94 @@ _INCOMPLETE_MESSAGES = {
 }
 
 type _VectorChannel = tuple[tuple[ChannelCandidate, ...], bool]
+type _VectorCall = Callable[
+    [QueryRequest, RequestScope, EligibilityAttempt, ExecutionContext],
+    Awaitable[_VectorChannel],
+]
+type _FactoryIdentity = tuple[EmbeddingCapabilities, str, bool, bool]
+
+# A vector channel failure degraded mode reports instead of refusing.
+_DEGRADABLE = frozenset(
+    {"CAPABILITY_MISSING", "INDEX_INCOMPLETE", "PROVIDER_FAILURE", "FORBIDDEN_SCOPE"}
+)
+# A memo past this many entries starts over; its keys grow with snapshots.
+_MEMO_LIMIT = 256
 
 
 @dataclass(frozen=True)
 class _QueryJob:
-    """One authorized request with its mode and plan, as preparation reads it."""
+    """One authorized request with its mode, requirements and plan."""
 
     request: QueryRequest
     scope: RequestScope
     mode: FrozenJsonMap
+    requirements: tuple[ResponseRequirement, ...]
     plan: QueryPlan
+    started: float
+
+
+@dataclass(frozen=True)
+class _QueryInputs:
+    """One job under its pinned attempt and execution context; each stage reads it."""
+
+    job: _QueryJob
+    attempt: EligibilityAttempt
+    ctx: ExecutionContext
+
+
+@dataclass(frozen=True)
+class _Channels:
+    """What the exact, lexical and vector channels returned, and how each ended."""
+
+    exact_lexical: tuple[ChannelCandidates, ...]
+    votes: Mapping[str, tuple[ChannelCandidate, ...]]
+    completed: tuple[str, ...]
+    incomplete: tuple[str, ...]
+    truncated: tuple[str, ...]
+    lexical_epoch: int
+
+
+@dataclass(frozen=True)
+class _Fused:
+    """The fused candidates and their votes, with the graph that augmented them."""
+
+    fused: tuple[FusedCandidate, ...]
+    votes: Mapping[str, tuple[ChannelCandidate, ...]]
+    graph: GraphScope | None
+    graph_candidates: GraphCandidates
+    paths: tuple[GraphPath, ...]
+
+
+class _FamilyChannel(NamedTuple):
+    """A vector channel's binding and configured settings, as the family check reads them."""
+
+    channel: str
+    provider: TextQueryProvider | VisualQueryProvider | None
+    index: VectorIndex | None
+    settings: EmbeddingSettings
+    modality: str
+
+
+@dataclass
+class _Digests:
+    """What a service computes once per configuration and binding.
+
+    A shallow copy of the service shares it, so every key names the inputs
+    that can vary between copies.
+    """
+
+    fingerprints: dict[tuple[object, ...], str] = field(default_factory=dict)
+    family_settings: dict[tuple[str, str], JsonValue] = field(default_factory=dict)
+    validated: set[tuple[object, ...]] = field(default_factory=set)
+
+
+def _remember[K, V](memo: dict[K, V], key: K, compute: Callable[[], V]) -> V:
+    """The value under ``key``, computed once; a full memo starts over."""
+    if key not in memo:
+        if len(memo) >= _MEMO_LIMIT:
+            memo.clear()
+        memo[key] = compute()
+    return memo[key]
 
 
 async def _run_independent_channels[T](
@@ -220,46 +305,54 @@ class QueryService:
         self.delivery_serializer = None
         self.delivery_serialization = None
 
+    @cached_property
+    def _digests(self) -> _Digests:
+        """The service's memo, made on first use; a shallow copy shares it."""
+        return _Digests()
+
     def _projection_fingerprint(self, config: ResolvedConfig | None = None) -> str:
         config = config or self.owner.config
-        parts = (
-            config.output_fingerprint,
-            tuple(profile.model_dump(mode="json") for profile in self.profiles),
-        )
-        return digest(
-            "query-projection-v1",
-            *(
-                parts
-                if self.delivery_serialization is None
-                else (*parts, self.delivery_serialization)
-            ),
+        profiles, serialization = self.profiles, self.delivery_serialization
+        return _remember(
+            self._digests.fingerprints,
+            ("projection", config.config_sha, profiles, serialization),
+            lambda: _projection_digest(config, profiles, serialization),
         )
 
     def _provider_fingerprint(self, config: ResolvedConfig | None = None) -> str:
         config = config or self.owner.config
+        bindings = self.bindings
+        bound = (
+            _factory_identity(bindings.text_provider),
+            _factory_identity(bindings.visual_provider),
+            bindings.text_index is not None,
+            bindings.visual_index is not None,
+            bindings.reranker.credential_binding_id if bindings.reranker else None,
+        )
+        return _remember(
+            self._digests.fingerprints,
+            ("provider", config.config_sha, config.query_fingerprint, bound),
+            lambda: _provider_digest(config, bound),
+        )
 
-        def factory_identity(provider: TextQueryProvider | VisualQueryProvider | None):
-            if provider is None:
-                return None
-            return {
-                "capabilities": provider.capabilities.model_dump(mode="json"),
-                "credential_binding_id": provider.credential_binding_id,
-                "remote": provider.remote,
-                "available": provider.available,
-            }
-
-        return digest(
-            "query-provider-v1",
-            config.query_fingerprint,
-            config.values.providers.model_dump(mode="json"),
-            config.values.index.model_dump(mode="json"),
-            factory_identity(self.bindings.text_provider),
-            factory_identity(self.bindings.visual_provider),
-            self.bindings.text_index is not None,
-            self.bindings.visual_index is not None,
-            self.bindings.reranker.credential_binding_id
-            if self.bindings.reranker
-            else None,
+    def _family_channels(self) -> tuple[_FamilyChannel, ...]:
+        """The text and image channels with their bindings and settings."""
+        bindings, providers = self.bindings, self.owner.config.values.providers
+        return (
+            _FamilyChannel(
+                "text",
+                bindings.text_provider,
+                bindings.text_index,
+                providers.text,
+                "text",
+            ),
+            _FamilyChannel(
+                "image",
+                bindings.visual_provider,
+                bindings.visual_index,
+                providers.image,
+                "visual",
+            ),
         )
 
     def _validate_provider_families(
@@ -268,126 +361,103 @@ class QueryService:
         """Check each planned channel's provider against its pinned family before cache reuse.
 
         The provider's own identity was checked once, by ``QueryBindings.validate``.
+        A snapshot never changes, so a channel that passed for a snapshot, a
+        configuration and a provider capability is not checked again.
         """
-        retained_configs: dict[str, ResolvedConfig] = {}
-        current_artifact_sha = sha256(
-            canonical_bytes(
-                {
-                    "type": "registry",
-                    "schema_version": "1",
-                    "data": self.owner.config.model_dump(mode="json"),
-                }
+        retained: dict[str, ResolvedConfig] = {}
+        validated = self._digests.validated
+        for family in self._family_channels():
+            if family.provider is None or not getattr(plan, family.channel):
+                continue
+            key = (
+                snapshot.snapshot_id,
+                family.channel,
+                self.owner.config.config_sha,
+                family.provider.capabilities,
+                family.index is not None,
             )
-        ).hexdigest()
-        for channel, provider, index, settings, modality in (
-            (
-                "text",
-                self.bindings.text_provider,
-                self.bindings.text_index,
-                self.owner.config.values.providers.text,
-                "text",
+            if key in validated:
+                continue
+            if self._check_family(family, snapshot, plan, retained):
+                if len(validated) >= _MEMO_LIMIT:
+                    validated.clear()
+                validated.add(key)
+
+    def _check_family(
+        self,
+        family: _FamilyChannel,
+        snapshot: SnapshotView,
+        plan: QueryPlan,
+        retained: dict[str, ResolvedConfig],
+    ) -> bool:
+        """Check one channel's provider against its pinned family; ``False`` without one.
+
+        Only a channel the request selected itself is refused for a missing family.
+        """
+        slot = snapshot.family(family.channel)
+        if slot is None:
+            if family.channel in plan.explicit:
+                raise TychoraError(
+                    "INDEX_INCOMPLETE",
+                    "Pinned vector family is unavailable.",
+                    reason="channel.unavailable",
+                )
+            return False
+        if family.index is None:
+            raise TychoraError(
+                "CAPABILITY_MISSING", "Pinned vector index is unavailable."
+            )
+        assert family.provider is not None
+        caps = family.provider.capabilities
+        spec = _family_spec(slot.family)
+        origin_sha = _family_origin(slot.family)
+        if origin_sha not in retained:
+            retained[origin_sha] = (
+                self.owner.config
+                if origin_sha == self.owner.config.retained_sha
+                else self.owner.store.retained_config_sha(origin_sha)
+            )
+        raw_capabilities = slot.family.config_json.get("capabilities")
+        if _retained_capabilities(raw_capabilities) != caps:
+            raise _provider_differs()
+        retained_settings = self._retained_settings(family, retained[origin_sha])
+        expected = digest(
+            f"{family.channel}-family-config-v1",
+            origin_sha,
+            _remember(
+                self._digests.family_settings,
+                (origin_sha, family.channel),
+                lambda: retained_settings.model_dump(mode="json"),
             ),
-            (
-                "image",
-                self.bindings.visual_provider,
-                self.bindings.visual_index,
-                self.owner.config.values.providers.image,
-                "visual",
-            ),
+            raw_capabilities,
+        )
+        if (
+            spec.config_sha != expected
+            or spec.family_id != slot.family.family_id
+            or spec.modality != family.modality
+            or (spec.provider, spec.model, spec.dimensions)
+            != (caps.provider, caps.model, caps.dimensions)
+            or spec.representation_fingerprint != caps.representation_fingerprint
         ):
-            if provider is None or not getattr(plan, channel):
-                continue
-            caps = provider.capabilities
-            slot = snapshot.family(channel)
-            if slot is None:
-                # Only a channel the request selected itself is refused.
-                if channel in plan.explicit:
-                    raise TychoraError(
-                        "INDEX_INCOMPLETE",
-                        "Pinned vector family is unavailable.",
-                        reason="channel.unavailable",
-                    )
-                continue
-            if index is None:
-                raise TychoraError(
-                    "CAPABILITY_MISSING", "Pinned vector index is unavailable."
-                )
-            raw = slot.family.config_json.get("spec")
-            if not isinstance(raw, Mapping):
-                raise TychoraError(
-                    "INDEX_INCOMPLETE", "Pinned vector family is unavailable."
-                )
-            try:
-                spec = FamilySpec.model_validate(dict(raw))
-            except ValueError:
-                raise TychoraError(
-                    "INDEX_INCOMPLETE", "Pinned vector family is invalid."
-                ) from None
-            origin_sha = slot.family.config_json.get("effective_config_sha")
-            if not isinstance(origin_sha, str) or len(origin_sha) != 64:
-                raise TychoraError(
-                    "INTEGRITY_ERROR", "Pinned vector family origin is invalid."
-                )
-            if origin_sha not in retained_configs:
-                retained_configs[origin_sha] = (
-                    self.owner.config
-                    if origin_sha == current_artifact_sha
-                    else self.owner.store.retained_config_sha(origin_sha)
-                )
-            retained_config = retained_configs[origin_sha]
-            raw_capabilities = slot.family.config_json.get("capabilities")
-            if raw_capabilities is None:
-                raise TychoraError(
-                    "CAPABILITY_MISSING",
-                    "Retained vector capability proof is absent; publish a new family and snapshot.",
-                )
-            try:
-                retained_capabilities = EmbeddingCapabilities.model_validate_json(
-                    canonical_bytes(raw_capabilities)
-                )
-            except (TypeError, ValueError):
-                raise TychoraError(
-                    "INTEGRITY_ERROR", "Retained vector capability proof is invalid."
-                ) from None
-            if retained_capabilities != caps:
-                raise TychoraError(
-                    "INTEGRITY_ERROR",
-                    "Query provider differs from pinned vector family.",
-                )
-            if not pinned_runtime_compatible(retained_config, self.owner.config):
-                raise TychoraError(
-                    "INTEGRITY_ERROR",
-                    "Query representation differs from pinned configuration.",
-                )
-            retained_settings = getattr(retained_config.values.providers, channel)
-            current_identity = settings.model_dump(mode="json")
-            retained_identity = retained_settings.model_dump(mode="json")
-            current_identity.pop("credential_ref", None)
-            retained_identity.pop("credential_ref", None)
-            if current_identity != retained_identity:
-                raise TychoraError(
-                    "INTEGRITY_ERROR",
-                    "Query representation differs from pinned configuration.",
-                )
-            expected = digest(
-                f"{channel}-family-config-v1",
-                origin_sha,
-                retained_settings.model_dump(mode="json"),
-                raw_capabilities,
+            raise _provider_differs()
+        return True
+
+    def _retained_settings(
+        self, family: _FamilyChannel, retained_config: ResolvedConfig
+    ) -> EmbeddingSettings:
+        """The channel's retained settings, refused unless the current ones match."""
+        retained_settings = getattr(retained_config.values.providers, family.channel)
+        unbound = {"credential_ref": None}
+        if not pinned_runtime_compatible(
+            retained_config, self.owner.config
+        ) or family.settings.model_copy(update=unbound) != retained_settings.model_copy(
+            update=unbound
+        ):
+            raise TychoraError(
+                "INTEGRITY_ERROR",
+                "Query representation differs from pinned configuration.",
             )
-            if (
-                spec.config_sha != expected
-                or spec.family_id != slot.family.family_id
-                or spec.modality != modality
-                or spec.provider != caps.provider
-                or spec.model != caps.model
-                or spec.dimensions != caps.dimensions
-                or spec.representation_fingerprint != caps.representation_fingerprint
-            ):
-                raise TychoraError(
-                    "INTEGRITY_ERROR",
-                    "Query provider differs from pinned vector family.",
-                )
+        return retained_settings
 
     def _replay_ready(self, request: QueryRequest) -> bool:
         """Conservatively establish current local/remote capability before channels."""
@@ -447,7 +517,8 @@ class QueryService:
                 qualified_additive_registry_extension,
             )
 
-            snapshot = self.owner.store.resolve_snapshot(None)
+            with self.owner.store.uow.read() as tx:
+                snapshot = resolve_snapshot(self.owner.catalog, tx, None)
 
             def read(config):
                 return self.history.replay_request(
@@ -492,14 +563,7 @@ class QueryService:
             raise TychoraError(
                 "INVALID_REQUEST", "Request profile differs from workspace."
             )
-        validate_query_text(
-            request,
-            self.bindings.text_provider.counter
-            if self.bindings.text_provider is not None
-            else self.bindings.visual_provider.counter
-            if self.bindings.visual_provider is not None
-            else self.bindings.rerank_counter or self.counter,
-        )
+        validate_query_text(request, self._query_counter())
         mode = _mode(self.registry, self.owner.config, request)
         requirements = tuple(
             ResponseRequirement.model_validate(value)
@@ -507,71 +571,84 @@ class QueryService:
         )
         active_requirements(requirements, request)
         job = _QueryJob(
-            request, granted, mode, plan_for(request, self.owner.config, self.bindings)
+            request,
+            granted,
+            mode,
+            requirements,
+            plan_for(request, self.owner.config, self.bindings),
+            started,
         )
-
-        async def operation(
-            attempt: EligibilityAttempt,
-        ) -> DeliveredResult:
-            snapshot = attempt.snapshot
-            assert snapshot is not None
-            await self.owner.run_write(
-                lambda: self._validate_provider_families(snapshot, job.plan),
-                ctx,
-                "interactive",
-            )
-            prepared, lexical_epoch, cache_hit = await self._cached_prepare(
-                job, attempt, ctx
-            )
-            eligible = await self.owner.run_read(
-                lambda tx: _delivered_eligibility(tx, attempt.view, prepared), ctx
-            )
-            delivered = self._deliver(
-                request, granted, attempt, requirements, mode, prepared, eligible
-            )
-            metrics = RunMetrics(
-                policy_epoch=attempt.view.policy_epoch,
-                lexical_statistics_epoch=lexical_epoch,
-                config_sha=self.owner.config.config_sha,
-                request_fingerprint=digest(
-                    "query-request-v1", request.model_dump(mode="json")
-                ),
-                duration_ms=max(0, int((time.monotonic() - started) * 1000)),
-                candidate_count=prepared.candidate_count,
-                cache_hit=cache_hit,
-            )
-
-            def record() -> None:
-                retained = (
-                    self.history.retain_request(
-                        delivered.result.run_id,
-                        request,
-                        scope=granted,
-                        snapshot_id=delivered.result.snapshot_id,
-                        config_sha=self.owner.config.config_sha,
-                        projection_fingerprint=self._projection_fingerprint(),
-                        provider_fingerprint=self._provider_fingerprint(),
-                    )
-                    if self.history.retains_requests
-                    else None
-                )
-                self.history.record(delivered, metrics, retained)
-
-            await self.owner.run_write(record, ctx, "interactive")
-            return delivered
-
-        async def supersede(delivered: DeliveredResult) -> None:
-            await self.owner.run_write(
-                lambda: self.history.supersede(delivered.result.run_id),
-                ExecutionContext(),
-                "interactive",
-            )
-
         return await run_pinned_eligibility(
             AttemptHost(self.compiler, self.owner, ctx),
             EligibilityInputs(None, granted, request, self.owner.config),
-            operation,
-            on_invalidated=supersede,
+            lambda attempt: self._operation(_QueryInputs(job, attempt, ctx)),
+            on_invalidated=self._supersede,
+        )
+
+    def _query_counter(self) -> TokenCounter:
+        """The counter that bounds query text: the first bound provider's, else ours."""
+        if self.bindings.text_provider is not None:
+            return self.bindings.text_provider.counter
+        if self.bindings.visual_provider is not None:
+            return self.bindings.visual_provider.counter
+        return self.bindings.rerank_counter or self.counter
+
+    async def _operation(self, query: _QueryInputs) -> DeliveredResult:
+        """Prepare or reuse the job's result under one attempt, deliver and record it."""
+        job, attempt, ctx = query.job, query.attempt, query.ctx
+        snapshot = attempt.snapshot
+        assert snapshot is not None
+        await self.owner.run_write(
+            lambda: self._validate_provider_families(snapshot, job.plan),
+            ctx,
+            "interactive",
+        )
+        prepared, lexical_epoch, cache_hit = await self._cached_prepare(query)
+        eligible = await self.owner.run_read(
+            lambda tx: _delivered_eligibility(tx, attempt.view, prepared), ctx
+        )
+        delivered = self._deliver(job, attempt, prepared, eligible)
+        metrics = RunMetrics(
+            policy_epoch=attempt.view.policy_epoch,
+            lexical_statistics_epoch=lexical_epoch,
+            config_sha=self.owner.config.config_sha,
+            request_fingerprint=digest(
+                "query-request-v1", job.request.model_dump(mode="json")
+            ),
+            duration_ms=max(0, int((time.monotonic() - job.started) * 1000)),
+            candidate_count=prepared.candidate_count,
+            cache_hit=cache_hit,
+        )
+        await self.owner.run_write(
+            lambda: self._record(job, delivered, metrics), ctx, "interactive"
+        )
+        return delivered
+
+    def _record(
+        self, job: _QueryJob, delivered: DeliveredResult, metrics: RunMetrics
+    ) -> None:
+        """Record the delivered run, retaining its request when history keeps them."""
+        retained = (
+            self.history.retain_request(
+                delivered.result.run_id,
+                job.request,
+                scope=job.scope,
+                snapshot_id=delivered.result.snapshot_id,
+                config_sha=self.owner.config.config_sha,
+                projection_fingerprint=self._projection_fingerprint(),
+                provider_fingerprint=self._provider_fingerprint(),
+            )
+            if self.history.retains_requests
+            else None
+        )
+        self.history.record(delivered, metrics, retained)
+
+    async def _supersede(self, delivered: DeliveredResult) -> None:
+        """Mark a run an invalidated attempt delivered as superseded."""
+        await self.owner.run_write(
+            lambda: self.history.supersede(delivered.result.run_id),
+            ExecutionContext(),
+            "interactive",
         )
 
     def _result_key(
@@ -587,7 +664,7 @@ class QueryService:
         )
 
     async def _cached_prepare(
-        self, job: _QueryJob, attempt: EligibilityAttempt, ctx: ExecutionContext
+        self, query: _QueryInputs
     ) -> tuple[CachedSelection, int, bool]:
         """The cached entry for this request, or a fresh one cached when allowed.
 
@@ -598,15 +675,14 @@ class QueryService:
         transient failure is never replayed. A complete entry whose channels a
         deterministic limit truncated is cached.
         """
+        request, view = query.job.request, query.attempt.view
         lexical_epoch = await self.owner.run_read(
-            lambda tx: tx.workspace.lexical_epoch(), ctx
+            lambda tx: tx.workspace.lexical_epoch(), query.ctx
         )
-        cached = self._cached_entry(
-            self._result_key(job.request, attempt.view, lexical_epoch)
-        )
+        cached = self._cached_entry(self._result_key(request, view, lexical_epoch))
         if cached is not None:
             return cached, lexical_epoch, True
-        prepared, actual_epoch = await self._prepare(job, attempt, ctx)
+        prepared, actual_epoch = await self._prepare(query)
         entry = prepared.to_bytes()
         bound = self.owner.config.values.limits.max_response_bytes
         if (
@@ -614,9 +690,7 @@ class QueryService:
             and prepared.coverage.status != "unavailable"
             and len(entry) <= bound + CACHE_OVERHEAD_BYTES
         ):
-            self.caches.put_result(
-                self._result_key(job.request, attempt.view, actual_epoch), entry
-            )
+            self.caches.put_result(self._result_key(request, view, actual_epoch), entry)
         return prepared, actual_epoch, False
 
     def _cached_entry(self, key: str) -> CachedSelection | None:
@@ -637,20 +711,85 @@ class QueryService:
             )
             return None
 
-    async def _prepare(
-        self, job: _QueryJob, attempt: EligibilityAttempt, ctx: ExecutionContext
-    ) -> tuple[CachedSelection, int]:
-        request, scope, mode, plan = job.request, job.scope, job.mode, job.plan
-        # Exact reads no lexical batch: a missing one skips lexical alone.
+    async def _prepare(self, query: _QueryInputs) -> tuple[CachedSelection, int]:
+        """Run the stages: channels, fusion, admission, reranking and assembly."""
+        channels = await self._channels(query)
+        fused = await self._fuse(query, channels)
+        admission = await self._admit(query, channels, fused)
+        ranked = await self._rerank(query, admission, fused)
+        selection, records, visuals, checks, relations = await self._assemble(
+            query, ranked, fused
+        )
+        coverage = build_coverage(
+            completed=channels.completed,
+            unavailable=channels.incomplete,
+            truncated=channels.truncated,
+            rerank_failed=ranked.failure is not None,
+            graph_exhausted=fused.graph_candidates.exhausted,
+        ).model_copy(update={"skipped_channels": query.job.plan.skipped})
+        return (
+            CachedSelection.of(
+                selection,
+                PreparedEvidence(
+                    records=records,
+                    checks=checks,
+                    relations=relations,
+                    visuals=visuals,
+                    coverage=coverage,
+                    warnings=query.attempt.warnings,
+                    decisions=_edition_decisions(query.attempt.decisions),
+                    candidate_count=len(fused.fused),
+                ),
+            ),
+            channels.lexical_epoch,
+        )
+
+    async def _channels(self, query: _QueryInputs) -> _Channels:
+        """Run the exact, lexical and vector channels; strict mode refuses a gap."""
         incomplete: list[str] = []
+        exact_lexical = await self._exact_lexical(query, incomplete)
+        lexical_epoch = await self._lexical_epoch(exact_lexical, query.ctx)
+        incomplete.extend(c.channel for c in exact_lexical if not c.complete)
+        completed: list[str] = [c.channel for c in exact_lexical if c.complete]
+        # A deterministic bound cut these short: reported, never refused.
+        truncated: list[str] = [c.channel for c in exact_lexical if c.truncated]
+        self._refuse_strict(incomplete, "channel.unavailable")
+        votes: dict[str, tuple[ChannelCandidate, ...]] = {
+            c.channel: (*c.source_candidates, *c.asset_candidates)
+            for c in exact_lexical
+        }
+        for channel, result in await self._vector_results(query, incomplete):
+            if isinstance(result, TychoraError):
+                self._refuse_failure(result)
+                incomplete.append(channel)
+                continue
+            votes[channel], cut = result
+            if cut:
+                truncated.append(channel)
+            completed.append(channel)
+        return _Channels(
+            exact_lexical,
+            votes,
+            tuple(completed),
+            tuple(incomplete),
+            tuple(truncated),
+            lexical_epoch,
+        )
+
+    async def _exact_lexical(
+        self, query: _QueryInputs, incomplete: list[str]
+    ) -> tuple[ChannelCandidates, ...]:
+        """The exact and lexical channels; a missing lexical batch skips lexical alone."""
+        request, plan, ctx = query.job.request, query.job.plan, query.ctx
+        view = query.attempt.view
         lexical_runs = plan.lexical and runs_lexical(request)
         lexical_missing = self._missing_batches(
-            attempt.view, ("lexical",) if lexical_runs else (), incomplete
+            view, ("lexical",) if lexical_runs else (), incomplete
         )
-        channels = await self.owner.run_read(
+        return await self.owner.run_read(
             lambda tx: retrieve_exact_lexical(
                 tx,
-                attempt.view,
+                view,
                 request,
                 self.registry,
                 80,
@@ -660,124 +799,93 @@ class QueryService:
             ),
             ctx,
         )
-        lexical_epoch = next(
-            (
-                channel.lexical_statistics_epoch
-                for channel in channels
-                if channel.lexical_statistics_epoch is not None
-            ),
-            None,
-        )
-        if lexical_epoch is None:
-            lexical_epoch = await self.owner.run_read(
-                lambda tx: tx.workspace.lexical_epoch(), ctx
-            )
-        assert lexical_epoch is not None
-        incomplete.extend(
-            channel.channel for channel in channels if not channel.complete
-        )
-        completed: list[str] = [
-            channel.channel for channel in channels if channel.complete
-        ]
-        # A deterministic bound cut these short: reported, never refused.
-        truncated: list[str] = [c.channel for c in channels if c.truncated]
-        self._refuse_strict(incomplete, "channel.unavailable")
-        votes: dict[str, tuple[ChannelCandidate, ...]] = {
-            channel.channel: (*channel.source_candidates, *channel.asset_candidates)
-            for channel in channels
-        }
-        vector_calls: list[
-            tuple[str, Callable[[], Awaitable[_VectorChannel | TychoraError]]]
-        ] = []
 
-        async def text_candidates() -> _VectorChannel | TychoraError:
-            try:
-                return await self._text_candidates(request, scope, attempt, ctx)
-            except TychoraError as error:
-                return error
+    async def _lexical_epoch(
+        self, exact_lexical: tuple[ChannelCandidates, ...], ctx: ExecutionContext
+    ) -> int:
+        """The lexical statistics epoch the channels read, else the current one."""
+        for channel in exact_lexical:
+            if channel.lexical_statistics_epoch is not None:
+                return channel.lexical_statistics_epoch
+        return await self.owner.run_read(lambda tx: tx.workspace.lexical_epoch(), ctx)
 
-        async def retrieve_visual_channel() -> _VectorChannel | TychoraError:
-            try:
-                return await self._visual_candidates(request, scope, attempt, ctx)
-            except TychoraError as error:
-                return error
+    def _refuse_failure(self, error: TychoraError) -> None:
+        """Raise a vector channel's failure unless degraded mode reports it."""
+        if (
+            not self.owner.config.values.retrieval.allow_degraded
+            or error.code not in _DEGRADABLE
+        ):
+            raise error
 
+    async def _vector_results(
+        self, query: _QueryInputs, incomplete: list[str]
+    ) -> tuple[tuple[str, _VectorChannel | TychoraError], ...]:
+        """Run the text and visual channels side by side; a failure is returned."""
+        request, plan, view = query.job.request, query.job.plan, query.attempt.view
+        index = self.owner.config.values.index
         text_runs = (
-            plan.text
-            and needs_text(request)
-            and self.owner.config.values.index.text.backend != "disabled"
+            plan.text and needs_text(request) and index.text.backend != "disabled"
         )
         image_runs = (
-            plan.image
-            and needs_visual(request)
-            and self.owner.config.values.index.image.backend != "disabled"
+            plan.image and needs_visual(request) and index.image.backend != "disabled"
         )
         # Strict mode refuses a missing batch; degraded mode records it.
         text_missing = self._missing_batches(
-            attempt.view, ("text",) if text_runs else (), incomplete
+            view, ("text",) if text_runs else (), incomplete
         )
         image_missing = self._missing_batches(
-            attempt.view, ("image",) if image_runs else (), incomplete
+            view, ("image",) if image_runs else (), incomplete
         )
+        calls: list[tuple[str, _VectorCall]] = []
         if text_runs and not text_missing:
-            vector_calls.append(("text", text_candidates))
+            calls.append(("text", self._text_candidates))
         if image_runs and not image_missing:
-            vector_calls.append(("visual", retrieve_visual_channel))
-
-        vector_results = await _run_independent_channels(
-            tuple(call for _, call in vector_calls), ctx
+            calls.append(("visual", self._visual_candidates))
+        results = await _run_independent_channels(
+            tuple(partial(_captured, call, query) for _, call in calls), query.ctx
         )
-        for (channel, _), result in zip(vector_calls, vector_results, strict=True):
-            if isinstance(result, TychoraError):
-                if (
-                    not self.owner.config.values.retrieval.allow_degraded
-                    or result.code
-                    not in {
-                        "CAPABILITY_MISSING",
-                        "INDEX_INCOMPLETE",
-                        "PROVIDER_FAILURE",
-                        "FORBIDDEN_SCOPE",
-                    }
-                ):
-                    raise result
-                incomplete.append(channel)
-                continue
-            votes[channel], cut = result
-            if cut:
-                truncated.append(channel)
-            completed.append(channel)
+        return tuple(zip((name for name, _ in calls), results, strict=True))
+
+    async def _fuse(self, query: _QueryInputs, channels: _Channels) -> _Fused:
+        """Fuse the channel votes, then again with the graph channel's when it runs."""
+        votes = dict(channels.votes)
         fused = fuse(votes)
-        graph = self.bindings.graph
-        graph_view, graph_candidates, graph_votes = await self._augment_graph(
-            request, attempt, fused, plan, ctx
+        graph, graph_candidates, graph_votes = await self._augment_graph(
+            query.job.request, query.attempt, fused, query.job.plan, query.ctx
         )
         if graph_votes:
             votes["graph"] = graph_votes
             fused = fuse(votes)
+        paths = tuple(
+            path
+            for item in (*graph_candidates.candidates, *graph_candidates.enrichments)
+            for path in item.paths
+        )
+        return _Fused(fused, votes, graph, graph_candidates, paths)
+
+    async def _admit(
+        self, query: _QueryInputs, channels: _Channels, fused: _Fused
+    ) -> Admission:
+        """Admit the fused survivors under the mode's and the request's lane needs."""
+        request, attempt = query.job.request, query.attempt
         survivors = await self.owner.run_read(
-            lambda tx: load_survivors(tx, attempt.view, fused), ctx
+            lambda tx: load_survivors(tx, attempt.view, fused.fused), query.ctx
         )
-        required = cast(tuple[str, ...], mode.get("required_lanes", ()))
-        active = active_requirements(
-            tuple(
-                ResponseRequirement.model_validate(v)
-                for v in cast(tuple[object, ...], mode.get("requirements", ()))
-            ),
-            request,
-        )
+        required = cast(tuple[str, ...], query.job.mode.get("required_lanes", ()))
+        active = active_requirements(query.job.requirements, request)
         required = tuple(
             dict.fromkeys((*required, *(r.value for r in active if r.target == "lane")))
         )
         lane_order = self.owner.config.values.output.lane_order or tuple(
             self.registry.lanes
         )
-        admission = admit(
+        return admit(
             survivors.candidates,
-            tuple(item.key for item in channels[0].source_candidates),
+            tuple(item.key for item in channels.exact_lexical[0].source_candidates),
             {
                 strategy: tuple(
                     ("unit", item.unit_id)
-                    for item in graph_candidates.candidates
+                    for item in fused.graph_candidates.candidates
                     if item.strategy == strategy
                 )
                 for strategy in ("structural", "semantic")
@@ -790,16 +898,17 @@ class QueryService:
             ),
             lanes=survivors.lanes,
         )
-        paths = tuple(
-            path
-            for item in (*graph_candidates.candidates, *graph_candidates.enrichments)
-            for path in item.paths
-        )
+
+    async def _rerank(
+        self, query: _QueryInputs, admission: Admission, fused: _Fused
+    ) -> RankedEvidence:
+        """Rerank the admitted candidates, or keep their order when reranking is off."""
+        request, attempt, ctx = query.job.request, query.attempt, query.ctx
         facts = await prepare_rerank_facts(
-            self.owner, attempt, admission, votes, ctx, paths=paths
+            self.owner, attempt, admission, fused.votes, ctx, paths=fused.paths
         )
-        if request.exact_only or not plan.rerank:
-            ranked = RankedEvidence(
+        if request.exact_only or not query.job.plan.rerank:
+            return RankedEvidence(
                 tuple(
                     RankedEvidenceItem(
                         candidate,
@@ -810,106 +919,111 @@ class QueryService:
                     for candidate in admission.selected
                 )
             )
-        else:
-            reranker = self.bindings.reranker
-            if (
-                self.auto_rerank
-                and reranker is not None
-                and self.bindings.rerank_counter is not None
-            ):
-                from tychora.application.reranking import _create_injected_reranker
+        return await rerank_candidates(
+            request,
+            admission,
+            RerankContext(
+                owner=self.owner,
+                attempt=attempt,
+                reranker=await self._reranker(query),
+                counter=self.bindings.rerank_counter,
+                facts=cast(Any, facts),
+                execution=ctx,
+                allow_degraded=self.owner.config.values.retrieval.allow_degraded,
+                unavailable=self.bindings.rerank_unavailable,
+            ),
+        )
 
-                reranker = await _create_injected_reranker(
-                    self.owner,
-                    runtime=reranker._runtime,
-                    scope=scope,
-                    counter=self.bindings.rerank_counter,
-                    ctx=ctx,
-                )
-            ranked = await rerank_candidates(
-                request,
-                admission,
-                RerankContext(
-                    owner=self.owner,
-                    attempt=attempt,
-                    reranker=reranker,
-                    counter=self.bindings.rerank_counter,
-                    facts=cast(Any, facts),
-                    execution=ctx,
-                    allow_degraded=self.owner.config.values.retrieval.allow_degraded,
-                    unavailable=self.bindings.rerank_unavailable,
-                ),
-            )
-        relations = _graph_relations(paths, graph_view)
+    async def _reranker(self, query: _QueryInputs) -> VoyageReranker | None:
+        """The bound reranker, rebound to the query's scope when it reranks itself."""
+        reranker = self.bindings.reranker
+        if (
+            not self.auto_rerank
+            or reranker is None
+            or self.bindings.rerank_counter is None
+        ):
+            return reranker
+        from tychora.application.reranking import _create_injected_reranker
+
+        return await _create_injected_reranker(
+            self.owner,
+            runtime=reranker._runtime,
+            scope=query.job.scope,
+            counter=self.bindings.rerank_counter,
+            ctx=query.ctx,
+        )
+
+    async def _assemble(
+        self, query: _QueryInputs, ranked: RankedEvidence, fused: _Fused
+    ) -> tuple[
+        Selection,
+        tuple[StructuredRecord, ...],
+        tuple[VisualEvidence, ...],
+        RelationChecks,
+        tuple[RelationPath, ...],
+    ]:
+        """Select segments and visuals, prepare their records and check relations."""
+        request, attempt, ctx = query.job.request, query.attempt, query.ctx
+        relations = _graph_relations(fused.paths, fused.graph)
         selection = assemble_segments(
             ranked,
             attempt.view,
             self.owner.config,
             self.counter,
-            graph_view=graph_view,
-            continuation_paths=paths,
+            graph_view=fused.graph,
+            continuation_paths=fused.paths,
             historical_kind_roles=attempt.historical_kind_roles,
             total_tokens=request.budgets.max_tokens,
             result_limit=request.limit,
         )
-        visual_candidates = await prepare_visual_candidates(
+        visual_options = await prepare_visual_candidates(
             self.owner, attempt, ranked, ctx
         )
-        visuals = select_visuals(visual_candidates, selection.segments)
         records = await self.owner.run_read(
             lambda tx: prepare_records(tx, selection, ranked, attempt), ctx
         )
-        checks = RelationChecks(status="not_evaluated")
-        check_settings = self.owner.config.values.checks.relations
-        if (
-            not request.exact_only
-            and check_settings.enabled
-            and graph is not None
-            and "graph" not in plan.skipped
-        ):
-            checks = await self.owner.run_write(
-                lambda: inspect_relations(
-                    graph,
-                    graph_view,
-                    tuple(
-                        dict.fromkeys(
-                            uid
-                            for segment in selection.segments
-                            for uid in segment.matched_unit_ids
-                        )
-                    ),
-                    self.owner.config.values.retrieval.graph.predicates,
-                    ctx,
-                    expansion_inspected_rows=graph_candidates.inspected_rows,
-                    registry=self.registry,
-                    max_rows=self.owner.config.values.limits.graph_work_limit,
-                    max_assertions=check_settings.max_assertions,
-                ),
-                ctx,
-                "interactive",
-            )
-        coverage = build_coverage(
-            completed=completed,
-            unavailable=incomplete,
-            truncated=truncated,
-            rerank_failed=ranked.failure is not None,
-            graph_exhausted=graph_candidates.exhausted,
-        ).model_copy(update={"skipped_channels": plan.skipped})
         return (
-            CachedSelection.of(
-                selection,
-                PreparedEvidence(
-                    records=records,
-                    checks=checks,
-                    relations=tuple(relations),
-                    visuals=visuals,
-                    coverage=coverage,
-                    warnings=attempt.warnings,
-                    decisions=_edition_decisions(attempt.decisions),
-                    candidate_count=len(fused),
-                ),
+            selection,
+            records,
+            select_visuals(visual_options, selection.segments),
+            await self._relation_checks(query, selection, fused),
+            tuple(relations),
+        )
+
+    async def _relation_checks(
+        self, query: _QueryInputs, selection: Selection, fused: _Fused
+    ) -> RelationChecks:
+        """Check the selected units' relations when checks are on and a graph runs."""
+        graph = self.bindings.graph
+        settings = self.owner.config.values.checks.relations
+        if (
+            query.job.request.exact_only
+            or not settings.enabled
+            or graph is None
+            or "graph" in query.job.plan.skipped
+        ):
+            return RelationChecks(status="not_evaluated")
+        unit_ids = tuple(
+            dict.fromkeys(
+                uid
+                for segment in selection.segments
+                for uid in segment.matched_unit_ids
+            )
+        )
+        return await self.owner.run_write(
+            lambda: inspect_relations(
+                graph,
+                fused.graph,
+                unit_ids,
+                self.owner.config.values.retrieval.graph.predicates,
+                query.ctx,
+                expansion_inspected_rows=fused.graph_candidates.inspected_rows,
+                registry=self.registry,
+                max_rows=self.owner.config.values.limits.graph_work_limit,
+                max_assertions=settings.max_assertions,
             ),
-            lexical_epoch,
+            query.ctx,
+            "interactive",
         )
 
     def _missing_batches(
@@ -945,8 +1059,6 @@ class QueryService:
         attempt: EligibilityAttempt,
         ctx: ExecutionContext,
     ) -> _VectorChannel:
-        from tychora.contracts.requests import PassageInput, QuestionInput
-
         if not isinstance(request.input, (QuestionInput, PassageInput)):
             return (), False
         query_text = request.input.text
@@ -1091,70 +1203,34 @@ class QueryService:
     def _registered_image_query(
         self, asset_id: str, attempt: EligibilityAttempt
     ) -> RegisteredImageQuery:
+        """The descriptor of a registered image query, from its verified pixels."""
         view = attempt.view
         with self.owner.store.uow.read() as tx:
             _require_image_asset(tx, view, asset_id)
-            row = self.owner.db.execute(
-                "SELECT a.asset_id,a.extraction_id,a.artifact_sha,a.asset_type,a.native_ref,"
-                "a.locator_json,a.caption,a.declared_review_state,e.revision_id,"
-                "p.size_bytes,p.media_type,p.storage_key,p.payload_state "
-                "FROM assets a JOIN extractions e USING(extraction_id) "
-                "JOIN artifacts p ON p.artifact_sha=a.artifact_sha WHERE a.asset_id=?",
-                (asset_id,),
-            ).fetchone()
-            if row is None or row[12] != "present" or row[11] != row[2]:
+            registered = tx.assets.registered(asset_id)
+            if (
+                registered is None
+                or registered.payload_state != "present"
+                or registered.ref.storage_key != registered.asset.artifact_sha
+            ):
                 raise TychoraError(
                     "ORIGINAL_REMOVED", "Image query original is unavailable."
                 )
-            source_rows = self.owner.db.execute(
-                "SELECT u.unit_id FROM unit_assets ua JOIN evidence_units u USING(unit_id) "
-                "WHERE ua.asset_id=? AND ua.role='source' ORDER BY u.unit_id LIMIT 2049",
-                (asset_id,),
-            ).fetchall()
-            if not source_rows or len(source_rows) > 2048:
+            sources = tx.assets.links(asset_id, ("source",), 2049)
+            if not sources or len(sources) > 2048:
                 raise TychoraError(
                     "INTEGRITY_ERROR", "Image query source links are invalid."
                 )
-            _require_image_sources(
-                tx, view, row[8], tuple(item[0] for item in source_rows)
-            )
-        asset = AssetRow.model_validate(
-            {
-                "asset_id": row[0],
-                "extraction_id": row[1],
-                "artifact_sha": row[2],
-                "asset_type": row[3],
-                "native_ref": row[4],
-                "locator": json.loads(row[5]),
-                "caption": row[6],
-                "declared_review_state": row[7],
-            }
-        )
-        dependencies = frozenset({asset_id, *(item[0] for item in source_rows)})
-        ref = ArtifactRef.from_row((row[2], *row[9:12]))
-        try:
-            from PIL import Image, ImageOps
-        except ImportError:
-            raise TychoraError(
-                "CAPABILITY_MISSING", "Image operations require the documents extra."
-            ) from None
-        with (
-            self.owner.artifacts.open_verified(ref) as stream,
-            Image.open(stream) as encoded,
-        ):
-            if encoded.width * encoded.height > 40_000_000:
-                raise TychoraError(
-                    "INVALID_REQUEST", "Image query exceeds pixel ceiling."
-                )
-            pixels = ImageOps.exif_transpose(encoded).convert("RGB")
-            pixels.load()
+            source_ids = tuple(link.unit_id for link in sources)
+            _require_image_sources(tx, view, registered.revision_id, source_ids)
+        pixels = _registered_pixels(self.owner, registered.ref)
         width, height = pixels.size
         descriptor = VisualInput.from_registered(
-            asset=asset,
-            artifact_ref=ref,
-            revision_id=row[8],
+            asset=registered.asset,
+            artifact_ref=registered.ref,
+            revision_id=registered.revision_id,
             context="",
-            dependency_ids=dependencies,
+            dependency_ids=frozenset({asset_id, *source_ids}),
             pixel_sha256=sha256(pixels.tobytes()).hexdigest(),
             width=width,
             height=height,
@@ -1170,11 +1246,8 @@ class QueryService:
 
     def _deliver(
         self,
-        request: QueryRequest,
-        scope: RequestScope,
+        job: _QueryJob,
         attempt: EligibilityAttempt,
-        requirements: tuple[ResponseRequirement, ...],
-        mode: FrozenJsonMap,
         prepared: CachedSelection,
         eligible: tuple[frozenset[str], frozenset[str]],
     ) -> DeliveredResult:
@@ -1182,11 +1255,11 @@ class QueryService:
             prepared.selection(),
             prepared.records,
             prepared.checks,
-            request,
+            job.request,
             ResponseContext(
                 run_id=str(uuid4()),
                 snapshot_id=attempt.view.snapshot_id,
-                scope=scope,
+                scope=job.scope,
                 counter=self.counter,
                 profiles=self.profiles,
                 eligible_unit_ids=eligible[0],
@@ -1196,8 +1269,10 @@ class QueryService:
                 coverage=prepared.coverage,
                 warnings=prepared.warnings,
                 decision_requirements=prepared.decisions,
-                required_lanes=cast(tuple[str, ...], mode.get("required_lanes", ())),
-                requirements=requirements,
+                required_lanes=cast(
+                    tuple[str, ...], job.mode.get("required_lanes", ())
+                ),
+                requirements=job.requirements,
                 checks_required=self.owner.config.values.checks.relations.required,
                 max_tokens=self.owner.config.values.limits.max_tokens,
                 max_response_bytes=self.owner.config.values.limits.max_response_bytes,
@@ -1205,6 +1280,138 @@ class QueryService:
                 delivery_serialization=self.delivery_serialization,
             ),
         )
+
+
+async def _captured(
+    call: _VectorCall, query: _QueryInputs
+) -> _VectorChannel | TychoraError:
+    """Run one vector channel, returning its typed failure instead of raising it."""
+    try:
+        return await call(query.job.request, query.job.scope, query.attempt, query.ctx)
+    except TychoraError as error:
+        return error
+
+
+def _projection_digest(
+    config: ResolvedConfig,
+    profiles: tuple[OutputProfile, ...],
+    serialization: str | None,
+) -> str:
+    """The projection identity of the output configuration, profiles and serialization."""
+    parts = (
+        config.output_fingerprint,
+        tuple(profile.model_dump(mode="json") for profile in profiles),
+    )
+    return digest(
+        "query-projection-v1",
+        *(parts if serialization is None else (*parts, serialization)),
+    )
+
+
+def _factory_identity(
+    provider: TextQueryProvider | VisualQueryProvider | None,
+) -> _FactoryIdentity | None:
+    """What of a bound provider factory changes a query's provider identity."""
+    if provider is None:
+        return None
+    return (
+        provider.capabilities,
+        provider.credential_binding_id,
+        provider.remote,
+        provider.available,
+    )
+
+
+def _provider_digest(
+    config: ResolvedConfig,
+    bound: tuple[
+        _FactoryIdentity | None, _FactoryIdentity | None, bool, bool, str | None
+    ],
+) -> str:
+    """The provider identity of the configuration and the bound collaborators."""
+    text, visual, text_index, visual_index, rerank_binding = bound
+    return digest(
+        "query-provider-v1",
+        config.query_fingerprint,
+        config.values.providers.model_dump(mode="json"),
+        config.values.index.model_dump(mode="json"),
+        _factory_document(text),
+        _factory_document(visual),
+        text_index,
+        visual_index,
+        rerank_binding,
+    )
+
+
+def _factory_document(identity: _FactoryIdentity | None) -> JsonValue:
+    """A provider factory identity as the digest records it."""
+    if identity is None:
+        return None
+    capabilities, credential_binding_id, remote, available = identity
+    return {
+        "capabilities": capabilities.model_dump(mode="json"),
+        "credential_binding_id": credential_binding_id,
+        "remote": remote,
+        "available": available,
+    }
+
+
+def _provider_differs() -> TychoraError:
+    return TychoraError(
+        "INTEGRITY_ERROR", "Query provider differs from pinned vector family."
+    )
+
+
+def _family_spec(family: IndexFamily) -> FamilySpec:
+    """The family's recorded specification; an absent or invalid one is refused."""
+    raw = family.config_json.get("spec")
+    if not isinstance(raw, Mapping):
+        raise TychoraError("INDEX_INCOMPLETE", "Pinned vector family is unavailable.")
+    try:
+        return FamilySpec.model_validate(dict(raw))
+    except ValueError:
+        raise TychoraError(
+            "INDEX_INCOMPLETE", "Pinned vector family is invalid."
+        ) from None
+
+
+def _family_origin(family: IndexFamily) -> str:
+    """The retained configuration digest the family was built under."""
+    origin_sha = family.config_json.get("effective_config_sha")
+    if not isinstance(origin_sha, str) or len(origin_sha) != 64:
+        raise TychoraError("INTEGRITY_ERROR", "Pinned vector family origin is invalid.")
+    return origin_sha
+
+
+def _retained_capabilities(raw: JsonValue) -> EmbeddingCapabilities:
+    """The capability proof the family retained; an absent one needs a new family."""
+    if raw is None:
+        raise TychoraError(
+            "CAPABILITY_MISSING",
+            "Retained vector capability proof is absent; publish a new family and snapshot.",
+        )
+    try:
+        return EmbeddingCapabilities.model_validate_json(canonical_bytes(raw))
+    except (TypeError, ValueError):
+        raise TychoraError(
+            "INTEGRITY_ERROR", "Retained vector capability proof is invalid."
+        ) from None
+
+
+def _registered_pixels(owner: WorkspaceOwner, ref: ArtifactRef) -> PillowImage:
+    """The verified image upright in RGB, refused above the pixel ceiling."""
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        raise TychoraError(
+            "CAPABILITY_MISSING", "Image operations require the documents extra."
+        ) from None
+    with owner.artifacts.open_verified(ref) as stream, Image.open(stream) as encoded:
+        if encoded.width * encoded.height > 40_000_000:
+            raise TychoraError("INVALID_REQUEST", "Image query exceeds pixel ceiling.")
+        pixels = ImageOps.exif_transpose(encoded).convert("RGB")
+        pixels.load()
+    return pixels
 
 
 def _require_image_asset(

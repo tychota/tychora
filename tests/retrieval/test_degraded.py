@@ -687,6 +687,17 @@ def test_unmet_requirement_stays_partial_beside_a_delivery_truncation():
     assert checks.status == "partial"
 
 
+def test_a_lane_named_delivery_is_an_unmet_requirement_not_a_truncation():
+    complete = Coverage(status="complete", completed_channels=("lexical",))
+    lane = CoverageGap(
+        code="required_lane",
+        channel="delivery",
+        message="not_selected_in_bounded_search",
+    )
+    delivered = _delivered_coverage(complete, [lane], False)
+    assert (delivered.status, delivered.truncated_channels) == ("partial", ())
+
+
 def test_missing_required_batch_is_incomplete(tmp_path):
     with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
         _add_text(kb, "a.md", "# A\n\nThe verification outcome.\n")

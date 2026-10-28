@@ -156,7 +156,9 @@ async def test_planned_graph_without_a_pinned_generation_raises_graph_disabled()
         return None
 
     service = QueryService.__new__(QueryService)
-    vars(service).update(bindings=QueryBindings(graph=object()), _graph_scope=no_scope)
+    vars(service).update(
+        bindings=QueryBindings(graph=cast(Any, object())), _graph_scope=no_scope
+    )
     attempt = revision_attempt(revision_view())
     request = QueryRequest.from_mapping({"question": "synthetic"})
     # A graph only in the default plan is skipped, not refused.

@@ -6,7 +6,6 @@ Python code with access to an owner/runtime can bypass application interfaces.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -26,7 +25,7 @@ from tychora.contracts.embeddings import (
     VisualResizeDerivation,
 )
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.identity import canonical_bytes, digest
+from tychora.contracts.identity import digest
 from tychora.ports.embeddings import VisualOperation
 from tychora.ports.execution import ExecutionContext
 
@@ -36,6 +35,7 @@ if TYPE_CHECKING:
     from tychora.application.owner import WorkspaceOwner
     from tychora.application.runtime import Priority
     from tychora.contracts.requests import RequestScope
+    from tychora.ports.repositories import ReadTransaction
     from tychora.ports.tokens import TokenCounter
 
 
@@ -97,30 +97,25 @@ class OwnerVisualAccess:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Visual resolution requires a fresh read."
             )
-        owner.db.execute("BEGIN")
-        try:
-            owner.upload_policy._check_epoch(self.epoch)
-            if not self.scope.collection_ids:
-                denied()
-            for cid in self.scope.collection_ids:
-                row = owner.db.execute(
-                    "SELECT workspace_id,access_floor FROM collections WHERE collection_id=?",
-                    (cid,),
-                ).fetchone()
-                if (
-                    row is None
-                    or row[0] != owner.workspace_id
-                    or row[1] > self.scope.access_ceiling
-                ):
+        with owner.store.uow.read() as tx:
+            try:
+                owner.upload_policy._check_epoch(self.epoch)
+                if not self.scope.collection_ids:
                     denied()
-            for item in items:
-                self._resolve_item(item)
-        except (ValueError, TypeError, KeyError):
-            denied()
-        finally:
-            owner.db.rollback()
+                for cid in self.scope.collection_ids:
+                    row = tx.workspace.collection(cid)
+                    if (
+                        row is None
+                        or row[0] != owner.workspace_id
+                        or row[1] > self.scope.access_ceiling
+                    ):
+                        denied()
+                for item in items:
+                    self._resolve_item(tx, item)
+            except (ValueError, TypeError, KeyError):
+                denied()
 
-    def _resolve_item(self, item: VisualInput) -> None:
+    def _resolve_item(self, tx: ReadTransaction, item: VisualInput) -> None:
         # Pydantic model_copy(update=...) does not run field or model validators.
         # Revalidate the complete caller descriptor before using its input hash
         # for admission, cache identity, or a returned embedding record.
@@ -134,40 +129,19 @@ class OwnerVisualAccess:
             denied()
         if VisualInput.model_validate(item.model_dump(mode="python")) != item:
             denied()
-        db = self.owner.db
-        row = db.execute(
-            "SELECT a.asset_id,a.extraction_id,a.artifact_sha,a.asset_type,a.native_ref,"
-            "a.locator_json,a.caption,a.declared_review_state,e.revision_id,"
-            "p.size_bytes,p.media_type,p.storage_key,p.payload_state "
-            "FROM assets a JOIN extractions e USING(extraction_id) "
-            "JOIN artifacts p ON p.artifact_sha=a.artifact_sha WHERE a.asset_id=?",
-            (item.asset.asset_id,),
-        ).fetchone()
-        if row is None:
+        registered = tx.assets.registered(item.asset.asset_id)
+        if registered is None:
             denied()
-        canonical = AssetRow.model_validate_json(
-            canonical_bytes(
-                dict(
-                    zip(
-                        (
-                            "asset_id",
-                            "extraction_id",
-                            "artifact_sha",
-                            "asset_type",
-                            "native_ref",
-                            "locator",
-                            "caption",
-                            "declared_review_state",
-                        ),
-                        (*row[:5], json.loads(row[5]), *row[6:8]),
-                    )
-                )
-            )
-        )
+        ref = registered.ref
         if (
-            canonical != item.asset
-            or row[8] != item.revision_id
-            or (row[9], row[10], row[11], row[12])
+            registered.asset != item.asset
+            or registered.revision_id != item.revision_id
+            or (
+                ref.size_bytes,
+                ref.media_type,
+                ref.storage_key,
+                registered.payload_state,
+            )
             != (
                 item.artifact_ref.size_bytes,
                 item.artifact_ref.media_type,
@@ -178,30 +152,31 @@ class OwnerVisualAccess:
             denied()
         # Canonical source/caption links are leaf dependencies, never substituted
         # by the containing revision. Arbitrary caller prose is not attested.
-        links = db.execute(
-            "SELECT u.unit_id,ua.role,u.extraction_id,u.text_origin,u.citable "
-            "FROM unit_assets ua JOIN evidence_units u USING(unit_id) "
-            "WHERE ua.asset_id=? AND ua.role IN ('source','caption') LIMIT 2049",
-            (item.asset.asset_id,),
-        ).fetchall()
+        links = tx.assets.links(item.asset.asset_id, ("source", "caption"), 2049)
         if (
             not links
             or len(links) > 2048
-            or not any(r[1] == "source" for r in links)
+            or not any(link.role == "source" for link in links)
             or any(
-                r[2] != item.asset.extraction_id or r[3] != "source" or r[4] != 1
-                for r in links
+                link.extraction_id != item.asset.extraction_id
+                or link.text_origin != "source"
+                or not link.citable
+                for link in links
             )
         ):
             denied()
-        if item.context not in ("", canonical.caption):
+        if item.context not in ("", registered.asset.caption):
             denied()
-        if item.context and not any(r[1] == "caption" for r in links):
+        if item.context and not any(link.role == "caption" for link in links):
             denied()
         required = frozenset(
             {
                 item.asset.asset_id,
-                *(r[0] for r in links if r[1] == "source" or item.context),
+                *(
+                    link.unit_id
+                    for link in links
+                    if link.role == "source" or item.context
+                ),
             }
         )
         if item.dependency_ids != required:

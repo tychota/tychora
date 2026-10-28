@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.requests import (
@@ -15,7 +15,12 @@ from tychora.contracts.requests import (
 )
 
 if TYPE_CHECKING:
+    from tychora.adapters.voyage.rerank import VoyageReranker
     from tychora.configuration.models import ResolvedConfig
+    from tychora.ports.graph import GraphStore
+    from tychora.ports.query import TextQueryProvider, VisualQueryProvider
+    from tychora.ports.tokens import TokenCounter
+    from tychora.ports.vectors import VectorIndex
     from tychora.retrieval.cache import QueryCaches
 
 _SWITCHES = ("lexical", "text", "image", "graph")
@@ -34,14 +39,14 @@ def _not_configured(name: str) -> TychoraError:
 class QueryBindings:
     """The optional query collaborators a workspace is built with."""
 
-    text_provider: Any = None
-    text_index: Any = None
-    visual_provider: Any = None
-    visual_index: Any = None
-    reranker: Any = None
-    rerank_counter: Any = None
+    text_provider: TextQueryProvider | None = None
+    text_index: VectorIndex | None = None
+    visual_provider: VisualQueryProvider | None = None
+    visual_index: VectorIndex | None = None
+    reranker: VoyageReranker | None = None
+    rerank_counter: TokenCounter | None = None
     rerank_unavailable: TychoraError | None = None
-    graph: Any = None
+    graph: GraphStore | None = None
 
     def validate(self, config: ResolvedConfig, caches: QueryCaches) -> None:
         """Refuse providers whose identity differs from the configured one."""

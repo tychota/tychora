@@ -7,6 +7,7 @@ from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
@@ -193,7 +194,9 @@ def test_local_text_replay_gate_degrades_reranker_but_strict_and_remote_still_fa
     service = QueryService.__new__(QueryService)
     vars(service)["owner"] = owner
     service.caches = caches
-    service.bindings = QueryBindings(text_provider=provider, text_index=object())
+    service.bindings = QueryBindings(
+        text_provider=provider, text_index=cast(Any, object())
+    )
     request = QueryRequest.from_mapping({"question": "verification"})
     assert service._replay_ready(request)
     config.values.retrieval.allow_degraded = False

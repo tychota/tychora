@@ -1,6 +1,7 @@
 """Public composition and provider identity boundaries."""
 
 from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
@@ -312,7 +313,7 @@ def test_actual_factory_space_and_locality_change_result_identity(tmp_path):
     )
     service = QueryService.__new__(QueryService)
     vars(service)["owner"] = SimpleNamespace(config=config)
-    service.bindings = QueryBindings(text_provider=provider)
+    service.bindings = QueryBindings(text_provider=cast(Any, provider))
     first = service._provider_fingerprint()
     provider.capabilities = capabilities.model_copy(
         update={
