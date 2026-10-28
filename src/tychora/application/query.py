@@ -34,7 +34,6 @@ from tychora.contracts.embeddings import (
 )
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import (
-    Coverage,
     DecisionRequirement,
     RelationChecks,
     RelationPath,
@@ -76,6 +75,7 @@ from tychora.retrieval.compiler import (
     EligibilityInputs,
     eligible_cache_key,
 )
+from tychora.retrieval.coverage import build_coverage, missing_batch_slots
 from tychora.retrieval.fusion import FusedCandidate, fuse
 from tychora.retrieval.graph import augment
 from tychora.retrieval.graph_scope import graph_scope
@@ -110,6 +110,12 @@ if TYPE_CHECKING:
 
 
 _LOG = logging.getLogger(__name__)
+# The visual channel reads the publication slot named ``image``.
+_SLOT_CHANNELS = {"image": "visual"}
+_INCOMPLETE_MESSAGES = {
+    "channel.unavailable": "A retrieval channel is incomplete.",
+    "batch.missing": "A batch of an eligible revision is missing.",
+}
 
 type _VectorChannel = tuple[tuple[ChannelCandidate, ...], bool]
 
@@ -704,6 +710,9 @@ class QueryService:
             raise TychoraError(
                 "INVALID_REQUEST", "Selected image channel cannot run for this query"
             )
+        incomplete = self._missing_batches(
+            attempt.view, ("lexical",) if plan is None or plan.lexical else ()
+        )
         channels = (
             await self.owner.run_read(
                 lambda tx: retrieve_exact_lexical(
@@ -717,7 +726,7 @@ class QueryService:
                 ),
                 ctx,
             )
-            if plan is None or plan.lexical
+            if (plan is None or plan.lexical) and not incomplete
             else ()
         )
         lexical_epoch = next(
@@ -733,16 +742,15 @@ class QueryService:
                 lambda tx: tx.workspace.lexical_epoch(), ctx
             )
         assert lexical_epoch is not None
-        incomplete: list[str] = [
+        incomplete.extend(
             channel.channel for channel in channels if not channel.complete
-        ]
+        )
         completed: list[str] = [
             channel.channel for channel in channels if channel.complete
         ]
-        # Vector channels an over-fetch bound cut short, kept for coverage.
-        truncated: list[str] = []
-        if incomplete and not self.owner.config.values.retrieval.allow_degraded:
-            raise TychoraError("INDEX_INCOMPLETE", "A retrieval channel is incomplete.")
+        # A deterministic bound cut these short: reported, never refused.
+        truncated = [channel.channel for channel in channels if channel.truncated]
+        self._refuse_strict(incomplete, "channel.unavailable")
         lexical_votes: dict[str, tuple[ChannelCandidate, ...]] = {
             channel.channel: (*channel.source_candidates, *channel.asset_candidates)
             for channel in channels
@@ -768,12 +776,14 @@ class QueryService:
             (plan is None or plan.text)
             and _needs_text(request)
             and self.owner.config.values.index.text.backend != "disabled"
+            and not self._missing_batches(attempt.view, ("text",), incomplete)
         ):
             vector_calls.append(("text", text_candidates))
         if (
             (plan is None or plan.image)
             and _needs_visual(request)
             and self.owner.config.values.index.image.backend != "disabled"
+            and not self._missing_batches(attempt.view, ("image",), incomplete)
         ):
             vector_calls.append(("visual", retrieve_visual_channel))
 
@@ -943,15 +953,12 @@ class QueryService:
                 ctx,
                 "interactive",
             )
-        unavailable = tuple(incomplete)
-        if ranked.failure is not None:
-            unavailable += ("rerank",)
-        coverage = Coverage(
-            status="partial"
-            if unavailable or not graph_candidates.exhausted
-            else "complete",
-            completed_channels=tuple(completed),
-            unavailable_channels=unavailable,
+        coverage = build_coverage(
+            completed=completed,
+            unavailable=incomplete,
+            truncated=truncated,
+            rerank_failed=ranked.failure is not None,
+            graph_exhausted=graph_candidates.exhausted,
         )
         return (
             CachedSelection.of(
@@ -969,6 +976,32 @@ class QueryService:
             ),
             lexical_epoch,
         )
+
+    def _missing_batches(
+        self,
+        view: EligibilityView,
+        slots: tuple[str, ...],
+        incomplete: list[str] | None = None,
+    ) -> list[str]:
+        """Channels among ``slots`` missing a batch of an eligible revision.
+
+        Strict mode refuses the query; degraded mode skips the channel and
+        reports it unavailable, appended to ``incomplete`` when given.
+        """
+        missing = [
+            _SLOT_CHANNELS.get(slot, slot) for slot in missing_batch_slots(view, slots)
+        ]
+        self._refuse_strict(missing, "batch.missing")
+        if incomplete is not None:
+            incomplete.extend(missing)
+        return missing
+
+    def _refuse_strict(self, channels: list[str], reason: str) -> None:
+        """Refuse incomplete ``channels`` with ``reason`` unless degradation is allowed."""
+        if channels and not self.owner.config.values.retrieval.allow_degraded:
+            raise TychoraError(
+                "INDEX_INCOMPLETE", _INCOMPLETE_MESSAGES[reason], reason=reason
+            )
 
     async def _text_candidates(
         self,

@@ -8,11 +8,14 @@ import pytest
 
 from tests.helpers.corpus import commit_with_facts, reader, seed_bundle
 from tests.helpers.eligibility import revision_attempt, revision_view
+from tests.helpers.legacy import OutputCounter
 from tests.providers.test_reranker import (
     LengthCounter,
     RecordingRerankTransport,
     _online_rerank_config_scope,
 )
+from tychora import Tychora
+from tychora.adapters.sqlite import lexical as lexical_module
 from tychora.adapters.voyage.request_types import RawVoyageResponse
 from tychora.adapters.voyage.runtime import VoyageRuntime
 from tychora.adapters.voyage.validation import qualify_voyage_rerank
@@ -29,6 +32,7 @@ from tychora.contracts.requests import QueryRequest, QuestionInput
 from tychora.indexing.representations import prepare_extraction
 from tychora.ports.execution import ExecutionContext
 from tychora.retrieval.admission import Admission
+from tychora.retrieval.coverage import build_coverage, missing_batch_slots
 from tychora.retrieval.fusion import FusedCandidate
 from tychora.retrieval.rerank import (
     RerankContext,
@@ -555,3 +559,130 @@ async def test_owner_rejects_forged_index_window_before_transport(tmp_path):
             )
         assert error.value.code == "FORBIDDEN_SCOPE"
         assert transport.calls == []
+
+
+def _add_text(kb, key, text):
+    job = kb.sources.add(
+        {
+            "type": "text",
+            "source_key": key,
+            "collection_id": "default",
+            "kind": "document@1",
+            "format": "markdown",
+            "text": text,
+            "metadata": {"title": key},
+        }
+    )
+    assert kb.jobs.wait(job.id).state == "succeeded"
+
+
+def _drop_lexical_batches(kb):
+    owner = kb._workspace.owner
+    owner.run_write_sync(
+        lambda: owner.db.execute("DELETE FROM page_batches WHERE slot='lexical'"),
+        ExecutionContext(),
+    )
+    return owner
+
+
+def test_truncated_channel_is_not_incomplete_in_strict_mode(tmp_path, monkeypatch):
+    monkeypatch.setattr(lexical_module, "WINDOW_LIMIT", 1)
+    with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
+        for index in range(3):
+            _add_text(
+                kb,
+                f"{index}.md",
+                f"# Report {index}\n\nThe verification outcome is final.\n",
+            )
+        result = kb.search({"question": "verification outcome"})
+    assert result.coverage.status == "complete"
+    assert result.coverage.truncated_channels == ("lexical",)
+    assert "lexical" not in result.coverage.unavailable_channels
+
+
+class _QuarterCounter:
+    """About four characters a token, like cl100k on English prose.
+
+    ``OutputCounter`` counts one token a character, so twenty short owners
+    overflow the 6,000-token default output budget and the delivery gap, not
+    channel coverage, would make the result partial.
+    """
+
+    model = "synthetic-output-test-counter"
+    tokenizer_id = "cl100k_base"
+
+    def count(self, text: str) -> int:
+        return -(-len(text) // 4)
+
+
+def test_verification_outcome_succeeds_strict_on_20_documents(tmp_path):
+    with Tychora.open(tmp_path / "ws", token_counter=_QuarterCounter()) as kb:
+        for index in range(20):
+            _add_text(
+                kb,
+                f"{index}.md",
+                f"# Audit {index}\n\nRecord the verification outcome for item {index}.\n",
+            )
+        result = kb.search({"question": "verification outcome"})
+    assert result.segments
+    assert result.coverage.status == "complete"
+    assert not result.coverage_gaps
+
+
+def test_missing_required_batch_is_incomplete(tmp_path):
+    with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
+        _add_text(kb, "a.md", "# A\n\nThe verification outcome.\n")
+        _drop_lexical_batches(kb)
+        with pytest.raises(TychoraError) as error:
+            kb.search({"question": "verification outcome"})
+    assert (error.value.code, error.value.reason) == (
+        "INDEX_INCOMPLETE",
+        "batch.missing",
+    )
+
+
+def test_degraded_mode_skips_a_channel_with_a_missing_batch(tmp_path):
+    root = tmp_path / "ws"
+    root.mkdir()
+    (root / "workspace.toml").write_text(
+        'schema_version = 1\n[profiles.local]\nbuiltin = "general-documents@1"\n'
+        '[defaults]\nprofile = "local"\n'
+        "[configuration.retrieval]\nallow_degraded = true\n"
+    )
+    with Tychora.open(root, token_counter=OutputCounter()) as kb:
+        _add_text(kb, "a.md", "# A\n\nThe verification outcome.\n")
+        _drop_lexical_batches(kb)
+        result = kb.search({"question": "verification outcome"})
+    # The lexical channel is skipped, not run: only exact search could match.
+    assert result.coverage.status == "partial"
+    assert result.coverage.unavailable_channels == ("lexical",)
+    assert "lexical" not in result.coverage.completed_channels
+    assert "lexical" not in result.coverage.truncated_channels
+
+
+def test_missing_batch_slots_counts_one_batch_per_eligible_revision():
+    view = revision_view(
+        {"r1": "e1", "r2": "e2"}, batches={"lexical": ("b1", "b2"), "text": ("t1",)}
+    )
+    assert missing_batch_slots(view, ("lexical", "text")) == ("text",)
+
+
+def test_graph_budget_truncation_keeps_coverage_complete():
+    coverage = build_coverage(
+        completed=("lexical",),
+        unavailable=(),
+        truncated=(),
+        rerank_failed=False,
+        graph_exhausted=False,
+    )
+    assert coverage.status == "complete"
+    assert coverage.truncated_channels == ("graph",)
+    failed = build_coverage(
+        completed=("lexical",),
+        unavailable=("text",),
+        truncated=("lexical",),
+        rerank_failed=True,
+        graph_exhausted=True,
+    )
+    assert failed.status == "partial"
+    assert failed.unavailable_channels == ("text", "rerank")
