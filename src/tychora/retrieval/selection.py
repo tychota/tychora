@@ -139,15 +139,16 @@ def _key(edition: RevisionFact, as_of: date | None) -> tuple[str, str, str]:
 def _overlapping(
     winners: list[RevisionFact], known: list[RevisionFact]
 ) -> list[RevisionFact]:
-    """Other editions in force that declare an end later than the winners' start."""
-    start = winners[0].effective_from or ""
+    """Other editions in force that declare an end, so still apply past the winners' start.
+
+    An edition in force at ``as_of`` ends after ``as_of``, which is on or after
+    the winners' start, so a declared end alone proves the overlap.
+    """
     chosen = {edition.revision_id for edition in winners}
     return [
         edition
         for edition in known
-        if edition.revision_id not in chosen
-        and edition.effective_until is not None
-        and edition.effective_until > start
+        if edition.revision_id not in chosen and edition.effective_until is not None
     ]
 
 

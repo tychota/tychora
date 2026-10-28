@@ -229,7 +229,7 @@ def test_effective_versus_publication_ordering():
     ).selected == {"x"}
 
 
-def test_tie_and_overlap_yield_one_decision():
+def test_tie_overlap_and_open_ended_supersession():
     first = _revision("first", start="2022-01-01", edition="A")
     second = _revision("second", start="2022-01-01", edition="A")
     tie = select_temporal_revisions(
@@ -381,6 +381,8 @@ def test_tie_boundaries():
 
 def test_overlap_boundaries():
     newer = _revision("newer", start="2022-01-01", published="2022-01-01", edition="3")
+    # An end equal to the winner's start is never in force with it (half-open
+    # interval), so it is dropped before any overlap is considered.
     ended = _revision("ended", start="2020-01-01", end="2022-01-01", edition="1")
     adjacent = select_temporal_revisions(
         (ended, newer), TemporalSelector(as_of=date(2022, 1, 1))
