@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import stat
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 
@@ -15,6 +13,21 @@ from tychora.adapters.files.archive import ArchiveReader, ArchiveWriter
 from tychora.adapters.files.cas import LocalArtifacts
 from tychora.adapters.files.references import from_backup
 from tychora.adapters.sqlite.migrations import open_verified_import
+from tychora.adapters.sqlite.restore_rows import (
+    RestoreDatabase,
+    active_snapshot_config_ref,
+    artifact_registration,
+    authorize_restore,
+    bootstrap_scope,
+    has_document_locator,
+    restored_workspace_ids,
+    retained_config_shas,
+    retained_extractions,
+    set_operational_state,
+    source_unit_attributes,
+    unit_locator_details,
+    unit_values,
+)
 from tychora.application.backup import BackupManifest
 from tychora.configuration.indexed_representation import pinned_runtime_compatible
 from tychora.configuration.models import ResolvedConfig
@@ -118,69 +131,12 @@ def deletion_suspended(path: Path, workspace_id: str) -> bool:
     return True
 
 
-def _authorize(db: sqlite3.Connection, scope: RequestScope) -> None:
-    if "manage" not in scope.capabilities:
-        raise TychoraError("FORBIDDEN_SCOPE", "Restore requires management grant")
-    collections = db.execute(
-        "SELECT collection_id,access_floor FROM collections"
-    ).fetchall()
-    if any(
-        collection_id not in scope.collection_ids or floor > scope.access_ceiling
-        for collection_id, floor in collections
-    ):
-        raise TychoraError(
-            "FORBIDDEN_SCOPE", "Restore requires whole-workspace authority"
-        )
-    for query in (
-        "SELECT MAX(access_floor) FROM sources",
-        "SELECT MAX(access_rank) FROM revisions",
-    ):
-        maximum = db.execute(query).fetchone()[0]
-        if maximum is not None and maximum > scope.access_ceiling:
-            raise TychoraError(
-                "FORBIDDEN_SCOPE", "Restore requires whole-workspace authority"
-            )
-
-
-def _local_owner_bootstrap_scope(db: sqlite3.Connection) -> RequestScope:
-    """Grant a local owner only this already-verified archive's collections."""
-    collection_ids = frozenset(
-        row[0] for row in db.execute("SELECT collection_id FROM collections")
-    )
-    ceilings = [
-        db.execute("SELECT COALESCE(MAX(access_floor),0) FROM collections").fetchone()[
-            0
-        ],
-        db.execute("SELECT COALESCE(MAX(access_floor),0) FROM sources").fetchone()[0],
-        db.execute("SELECT COALESCE(MAX(access_rank),0) FROM revisions").fetchone()[0],
-    ]
-    return RequestScope(
-        principal_id="local-owner",
-        collection_ids=collection_ids,
-        access_ceiling=max(ceilings),
-        uses=frozenset({"compose", "audit", "lookup"}),
-        capabilities=frozenset({"read", "write", "manage", "vision"}),
-    )
-
-
 def _active_snapshot_config(
-    db: sqlite3.Connection, artifacts: LocalArtifacts
+    db: RestoreDatabase, artifacts: LocalArtifacts
 ) -> ResolvedConfig | None:
-    row = db.execute(
-        "SELECT s.config_sha FROM workspaces w LEFT JOIN snapshots s "
-        "ON s.snapshot_id=w.active_snapshot_id"
-    ).fetchone()
-    if row is None or row[0] is None:
+    ref = active_snapshot_config_ref(db)
+    if ref is None:
         return None
-    ref_row = db.execute(
-        "SELECT size_bytes,media_type,storage_key FROM artifacts WHERE artifact_sha=?",
-        (row[0],),
-    ).fetchone()
-    if ref_row is None:
-        raise TychoraError(
-            "INTEGRITY_ERROR", "Active snapshot configuration is missing"
-        )
-    ref = ArtifactRef.from_row((row[0], *ref_row[:3]))
     with artifacts.open_verified(ref) as stream:
         raw = stream.read(min(ref.size_bytes, 16 * 1024 * 1024) + 1)
     if len(raw) != ref.size_bytes:
@@ -234,22 +190,18 @@ def _selected_backup_config(directory: Path, manifest: dict) -> ResolvedConfig |
 
 
 def _validate_retained_documents(
-    db: sqlite3.Connection,
+    db: RestoreDatabase,
     artifacts: LocalArtifacts,
     selected_config: ResolvedConfig | None,
 ) -> None:
     """Recheck document source ownership against retained parser and SDK facts."""
 
     def payload(sha: str, limit: int = 256 * 1024 * 1024) -> tuple[ArtifactRef, bytes]:
-        row = db.execute(
-            "SELECT size_bytes,media_type,storage_key FROM artifacts WHERE artifact_sha=?",
-            (sha,),
-        ).fetchone()
-        if row is None or row[0] > limit:
+        ref = artifact_registration(db, sha)
+        if ref is None or ref.size_bytes > limit:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Retained document dependency is unavailable"
             )
-        ref = ArtifactRef.from_row((sha, *row[:3]))
         with artifacts.open_verified(ref) as stream:
             raw = stream.read(ref.size_bytes + 1)
         if len(raw) != ref.size_bytes:
@@ -261,14 +213,7 @@ def _validate_retained_documents(
     candidate_configs: list[ResolvedConfig] = (
         [selected_config] if selected_config is not None else []
     )
-    config_shas = {
-        row[0]
-        for row in db.execute(
-            "SELECT effective_config_sha FROM jobs UNION SELECT config_sha FROM snapshots"
-        )
-        if row[0] is not None
-    }
-    for config_sha in sorted(config_shas):
+    for config_sha in sorted(retained_config_shas(db)):
         _, config_raw = payload(config_sha, 16 * 1024 * 1024)
         document = json.loads(config_raw, object_pairs_hook=_unique_pairs)
         if document.get("type") != "registry" or document.get("schema_version") != "1":
@@ -285,12 +230,7 @@ def _validate_retained_documents(
         manifest_sha,
         diagnostics_sha,
         registration_json,
-    ) in db.execute(
-        "SELECT e.extraction_id,e.revision_id,e.document_artifact_sha,"
-        "e.diagnostics_artifact_sha,s.registration_json FROM extractions e "
-        "JOIN revisions r ON r.revision_id=e.revision_id "
-        "JOIN sources s ON s.source_id=r.source_id"
-    ):
+    ) in retained_extractions(db):
         ref, raw = payload(manifest_sha)
         try:
             root = json.loads(raw, object_pairs_hook=_unique_pairs)
@@ -319,21 +259,10 @@ def _validate_retained_documents(
             )
             registered_format = source_registration.get("format")
             parsed_format = data.get("registration", {}).get("format")
-            document_locator = (
-                db.execute(
-                    "SELECT 1 FROM locators l JOIN evidence_units u USING(unit_id) "
-                    "WHERE u.extraction_id=? AND l.locator_type='document' LIMIT 1",
-                    (extraction_id,),
-                ).fetchone()
-                is not None
-            )
+            document_locator = has_document_locator(db, extraction_id)
             rich_format = {"pdf", "docx", "png", "jpeg"}
             source_markers = []
-            for (attributes_json,) in db.execute(
-                "SELECT attributes_json FROM evidence_units "
-                "WHERE extraction_id=? AND text_origin='source'",
-                (extraction_id,),
-            ):
+            for attributes_json in source_unit_attributes(db, extraction_id):
                 attributes = json.loads(
                     attributes_json, object_pairs_hook=_unique_pairs
                 )
@@ -385,24 +314,15 @@ def _validate_retained_documents(
                 raise ValueError
             units = []
             source_units = []
-            cursor = db.execute(
-                "SELECT * FROM evidence_units WHERE extraction_id=? ORDER BY ordinal",
-                (extraction_id,),
-            )
-            fields = [column[0] for column in cursor.description]
-            for row in cursor:
-                values = dict(zip(fields, row))
+            for values in unit_values(db, extraction_id):
                 uid = values["unit_id"]
                 values["heading_path"] = json.loads(values.pop("heading_path_json"))
                 values["attributes"] = json.loads(values.pop("attributes_json"))
                 values["review_state"] = values.pop("declared_review_state")
                 values["citable"] = bool(values["citable"])
                 values["locators"] = [
-                    json.loads(item[0], object_pairs_hook=_unique_pairs)
-                    for item in db.execute(
-                        "SELECT details_json FROM locators WHERE unit_id=? ORDER BY fragment_ordinal",
-                        (uid,),
-                    )
+                    json.loads(details, object_pairs_hook=_unique_pairs)
+                    for details in unit_locator_details(db, uid)
                 ]
                 units.append(EvidenceUnit.from_mapping(values))
                 if values["text_origin"] == "source":
@@ -476,7 +396,7 @@ def load_restored_runtime_config(path: Path) -> ResolvedConfig:
     """Reopen from a durable verified activation, independent of deletion state."""
     db = open_verified_import(path / "corpus.sqlite3")
     try:
-        workspace = db.execute("SELECT workspace_id FROM workspaces").fetchall()
+        workspace = restored_workspace_ids(db)
         if len(workspace) != 1:
             raise TychoraError(
                 "PROFILE_INCOMPATIBLE", "Restore activation marker is unavailable"
@@ -506,7 +426,7 @@ def load_restored_runtime_config(path: Path) -> ResolvedConfig:
             }
             or activation["type"] != "restore-activation"
             or activation["schema_version"] != 1
-            or activation["workspace_id"] != workspace[0][0]
+            or activation["workspace_id"] != workspace[0]
             or activation["backup_manifest_sha256"] != manifest_sha
         ):
             raise TychoraError("INTEGRITY_ERROR", "Restore activation binding differs")
@@ -601,10 +521,8 @@ class RestoreService:
                 _validate_retained_documents(
                     db, LocalArtifacts(stage.stage / "artifacts"), selected
                 )
-                opening_scope = (
-                    scope if scope is not None else _local_owner_bootstrap_scope(db)
-                )
-                _authorize(db, opening_scope)
+                opening_scope = scope if scope is not None else bootstrap_scope(db)
+                authorize_restore(db, opening_scope)
                 retained = _active_snapshot_config(
                     db, LocalArtifacts(stage.stage / "artifacts")
                 )
@@ -663,7 +581,7 @@ class RestoreService:
             finally:
                 db.close()
             ctx.checkpoint()
-            self._set_operational_state(stage.stage / "corpus.sqlite3")
+            set_operational_state(stage.stage / "corpus.sqlite3")
             restored_sha = _file_sha(stage.stage / "corpus.sqlite3")
             activation_sha = stage.write_json(
                 RESTORE_ACTIVATION,
@@ -706,37 +624,3 @@ class RestoreService:
                 restored_sha,
                 opening_scope=opening_scope,
             )
-
-    @staticmethod
-    def _set_operational_state(path: Path) -> None:
-        db = sqlite3.connect(path)
-        try:
-            db.execute("PRAGMA trusted_schema=OFF")
-            db.execute("PRAGMA foreign_keys=ON")
-            db.execute("PRAGMA synchronous=FULL")
-            db.execute("BEGIN IMMEDIATE")
-            db.execute(
-                "UPDATE index_batches SET state='pending' WHERE family_id IN "
-                "(SELECT family_id FROM index_families WHERE channel IN ('text','image','graph'))"
-            )
-            now = datetime.now(UTC).isoformat()
-            db.execute(
-                "UPDATE jobs SET state='complete',updated_at=? WHERE state IN "
-                "('queued','running','cancelling') AND result_snapshot_id IS NOT NULL",
-                (now,),
-            )
-            db.execute(
-                "UPDATE jobs SET state='failed',error_code='JOB_INTERRUPTED',updated_at=? "
-                "WHERE state IN ('queued','running','cancelling')",
-                (now,),
-            )
-            if db.execute("PRAGMA foreign_key_check").fetchone() is not None:
-                raise TychoraError(
-                    "INTEGRITY_ERROR", "Restore state broke foreign keys"
-                )
-            db.commit()
-        except BaseException:
-            db.rollback()
-            raise
-        finally:
-            db.close()

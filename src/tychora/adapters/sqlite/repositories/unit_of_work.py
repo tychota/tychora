@@ -13,8 +13,10 @@ from tychora.ports.repositories import (
     FamilyRepository,
     InspectionRepository,
     ReadTransaction,
+    RemovalRepository,
     RepresentationRepository,
     SnapshotRepository,
+    UploadPolicyRepository,
     WorkspaceRepository,
     WriteTransaction,
 )
@@ -27,8 +29,10 @@ from .batches import SqliteBatchRepository
 from .eligibility import SqliteEligibilityRepository
 from .families import SqliteFamilyRepository
 from .inspection import SqliteInspectionRepository
+from .removal import SqliteRemovalRepository
 from .representations import SqliteRepresentationRepository
 from .snapshots import SqliteSnapshotRepository
+from .upload_policy import SqliteUploadPolicyRepository
 from .workspace import SqliteWorkspaceRepository
 
 _BUSY_CODES = frozenset({sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED})
@@ -84,6 +88,8 @@ class SqliteTransaction:
     lexical: LexicalSearch
     assets: AssetRepository
     inspection: InspectionRepository
+    upload_policy: UploadPolicyRepository
+    removal: RemovalRepository
 
     def __init__(self, db: sqlite3.Connection, *, writable: bool) -> None:
         self.workspace = SqliteWorkspaceRepository(db, writable=writable)
@@ -96,6 +102,8 @@ class SqliteTransaction:
         self.lexical = SqliteLexicalSearch(db)
         self.assets = SqliteAssetRepository(db)
         self.inspection = SqliteInspectionRepository(db)
+        self.upload_policy = SqliteUploadPolicyRepository(db, writable=writable)
+        self.removal = SqliteRemovalRepository(db, writable=writable)
 
 
 class SqliteUnitOfWork:

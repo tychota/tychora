@@ -8,6 +8,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from tychora.adapters.sqlite.repositories import artifact_ref
+from tychora.adapters.sqlite.repositories.removal import TYPED_MANIFEST_ROOTS
 from tychora.contracts.artifacts import (
     CAPTURE_TYPES,
     ArtifactRef,
@@ -20,18 +21,6 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import JsonValue, canonical_bytes
 
 MAX_MANIFEST_BYTES = 16 * 1024 * 1024
-# Typed manifest roots whose closures keep artifacts live, as (query, kind).
-TYPED_MANIFEST_ROOTS = (
-    ("SELECT manifest_sha FROM snapshots", "snapshot"),
-    ("SELECT manifest_sha FROM membership_pages", "membership_page"),
-    ("SELECT input_manifest_sha FROM index_batches", "index_input"),
-    ("SELECT effective_config_sha FROM jobs", "registry"),
-    ("SELECT manifest_sha FROM evaluation_datasets", "evaluation"),
-    (
-        "SELECT retained_payload_sha FROM query_runs WHERE retained_payload_sha IS NOT NULL",
-        "retained_run",
-    ),
-)
 _CAPTURE_AND_EXTRACTION_ROOTS = (
     (
         "SELECT captured_inputs_sha FROM jobs WHERE captured_inputs_sha IS NOT NULL",

@@ -9,12 +9,11 @@ from typing import TYPE_CHECKING, Literal, cast
 
 from tychora.adapters.files.references import (
     MAX_MANIFEST_BYTES,
-    TYPED_MANIFEST_ROOTS,
     ClosureWalk,
     workspace_closure_budget,
 )
 from tychora.adapters.sqlite.bindings import BoundSet, live_by_rows
-from tychora.contracts.artifacts import ArtifactRef, ManifestRef, registered_manifest
+from tychora.contracts.artifacts import ManifestRef, registered_manifest
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.operations import (
@@ -34,10 +33,6 @@ if TYPE_CHECKING:
     from tychora.ports.jobs import JobRepository
 
 
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
-
-
 MAX_REMOVAL_PLAN_ITEMS = 10_000
 
 
@@ -52,12 +47,8 @@ class RemovalService:
         self, source_id: str, scope: RequestScope, *, withdrawn: bool = False
     ) -> str:
         grant = self.owner.scope.narrow(scope)
-        row = self.owner.db.execute(
-            "SELECT s.collection_id,s.withdrawn_at,c.access_floor,s.access_floor FROM sources s "
-            "JOIN collections c USING(collection_id) "
-            "WHERE s.source_id=? AND c.workspace_id=?",
-            (source_id, self.owner.workspace_id),
-        ).fetchone()
+        with self.owner.store.uow.read() as tx:
+            row = tx.removal.source_grant(source_id, self.owner.workspace_id)
         if (
             row is None
             or row[0] not in grant.collection_ids
@@ -115,23 +106,15 @@ class RemovalService:
             raise TychoraError("INVALID_REQUEST", "Select distinct revisions.")
         found: dict[str, set[str]] = {}
         for revision_id in revision_ids:
-            row = self.owner.db.execute(
-                "SELECT original_sha,access_rank FROM revisions WHERE revision_id=? AND source_id=?",
-                (revision_id, source_id),
-            ).fetchone()
+            with self.owner.store.uow.read() as tx:
+                row = tx.removal.revision_original(revision_id, source_id)
             if row is None or row[1] > self.owner.scope.narrow(scope).access_ceiling:
                 raise TychoraError(
                     "FORBIDDEN_SCOPE", "Revision is outside the selected source."
                 )
             shas = {row[0]}
-            shas.update(
-                sha
-                for (sha,) in self.owner.db.execute(
-                    "SELECT artifact_sha FROM revision_artifacts WHERE revision_id=? "
-                    "AND role IN ('original','source_file')",
-                    (revision_id,),
-                )
-            )
+            with self.owner.store.uow.read() as tx:
+                shas.update(tx.removal.original_artifacts(revision_id))
             if not shas:
                 raise TychoraError(
                     "INTEGRITY_ERROR", "Revision has no original binding."
@@ -142,7 +125,6 @@ class RemovalService:
     def _plan(
         self, revision_ids: tuple[str, ...], bindings: dict[str, set[str]]
     ) -> MaintenancePlan:
-        db = self.owner.db
         binding_rows: list[OriginalBindingCut] = []
         proposed = frozenset(
             (revision_id, sha) for revision_id, shas in bindings.items() for sha in shas
@@ -151,77 +133,49 @@ class RemovalService:
             raise TychoraError("INVALID_REQUEST", "Original binding plan is too large.")
         derived: set[str] = set()
         for revision_id in revision_ids:
-            original = db.execute(
-                "SELECT original_sha FROM revisions WHERE revision_id=?", (revision_id,)
-            ).fetchone()[0]
-            roles: dict[str, set[str]] = {original: {"revision_original"}}
-            for role, sha in db.execute(
-                "SELECT role,artifact_sha FROM revision_artifacts WHERE revision_id=?",
-                (revision_id,),
-            ):
-                if role in {"original", "source_file"}:
-                    roles.setdefault(sha, set()).add(role)
-                else:
-                    derived.add(sha)
-            for row in db.execute(
-                "SELECT document_artifact_sha,assertions_artifact_sha,diagnostics_artifact_sha "
-                "FROM extractions WHERE revision_id=?",
-                (revision_id,),
-            ):
-                derived.update(sha for sha in row if sha is not None)
-            for (sha,) in db.execute(
-                "SELECT a.artifact_sha FROM assets a JOIN extractions e USING(extraction_id) "
-                "WHERE e.revision_id=? UNION SELECT p.derivation_sha FROM asset_proxies p "
-                "JOIN assets a USING(asset_id) JOIN extractions e USING(extraction_id) "
-                "WHERE e.revision_id=?",
-                (revision_id, revision_id),
-            ):
-                derived.add(sha)
-            for (sha,) in db.execute(
-                "SELECT DISTINCT b.vectors_sha FROM index_batches b "
-                "JOIN extractions e USING(extraction_id) "
-                "WHERE b.vectors_sha IS NOT NULL AND e.revision_id=?",
-                (revision_id,),
-            ):
-                derived.add(sha)
-            for sha, role_set in sorted(roles.items()):
-                binding_rows.append(
-                    OriginalBindingCut(
-                        revision_id=revision_id,
-                        artifact_sha=sha,
-                        roles=cast(
-                            tuple[
-                                Literal["revision_original", "original", "source_file"],
-                                ...,
-                            ],
-                            tuple(sorted(role_set)),
-                        ),
-                        already_removed=db.execute(
-                            "SELECT 1 FROM original_payload_tombstones "
-                            "WHERE revision_id=? AND artifact_sha=?",
-                            (revision_id, sha),
-                        ).fetchone()
-                        is not None,
+            with self.owner.store.uow.read() as tx:
+                payloads = tx.removal.revision_payloads(revision_id)
+                derived.update(payloads["derived"])
+                roles: dict[str, set[str]] = {
+                    sha: {"revision_original"} for sha in payloads["revision_original"]
+                }
+                for role in ("original", "source_file"):
+                    for sha in payloads[role]:
+                        roles.setdefault(sha, set()).add(role)
+                for sha, role_set in sorted(roles.items()):
+                    binding_rows.append(
+                        OriginalBindingCut(
+                            revision_id=revision_id,
+                            artifact_sha=sha,
+                            roles=cast(
+                                tuple[
+                                    Literal[
+                                        "revision_original", "original", "source_file"
+                                    ],
+                                    ...,
+                                ],
+                                tuple(sorted(role_set)),
+                            ),
+                            already_removed=tx.removal.tombstoned(revision_id, sha),
+                        )
                     )
-                )
         selected = sorted({sha for _, sha in proposed})
         if len(derived) + len(binding_rows) + len(selected) > MAX_REMOVAL_PLAN_ITEMS:
             raise TychoraError("INVALID_REQUEST", "Removal plan is too large.")
         cut: list[OriginalReferenceCut] = []
         for sha in selected:
-            row = db.execute(
-                "SELECT size_bytes,payload_state FROM artifacts WHERE artifact_sha=?",
-                (sha,),
-            ).fetchone()
-            if row is None:
+            with self.owner.store.uow.read() as tx:
+                registered = tx.artifacts.state(sha)
+            if registered is None:
                 raise TychoraError(
                     "INTEGRITY_ERROR", "Original registration is missing."
                 )
+            ref, payload_state = registered
             disposition = (
                 "shared"
                 if self._live_root(sha, proposed)
                 else "already_deleted"
-                if row[1] == "deleted"
+                if payload_state == "deleted"
                 else "pending_lease"
                 if self.owner.artifacts.payload_is_pinned(sha)
                 or self.owner.leases.any_pinned()
@@ -230,7 +184,7 @@ class RemovalService:
             cut.append(
                 OriginalReferenceCut(
                     artifact_sha=sha,
-                    size_bytes=row[0],
+                    size_bytes=ref.size_bytes,
                     disposition=disposition,
                 )
             )
@@ -272,19 +226,15 @@ class RemovalService:
         if not confirm_original_removal:
             return MaintenanceResult(plan=plan)
         for sha in selected:
-            row = self.owner.db.execute(
-                "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
-                (sha,),
-            ).fetchone()
-            if row is None:
+            with self.owner.store.uow.read() as tx:
+                registered = tx.artifacts.state(sha)
+            if registered is None:
                 raise TychoraError(
                     "INTEGRITY_ERROR", "Original artifact registration is missing."
                 )
             if (
-                row[3] == "present"
-                and not self.owner.artifacts.stat(
-                    ArtifactRef.from_row((sha, *row[:3]))
-                ).available
+                registered[1] == "present"
+                and not self.owner.artifacts.stat(registered[0]).available
             ):
                 raise TychoraError(
                     "INTEGRITY_ERROR", "Present original payload is missing."
@@ -300,7 +250,7 @@ class RemovalService:
             },
         )
         try:
-            with self.owner.store.immediate_transaction():
+            with self.owner.store.uow.write() as tx:
                 self._authorized_source(source_id, scope, withdrawn=True)
                 if self._bindings(source_id, revision_ids, scope) != bindings:
                     raise TychoraError(
@@ -311,25 +261,14 @@ class RemovalService:
                 plan = self._plan(revision_ids, bindings)
                 for revision_id, shas in bindings.items():
                     for sha in shas:
-                        if not self.owner.db.execute(
-                            "SELECT 1 FROM original_payload_tombstones WHERE revision_id=? AND artifact_sha=?",
-                            (revision_id, sha),
-                        ).fetchone():
-                            self.owner.db.execute(
-                                "INSERT INTO original_payload_tombstones(revision_id,artifact_sha,removal_job_id,removed_at) VALUES (?,?,?,?)",
-                                (revision_id, sha, handle.id, _now()),
+                        if not tx.removal.tombstoned(revision_id, sha):
+                            tx.removal.insert_tombstone(
+                                revision_id, sha, handle.id, datetime.now(UTC)
                             )
-                self.owner.db.execute(
-                    "UPDATE workspaces SET policy_epoch=policy_epoch+1 WHERE workspace_id=?",
-                    (self.owner.workspace_id,),
-                )
+                tx.workspace.bump_policy_epoch()
                 for sha in selected:
                     if not self._live_root(sha):
-                        self.owner.db.execute(
-                            "UPDATE artifacts SET payload_state='delete_pending',payload_deleted_at=NULL "
-                            "WHERE artifact_sha=? AND payload_state='present'",
-                            (sha,),
-                        )
+                        tx.artifacts.mark_delete_pending(sha)
             counts = self.reconcile_pending_deletions(selected)
             self.jobs.complete(handle.id)
         except BaseException:
@@ -347,15 +286,13 @@ class RemovalService:
         )
 
     def _manifest_ref(self, sha: str, kind: str) -> ManifestRef:
-        row = self.owner.db.execute(
-            "SELECT size_bytes,media_type,storage_key FROM artifacts WHERE artifact_sha=?",
-            (sha,),
-        ).fetchone()
-        if row is None:
+        with self.owner.store.uow.read() as tx:
+            registered = tx.artifacts.state(sha)
+        if registered is None:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Required manifest descriptor is missing."
             )
-        return registered_manifest(ArtifactRef.from_row((sha, *row[:3])), kind)
+        return registered_manifest(registered[0], kind)
 
     def _load_manifest(self, link: ManifestRef):
         """Read and decode one verified manifest for the closure walk."""
@@ -398,16 +335,10 @@ class RemovalService:
         """
         if not walk:
             return frozenset()
-        db = self.owner.db
-        roots = {
-            (sha, kind)
-            for query, kind in TYPED_MANIFEST_ROOTS
-            for (sha,) in db.execute(query).fetchall()
-        }
-        captures = db.execute(
-            "SELECT captured_inputs_sha,state='complete' AND result_snapshot_id IS NOT NULL "
-            "FROM jobs WHERE captured_inputs_sha IS NOT NULL"
-        ).fetchall()
+        db = self.owner.store.db
+        with self.owner.store.uow.read() as tx:
+            roots = set(tx.removal.manifest_roots())
+            captures = tx.removal.capture_roots()
         roots |= {(sha, "job_capture") for sha, published in captures if not published}
         closure = ClosureWalk(
             load=self._load_manifest, budget=workspace_closure_budget(db)
@@ -436,7 +367,7 @@ class RemovalService:
         ``rooted`` is a result of ``_rooted`` taken since the last change to the
         root rows; without it the roots are walked now.
         """
-        if live_by_rows(self.owner.db, sha, proposed):
+        if live_by_rows(self.owner.store.db, sha, proposed):
             return True
         return sha in (self._rooted() if rooted is None else rooted)
 
@@ -446,12 +377,8 @@ class RemovalService:
         """Resume pending payload deletions on the owner before any copy of the database is taken."""
         if self.owner.restore_deletion_suspended:
             return {"deleted_payloads": 0, "shared_payloads": 0, "pending_payloads": 0}
-        selected = candidates or frozenset(
-            sha
-            for (sha,) in self.owner.db.execute(
-                "SELECT artifact_sha FROM artifacts WHERE payload_state='delete_pending'"
-            )
-        )
+        with self.owner.store.uow.read() as tx:
+            selected = candidates or frozenset(tx.artifacts.pending_deletions())
         counts = {"deleted_payloads": 0, "shared_payloads": 0, "pending_payloads": 0}
         # Invariant: the whole pass is one owner-thread call on the owner's only
         # connection, and between reading the bindings and the last unlink it
@@ -460,48 +387,39 @@ class RemovalService:
         # the roots decide every candidate, and no recheck after an unlink is
         # needed (test_a_reconcile_pass_writes_only_payload_states pins this).
         rooted = self._rooted(walk=bool(selected))
-        bound = BoundSet.load(self.owner.db, selected, rooted=rooted)
+        bound = BoundSet.load(self.owner.store.db, selected, rooted=rooted)
         for sha in sorted(selected):
             with self.owner.artifacts.payload_guard(sha):
-                row = self.owner.db.execute(
-                    "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
-                    (sha,),
-                ).fetchone()
-                if row is None:
+                with self.owner.store.uow.read() as tx:
+                    registered = tx.artifacts.state(sha)
+                if registered is None:
                     raise TychoraError(
                         "INTEGRITY_ERROR", "Original artifact registration is missing."
                     )
+                ref, payload_state = registered
                 if bound.binds(sha):
-                    if row[3] == "delete_pending":
-                        ref = ArtifactRef.from_row((sha, *row[:3]))
+                    if payload_state == "delete_pending":
                         if not self.owner.artifacts.stat(ref).available:
                             raise TychoraError(
                                 "INTEGRITY_ERROR", "Live original payload is missing."
                             )
-                        self.owner.db.execute(
-                            "UPDATE artifacts SET payload_state='present' WHERE artifact_sha=?",
-                            (sha,),
-                        )
+                        with self.owner.store.uow.write() as tx:
+                            tx.artifacts.mark_present(sha)
                     counts["shared_payloads"] += 1
                     continue
-                if row[3] == "deleted":
+                if payload_state == "deleted":
                     counts["deleted_payloads"] += 1
                     continue
                 if (
-                    row[3] != "delete_pending"
+                    payload_state != "delete_pending"
                     or self.owner.artifacts.payload_is_pinned(sha)
                     or self.owner.leases.any_pinned()
                 ):
                     counts["pending_payloads"] += 1
                     continue
-                ref = ArtifactRef.from_row((sha, *row[:3]))
                 self.owner.artifacts.unlink_registered(ref)
-                with self.owner.store.immediate_transaction():
-                    self.owner.db.execute(
-                        "UPDATE artifacts SET payload_state='deleted',payload_deleted_at=? "
-                        "WHERE artifact_sha=? AND payload_state='delete_pending'",
-                        (_now(), sha),
-                    )
+                with self.owner.store.uow.write() as tx:
+                    tx.artifacts.mark_deleted(sha, datetime.now(UTC))
                 counts["deleted_payloads"] += 1
         return counts
 
