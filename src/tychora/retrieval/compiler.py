@@ -116,9 +116,6 @@ class ModePolicy:
     allowed_lanes: frozenset[str]
     allowed_uses: frozenset[str]
     original_reviews: frozenset[str]
-    # The revision review states the request admits: the mode's, narrowed by
-    # ``QueryRequest.review_states``. Unit and asset reviews keep the mode's.
-    revision_reviews: frozenset[str]
     proxy_reviews: frozenset[str]
     proxy_disabled: bool
     # Exact retained inspection alone reads archived collections; never cached.
@@ -358,7 +355,7 @@ def _readable(
         and active
         and max(row.access_rank, row.source_floor, row.collection_floor)
         <= scope.access_ceiling
-        and row.review_state in mode.revision_reviews
+        and row.review_state in mode.original_reviews
         and bool(uses & mode.allowed_uses)
         and bool(kind.allowed_uses & mode.allowed_uses)
     )
@@ -534,6 +531,8 @@ class EligibilityCompiler:
         name = request.mode or config.values.mode or config.values.default_mode
         if name is None or name not in self.registry.modes:
             raise _invalid("Retrieval mode is unavailable", "mode.unavailable")
+        # Review states are a sorted subset of four states, so caller input adds
+        # at most 16 keys per mode and uses: the cache stays bounded.
         key = (config.config_sha, name, scope.uses, request.review_states)
         with self._lock:
             cached = self._modes.get(key)
@@ -545,9 +544,10 @@ class EligibilityCompiler:
         if definition["derived_proxy_policy"] == "accepted_only":
             proxy_reviews &= {"accepted"}
         original_reviews = frozenset(definition["original_review_states"])
-        revision_reviews = original_reviews
         if request.review_states is not None:
-            revision_reviews &= frozenset(request.review_states)
+            # The request narrows every review gate the mode applies.
+            original_reviews &= frozenset(request.review_states)
+            proxy_reviews &= frozenset(request.review_states)
         mode = ModePolicy(
             name=name,
             digest=digest(
@@ -559,13 +559,12 @@ class EligibilityCompiler:
                 *(
                     ()
                     if request.review_states is None
-                    else (sorted(request.review_states),)
+                    else (list(request.review_states),)
                 ),
             ),
             allowed_lanes=frozenset(definition["allowed_lanes"]),
             allowed_uses=frozenset(definition["allowed_uses"]) & scope.uses,
             original_reviews=original_reviews,
-            revision_reviews=revision_reviews,
             proxy_reviews=proxy_reviews,
             proxy_disabled=definition["derived_proxy_policy"] == "disabled"
             or not definition.get("allow_derived_proxies", True),

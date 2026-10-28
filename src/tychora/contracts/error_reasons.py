@@ -395,6 +395,12 @@ _ENTRIES = (
     ),
     Reason(
         "INVALID_REQUEST",
+        "channel.input_unusable",
+        False,
+        "Remove the channel from the request or ask with an input and modality it reads.",
+    ),
+    Reason(
+        "INVALID_REQUEST",
         "edition.as_of_required",
         False,
         "Give an as_of date with the applicable revision selector.",

@@ -353,12 +353,12 @@ class EvaluationService:
             "output_model": getattr(self.query.counter, "model", "unknown"),
             "output_tokenizer": getattr(self.query.counter, "tokenizer_id", "unknown"),
             "text_model": getattr(
-                getattr(self.query.text_provider, "capabilities", None),
+                getattr(self.query.bindings.text_provider, "capabilities", None),
                 "model",
                 None,
             ),
             "visual_model": getattr(
-                getattr(self.query.visual_provider, "capabilities", None),
+                getattr(self.query.bindings.visual_provider, "capabilities", None),
                 "model",
                 None,
             ),

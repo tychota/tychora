@@ -365,8 +365,10 @@ def test_disabled_lexical_votes_do_not_escape_graph_seed_path(tmp_path, monkeypa
         def forbidden_lexical(*args, **kwargs):
             raise AssertionError("disabled lexical channel executed")
 
+        # Exact still runs; only the ranked lexical search is switched off.
         monkeypatch.setattr(
-            "tychora.application.query.retrieve_exact_lexical", forbidden_lexical
+            "tychora.adapters.sqlite.lexical.SqliteLexicalSearch.search",
+            forbidden_lexical,
         )
         isolated = request.model_copy(
             update={
@@ -381,10 +383,11 @@ def test_disabled_lexical_votes_do_not_escape_graph_seed_path(tmp_path, monkeypa
         assert result.coverage.skipped_channels == (
             "lexical",
             "text",
-            "image",
+            "visual",
             "graph",
             "rerank",
         )
+        assert result.coverage.completed_channels == ("exact",)
 
 
 @pytest.mark.asyncio
@@ -394,6 +397,7 @@ async def test_runner_persists_each_variant_and_repetition(tmp_path):
     from tychora.adapters.sqlite.evaluations import EvaluationRepository
     from tychora.adapters.sqlite.jobs import JobRepository
     from tychora.application.owner import WorkspaceOwner
+    from tychora.application.query_plan import QueryBindings
     from tychora.configuration.resolve import resolve_config
     from tychora.contracts.evidence import Coverage, Excerpt, QueryResult, Segment
     from tychora.contracts.identity import canonical_bytes
@@ -464,9 +468,7 @@ async def test_runner_persists_each_variant_and_repetition(tmp_path):
             counter = type(
                 "Counter", (), {"model": "synthetic", "tokenizer_id": "synthetic@1"}
             )()
-            text_provider = None
-            visual_provider = None
-            reranker = None
+            bindings = QueryBindings()
 
             async def search(self, query, grant, ctx):
                 return DeliveredResult(

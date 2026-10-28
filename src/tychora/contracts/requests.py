@@ -418,6 +418,19 @@ class QueryRequest(Contract):
     def question_convenience(cls, value: Any) -> Any:
         return _normalize_question(value)
 
+    @field_validator("review_states")
+    @classmethod
+    def _normalized_review_states(
+        cls, value: tuple[str, ...] | None
+    ) -> tuple[str, ...] | None:
+        """Sorted and deduplicated, so equal requests have equal digests."""
+        return tuple(sorted(set(value))) if value is not None else None
+
+    @field_serializer("modalities", when_used="json")
+    def _sorted_modalities(self, value: frozenset[str]) -> list[str]:
+        """Dump modalities in a stable order, so digests of a request are stable."""
+        return sorted(value)
+
 
 def _normalize_question(value: Any) -> Any:
     if isinstance(value, Mapping) and "question" in value:

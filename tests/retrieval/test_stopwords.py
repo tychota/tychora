@@ -5,6 +5,7 @@ from pathlib import Path
 from tests.helpers.legacy import OutputCounter
 from tychora import Tychora
 from tychora.application.query import QueryService
+from tychora.application.query_plan import QueryBindings
 from tychora.configuration.resolve import resolve_config
 from tychora.configuration.stopwords import load_stopwords
 from tychora.retrieval.lexical_query import lexical_expression
@@ -79,11 +80,7 @@ def test_changing_lists_changes_the_result_cache_inputs(tmp_path):
     none = _config(tmp_path, '[configuration.retrieval.lexical]\nstopwords = "none"\n')
     assert builtin.config_sha != none.config_sha
     service = QueryService.__new__(QueryService)
-    service.text_provider = None
-    service.text_index = None
-    service.visual_provider = None
-    service.visual_index = None
-    service.reranker = None
+    service.bindings = QueryBindings()
     assert service._provider_fingerprint(builtin) != service._provider_fingerprint(none)
 
 

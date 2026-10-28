@@ -3,7 +3,7 @@
 import pytest
 
 from tests.helpers.legacy import OutputCounter
-from tests.helpers.owner import owner_row
+from tests.helpers.owner import accept_source_units, owner_row
 from tychora import Tychora
 from tychora.application.query_plan import QueryBindings, plan_for
 from tychora.configuration.resolve import resolve_config
@@ -120,7 +120,81 @@ def test_an_explicit_channel_the_query_cannot_use_is_refused(image_config):
     request = QueryRequest.from_mapping({**lexical_only, "channels": {"image": True}})
     with pytest.raises(TychoraError) as error:
         plan_for(request, image_config, bindings)
-    assert error.value.code == "INVALID_REQUEST"
+    assert (error.value.code, error.value.reason) == (
+        "INVALID_REQUEST",
+        "channel.input_unusable",
+    )
+
+
+def test_explicit_rerank_needs_an_available_reranker_and_a_ranked_query(tmp_path):
+    path = tmp_path / "rerank.toml"
+    path.write_text(
+        'schema_version=1\n[profiles.test]\nbuiltin="documents@1"\n'
+        '[configuration.providers.rerank]\nprovider="voyage"\nmodel="rerank-2.5"\n'
+        'credential_ref="env:SYNTHETIC_UNSET"\n'
+    )
+    config = resolve_config(path, "test", {})
+    ready = QueryBindings(reranker=object(), rerank_counter=object())
+    on = {"question": "seal", "rerank": "on"}
+    assert plan_for(QueryRequest.from_mapping(on), config, ready).rerank
+    unavailable = QueryBindings(
+        reranker=object(),
+        rerank_counter=object(),
+        rerank_unavailable=TychoraError("PROVIDER_FAILURE", "synthetic"),
+    )
+    for request, bindings, reason in (
+        (on, unavailable, "channel.not_configured"),
+        ({**on, "exact_only": True}, ready, "channel.input_unusable"),
+    ):
+        with pytest.raises(TychoraError) as error:
+            plan_for(QueryRequest.from_mapping(request), config, bindings)
+        assert (error.value.code, error.value.reason) == ("INVALID_REQUEST", reason)
+
+
+def test_a_turned_off_image_channel_is_skipped_as_visual(config):
+    request = QueryRequest.from_mapping(
+        {"question": "seal", "channels": {"image": False, "graph": False}}
+    )
+    assert plan_for(request, config, QueryBindings()).skipped == ("visual", "graph")
+
+
+def _add_standard(kb):
+    job = kb.sources.add(
+        {
+            "type": "text",
+            "source_key": "std.md",
+            "collection_id": "default",
+            "kind": "standard@1",
+            "format": "markdown",
+            "text": "## STD-7\n\nRequirement: Inspect seals quarterly.\n",
+            "metadata": {"title": "std.md", "issuer": "ISO", "edition": "1"},
+        }
+    )
+    assert kb.jobs.wait(job.id).state == "succeeded"
+
+
+@pytest.mark.parametrize("exact_only", [False, True])
+def test_lexical_off_still_runs_exact(tmp_path, monkeypatch, exact_only):
+    with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
+        _add_standard(kb)
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("lexical search ran although it was switched off")
+
+        monkeypatch.setattr(
+            "tychora.adapters.sqlite.lexical.SqliteLexicalSearch.search", forbidden
+        )
+        result = kb.search(
+            {
+                "question": "What does STD-7 require?",
+                "channels": {"lexical": False},
+                "exact_only": exact_only,
+            }
+        )
+    assert result.segments
+    assert all("STD-7" in segment.text for segment in result.segments)
+    assert result.coverage.completed_channels == ("exact",)
+    assert result.coverage.skipped_channels == ("lexical",)
 
 
 def test_review_states_change_request_digest():
@@ -165,18 +239,81 @@ def _add(kb, key, text, approval):
     assert kb.jobs.wait(job.id).state == "succeeded"
 
 
+_LOOKUP_LANES = (
+    '["authority", "standard", "feedback", "evidence", "example", "maintenance"]'
+)
+_CURATED = f"""schema_version = 1
+id = "curated"
+version = "1"
+extends = ["builtin:general-documents@1"]
+
+[modes.curated]
+allowed_lanes = {_LOOKUP_LANES}
+allowed_uses = ["lookup"]
+original_review_states = ["accepted"]
+derived_proxy_policy = "permitted"
+allow_derived_proxies = true
+derived_proxy_review_states = ["accepted"]
+required_lanes = []
+"""
+
+
+def _curated_workspace(root):
+    """A workspace whose ``curated`` mode is ``lookup`` gated to accepted reviews."""
+    pack = root / "packs" / "curated"
+    pack.mkdir(parents=True)
+    (pack / "profile.toml").write_text(_CURATED)
+    (root / "workspace.toml").write_text(
+        'schema_version=1\n[profiles.curated]\npath="packs/curated"\n'
+        '[defaults]\nprofile="curated"\n'
+    )
+    return Tychora.open(root, token_counter=OutputCounter())
+
+
+def _owners(result):
+    return [(s.source_id, s.matched_unit_ids) for s in result.segments]
+
+
 def test_review_states_narrow_mode_states(tmp_path):
-    with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
+    with _curated_workspace(tmp_path / "ws") as kb:
         _add(kb, "accepted.md", "# A\n\nSeal inspection accepted.\n", "accepted")
         _add(kb, "draft.md", "# B\n\nSeal inspection draft.\n", "unreviewed")
-        everything = kb.search({"question": "seal inspection"})
-        narrowed = kb.search(
-            {"question": "seal inspection", "review_states": ["accepted"]}
+        accept_source_units(kb._workspace.owner, "accepted.md")
+        draft = owner_row(
+            kb._workspace.owner,
+            "SELECT source_id FROM sources WHERE source_key=?",
+            ("draft.md",),
         )
-    assert {s.source_id for s in everything.segments} > {
-        s.source_id for s in narrowed.segments
-    }
-    assert len({s.source_id for s in narrowed.segments}) == 1
+        assert draft is not None
+        question = {"question": "seal inspection", "mode": "lookup"}
+        everything = kb.search(question)
+        narrowed = kb.search({**question, "review_states": ["accepted"]})
+        # Duplicates are dropped and order does not matter.
+        repeated = kb.search({**question, "review_states": ["accepted", "accepted"]})
+        curated = kb.search({**question, "mode": "curated"})
+    assert draft[0] in {s.source_id for s in everything.segments}
+    assert draft[0] not in {s.source_id for s in narrowed.segments}
+    assert narrowed.segments
+    assert _owners(narrowed) == _owners(curated) == _owners(repeated)
+
+
+def test_review_states_are_normalized():
+    request = QueryRequest.from_mapping(
+        {"question": "seal", "review_states": ["needs_review", "accepted", "accepted"]}
+    )
+    assert request.review_states == ("accepted", "needs_review")
+    swapped = QueryRequest.from_mapping(
+        {"question": "seal", "review_states": ["accepted", "needs_review"]}
+    )
+    assert request_digest(request, None) == request_digest(swapped, None)
+    image_first = QueryRequest.from_mapping(
+        {"question": "seal", "modalities": ["image", "text", "lexical"]}
+    )
+    assert image_first.model_dump(mode="json")["modalities"] == [
+        "image",
+        "lexical",
+        "text",
+    ]
 
 
 def test_a_turned_off_channel_is_reported_skipped(tmp_path):

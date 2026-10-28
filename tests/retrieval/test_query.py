@@ -193,13 +193,7 @@ def test_local_text_replay_gate_degrades_reranker_but_strict_and_remote_still_fa
     service = QueryService.__new__(QueryService)
     vars(service)["owner"] = owner
     service.caches = caches
-    service.text_provider = provider
-    vars(service)["text_index"] = object()
-    service.visual_provider = None
-    service.visual_index = None
-    service.reranker = None
-    service.rerank_counter = None
-    service.rerank_unavailable = None
+    service.bindings = QueryBindings(text_provider=provider, text_index=object())
     request = QueryRequest.from_mapping({"question": "verification"})
     assert service._replay_ready(request)
     config.values.retrieval.allow_degraded = False
