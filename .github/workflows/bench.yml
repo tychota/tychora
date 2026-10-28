@@ -46,6 +46,8 @@ jobs:
         run: uv run --locked python -m tychora.interfaces.bench run --corpus bench-small --suite query --profile offline --cache "$RUNNER_TEMP/bench"
       - name: Scale suite
         run: uv run --locked python -m tychora.interfaces.bench run --corpus bench-small --suite scale --profile offline --checkpoints 100,1000,10000 --max-wall-seconds 14400 --cache "$RUNNER_TEMP/bench"
+      - name: Strict search at 10,000 documents (E5)
+        run: uv run --locked --group test-fixtures pytest tests/acceptance/test_strict_scale.py -m scale -q -p no:randomly
       - name: Keep the results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
