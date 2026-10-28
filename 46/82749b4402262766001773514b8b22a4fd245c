@@ -1,0 +1,56 @@
+src/tychora/adapters/sqlite/repositories/removal.py
+  s_ab847b2c6c265a::t_e6e8a24c2d5665 1-147
+tests/architecture/test_sql_free_modules.py
+  s_ab847b2c6c265a::t_bcf5b4617bf8b4 21-23
+src/tychora/adapters/sqlite/bootstrap.py
+  s_ab847b2c6c265a::t_a7dc2e2a8bde16 21-23
+  s_ab847b2c6c265a::t_68c97bdbd21dbc 1-20,24-63
+src/tychora/application/owner.py
+  s_ab847b2c6c265a::t_0d06348fccc44a 1005,1007,1032,1034,1047-1049,1051,1073-1079,1276-1277,1344-1349,1369-1374,1397-1414,1417-1429,1435-1436
+  s_ab847b2c6c265a::t_a7dc2e2a8bde16 266
+  s_ab847b2c6c265a::t_5fcbf6a6fcd5be 259
+  s_ab847b2c6c265a::t_68c97bdbd21dbc 31,159-163,257
+quality/baseline.json
+  s_ab847b2c6c265a::t_279da539635f07 20,65,87,90,102,106,149,204,209,211,220,284,305,312,355,508,540,543,547,573,577,579,584,588,626,679,742,847,856,860-861,871,892,896,912,930,936,994,1001
+src/tychora/adapters/sqlite/repositories/artifacts.py
+  s_ab847b2c6c265a::t_e6e8a24c2d5665 116-158
+src/tychora/application/removal.py
+  s_ab847b2c6c265a::t_a7dc2e2a8bde16 16
+  s_ab847b2c6c265a::t_518df612e37a9a 50-51,109-110,116-117,136-160,167-169,173,178,187,229-231,236-237,253,264-266,268,271,289-291,295,338-341,370,380-381,390,393-395,399,401,406-407,410,414,421-422
+src/tychora/application/restore.py
+  s_ab847b2c6c265a::t_a7dc2e2a8bde16 524
+  s_ab847b2c6c265a::t_166e5260090751 16-30,135,137-138,193,200-201,216,233,262,265,317,324-325,399,429,525,584
+src/tychora/adapters/sqlite/restore_rows.py
+  s_ab847b2c6c265a::t_166e5260090751 1-198
+src/tychora/adapters/sqlite/repositories/__init__.py
+  s_ab847b2c6c265a::t_e6e8a24c2d5665 9,13,23,28
+src/tychora/ports/repositories.py
+  s_ab847b2c6c265a::t_e6e8a24c2d5665 138-157,689-772,786-787
+  s_ab847b2c6c265a::t_518df612e37a9a 13
+src/tychora/adapters/sqlite/repositories/inspection.py
+  s_ab847b2c6c265a::t_e6e8a24c2d5665 8-9,111
+src/tychora/adapters/sqlite/repositories/unit_of_work.py
+  s_ab847b2c6c265a::t_e6e8a24c2d5665 16,19,32,35,91-92,105-106
+src/tychora/adapters/files/references.py
+  s_ab847b2c6c265a::t_e6e8a24c2d5665 11
+tests/storage/test_epoch_invariant.py
+  s_ab847b2c6c265a::t_bcf5b4617bf8b4 63-64
+src/tychora/adapters/sqlite/repositories/upload_policy.py
+  s_ab847b2c6c265a::t_e7e98be2f38ba2 1-106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4682749b4402262766001773514b8b22a4fd245c",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
