@@ -23,7 +23,11 @@ def indexed_representation_identity(config: ResolvedConfig) -> str:
 def pinned_runtime_compatible(
     retained: ResolvedConfig, current: ResolvedConfig
 ) -> bool:
-    """Permit credential rotation and monotonic offline/source-root tightening."""
+    """Permit credential rotation and monotonic offline/source-root tightening.
+
+    Query-time retrieval choices (lexical languages, degraded mode) never
+    require publication under new settings.
+    """
     from .additive_compatibility import qualified_additive_registry_extension
 
     if qualified_additive_registry_extension(retained, current):
@@ -50,7 +54,9 @@ def pinned_runtime_compatible(
             value.pop(field)
         value["values"].pop("offline")
         value["values"]["acquisition"].pop("roots")
+        # Query-time choices: lexical languages and whether a query may degrade.
         value["values"]["retrieval"].pop("lexical")
+        value["values"]["retrieval"].pop("allow_degraded")
         providers = value["values"]["providers"]
         for modality in ("text", "image"):
             providers[modality].pop("credential_ref")

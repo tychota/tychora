@@ -213,12 +213,19 @@ class _Digests:
 
 
 def _remember[K, V](memo: dict[K, V], key: K, compute: Callable[[], V]) -> V:
-    """The value under ``key``, computed once; a full memo starts over."""
-    if key not in memo:
+    """The value under ``key``, computed once; a full memo starts over.
+
+    Owner and pool threads share the memo: a concurrent ``clear`` can drop
+    an entry between the check and the read, so the hit path uses ``get`` and
+    the miss path returns the value it computed.
+    """
+    value = memo.get(key)
+    if value is None:
+        value = compute()
         if len(memo) >= _MEMO_LIMIT:
             memo.clear()
-        memo[key] = compute()
-    return memo[key]
+        memo[key] = value
+    return value
 
 
 async def _run_independent_channels[T](
@@ -304,10 +311,12 @@ class QueryService:
         self.assembler = ResponseAssembler()
         self.delivery_serializer = None
         self.delivery_serialization = None
+        # Seeded here so a ``copy.copy`` of a fresh service shares the memo.
+        self.__dict__["_digests"] = _Digests()
 
     @cached_property
     def _digests(self) -> _Digests:
-        """The service's memo, made on first use; a shallow copy shares it."""
+        """The service's memo; ``__init__`` seeds it, this covers bare instances."""
         return _Digests()
 
     def _projection_fingerprint(self, config: ResolvedConfig | None = None) -> str:
