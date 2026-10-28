@@ -161,10 +161,10 @@ async def test_planned_graph_without_a_pinned_generation_raises_graph_disabled()
     )
     attempt = revision_attempt(revision_view())
     request = QueryRequest.from_mapping({"question": "synthetic"})
-    # A graph only in the default plan is skipped, not refused.
+    # A graph only in the default plan is not refused; it is reported unavailable.
     assert await service._augment_graph(
         request, attempt, (), _graph_plan(frozenset()), ExecutionContext()
-    ) == (None, GraphCandidates(), ())
+    ) == (None, GraphCandidates(), (), True)
     with pytest.raises(TychoraError) as error:
         await service._augment_graph(
             request,
