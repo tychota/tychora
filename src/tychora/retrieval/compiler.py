@@ -45,6 +45,7 @@ from tychora.ports.repositories import (
     UnitFlags,
 )
 from tychora.retrieval.selection import (
+    EditionDecision,
     RevisionFact,
     TemporalSelector,
     select_temporal_revisions,
@@ -90,6 +91,7 @@ class CompiledEligibility:
     historical_kind_envelopes: Mapping[str, FrozenJsonMap] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    decisions: tuple[EditionDecision, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -405,6 +407,7 @@ def _revision_fact(row: MemberRow, kind: _Kind) -> RevisionFact:
         effective_until=row.effective_until,
         is_default=row.is_default,
         kind_allowed_uses=kind.allowed_uses,
+        edition_key=row.edition_key,
     )
 
 
@@ -669,11 +672,11 @@ class EligibilityCompiler:
         admitted = _admitted_members(
             rows, kinds, job.inputs.scope, job.mode, self.registry
         )
-        selected_ids, warnings = select_temporal_revisions(
+        selection = select_temporal_revisions(
             tuple(_revision_fact(r, kinds[r.kind_id]) for r in admitted),
             TemporalSelector.of(request),
         )
-        edition = [row for row in admitted if row.revision_id in selected_ids]
+        edition = [row for row in admitted if row.revision_id in selection.selected]
         # Global facets matter only to filters, and only for the chosen editions.
         facets = self._global_facets(tx, edition) if job.selected is not None else {}
         chosen, selected = self._revision_filter(
@@ -720,7 +723,9 @@ class EligibilityCompiler:
             all_members_eligible=len(grants) == snapshot.member_count,
         )
         roles, envelopes = _historical(self.registry, kinds, edition)
-        return CompiledEligibility(view, warnings, roles, envelopes)
+        return CompiledEligibility(
+            view, selection.warnings, roles, envelopes, selection.decisions
+        )
 
     def _revision_filter(
         self,

@@ -215,6 +215,7 @@ class DecisionRequirement(Contract):
     reason: str
     unit_ids: tuple[Identifier, ...] = ()
     assertion_ids: tuple[Identifier, ...] = ()
+    revision_ids: tuple[Identifier, ...] = ()
 
 
 class RelationChecks(Contract):

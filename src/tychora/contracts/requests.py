@@ -362,7 +362,7 @@ class QueryRequest(Contract):
     hints: tuple[NonEmptyStr, ...] = ()
     context: FrozenJsonMap = Field(default_factory=FrozenJsonMap)
     revision_ids: tuple[Identifier, ...] = ()
-    revision_selector: Literal["current", "all"] = "current"
+    revision_selector: Literal["current", "all", "applicable"] = "current"
     as_of: date | None = None
     cutoff: date | None = None
     unknown_dates: Literal["strict", "permissive"] = "strict"

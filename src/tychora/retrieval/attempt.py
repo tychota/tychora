@@ -22,6 +22,7 @@ from tychora.retrieval.compiler import (
     EligibilityCompiler,
     EligibilityInputs,
 )
+from tychora.retrieval.selection import EditionDecision
 
 
 class SnapshotLeases(Protocol):
@@ -111,6 +112,11 @@ class EligibilityAttempt:
     def warnings(self) -> tuple[str, ...]:
         """Edition warnings of the compiled view."""
         return self.compiled.warnings
+
+    @property
+    def decisions(self) -> tuple[EditionDecision, ...]:
+        """Edition decisions the compiled view leaves to the caller."""
+        return self.compiled.decisions
 
     @property
     def historical_kind_roles(self) -> Mapping[str, str]:
