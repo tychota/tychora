@@ -40,6 +40,7 @@ RebuildSkipReason = Literal[
     "job_failed",
     "timed_out",
     "review_target_missing",
+    "uses_override_unapplied",
 ]
 INCOMPLETE_MARKER = ".rebuild-incomplete"
 _INLINE_DROPPED = (
@@ -112,6 +113,10 @@ class RebuildTarget(Protocol):
 
     def restore_policy(self, sources: tuple[InventorySource, ...]) -> int:
         """Carry access floors, ranks, uses and declared review states over."""
+        ...
+
+    def set_allowed_uses(self, source_id: str, uses: tuple[str, ...]) -> None:
+        """Narrow a re-added source's allowed uses to ``uses``."""
         ...
 
     def record_review(
@@ -272,6 +277,7 @@ def _replay_source(replay: _Replay, source: InventorySource) -> None:
         if job_id := _replay_revision(replay, source, revision, kind):
             jobs.append(job_id)
     if jobs:
+        _restore_override(replay, source)
         progress.sources.append(
             RebuiltSource(
                 source_key=source.source_key,
@@ -279,6 +285,26 @@ def _replay_source(replay: _Replay, source: InventorySource) -> None:
                 revisions=len(jobs),
                 job_ids=tuple(jobs),
             )
+        )
+
+
+def _restore_override(replay: _Replay, source: InventorySource) -> None:
+    """Re-apply the old source's allowed-use override, or report that it was not.
+
+    The override only narrows what the source's revisions grant, so losing it
+    silently would widen what generation may cite.
+    """
+    if source.allowed_uses_override is None:
+        return
+    uses = tuple(json.loads(source.allowed_uses_override))
+    try:
+        replay.target.set_allowed_uses(source.source_id, uses)
+    except TychoraError as error:
+        replay.progress.skip(
+            "source",
+            source.source_key,
+            "uses_override_unapplied",
+            f"{source.allowed_uses_override}: {error.reason or error.code}",
         )
 
 
@@ -366,8 +392,10 @@ def rebuild_workspace(
 
     The destination must not exist or be empty, and must not be or contain the old
     workspace; nothing is written before that is checked. Access floors, ranks,
-    allowed uses and declared review states of the old workspace are carried over
-    and never lowered.
+    allowed uses, per-source allowed-use overrides and declared review states of
+    the old workspace are carried over and never lowered or widened. An override
+    the new workspace refuses is listed as a skipped ``uses_override_unapplied``
+    item so the operator can re-apply it.
 
     A marker file in the destination is written before the first source is added
     and removed only after the final policy restore succeeds. A process killed in

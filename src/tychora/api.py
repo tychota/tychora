@@ -372,6 +372,11 @@ class _LocalRebuildTarget:
             lambda: restore_policy(owner.db, owner.workspace_id, sources)
         )
 
+    def set_allowed_uses(self, source_id: str, uses: tuple[str, ...]) -> None:
+        """Narrow a re-added source's allowed uses to ``uses``."""
+        store = self._workspace.owner.store
+        self._on_owner(lambda: store.set_allowed_uses_override(source_id, uses))
+
     def record_review(
         self, target: ReviewTarget, state: str, actor: str, decided_at: datetime
     ) -> None:
