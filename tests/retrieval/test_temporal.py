@@ -4,7 +4,11 @@ from datetime import date
 from hashlib import sha256
 
 from tychora.contracts.identity import canonical_bytes
-from tychora.retrieval.selection import RevisionFact, select_temporal_revisions
+from tychora.retrieval.selection import (
+    RevisionFact,
+    TemporalSelector,
+    select_temporal_revisions,
+)
 
 
 def _revision(
@@ -38,11 +42,15 @@ def test_current_uses_declared_default_and_explicit_overrides_it():
     old = _revision("old", start="2022-01-01")
     current = _revision("current", start="2023-01-01", default=True)
     assert select_temporal_revisions((old, current)) == (frozenset({"current"}), ())
-    assert select_temporal_revisions((old, current), explicit_ids=("old",)) == (
+    assert select_temporal_revisions(
+        (old, current), TemporalSelector(explicit_ids=("old",))
+    ) == (
         frozenset({"old"}),
         (),
     )
-    assert select_temporal_revisions((old, current), selector="all") == (
+    assert select_temporal_revisions(
+        (old, current), TemporalSelector(selector="all")
+    ) == (
         frozenset({"old", "current"}),
         (),
     )
@@ -51,40 +59,43 @@ def test_current_uses_declared_default_and_explicit_overrides_it():
 def test_as_of_filters_half_open_intervals_and_picks_latest_start():
     old = _revision("old", start="2022-01-01", end="2024-01-01")
     current = _revision("current", start="2024-01-01", default=True)
-    assert select_temporal_revisions((old, current), as_of=date(2023, 12, 31))[
-        0
-    ] == frozenset({"old"})
-    assert select_temporal_revisions((old, current), as_of=date(2024, 1, 1))[
-        0
-    ] == frozenset({"current"})
+    assert select_temporal_revisions(
+        (old, current), TemporalSelector(as_of=date(2023, 12, 31))
+    )[0] == frozenset({"old"})
+    assert select_temporal_revisions(
+        (old, current), TemporalSelector(as_of=date(2024, 1, 1))
+    )[0] == frozenset({"current"})
 
 
 def test_cutoff_is_independent_of_effective_date():
     early = _revision("early", start="2020-01-01", published="2021-01-01")
     late = _revision("late", start="2022-01-01", published="2025-01-01", default=True)
     assert select_temporal_revisions(
-        (early, late), as_of=date(2023, 1, 1), cutoff=date(2024, 1, 1)
+        (early, late), TemporalSelector(as_of=date(2023, 1, 1), cutoff=date(2024, 1, 1))
     )[0] == frozenset({"early"})
     assert select_temporal_revisions(
-        (early, late), cutoff=date(2024, 1, 1), selector="all"
+        (early, late), TemporalSelector(cutoff=date(2024, 1, 1), selector="all")
     )[0] == frozenset({"early"})
 
 
 def test_unknown_dates_supplement_known_winner_only_when_permissive():
     known = _revision("known", start="2022-01-01")
     unknown = _revision("unknown")
-    assert select_temporal_revisions((known, unknown), as_of=date(2023, 1, 1))[
-        0
-    ] == frozenset({"known"})
     assert select_temporal_revisions(
-        (known, unknown), as_of=date(2023, 1, 1), unknown_dates="permissive"
+        (known, unknown), TemporalSelector(as_of=date(2023, 1, 1))
+    )[0] == frozenset({"known"})
+    assert select_temporal_revisions(
+        (known, unknown),
+        TemporalSelector(as_of=date(2023, 1, 1), unknown_dates="permissive"),
     )[0] == frozenset({"known", "unknown"})
 
 
 def test_tied_latest_editions_warn_and_keep_both():
     first = _revision("first", start="2022-01-01")
     second = _revision("second", start="2022-01-01", default=True)
-    ids, warnings = select_temporal_revisions((first, second), as_of=date(2023, 1, 1))
+    ids, warnings = select_temporal_revisions(
+        (first, second), TemporalSelector(as_of=date(2023, 1, 1))
+    )
     assert ids == frozenset({"first", "second"})
     assert warnings
 
@@ -93,7 +104,7 @@ def test_explicit_revision_still_obeys_date_constraints():
     old = _revision("old", start="2020-01-01", end="2021-01-01")
     assert (
         select_temporal_revisions(
-            (old,), explicit_ids=("old",), as_of=date(2022, 1, 1)
+            (old,), TemporalSelector(explicit_ids=("old",), as_of=date(2022, 1, 1))
         )[0]
         == frozenset()
     )
@@ -109,7 +120,7 @@ def test_compiled_attempt_exposes_overlap_warning(tmp_path):
     from tychora.contracts.identity import digest
     from tychora.contracts.publication import SnapshotMember, SnapshotView
     from tychora.contracts.requests import QueryRequest, RequestScope
-    from tychora.retrieval.compiler import EligibilityCompiler
+    from tychora.retrieval.compiler import EligibilityCompiler, EligibilityInputs
 
     workspace = tmp_path / "workspace.toml"
     workspace.write_text(
@@ -151,12 +162,14 @@ def test_compiled_attempt_exposes_overlap_warning(tmp_path):
     compiler.mark_compatible(snapshot, config, config)
     compiled = compiler.compile(
         tx,
-        snapshot,
-        scope,
-        QueryRequest.from_mapping(
-            {"question": "Why?", "mode": "audit", "as_of": "2024-01-01"}
+        EligibilityInputs(
+            snapshot,
+            scope,
+            QueryRequest.from_mapping(
+                {"question": "Why?", "mode": "audit", "as_of": "2024-01-01"}
+            ),
+            config,
         ),
-        config,
         members=(
             SnapshotMember(
                 source_id="source", revision_id="one", extraction_id="one-extraction"

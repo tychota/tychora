@@ -12,7 +12,7 @@ from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import digest
 from tychora.contracts.requests import AndFilter, EqFilter
-from tychora.retrieval.compiler import filter_matches
+from tychora.retrieval.compiler import FacetSubject, filter_matches
 
 
 def _registry(tmp_path, *, remap_alias=False):
@@ -60,12 +60,7 @@ def test_only_declared_canonical_facet_is_global_and_child_can_narrow(tmp_path):
 
     def matches(expr, source, child, include=True):
         return filter_matches(
-            expr,
-            registry,
-            source,
-            child,
-            include_global=include,
-            global_facets=declared,
+            expr, registry, FacetSubject(source, child, include, declared)
         )
 
     assert matches(project, {}, {}, include=True)

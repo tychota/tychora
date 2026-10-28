@@ -42,7 +42,7 @@ from tychora.retrieval.attempt import (
     is_source_unit,
 )
 from tychora.retrieval.cache import EligibilityCache
-from tychora.retrieval.compiler import EligibilityCompiler
+from tychora.retrieval.compiler import EligibilityCompiler, EligibilityInputs
 from tychora.retrieval.graph_scope import graph_scope
 
 ITERATIONS = 500
@@ -426,7 +426,9 @@ def _compile_both(run, legacy, compiler, cache, scope, request):
             run.call(
                 owner.run_read(
                     lambda tx: compiler.compile_cached(
-                        tx, cache, snapshot, scope, request, owner.config
+                        tx,
+                        cache,
+                        EligibilityInputs(snapshot, scope, request, owner.config),
                     ),
                     ExecutionContext(),
                 )
@@ -441,7 +443,9 @@ def _compile_both(run, legacy, compiler, cache, scope, request):
         owner.run_read(
             lambda tx: (
                 compiler.compile_cached(
-                    tx, cache, snapshot, scope, request, owner.config
+                    tx,
+                    cache,
+                    EligibilityInputs(snapshot, scope, request, owner.config),
                 ).view
             ),
             ExecutionContext(),
@@ -536,7 +540,7 @@ def _cached(kb, compiler, cache, snapshot, scope, request):
     return kb._workspace.bridge.call(
         owner.run_read(
             lambda tx: compiler.compile_cached(
-                tx, cache, snapshot, scope, request, owner.config
+                tx, cache, EligibilityInputs(snapshot, scope, request, owner.config)
             ),
             ExecutionContext(),
         )
@@ -639,7 +643,9 @@ def test_compiler_never_calls_prepare_extraction(stable, monkeypatch):
     view = kb._workspace.bridge.call(
         owner.run_read(
             lambda tx: (
-                compiler.compile(tx, snapshot, owner.scope, request, owner.config).view
+                compiler.compile(
+                    tx, EligibilityInputs(snapshot, owner.scope, request, owner.config)
+                ).view
             ),
             ExecutionContext(),
         )
@@ -686,10 +692,7 @@ def test_only_retained_inspection_admits_archived_collections(stable):
                 lambda tx: (
                     compiler.compile(
                         tx,
-                        snapshot,
-                        owner.scope,
-                        request,
-                        owner.config,
+                        EligibilityInputs(snapshot, owner.scope, request, owner.config),
                         include_archived=include_archived,
                     ).view
                 ),

@@ -59,13 +59,18 @@ from tychora.ports.tokens import TokenCounter
 from tychora.ports.vectors import VectorIndex
 from tychora.retrieval.admission import LanePolicy, admit
 from tychora.retrieval.attempt import (
+    AttemptHost,
     EligibilityAttempt,
     is_eligible_asset,
     is_eligible_unit,
     run_pinned_eligibility,
 )
 from tychora.retrieval.cache import QueryCaches
-from tychora.retrieval.compiler import EligibilityCompiler, eligible_cache_key
+from tychora.retrieval.compiler import (
+    EligibilityCompiler,
+    EligibilityInputs,
+    eligible_cache_key,
+)
 from tychora.retrieval.fusion import FusedCandidate, fuse
 from tychora.retrieval.graph import augment
 from tychora.retrieval.graph_scope import graph_scope
@@ -644,14 +649,9 @@ class QueryService:
             )
 
         return await run_pinned_eligibility(
-            self.compiler,
-            None,
-            granted,
-            request,
-            self.owner.config,
+            AttemptHost(self.compiler, self.owner, ctx),
+            EligibilityInputs(None, granted, request, self.owner.config),
             operation,
-            owner=self.owner,
-            ctx=ctx,
             on_invalidated=supersede,
         )
 

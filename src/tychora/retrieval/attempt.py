@@ -12,12 +12,16 @@ from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.eligibility import EligibilityView
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.publication import SnapshotView
-from tychora.contracts.requests import QueryRequest, RequestScope
+from tychora.contracts.requests import RequestScope
 from tychora.ports.execution import ExecutionContext
 from tychora.ports.repositories import OwnerFact, ReadTransaction
 from tychora.retrieval.cache import EligibilityCache
 from tychora.retrieval.catalog import SnapshotCatalog
-from tychora.retrieval.compiler import CompiledEligibility, EligibilityCompiler
+from tychora.retrieval.compiler import (
+    CompiledEligibility,
+    EligibilityCompiler,
+    EligibilityInputs,
+)
 
 
 class SnapshotLeases(Protocol):
@@ -144,34 +148,26 @@ class _Delivered[T]:
 
 
 @dataclass(frozen=True)
-class _Pinned:
-    """What both attempts of one pinned query share."""
+class AttemptHost:
+    """The compiler and owner one request's attempts run on, under its context."""
 
     compiler: EligibilityCompiler
     owner: AttemptOwner
-    snapshot: SnapshotView
-    scope: RequestScope
-    request: QueryRequest
-    config: ResolvedConfig
     ctx: ExecutionContext
 
 
 async def run_pinned_eligibility[T](
-    compiler: EligibilityCompiler,
-    selector: str | None,
-    scope: RequestScope,
-    request: QueryRequest,
-    config: ResolvedConfig,
+    host: AttemptHost,
+    inputs: EligibilityInputs[str | None],
     operation: Callable[[EligibilityAttempt], Awaitable[T]],
     *,
-    owner: AttemptOwner,
-    ctx: ExecutionContext,
     on_invalidated: Callable[[T], Awaitable[None]] | None = None,
 ) -> T:
     """Hold one snapshot lease through both attempts, provider calls and delivery."""
-    scope = owner.scope.narrow(scope)
+    compiler, owner, ctx, config = host.compiler, host.owner, host.ctx, inputs.config
+    scope = owner.scope.narrow(inputs.scope)
     snapshot = await owner.run_read(
-        lambda tx: resolve_snapshot(owner.catalog, tx, selector), ctx
+        lambda tx: resolve_snapshot(owner.catalog, tx, inputs.snapshot), ctx
     )
     with owner.store.leases.pin(frozenset({snapshot.snapshot_id})):
         if not compiler.knows_compatible(snapshot, config):
@@ -179,9 +175,9 @@ async def run_pinned_eligibility[T](
                 lambda: owner.store.retained_config(snapshot), ctx, "interactive"
             )
             compiler.mark_compatible(snapshot, config, retained)
-        pinned = _Pinned(compiler, owner, snapshot, scope, request, config, ctx)
+        pinned = EligibilityInputs(snapshot, scope, inputs.request, config)
         for attempt_number in range(2):
-            attempt = await _attempt(pinned)
+            attempt = await _attempt(host, pinned)
             delivered = await _deliver_once(
                 attempt, operation, on_invalidated, final=attempt_number == 1
             )
@@ -215,25 +211,20 @@ async def _deliver_once[T](
     return _Delivered(result)
 
 
-async def _attempt(pinned: _Pinned) -> EligibilityAttempt:
+async def _attempt(
+    host: AttemptHost, inputs: EligibilityInputs[SnapshotView]
+) -> EligibilityAttempt:
     """Compile the view, cached, on the read pool."""
-    owner, snapshot = pinned.owner, pinned.snapshot
+    owner = host.owner
     compiled = await owner.run_read(
-        lambda tx: pinned.compiler.compile_cached(
-            tx,
-            owner.eligibility_cache,
-            snapshot,
-            pinned.scope,
-            pinned.request,
-            pinned.config,
-        ),
-        pinned.ctx,
+        lambda tx: host.compiler.compile_cached(tx, owner.eligibility_cache, inputs),
+        host.ctx,
     )
     return EligibilityAttempt(
         compiled=compiled,
-        snapshot=snapshot,
+        snapshot=inputs.snapshot,
         owner=owner,
-        ctx=pinned.ctx,
+        ctx=host.ctx,
     )
 
 

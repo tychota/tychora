@@ -2,7 +2,9 @@
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Literal
+from typing import Literal, Self
+
+from tychora.contracts.requests import QueryRequest
 
 
 @dataclass(frozen=True)
@@ -33,16 +35,39 @@ def _parsed_date(value: str | None) -> date | None:
     return date.fromisoformat(value)
 
 
+@dataclass(frozen=True)
+class TemporalSelector:
+    """A request's edition selection: explicit revisions, selector and date bounds."""
+
+    explicit_ids: tuple[str, ...] = ()
+    selector: Literal["current", "all"] = "current"
+    as_of: date | None = None
+    cutoff: date | None = None
+    unknown_dates: Literal["strict", "permissive"] = "strict"
+
+    @classmethod
+    def of(cls, request: QueryRequest) -> Self:
+        """The request's edition selection."""
+        return cls(
+            explicit_ids=request.revision_ids,
+            selector=request.revision_selector,
+            as_of=request.as_of,
+            cutoff=request.cutoff,
+            unknown_dates=request.unknown_dates,
+        )
+
+
+_CURRENT = TemporalSelector()
+
+
 def select_temporal_revisions(
     revisions: tuple[RevisionFact, ...],
-    *,
-    explicit_ids: tuple[str, ...] = (),
-    selector: Literal["current", "all"] = "current",
-    as_of: date | None = None,
-    cutoff: date | None = None,
-    unknown_dates: Literal["strict", "permissive"] = "strict",
+    temporal: TemporalSelector = _CURRENT,
 ) -> tuple[frozenset[str], tuple[str, ...]]:
     """Select retained editions after independently applying both date constraints."""
+    explicit_ids, selector = temporal.explicit_ids, temporal.selector
+    as_of, cutoff = temporal.as_of, temporal.cutoff
+    unknown_dates = temporal.unknown_dates
     selected: set[str] = set()
     warnings: list[str] = []
     grouped: dict[str, list[RevisionFact]] = {}

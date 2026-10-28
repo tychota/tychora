@@ -38,7 +38,11 @@ from tychora.contracts.requests import (
 )
 from tychora.ports.artifacts import ArtifactReader
 from tychora.ports.repositories import FacetValue, MemberRow, ReadTransaction, ReviewRow
-from tychora.retrieval.selection import RevisionFact, select_temporal_revisions
+from tychora.retrieval.selection import (
+    RevisionFact,
+    TemporalSelector,
+    select_temporal_revisions,
+)
 
 if TYPE_CHECKING:
     from tychora.retrieval.cache import EligibilityCache
@@ -83,6 +87,19 @@ class CompiledEligibility:
 
 
 @dataclass(frozen=True)
+class EligibilityInputs[S]:
+    """What one view compiles from: a snapshot (or its selector), scope, request, config.
+
+    ``S`` is ``SnapshotView`` once pinned, or the ``str | None`` selector before.
+    """
+
+    snapshot: S
+    scope: RequestScope
+    request: QueryRequest
+    config: ResolvedConfig
+
+
+@dataclass(frozen=True)
 class ModePolicy:
     """A retrieval mode bound to the caller's uses."""
 
@@ -102,9 +119,7 @@ class _Job:
     """One request bound to its key, mode and compiled filter."""
 
     key: EligibilityKey
-    snapshot: SnapshotView
-    scope: RequestScope
-    request: QueryRequest
+    inputs: EligibilityInputs[SnapshotView]
     mode: ModePolicy
     selected: ScopedFilter | None
 
@@ -152,46 +167,29 @@ def request_digest(request: QueryRequest, selected: ScopedFilter | None) -> str:
     )
 
 
-def filter_matches(
-    expr: FilterExpr,
-    registry: Registry,
-    source_values: dict[str, object],
-    child_values: dict[str, object],
-    *,
-    include_global: bool,
-    global_facets: frozenset[str],
-) -> bool:
+@dataclass(frozen=True)
+class FacetSubject:
+    """The facet values one filter is checked against, with the global-facet policy."""
+
+    revision_values: Mapping[str, object]
+    unit_values: Mapping[str, object]
+    include_global: bool
+    global_facets: frozenset[str]
+
+
+def filter_matches(expr: FilterExpr, registry: Registry, subject: FacetSubject) -> bool:
     """Whether a revision's and a unit's facet values satisfy a scoped filter."""
     if isinstance(expr, AndFilter):
-        return all(
-            filter_matches(
-                child,
-                registry,
-                source_values,
-                child_values,
-                include_global=include_global,
-                global_facets=global_facets,
-            )
-            for child in expr.children
-        )
+        return all(filter_matches(child, registry, subject) for child in expr.children)
     if isinstance(expr, OrFilter):
-        return any(
-            filter_matches(
-                child,
-                registry,
-                source_values,
-                child_values,
-                include_global=include_global,
-                global_facets=global_facets,
-            )
-            for child in expr.children
-        )
+        return any(filter_matches(child, registry, subject) for child in expr.children)
     facet = registry.facet(expr.field)
     facet_key = facet["key"]
     assert isinstance(facet_key, str)
-    explicit_global = facet_key in global_facets
-    source = cast(JsonValue, source_values.get(expr.field))
-    child = cast(JsonValue, child_values.get(expr.field))
+    explicit_global = facet_key in subject.global_facets
+    include_global = subject.include_global
+    source = cast(JsonValue, subject.revision_values.get(expr.field))
+    child = cast(JsonValue, subject.unit_values.get(expr.field))
     if (
         source is None
         and child is not None
@@ -532,14 +530,15 @@ class EligibilityCompiler:
             self.mark_compatible(snapshot, config, read_retained())
 
     def key(
-        self,
-        tx: ReadTransaction,
-        snapshot: SnapshotView,
-        scope: RequestScope,
-        request: QueryRequest,
-        config: ResolvedConfig,
+        self, tx: ReadTransaction, inputs: EligibilityInputs[SnapshotView]
     ) -> tuple[EligibilityKey, ModePolicy, ScopedFilter | None]:
         """The cache key of this request, with its mode and compiled filter."""
+        snapshot, scope, request, config = (
+            inputs.snapshot,
+            inputs.scope,
+            inputs.request,
+            inputs.config,
+        )
         check_request_limits(request, config)
         if self.registry.registry_digest != config.registry_digest:
             raise _invalid(
@@ -569,10 +568,7 @@ class EligibilityCompiler:
     def compile(
         self,
         tx: ReadTransaction,
-        snapshot: SnapshotView,
-        scope: RequestScope,
-        request: QueryRequest,
-        config: ResolvedConfig,
+        inputs: EligibilityInputs[SnapshotView],
         *,
         members: tuple[SnapshotMember, ...] | None = None,
         include_archived: bool = False,
@@ -582,7 +578,7 @@ class EligibilityCompiler:
         ``include_archived`` admits archived collections, for exact retained
         inspection only; its policy digest differs from the mode's own.
         """
-        key, mode, selected = self.key(tx, snapshot, scope, request, config)
+        key, mode, selected = self.key(tx, inputs)
         if include_archived:
             mode = replace(
                 mode,
@@ -590,21 +586,17 @@ class EligibilityCompiler:
                 include_archived=True,
             )
             key = key._replace(policy_digest=mode.digest)
-        job = _Job(key, snapshot, scope, request, mode, selected)
-        return self._compile(tx, job, members)
+        return self._compile(tx, _Job(key, inputs, mode, selected), members)
 
     def compile_cached(
         self,
         tx: ReadTransaction,
         cache: EligibilityCache,
-        snapshot: SnapshotView,
-        scope: RequestScope,
-        request: QueryRequest,
-        config: ResolvedConfig,
+        inputs: EligibilityInputs[SnapshotView],
     ) -> CompiledEligibility:
         """Return the cached view for this key, compiling it once on a miss."""
-        key, mode, selected = self.key(tx, snapshot, scope, request, config)
-        job = _Job(key, snapshot, scope, request, mode, selected)
+        key, mode, selected = self.key(tx, inputs)
+        job = _Job(key, inputs, mode, selected)
         return cache.get_or_compile(key, lambda: self._compile(tx, job, None))
 
     def _compile(
@@ -613,17 +605,15 @@ class EligibilityCompiler:
         job: _Job,
         members: tuple[SnapshotMember, ...] | None,
     ) -> CompiledEligibility:
-        key, snapshot, request = job.key, job.snapshot, job.request
+        key, snapshot, request = job.key, job.inputs.snapshot, job.inputs.request
         rows = _member_rows(tx, snapshot, members)
         kinds = self._kind_envelopes(tx, rows)
-        admitted = _admitted_members(rows, kinds, job.scope, job.mode, self.registry)
+        admitted = _admitted_members(
+            rows, kinds, job.inputs.scope, job.mode, self.registry
+        )
         selected_ids, warnings = select_temporal_revisions(
             tuple(_revision_fact(r, kinds[r.kind_id]) for r in admitted),
-            explicit_ids=request.revision_ids,
-            selector=request.revision_selector,
-            as_of=request.as_of,
-            cutoff=request.cutoff,
-            unknown_dates=request.unknown_dates,
+            TemporalSelector.of(request),
         )
         chosen = [row for row in admitted if row.revision_id in selected_ids]
         # Global facets matter only to filters, and only for the chosen editions.
@@ -639,7 +629,7 @@ class EligibilityCompiler:
             for row in chosen
         }
         failing, unit_filter = self._filter_sets(
-            tx, job.selected, job.request, chosen, facets
+            tx, job.selected, request, chosen, facets
         )
         units, assets = _exclusions(tx, chosen, job.mode, failing)
         batches = _selected_batches(
@@ -702,10 +692,12 @@ class EligibilityCompiler:
             return filter_matches(
                 expr,
                 self.registry,
-                by_revision.get(revision, {}),
-                by_unit.get(unit_id, {}),
-                include_global=request.include_global,
-                global_facets=global_facets.get(revision, frozenset()),
+                FacetSubject(
+                    by_revision.get(revision, {}),
+                    by_unit.get(unit_id, {}),
+                    request.include_global,
+                    global_facets.get(revision, frozenset()),
+                ),
             )
 
         failing = frozenset(

@@ -43,7 +43,7 @@ from tychora.contracts.requests import (
 )
 from tychora.ports.execution import ExecutionContext
 from tychora.retrieval.attempt import readable_units, require_epoch
-from tychora.retrieval.compiler import EligibilityCompiler
+from tychora.retrieval.compiler import EligibilityCompiler, EligibilityInputs
 
 if TYPE_CHECKING:
     from tychora.application.owner import WorkspaceOwner
@@ -1115,7 +1115,8 @@ class DiscoveryService:
             compiler.ensure_compatible(
                 snapshot, owner.config, lambda: owner.store.retained_config(snapshot)
             )
-            view = compiler.compile(tx, snapshot, scope, request, owner.config).view
+            inputs = EligibilityInputs(snapshot, scope, request, owner.config)
+            view = compiler.compile(tx, inputs).view
             row = owner.db.execute(
                 "SELECT e.revision_id,e.diagnostics_artifact_sha,r.source_id "
                 "FROM extractions e JOIN revisions r USING(revision_id) "
