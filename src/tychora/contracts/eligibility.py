@@ -1,5 +1,6 @@
 """Revision-level eligibility: what one pinned query may read, without its units."""
 
+import json
 from collections.abc import Iterable, Mapping
 from functools import cached_property
 
@@ -7,6 +8,11 @@ from pydantic import Field
 
 from .base import Contract, Identifier, NonEmptyStr, NonNegativeInt, Sha256
 from .graph import GraphBatchReceipt
+
+
+def json_array(ids: Iterable[str]) -> str:
+    """One JSON array of ``ids`` in a stable order, for a ``json_each`` binding."""
+    return json.dumps(sorted(ids))
 
 
 class RevisionGrant(Contract):
@@ -79,6 +85,26 @@ class EligibilityView(Contract):
     def extraction_ids(self) -> frozenset[str]:
         """Every selected extraction."""
         return frozenset(grant.extraction_id for grant in self.revisions.values())
+
+    @cached_property
+    def extraction_ids_json(self) -> str:
+        """``extraction_ids`` as one JSON array binding, built once per view."""
+        return json_array(self.extraction_ids)
+
+    @cached_property
+    def excluded_unit_ids_json(self) -> str:
+        """``excluded_unit_ids`` as one JSON array binding, built once per view."""
+        return json_array(self.excluded_unit_ids)
+
+    @cached_property
+    def excluded_asset_ids_json(self) -> str:
+        """``excluded_asset_ids`` as one JSON array binding, built once per view."""
+        return json_array(self.excluded_asset_ids)
+
+    @cached_property
+    def unit_filter_json(self) -> str | None:
+        """``unit_filter`` as one JSON array binding, or None without a filter."""
+        return None if self.unit_filter is None else json_array(self.unit_filter)
 
     @cached_property
     def batch_ids(self) -> frozenset[str]:
