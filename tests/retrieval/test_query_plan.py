@@ -368,3 +368,25 @@ def test_review_states_disjoint_from_the_mode_are_refused(tmp_path):
         "INVALID_REQUEST",
         "review.states_empty",
     )
+
+
+def test_admission_passes_its_reservations_to_the_survivor_bound(tmp_path, monkeypatch):
+    from tychora.application import query as query_module
+
+    calls = []
+    original = query_module.load_survivors
+
+    def spied(tx, view, candidates, exact_keys=(), graph_lists=None):
+        calls.append((tuple(exact_keys), graph_lists))
+        return original(tx, view, candidates, exact_keys, graph_lists)
+
+    monkeypatch.setattr(query_module, "load_survivors", spied)
+    with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
+        _add_standard(kb)
+        result = kb.search({"question": "What does STD-7 require?"})
+    assert result.segments
+    ((exact_keys, graph_lists),) = calls
+    # The exact channel's keys reach the bound, so their places are read first.
+    assert exact_keys and all(kind == "unit" for kind, _ in exact_keys)
+    assert graph_lists is not None
+    assert set(graph_lists) == {"structural", "semantic"}

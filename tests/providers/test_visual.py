@@ -6,6 +6,7 @@ import json
 from hashlib import sha256
 from io import BytesIO
 from threading import Event, Lock
+from typing import Any, cast
 
 import pytest
 from PIL import Image
@@ -777,3 +778,30 @@ def test_visual_model_unavailability_and_distinct_space():
         "cosine",
         visual.representation_fingerprint,
     )
+
+
+@pytest.mark.asyncio
+async def test_query_binding_creates_the_visual_embedder_on_the_interactive_lane(
+    monkeypatch,
+):
+    from types import SimpleNamespace
+
+    from tychora.adapters.voyage import query as voyage_query
+
+    seen = {}
+
+    async def recording(owner, **kwargs):
+        seen.update(kwargs)
+        return "bound"
+
+    monkeypatch.setattr(voyage_query, "create_visual_embedder", recording)
+    base = SimpleNamespace(
+        capabilities="caps", _counter="counter", _runtime=SimpleNamespace()
+    )
+    provider = voyage_query.VoyageVisualQueryProvider(cast(Any, base))
+    bound = await provider.bind(
+        cast(Any, object()), cast(Any, "scope"), ExecutionContext()
+    )
+    assert bound == "bound"
+    # A query binds per call: a background lane would queue it behind ingestion.
+    assert seen["priority"] == "interactive"

@@ -83,13 +83,17 @@ def test_storing_a_newer_epoch_evicts_every_older_epoch_and_its_graph():
         key = eligible_cache_key(compiled.view)
         cache.get_or_compile(key, lambda compiled=compiled: compiled)
         cache.graph_scope(key, lambda: None)
+    assert (len(cache._entries), len(cache._graphs)) == (2, 2)
     same = _compiled(epoch=2, request="a")
     cache.get_or_compile(eligible_cache_key(same.view), lambda: same)
     # Only the epoch-2 view is left; the epoch-1 views and graphs are gone.
-    assert cache.purge() == 1
+    assert list(cache._entries) == [eligible_cache_key(same.view)]
+    assert len(cache._graphs) == 0
     builds = []
     cache.graph_scope(eligible_cache_key(old[0].view), lambda: builds.append(1))
     assert builds == [1]
+    # A graph of the superseded epoch is built for its caller but not kept.
+    assert len(cache._graphs) == 0
 
 
 def test_a_stale_epoch_compiled_late_is_returned_but_not_kept():
@@ -102,4 +106,5 @@ def test_a_stale_epoch_compiled_late_is_returned_but_not_kept():
     again = _compiled(epoch=2)
     assert cache.get_or_compile(key, lambda: again) is again
     cache.graph_scope(key, lambda: None)
-    assert cache.purge() == 1
+    assert list(cache._entries) == [eligible_cache_key(newer.view)]
+    assert len(cache._graphs) == 0
