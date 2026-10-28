@@ -26,13 +26,9 @@ def build_coverage(
 
 
 def missing_batch_slots(view: EligibilityView, slots: Iterable[str]) -> tuple[str, ...]:
-    """Slots whose selected batches do not cover every eligible revision.
-
-    A family serves one batch per extraction, so a slot is complete when it
-    selects as many batches as the view grants revisions.
-    """
+    """Slots whose selected batches do not serve every eligible extraction."""
     return tuple(
         slot
         for slot in slots
-        if len(view.selected_batches.get(slot, ())) < len(view.revisions)
+        if view.extraction_ids - view.batch_extractions.get(slot, frozenset())
     )

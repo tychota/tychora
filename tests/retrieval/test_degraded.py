@@ -9,25 +9,32 @@ import pytest
 from tests.helpers.corpus import commit_with_facts, reader, seed_bundle
 from tests.helpers.eligibility import revision_attempt, revision_view
 from tests.helpers.legacy import OutputCounter
+from tests.indexing.test_publication import RecordingCounter, RecordingEmbedder
 from tests.providers.test_reranker import (
     LengthCounter,
     RecordingRerankTransport,
     _online_rerank_config_scope,
 )
-from tychora import Tychora
+from tests.retrieval.test_result_cache import _record_puts
+from tychora import ProviderBindings, Tychora
+from tychora.adapters.chroma.index import ChromaVectorIndex
 from tychora.adapters.sqlite import lexical as lexical_module
 from tychora.adapters.voyage.request_types import RawVoyageResponse
 from tychora.adapters.voyage.runtime import VoyageRuntime
 from tychora.adapters.voyage.validation import qualify_voyage_rerank
+from tychora.api import LocalTextBinding
 from tychora.application.owner import WorkspaceOwner
+from tychora.application.query import QueryService
 from tychora.application.reranking import (
     _create_injected_reranker,
     create_reranker,
     prepare_rerank_facts,
 )
+from tychora.configuration.resolve import resolve_config
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.candidates import ChannelCandidate
 from tychora.contracts.errors import TychoraError
+from tychora.contracts.evidence import Coverage, CoverageGap
 from tychora.contracts.requests import QueryRequest, QuestionInput
 from tychora.indexing.representations import prepare_extraction
 from tychora.ports.execution import ExecutionContext
@@ -40,6 +47,7 @@ from tychora.retrieval.rerank import (
     RerankMatch,
     rerank_candidates,
 )
+from tychora.retrieval.response import _delivered_coverage
 
 
 class CharacterCounter:
@@ -576,13 +584,41 @@ def _add_text(kb, key, text):
     assert kb.jobs.wait(job.id).state == "succeeded"
 
 
-def _drop_lexical_batches(kb):
+def _drop_batches(kb, slot):
     owner = kb._workspace.owner
     owner.run_write_sync(
-        lambda: owner.db.execute("DELETE FROM page_batches WHERE slot='lexical'"),
+        lambda: owner.db.execute("DELETE FROM page_batches WHERE slot=?", (slot,)),
         ExecutionContext(),
     )
-    return owner
+
+
+_LOCAL_PROFILE = (
+    'schema_version = 1\n[profiles.local]\nbuiltin = "general-documents@1"\n'
+    '[defaults]\nprofile = "local"\n'
+)
+
+
+def _open_text_workspace(root: Path, *, degraded: bool) -> Tychora:
+    """A workspace with a local text slot; its query provider is never reached."""
+    settings = root / "workspace.toml"
+    settings.write_text(
+        _LOCAL_PROFILE + "[configuration]\noffline = true\n"
+        f"[configuration.retrieval]\nallow_degraded = {str(degraded).lower()}\n"
+        '[configuration.providers.text]\nprovider = "voyage"\n'
+        'model = "voyage-context-4"\ndimensions = 2\n'
+        '[configuration.index.text]\nbackend = "chroma"\n'
+    )
+    counter = RecordingCounter()
+    return Tychora.open(
+        root / "ws",
+        config=resolve_config(settings, "local", {}),
+        providers=ProviderBindings(
+            local_text=LocalTextBinding(embedder=RecordingEmbedder(counter)),
+            text_index=ChromaVectorIndex(root / "vectors"),
+            text_counter=counter,
+        ),
+        token_counter=OutputCounter(),
+    )
 
 
 def test_truncated_channel_is_not_incomplete_in_strict_mode(tmp_path, monkeypatch):
@@ -600,39 +636,61 @@ def test_truncated_channel_is_not_incomplete_in_strict_mode(tmp_path, monkeypatc
     assert "lexical" not in result.coverage.unavailable_channels
 
 
-class _QuarterCounter:
-    """About four characters a token, like cl100k on English prose.
-
-    ``OutputCounter`` counts one token a character, so twenty short owners
-    overflow the 6,000-token default output budget and the delivery gap, not
-    channel coverage, would make the result partial.
-    """
-
-    model = "synthetic-output-test-counter"
-    tokenizer_id = "cl100k_base"
-
-    def count(self, text: str) -> int:
-        return -(-len(text) // 4)
+def _twenty_audits(kb):
+    for index in range(20):
+        _add_text(
+            kb,
+            f"{index}.md",
+            f"# Audit {index}\n\nRecord the verification outcome for item {index}.\n",
+        )
 
 
 def test_verification_outcome_succeeds_strict_on_20_documents(tmp_path):
-    with Tychora.open(tmp_path / "ws", token_counter=_QuarterCounter()) as kb:
-        for index in range(20):
-            _add_text(
-                kb,
-                f"{index}.md",
-                f"# Audit {index}\n\nRecord the verification outcome for item {index}.\n",
-            )
+    with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
+        _twenty_audits(kb)
         result = kb.search({"question": "verification outcome"})
     assert result.segments
     assert result.coverage.status == "complete"
-    assert not result.coverage_gaps
+
+
+def test_output_budget_omission_is_a_delivery_truncation(tmp_path):
+    # One token a character: twenty owners overflow the 6,000-token budget.
+    with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
+        _twenty_audits(kb)
+        result = kb.search({"question": "verification outcome"})
+    assert result.coverage.status == "complete"
+    assert "delivery" in result.coverage.truncated_channels
+    assert [(gap.code, gap.channel) for gap in result.coverage_gaps] == [
+        ("output_budget_omission", "delivery")
+    ]
+
+
+def test_unmet_requirement_stays_partial_beside_a_delivery_truncation():
+    complete = Coverage(status="complete", completed_channels=("lexical",))
+    delivery = CoverageGap(
+        code="output_budget_omission",
+        channel="delivery",
+        message="selected_evidence_omitted",
+    )
+    unmet = CoverageGap(
+        code="required_lane",
+        channel="standard",
+        message="not_selected_in_bounded_search",
+    )
+    alone = _delivered_coverage(complete, [delivery], False)
+    assert (alone.status, alone.truncated_channels) == ("complete", ("delivery",))
+    both = _delivered_coverage(complete, [delivery, unmet], False)
+    assert (both.status, both.truncated_channels) == ("partial", ("delivery",))
+    required = _delivered_coverage(complete, [unmet], False)
+    assert (required.status, required.truncated_channels) == ("partial", ())
+    checks = _delivered_coverage(complete, [], True)
+    assert checks.status == "partial"
 
 
 def test_missing_required_batch_is_incomplete(tmp_path):
     with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
         _add_text(kb, "a.md", "# A\n\nThe verification outcome.\n")
-        _drop_lexical_batches(kb)
+        _drop_batches(kb, "lexical")
         with pytest.raises(TychoraError) as error:
             kb.search({"question": "verification outcome"})
     assert (error.value.code, error.value.reason) == (
@@ -641,29 +699,95 @@ def test_missing_required_batch_is_incomplete(tmp_path):
     )
 
 
-def test_degraded_mode_skips_a_channel_with_a_missing_batch(tmp_path):
+def test_strict_exact_only_search_needs_no_lexical_batch(tmp_path):
+    with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
+        _add_text(kb, "a.md", "# A\n\nThe verification outcome.\n")
+        _drop_batches(kb, "lexical")
+        result = kb.search({"question": "verification outcome", "exact_only": True})
+    assert result.coverage.status == "complete"
+    assert result.coverage.completed_channels == ("exact",)
+    assert result.coverage.unavailable_channels == ()
+
+
+def test_degraded_mode_skips_a_channel_with_a_missing_batch(tmp_path, monkeypatch):
+    stored = _record_puts(monkeypatch)
     root = tmp_path / "ws"
     root.mkdir()
     (root / "workspace.toml").write_text(
-        'schema_version = 1\n[profiles.local]\nbuiltin = "general-documents@1"\n'
-        '[defaults]\nprofile = "local"\n'
-        "[configuration.retrieval]\nallow_degraded = true\n"
+        _LOCAL_PROFILE + "[configuration.retrieval]\nallow_degraded = true\n"
     )
     with Tychora.open(root, token_counter=OutputCounter()) as kb:
         _add_text(kb, "a.md", "# A\n\nThe verification outcome.\n")
-        _drop_lexical_batches(kb)
+        _drop_batches(kb, "lexical")
         result = kb.search({"question": "verification outcome"})
-    # The lexical channel is skipped, not run: only exact search could match.
+        kb.search({"question": "verification outcome"})
+    # Exact reads no lexical batch, so it still runs; lexical alone is skipped.
     assert result.coverage.status == "partial"
+    assert result.coverage.completed_channels == ("exact",)
     assert result.coverage.unavailable_channels == ("lexical",)
-    assert "lexical" not in result.coverage.completed_channels
     assert "lexical" not in result.coverage.truncated_channels
+    # A failure-degraded result is never cached.
+    assert stored == []
 
 
-def test_missing_batch_slots_counts_one_batch_per_eligible_revision():
-    view = revision_view(
-        {"r1": "e1", "r2": "e2"}, batches={"lexical": ("b1", "b2"), "text": ("t1",)}
+def test_missing_text_batch_is_refused_in_strict_mode(tmp_path):
+    with _open_text_workspace(tmp_path, degraded=False) as kb:
+        _add_text(kb, "a.md", "# A\n\nThe verification outcome.\n")
+        _drop_batches(kb, "text")
+        with pytest.raises(TychoraError) as error:
+            kb.search({"question": "verification outcome"})
+    assert (error.value.code, error.value.reason) == (
+        "INDEX_INCOMPLETE",
+        "batch.missing",
     )
+
+
+def test_missing_text_batch_is_unavailable_in_degraded_mode(tmp_path, monkeypatch):
+    stored = _record_puts(monkeypatch)
+    with _open_text_workspace(tmp_path, degraded=True) as kb:
+        _add_text(kb, "a.md", "# A\n\nThe verification outcome.\n")
+        _drop_batches(kb, "text")
+        result = kb.search({"question": "verification outcome"})
+    assert result.coverage.status == "partial"
+    assert result.coverage.completed_channels == ("exact", "lexical")
+    assert result.coverage.unavailable_channels == ("text",)
+    assert stored == []
+
+
+def _service(*, degraded: bool) -> QueryService:
+    service = QueryService.__new__(QueryService)
+    retrieval = SimpleNamespace(allow_degraded=degraded)
+    vars(service)["owner"] = SimpleNamespace(
+        config=SimpleNamespace(values=SimpleNamespace(retrieval=retrieval))
+    )
+    return service
+
+
+def test_missing_image_batch_is_refused_or_reported_as_visual():
+    # A visual slot needs a qualified multimodal embedder at ingestion, so the
+    # image slot is checked on a synthetic view through the same helper.
+    view = revision_view(
+        {"r1": "e1"},
+        batches={"lexical": ("b1",)},
+        batch_extractions={"lexical": ("e1",)},
+    )
+    with pytest.raises(TychoraError) as error:
+        _service(degraded=False)._missing_batches(view, ("image",), [])
+    assert error.value.reason == "batch.missing"
+    incomplete: list[str] = []
+    assert _service(degraded=True)._missing_batches(view, ("image",), incomplete) == [
+        "visual"
+    ]
+    assert incomplete == ["visual"]
+
+
+def test_missing_batch_slots_checks_each_eligible_extraction():
+    view = revision_view(
+        {"r1": "e1", "r2": "e2"},
+        batches={"lexical": ("b1", "b2"), "text": ("t1", "t1")},
+        batch_extractions={"lexical": ("e1", "e2"), "text": ("e1",)},
+    )
+    # Two text batch rows serve one extraction: a count would miss the gap.
     assert missing_batch_slots(view, ("lexical", "text")) == ("text",)
 
 
