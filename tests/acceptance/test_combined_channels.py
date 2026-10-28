@@ -215,7 +215,7 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
             output_counter=Counter(),
             caches=caches,
             bindings=QueryBindings(
-                text_provider=service.text_provider, text_index=text_index
+                text_provider=service.bindings.text_provider, text_index=text_index
             ),
         )
         unbound = (await text_only.search(plain, scope, ExecutionContext())).result
@@ -233,6 +233,29 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
                 "INVALID_REQUEST",
                 "channel.not_configured",
             )
+        # Asking for the image modality on a text-only service is not a request
+        # error: strict mode refuses the unavailable channel, degraded reports it.
+        text_and_image = plain.model_copy(
+            update={"modalities": frozenset({"text", "image"})}
+        )
+        with pytest.raises(TychoraError) as strict:
+            await text_only.search(text_and_image, scope, ExecutionContext())
+        assert strict.value.code != "INVALID_REQUEST"
+        # Degraded mode reports it instead. Re-publishing under a degraded
+        # profile would need a second visual workspace, so the flag is flipped
+        # in place on a service with no vector binding (no pinned family check).
+        retrieval = owner.config.values.retrieval
+        object.__setattr__(retrieval, "allow_degraded", True)
+        try:
+            degraded = QueryService(owner, output_counter=Counter(), caches=caches)
+            reported = (
+                await degraded.search(text_and_image, scope, ExecutionContext())
+            ).result
+        finally:
+            object.__setattr__(retrieval, "allow_degraded", False)
+        assert reported.coverage.status == "partial"
+        assert "visual" in reported.coverage.unavailable_channels
+        assert set(reported.coverage.unavailable_channels) == {"text", "visual"}
         snapshot = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )

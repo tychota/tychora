@@ -10,6 +10,7 @@ from tychora import ProviderBindings, Tychora
 from tychora.adapters.chroma.index import ChromaVectorIndex
 from tychora.api import LocalTextBinding
 from tychora.application.query import QueryService
+from tychora.application.query_plan import QueryBindings
 from tychora.configuration.indexed_representation import pinned_runtime_compatible
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.errors import TychoraError
@@ -311,11 +312,7 @@ def test_actual_factory_space_and_locality_change_result_identity(tmp_path):
     )
     service = QueryService.__new__(QueryService)
     vars(service)["owner"] = SimpleNamespace(config=config)
-    vars(service)["text_provider"] = provider
-    service.text_index = None
-    service.visual_provider = None
-    service.visual_index = None
-    service.reranker = None
+    service.bindings = QueryBindings(text_provider=provider)
     first = service._provider_fingerprint()
     provider.capabilities = capabilities.model_copy(
         update={

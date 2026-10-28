@@ -703,6 +703,7 @@ asyncio.run(serve(Path(sys.argv[1]), token_counter=Counter()))
 
 @pytest.mark.asyncio
 async def test_mcp_search_forwards_channels_rerank_and_review_states(tmp_path):
+    from tests.helpers.owner import accept_source_units
     from tychora.interfaces.mcp.server import _current, build_mcp
 
     with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
@@ -720,6 +721,7 @@ async def test_mcp_search_forwards_channels_rerank_and_review_states(tmp_path):
             )
             assert kb.jobs.wait(job.id).state == "succeeded"
         owner = kb._workspace.owner
+        await asyncio.to_thread(accept_source_units, owner, "accepted.md")
         server = build_mcp(kb._workspace.services, owner.scope)
         with owner.service_runtime.operation() as services:
             marker = _current.set((services, owner.scope))

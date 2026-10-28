@@ -112,9 +112,7 @@ from tychora.retrieval.vectors import (
 from tychora.retrieval.visuals import prepare_visual_candidates, select_visuals
 
 if TYPE_CHECKING:
-    from tychora.adapters.voyage.rerank import VoyageReranker
     from tychora.application.owner import WorkspaceOwner
-    from tychora.ports.graph import GraphStore
 
 
 _LOG = logging.getLogger(__name__)
@@ -212,14 +210,6 @@ class QueryService:
         lexical = owner.config.values.retrieval.lexical
         self.stopwords = load_stopwords(lexical.languages, lexical.stopwords).words
         self.compiler = EligibilityCompiler(self.registry, owner.artifacts)
-        self.graph: GraphStore | None = bindings.graph
-        self.text_provider: TextQueryProvider | None = bindings.text_provider
-        self.text_index: VectorIndex | None = bindings.text_index
-        self.visual_provider: VisualQueryProvider | None = bindings.visual_provider
-        self.visual_index: VectorIndex | None = bindings.visual_index
-        self.reranker: VoyageReranker | None = bindings.reranker
-        self.rerank_counter: TokenCounter | None = bindings.rerank_counter
-        self.rerank_unavailable = bindings.rerank_unavailable
         self.auto_rerank = auto_rerank
         self.counter = output_counter
         self.caches = caches or QueryCaches()
@@ -263,11 +253,13 @@ class QueryService:
             config.query_fingerprint,
             config.values.providers.model_dump(mode="json"),
             config.values.index.model_dump(mode="json"),
-            factory_identity(self.text_provider),
-            factory_identity(self.visual_provider),
-            self.text_index is not None,
-            self.visual_index is not None,
-            self.reranker.credential_binding_id if self.reranker else None,
+            factory_identity(self.bindings.text_provider),
+            factory_identity(self.bindings.visual_provider),
+            self.bindings.text_index is not None,
+            self.bindings.visual_index is not None,
+            self.bindings.reranker.credential_binding_id
+            if self.bindings.reranker
+            else None,
         )
 
     def _validate_provider_families(
@@ -290,15 +282,15 @@ class QueryService:
         for channel, provider, index, settings, modality in (
             (
                 "text",
-                self.text_provider,
-                self.text_index,
+                self.bindings.text_provider,
+                self.bindings.text_index,
                 self.owner.config.values.providers.text,
                 "text",
             ),
             (
                 "image",
-                self.visual_provider,
-                self.visual_index,
+                self.bindings.visual_provider,
+                self.bindings.visual_index,
                 self.owner.config.values.providers.image,
                 "visual",
             ),
@@ -311,7 +303,9 @@ class QueryService:
                 # Only a channel the request selected itself is refused.
                 if channel in plan.explicit:
                     raise TychoraError(
-                        "CAPABILITY_MISSING", "Pinned vector family is unavailable."
+                        "INDEX_INCOMPLETE",
+                        "Pinned vector family is unavailable.",
+                        reason="channel.unavailable",
                     )
                 continue
             if index is None:
@@ -404,10 +398,10 @@ class QueryService:
             needs_text(request)
             and self.owner.config.values.index.text.backend != "disabled"
         ):
-            provider = self.text_provider
+            provider = self.bindings.text_provider
             if (
                 provider is None
-                or self.text_index is None
+                or self.bindings.text_index is None
                 or provider.caches is not self.caches
                 or not provider.available
                 or (offline and provider.remote)
@@ -417,10 +411,10 @@ class QueryService:
             needs_visual(request)
             and self.owner.config.values.index.image.backend != "disabled"
         ):
-            visual = self.visual_provider
+            visual = self.bindings.visual_provider
             if (
                 visual is None
-                or self.visual_index is None
+                or self.bindings.visual_index is None
                 or visual.caches is not self.caches
                 or not visual.available
                 or (offline and visual.remote)
@@ -431,10 +425,10 @@ class QueryService:
             and self.owner.config.values.providers.rerank.provider != "disabled"
             and not self.owner.config.values.retrieval.allow_degraded
             and (
-                self.reranker is None
-                or self.rerank_counter is None
-                or self.rerank_unavailable is not None
-                or not self.reranker.available
+                self.bindings.reranker is None
+                or self.bindings.rerank_counter is None
+                or self.bindings.rerank_unavailable is not None
+                or not self.bindings.reranker.available
                 or offline
             )
         )
@@ -500,11 +494,11 @@ class QueryService:
             )
         validate_query_text(
             request,
-            self.text_provider.counter
-            if self.text_provider is not None
-            else self.visual_provider.counter
-            if self.visual_provider is not None
-            else self.rerank_counter or self.counter,
+            self.bindings.text_provider.counter
+            if self.bindings.text_provider is not None
+            else self.bindings.visual_provider.counter
+            if self.bindings.visual_provider is not None
+            else self.bindings.rerank_counter or self.counter,
         )
         mode = _mode(self.registry, self.owner.config, request)
         requirements = tuple(
@@ -653,22 +647,18 @@ class QueryService:
         lexical_missing = self._missing_batches(
             attempt.view, ("lexical",) if lexical_runs else (), incomplete
         )
-        channels = (
-            await self.owner.run_read(
-                lambda tx: retrieve_exact_lexical(
-                    tx,
-                    attempt.view,
-                    request,
-                    self.registry,
-                    80,
-                    ctx,
-                    stopwords=self.stopwords,
-                    with_lexical=not lexical_missing,
-                ),
+        channels = await self.owner.run_read(
+            lambda tx: retrieve_exact_lexical(
+                tx,
+                attempt.view,
+                request,
+                self.registry,
+                80,
                 ctx,
-            )
-            if plan.lexical
-            else ()
+                stopwords=self.stopwords,
+                with_lexical=plan.lexical and not lexical_missing,
+            ),
+            ctx,
         )
         lexical_epoch = next(
             (
@@ -692,11 +682,10 @@ class QueryService:
         # A deterministic bound cut these short: reported, never refused.
         truncated: list[str] = [c.channel for c in channels if c.truncated]
         self._refuse_strict(incomplete, "channel.unavailable")
-        lexical_votes: dict[str, tuple[ChannelCandidate, ...]] = {
+        votes: dict[str, tuple[ChannelCandidate, ...]] = {
             channel.channel: (*channel.source_candidates, *channel.asset_candidates)
             for channel in channels
         }
-        votes = lexical_votes.copy() if plan.lexical else {}
         vector_calls: list[
             tuple[str, Callable[[], Awaitable[_VectorChannel | TychoraError]]]
         ] = []
@@ -758,7 +747,7 @@ class QueryService:
                 truncated.append(channel)
             completed.append(channel)
         fused = fuse(votes)
-        graph = self.graph
+        graph = self.bindings.graph
         graph_view, graph_candidates, graph_votes = await self._augment_graph(
             request, attempt, fused, plan, ctx
         )
@@ -784,9 +773,7 @@ class QueryService:
         )
         admission = admit(
             survivors.candidates,
-            tuple(item.key for item in channels[0].source_candidates)
-            if channels and plan.lexical
-            else (),
+            tuple(item.key for item in channels[0].source_candidates),
             {
                 strategy: tuple(
                     ("unit", item.unit_id)
@@ -824,11 +811,11 @@ class QueryService:
                 )
             )
         else:
-            reranker = self.reranker
+            reranker = self.bindings.reranker
             if (
                 self.auto_rerank
                 and reranker is not None
-                and self.rerank_counter is not None
+                and self.bindings.rerank_counter is not None
             ):
                 from tychora.application.reranking import _create_injected_reranker
 
@@ -836,7 +823,7 @@ class QueryService:
                     self.owner,
                     runtime=reranker._runtime,
                     scope=scope,
-                    counter=self.rerank_counter,
+                    counter=self.bindings.rerank_counter,
                     ctx=ctx,
                 )
             ranked = await rerank_candidates(
@@ -846,11 +833,11 @@ class QueryService:
                     owner=self.owner,
                     attempt=attempt,
                     reranker=reranker,
-                    counter=self.rerank_counter,
+                    counter=self.bindings.rerank_counter,
                     facts=cast(Any, facts),
                     execution=ctx,
                     allow_degraded=self.owner.config.values.retrieval.allow_degraded,
-                    unavailable=self.rerank_unavailable,
+                    unavailable=self.bindings.rerank_unavailable,
                 ),
             )
         relations = _graph_relations(paths, graph_view)
@@ -963,8 +950,8 @@ class QueryService:
         if not isinstance(request.input, (QuestionInput, PassageInput)):
             return (), False
         query_text = request.input.text
-        base = self.text_provider
-        index = self.text_index
+        base = self.bindings.text_provider
+        index = self.bindings.text_index
         if base is None or index is None:
             raise TychoraError(
                 "CAPABILITY_MISSING", "Configured text retrieval is unavailable."
@@ -1014,8 +1001,8 @@ class QueryService:
         attempt: EligibilityAttempt,
         ctx: ExecutionContext,
     ) -> _VectorChannel:
-        base = self.visual_provider
-        index = self.visual_index
+        base = self.bindings.visual_provider
+        index = self.bindings.visual_index
         if base is None or index is None:
             raise TychoraError(
                 "CAPABILITY_MISSING", "Configured visual retrieval is unavailable."
@@ -1057,7 +1044,7 @@ class QueryService:
         ctx: ExecutionContext,
     ) -> tuple[GraphScope | None, GraphCandidates, tuple[ChannelCandidate, ...]]:
         """The graph scope, candidates and source votes, when a graph channel runs."""
-        graph = self.graph
+        graph = self.bindings.graph
         if request.exact_only or graph is None or "graph" in plan.skipped:
             return None, GraphCandidates(), ()
         scoped = await self._graph_scope(attempt, ctx)

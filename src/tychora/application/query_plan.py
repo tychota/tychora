@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from tychora.retrieval.cache import QueryCaches
 
 _SWITCHES = ("lexical", "text", "image", "graph")
+_COVERAGE_NAMES = {"image": "visual"}
 
 
 def _not_configured(name: str) -> TychoraError:
@@ -130,7 +131,9 @@ def _bound(bindings: QueryBindings) -> dict[str, bool]:
         "text": bindings.text_provider is not None and bindings.text_index is not None,
         "image": bindings.visual_provider is not None
         and bindings.visual_index is not None,
-        "rerank": bindings.reranker is not None and bindings.rerank_counter is not None,
+        "rerank": bindings.reranker is not None
+        and bindings.rerank_counter is not None
+        and bindings.rerank_unavailable is None,
         "graph": bindings.graph is not None,
     }
 
@@ -182,12 +185,22 @@ def _require_runnable(
         raise _not_configured("graph")
 
 
+def _reranks(request: QueryRequest) -> bool:
+    return not request.exact_only
+
+
 def _require_usable(explicit: frozenset[str], request: QueryRequest) -> None:
-    """Refuse an explicitly selected vector channel this query's input cannot use."""
-    for name, usable in (("text", needs_text), ("image", needs_visual)):
+    """Refuse an explicitly selected stage this query's input cannot use."""
+    for name, usable in (
+        ("text", needs_text),
+        ("image", needs_visual),
+        ("rerank", _reranks),
+    ):
         if name in explicit and not usable(request):
             raise TychoraError(
-                "INVALID_REQUEST", f"Selected {name} channel cannot run for this query"
+                "INVALID_REQUEST",
+                f"Selected {name} channel cannot run for this query",
+                reason="channel.input_unusable",
             )
 
 
@@ -201,8 +214,9 @@ def plan_for(
     _require_runnable(explicit, strategies, config, bindings)
     _require_usable(explicit, request)
     configured = _configured(config)
+    # Coverage names the image channel ``visual``; skipped channels use its names.
     skipped = tuple(
-        name
+        _COVERAGE_NAMES.get(name, name)
         for name in _SWITCHES
         if name in selection.model_fields_set and not getattr(selection, name)
     )

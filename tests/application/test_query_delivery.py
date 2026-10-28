@@ -8,7 +8,7 @@ import pytest
 from tests.helpers.eligibility import revision_attempt, revision_view
 from tests.helpers.legacy import OutputCounter
 from tychora.application.query import QueryService, _delivered_eligibility
-from tychora.application.query_plan import QueryPlan
+from tychora.application.query_plan import QueryBindings, QueryPlan
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import (
@@ -156,7 +156,7 @@ async def test_planned_graph_without_a_pinned_generation_raises_graph_disabled()
         return None
 
     service = QueryService.__new__(QueryService)
-    vars(service).update(graph=object(), _graph_scope=no_scope)
+    vars(service).update(bindings=QueryBindings(graph=object()), _graph_scope=no_scope)
     attempt = revision_attempt(revision_view())
     request = QueryRequest.from_mapping({"question": "synthetic"})
     # A graph only in the default plan is skipped, not refused.

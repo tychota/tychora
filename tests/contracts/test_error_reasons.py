@@ -90,6 +90,7 @@ CLASSIFIED_REASONS = {
         "identifier.namespace_unknown",
         "mode.unavailable",
         "channel.not_configured",
+        "channel.input_unusable",
         "profile.snapshot_mismatch",
         "edition.as_of_required",
     },
