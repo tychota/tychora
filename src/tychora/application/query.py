@@ -871,6 +871,10 @@ class QueryService:
         graph, graph_candidates, graph_votes, unavailable = await self._augment_graph(
             query.job.request, query.attempt, fused, query.job.plan, query.ctx
         )
+        if unavailable:
+            # A planned graph that cannot run is refused in strict mode, as
+            # any other unavailable channel is; degraded mode reports it.
+            self._refuse_strict(["graph"], "channel.unavailable")
         if graph_votes:
             votes["graph"] = graph_votes
             fused = fuse(votes)
@@ -1188,8 +1192,9 @@ class QueryService:
         """The graph scope, candidates and source votes, when a graph channel runs.
 
         The last item is whether a configured graph had no pinned generation:
-        a graph the request selected itself is refused, a planned one is
-        reported unavailable in coverage.
+        a graph the request selected itself is refused with ``graph.disabled``;
+        a planned one is refused in strict mode by the caller and reported
+        unavailable in coverage when degradation is allowed.
         """
         graph = self.bindings.graph
         if request.exact_only or graph is None or "graph" in plan.skipped:

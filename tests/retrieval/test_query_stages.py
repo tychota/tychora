@@ -5,11 +5,15 @@ import copy
 from collections import Counter
 from pathlib import Path
 
+import pytest
+
 from tests.helpers.legacy import OutputCounter
 from tychora import Tychora
 from tychora.adapters.sqlite.history import HistoryRepository
 from tychora.application import query as query_module
 from tychora.configuration.models import ResolvedConfig
+from tychora.configuration.resolve import resolve_config
+from tychora.contracts.errors import TychoraError
 from tychora.contracts.requests import QueryRequest
 from tychora.ports.execution import ExecutionContext
 
@@ -128,15 +132,50 @@ def test_query_functions_stay_under_80_lines():
     assert long == []
 
 
-def test_an_unavailable_configured_graph_makes_coverage_partial(tmp_path, monkeypatch):
-    from tychora.contracts.graph import GraphCandidates
+def _graph_workspace(tmp_path, *, degraded: bool):
+    settings = tmp_path / "workspace.toml"
+    settings.write_text(
+        'schema_version=1\n[profiles.local]\nbuiltin="general-documents@1"\n'
+        '[configuration.index]\ngraph="ladybug"\n'
+        f"[configuration.retrieval]\nallow_degraded={str(degraded).lower()}\n"
+    )
+    return Tychora.open(
+        tmp_path / "ws",
+        config=resolve_config(settings, "local", {}),
+        token_counter=OutputCounter(),
+    )
 
-    async def unavailable(self, request, attempt, fused, plan, ctx):
-        return None, GraphCandidates(), (), True
 
-    with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
+def _no_pinned_generation(monkeypatch):
+    """The configured graph is bound, but the attempt's view pins no generation."""
+
+    async def no_scope(self, attempt, ctx):
+        return None
+
+    monkeypatch.setattr(query_module.QueryService, "_graph_scope", no_scope)
+
+
+def test_an_unavailable_planned_graph_is_partial_when_degradation_is_allowed(
+    tmp_path, monkeypatch
+):
+    with _graph_workspace(tmp_path, degraded=True) as kb:
         _ingest(kb)
-        monkeypatch.setattr(query_module.QueryService, "_augment_graph", unavailable)
+        assert kb._workspace.services.query.bindings.graph is not None
+        _no_pinned_generation(monkeypatch)
         result = kb.search({"question": "verification outcome"})
     assert "graph" in result.coverage.unavailable_channels
     assert result.coverage.status == "partial"
+
+
+def test_an_unavailable_planned_graph_is_refused_in_strict_mode(tmp_path, monkeypatch):
+    with _graph_workspace(tmp_path, degraded=False) as kb:
+        _ingest(kb)
+        complete = kb.search({"question": "pump seal"})
+        _no_pinned_generation(monkeypatch)
+        with pytest.raises(TychoraError) as error:
+            kb.search({"question": "verification outcome"})
+    assert complete.coverage.status == "complete"
+    assert (error.value.code, error.value.reason) == (
+        "INDEX_INCOMPLETE",
+        "channel.unavailable",
+    )
