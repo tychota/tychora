@@ -7,7 +7,11 @@ import pytest
 
 from tests.retrieval.graph_fixture import assertion, sealed_graph, unit
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.graph import GraphPredicatePolicy, GraphTraversalPolicy
+from tychora.contracts.graph import (
+    AssertionQuery,
+    GraphPredicatePolicy,
+    GraphTraversalPolicy,
+)
 from tychora.ports.execution import ExecutionContext
 
 
@@ -86,7 +90,10 @@ def test_explicit_inspection_returns_bounded_assertion_page(tmp_path):
         view = case.view(context={"a", "b"}, candidates={"a", "b"})
         budget = case.budget(max_inspection_edges=1)
         page = case.graph.get_assertions(
-            view, ("a",), ("references@1",), budget, case.ctx
+            view,
+            AssertionQuery(selected_unit_ids=("a",), predicates=("references@1",)),
+            budget,
+            case.ctx,
         )
         assert [path.assertion_ids[0] for path in page.assertions] == [
             relation.assertion_id
@@ -97,7 +104,10 @@ def test_explicit_inspection_returns_bounded_assertion_page(tmp_path):
         )
         assert (
             case.graph.get_assertions(
-                blocked, ("a",), ("references@1",), case.budget(), case.ctx
+                blocked,
+                AssertionQuery(selected_unit_ids=("a",), predicates=("references@1",)),
+                case.budget(),
+                case.ctx,
             ).assertions
             == ()
         )
@@ -236,7 +246,10 @@ def test_shared_budget_rejects_overlay_change_between_strategy_calls(tmp_path):
         )
         with pytest.raises(TychoraError) as error:
             case.graph.get_assertions(
-                blocked, ("a",), ("references@1",), budget, case.ctx
+                blocked,
+                AssertionQuery(selected_unit_ids=("a",), predicates=("references@1",)),
+                budget,
+                case.ctx,
             )
         assert error.value.code == "SCOPE_CHANGED"
     finally:
@@ -296,7 +309,10 @@ def test_explicit_inspection_labels_proposed_assertion_without_expansion(tmp_pat
     try:
         view = case.view(context={"a", "b"}, candidates={"a", "b"})
         page = case.graph.get_assertions(
-            view, ("a",), ("references@1",), case.budget(), case.ctx
+            view,
+            AssertionQuery(selected_unit_ids=("a",), predicates=("references@1",)),
+            case.budget(),
+            case.ctx,
         )
         assert [(path.assertion_ids[0], path.status) for path in page.assertions] == [
             (proposal.assertion_id, "proposed")

@@ -31,7 +31,11 @@ from tychora.contracts import (
 )
 from tychora.contracts.base import CodepointRange
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.graph import GraphPredicatePolicy, GraphTraversalPolicy
+from tychora.contracts.graph import (
+    AssertionQuery,
+    GraphPredicatePolicy,
+    GraphTraversalPolicy,
+)
 from tychora.contracts.identity import digest
 from tychora.indexing.coordinator import ProjectionCoordinator
 from tychora.ports.execution import ExecutionContext
@@ -431,22 +435,26 @@ def test_native_explicit_relation_view_and_direction_narrow_policy(tmp_path):
     view = case.view(context={"a", "b", "c"}, candidates={"a", "b", "c"})
     semantic = case.graph.get_assertions(
         view,
-        ("a",),
-        ("cites@1", "contains@1"),
+        AssertionQuery(
+            selected_unit_ids=("a",),
+            predicates=("cites@1", "contains@1"),
+            direction="both",
+            relation_view="semantic",
+        ),
         case.budget(),
         case.ctx,
-        direction="both",
-        relation_view="semantic",
     )
     assert [path.predicate for path in semantic.assertions] == ["cites@1"]
     incoming = case.graph.get_assertions(
         view,
-        ("b",),
-        ("cites@1",),
+        AssertionQuery(
+            selected_unit_ids=("b",),
+            predicates=("cites@1",),
+            direction="incoming",
+            relation_view="semantic",
+        ),
         case.budget(),
         case.ctx,
-        direction="incoming",
-        relation_view="semantic",
     )
     assert incoming.assertions == ()
 

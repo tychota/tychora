@@ -24,7 +24,7 @@ from tychora.contracts.evidence import (
     StructuredRecord,
     VisualEvidence,
 )
-from tychora.contracts.graph import GraphBudget, GraphScope
+from tychora.contracts.graph import AssertionQuery, GraphBudget, GraphScope
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.requests import (
     BudgetContract,
@@ -491,20 +491,10 @@ class ResponseAssembler:
         )
 
 
-def inspect_relations(
-    graph: GraphStore,
-    view: GraphScope | None,
-    selected_unit_ids: tuple[str, ...],
-    predicates: tuple[str, ...],
-    ctx: ExecutionContext,
-    *,
-    expansion_inspected_rows: int,
-    registry: Registry,
-    max_rows: int = 2000,
-    max_assertions: int = 100,
-    enabled: bool = True,
-) -> RelationChecks:
-    """Inspect selected owners within the same request's consumed graph work."""
+def _decision_policy(
+    registry: Registry, predicates: tuple[str, ...]
+) -> dict[str, tuple[bool, str]]:
+    """Each predicate's configured decision requirement and diagnostic category."""
     policy = {}
     for predicate in predicates:
         definition = registry.relations.get(predicate)
@@ -519,6 +509,24 @@ def inspect_relations(
                 "INTEGRITY_ERROR", "Relation decision policy is invalid."
             )
         policy[predicate] = (required, category)
+    return policy
+
+
+def inspect_relations(
+    graph: GraphStore,
+    view: GraphScope | None,
+    selected_unit_ids: tuple[str, ...],
+    predicates: tuple[str, ...],
+    ctx: ExecutionContext,
+    *,
+    expansion_inspected_rows: int,
+    registry: Registry,
+    max_rows: int = 2000,
+    max_assertions: int = 100,
+    enabled: bool = True,
+) -> RelationChecks:
+    """Inspect selected owners within the same request's consumed graph work."""
+    policy = _decision_policy(registry, predicates)
     if not enabled or view is None:
         return RelationChecks(status="not_evaluated", predicates=predicates)
     if (
@@ -535,7 +543,8 @@ def inspect_relations(
         inspected_rows=expansion_inspected_rows,
         max_inspection_edges=max_assertions,
     )
-    page = graph.get_assertions(view, selected_unit_ids, predicates, budget, ctx)
+    query = AssertionQuery(selected_unit_ids=selected_unit_ids, predicates=predicates)
+    page = graph.get_assertions(view, query, budget, ctx)
     if len(page.assertions) > max_assertions:
         raise TychoraError(
             "INTEGRITY_ERROR", "Graph inspection exceeded assertion cap."

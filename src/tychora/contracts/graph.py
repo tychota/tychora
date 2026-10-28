@@ -339,6 +339,15 @@ class GraphCandidates(Contract):
     exhausted: bool = True
 
 
+class AssertionQuery(Contract):
+    """One explicit assertion inspection: seed units, predicates and orientation."""
+
+    selected_unit_ids: tuple[Identifier, ...]
+    predicates: tuple[NonEmptyStr, ...]
+    direction: Literal["outgoing", "incoming", "both"] | None = None
+    relation_view: Literal["semantic", "structural"] | None = None
+
+
 class AssertionPage(Contract):
     assertions: tuple[GraphPath, ...] = ()
     inspected_edges: NonNegativeInt = 0

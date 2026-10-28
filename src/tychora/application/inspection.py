@@ -20,7 +20,7 @@ from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import CodepointRange, FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import Excerpt, RelationPath
-from tychora.contracts.graph import GraphBudget, GraphScope
+from tychora.contracts.graph import AssertionQuery, GraphBudget, GraphScope
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.operations import (
     ExtractionContentRequest,
@@ -919,12 +919,14 @@ class InspectionService:
             )
             page = self.graph.get_assertions(
                 graph,
-                request.unit_ids,
-                predicates,
+                AssertionQuery(
+                    selected_unit_ids=request.unit_ids,
+                    predicates=predicates,
+                    direction=request.direction,
+                    relation_view=request.view,
+                ),
                 budget,
                 ctx,
-                direction=request.direction,
-                relation_view=request.view,
             )
             eligible = graph.graph_eligible_unit_ids
             paths = []

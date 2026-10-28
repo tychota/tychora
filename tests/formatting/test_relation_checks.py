@@ -6,6 +6,7 @@ from tychora.configuration.registry import Registry
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.graph import (
     AssertionPage,
+    AssertionQuery,
     GraphBatchReceipt,
     GraphBudget,
     GraphCandidates,
@@ -64,13 +65,9 @@ class Graph:
     def get_assertions(
         self,
         view: GraphScope,
-        selected_unit_ids: tuple[str, ...],
-        predicates: tuple[str, ...],
+        query: AssertionQuery,
         limits: GraphBudget,
         ctx: ExecutionContext,
-        *,
-        direction: str | None = None,
-        relation_view: str | None = None,
     ) -> AssertionPage:
         assert limits.inspected_rows == 1999
         limits.inspected_rows += 1
@@ -164,17 +161,7 @@ def test_configured_decision_flag_overrides_predicate_name(tmp_path):
         def __init__(self, predicate):
             self.predicate = predicate
 
-        def get_assertions(
-            self,
-            view,
-            selected_unit_ids,
-            predicates,
-            limits,
-            ctx,
-            *,
-            direction=None,
-            relation_view=None,
-        ):
+        def get_assertions(self, view, query, limits, ctx):
             return AssertionPage(
                 assertions=(
                     GraphPath(

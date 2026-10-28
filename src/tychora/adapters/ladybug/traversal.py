@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.graph import (
     AssertionPage,
+    AssertionQuery,
     GraphBudget,
     GraphCandidate,
     GraphCandidates,
@@ -706,13 +707,9 @@ SKIP {offset} LIMIT {page_size}
     def get_assertions(
         self,
         view: GraphScope,
-        selected_unit_ids: tuple[str, ...],
-        predicates: tuple[str, ...],
+        query: AssertionQuery,
         limits: GraphBudget,
         ctx: ExecutionContext,
-        *,
-        direction: Literal["outgoing", "incoming", "both"] | None = None,
-        relation_view: Literal["semantic", "structural"] | None = None,
     ) -> AssertionPage:
         with self.store._lock:
             self._ready(view)
@@ -725,20 +722,20 @@ SKIP {offset} LIMIT {page_size}
                 )
             }
             permitted = set(policies)
-            if set(predicates) - permitted:
+            if set(query.predicates) - permitted:
                 raise TychoraError(
                     "INVALID_REQUEST", "Unregistered inspection predicate"
                 )
-            if relation_view is not None:
+            if query.relation_view is not None:
                 policies = {
                     name: policy
                     for name, policy in policies.items()
-                    if policy.view == relation_view
+                    if policy.view == query.relation_view
                 }
-            predicates = tuple(name for name in predicates if name in policies)
-            if selected_unit_ids and limits.inspected_rows >= limits.max_rows:
+            predicates = tuple(name for name in query.predicates if name in policies)
+            if query.selected_unit_ids and limits.inspected_rows >= limits.max_rows:
                 return AssertionPage(truncation="edge_work_limit", exhausted=False)
-            frontier = set(selected_unit_ids) & view.graph_eligible_unit_ids
+            frontier = set(query.selected_unit_ids) & view.graph_eligible_unit_ids
             visited_units = set(frontier)
             seen_assertions: set[str] = set()
             assertions: list[GraphPath] = []
@@ -750,9 +747,11 @@ SKIP {offset} LIMIT {page_size}
                         rule = policies[predicate]
                         directions = (
                             rule.directions
-                            if direction is None or direction == "both"
+                            if query.direction in (None, "both")
                             else tuple(
-                                item for item in rule.directions if item == direction
+                                item
+                                for item in rule.directions
+                                if item == query.direction
                             )
                         )
                         for edge_direction in directions:

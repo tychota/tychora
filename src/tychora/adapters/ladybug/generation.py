@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 from threading import RLock
-from typing import Any, Literal, NoReturn, cast
+from typing import Any, NoReturn, cast
 
 from ladybug import Connection, Database
 from ladybug.query_result import QueryResult
@@ -15,6 +15,7 @@ from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import EvidenceUnit
 from tychora.contracts.graph import (
     AssertionPage,
+    AssertionQuery,
     GraphAssertionBinding,
     GraphBatchReceipt,
     GraphBudget,
@@ -104,23 +105,11 @@ class LadybugGraphStore:
     def get_assertions(
         self,
         view: GraphScope,
-        selected_unit_ids: tuple[str, ...],
-        predicates: tuple[str, ...],
+        query: AssertionQuery,
         limits: GraphBudget,
         ctx: ExecutionContext,
-        *,
-        direction: Literal["outgoing", "incoming", "both"] | None = None,
-        relation_view: Literal["semantic", "structural"] | None = None,
     ) -> AssertionPage:
-        return self._require_traversal().get_assertions(
-            view,
-            selected_unit_ids,
-            predicates,
-            limits,
-            ctx,
-            direction=direction,
-            relation_view=relation_view,
-        )
+        return self._require_traversal().get_assertions(view, query, limits, ctx)
 
     def set_traversal_policy(self, policy: GraphTraversalPolicy) -> None:
         """Activate current query policy after the owner quiesces operations."""
