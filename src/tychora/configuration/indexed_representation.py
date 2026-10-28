@@ -50,6 +50,7 @@ def pinned_runtime_compatible(
             value.pop(field)
         value["values"].pop("offline")
         value["values"]["acquisition"].pop("roots")
+        value["values"]["retrieval"].pop("lexical")
         providers = value["values"]["providers"]
         for modality in ("text", "image"):
             providers[modality].pop("credential_ref")

@@ -35,7 +35,13 @@ class LexicalSearch(Protocol):
     """Full-text and identifier search restricted to a view."""
 
     def search(
-        self, view: EligibilityView, query: str, limit: int, ctx: ExecutionContext
+        self,
+        view: EligibilityView,
+        query: str,
+        limit: int,
+        ctx: ExecutionContext,
+        *,
+        stopwords: frozenset[str] = frozenset(),
     ) -> RankedOwners:
         """Rank owners by their best matching window; ``limit`` owners per kind."""
         ...

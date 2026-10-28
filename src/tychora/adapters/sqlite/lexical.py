@@ -96,11 +96,17 @@ class SqliteLexicalSearch:
         self._db = db
 
     def search(
-        self, view: EligibilityView, query: str, limit: int, ctx: ExecutionContext
+        self,
+        view: EligibilityView,
+        query: str,
+        limit: int,
+        ctx: ExecutionContext,
+        *,
+        stopwords: frozenset[str] = frozenset(),
     ) -> RankedOwners:
         """Rank owners by their best of at most ``WINDOW_LIMIT`` eligible windows."""
         _limit(limit, OWNERS_PER_KIND)
-        expression = lexical_expression(query, frozenset())
+        expression = lexical_expression(query, stopwords)
         if expression is None:
             return RankedOwners(owners=(), detail={"windows": 0, "owners": 0})
         restriction, args = _restriction(

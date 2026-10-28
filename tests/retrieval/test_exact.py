@@ -40,7 +40,7 @@ def _db():
 
 
 class ForbiddenSearch(SqliteLexicalSearch):
-    def search(self, view, query, limit, ctx):
+    def search(self, view, query, limit, ctx, *, stopwords=frozenset()):
         raise AssertionError("exact-only or invalid request reached lexical search")
 
 

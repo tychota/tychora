@@ -19,6 +19,7 @@ from tychora.application.reranking import prepare_rerank_facts
 from tychora.configuration.indexed_representation import pinned_runtime_compatible
 from tychora.configuration.models import ResolvedConfig
 from tychora.configuration.registry import Registry
+from tychora.configuration.stopwords import load_stopwords
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.candidates import ChannelCandidate
@@ -213,6 +214,8 @@ class QueryService:
     ) -> None:
         self.owner = owner
         self.registry = owner.store.registry
+        lexical = owner.config.values.retrieval.lexical
+        self.stopwords = load_stopwords(lexical.languages, lexical.stopwords).words
         self.compiler = EligibilityCompiler(self.registry, owner.artifacts)
         self.graph = graph
         self.text_provider = text_provider
@@ -704,7 +707,13 @@ class QueryService:
         channels = (
             await self.owner.run_read(
                 lambda tx: retrieve_exact_lexical(
-                    tx, attempt.view, request, self.registry, 80, ctx
+                    tx,
+                    attempt.view,
+                    request,
+                    self.registry,
+                    80,
+                    ctx,
+                    stopwords=self.stopwords,
                 ),
                 ctx,
             )

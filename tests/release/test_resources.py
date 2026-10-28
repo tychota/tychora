@@ -20,6 +20,8 @@ root = files("tychora")
 assert root.joinpath("resources/migrations/0001.sql").is_file()
 assert root.joinpath("profiles/documents/profile.toml").is_file()
 assert root.joinpath("resources/skills/query/SKILL.md").is_file()
+assert root.joinpath("resources/stopwords/en@1.txt").is_file()
+assert root.joinpath("resources/stopwords/fr@1.txt").is_file()
 """
     result = subprocess.run(
         [str(installed_base.python), "-c", code],
