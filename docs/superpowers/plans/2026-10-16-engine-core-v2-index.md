@@ -17,7 +17,7 @@
 | 1 | `2026-10-16-engine-core-v2-phase-1-foundations.md` | Benchmark harness, error reasons, repository ports, format 2, workspace rebuild | Fully detailed | Sub-project 0 merged |
 | 2 | `2026-10-16-engine-core-v2-phase-2-snapshot-pages.md` | Membership pages, publication of new batches only, per-batch vector artifacts, family identity, retention and GC | Fully detailed | 1 |
 | 3 | `2026-10-16-engine-core-v2-phase-3-write-time-structure.md` | Boundary keys and section levels, linear windowing, persisted representation facts | Fully detailed | 1 |
-| 4 | `2026-10-16-engine-core-v2-phase-4-query-path.md` | Lanes and read pool, snapshot catalog, eligibility v2 and cache, de-revalidated query path, stop words, strict mode, editions, per-request narrowing | Task granularity, to be expanded before execution | 2, 3 |
+| 4 | `2026-10-16-engine-core-v2-phase-4-query-path.md` | Lanes and read pool, snapshot catalog, eligibility v2 and cache, de-revalidated query path, stop words, strict mode, editions, per-request narrowing | Fully detailed | 2, 3 |
 | 5 | `2026-10-16-engine-core-v2-phase-5-trace-usage-aggregates.md` | Query trace, usage ledger and prices, aggregates, background phases, dashboard endpoints, purge commands | Task granularity, to be expanded before execution | 2, 4 |
 | 6 | `2026-10-16-engine-core-v2-phase-6-incremental-graph.md` | Graph contributions, live graph, compaction, degree table, neighbours and impact tools, hubs endpoint, edge weights | Task granularity, to be expanded before execution | 2, 4, 5 |
 | 7 | `2026-10-16-engine-core-v2-phase-7-families-parity-rebuild.md` | Vector family options and local query encoder, `manage rebuild index`, connectors, catalog import, `max_upload_rank`, ingestion pipeline split, final verification | Task granularity, to be expanded before execution | 1–6 |
@@ -60,6 +60,8 @@ Phase 1 leaves out interface members that nothing calls yet, because the dead-co
 - `WorkspaceRepository.format_version`, `bump_policy_epoch`, `bump_lexical_epoch`; `ArtifactRepository.require`.
 
 Phase 4 also routes the remaining raw `lexical_statistics_epoch` reads (`application/query.py`, `adapters/sqlite/publication.py`, `retrieval/lexical.py`) through the workspace repository; the phase-1 guard only pins `policy_epoch` reads. Phase 4 further owns the code-gold `definition_recall` fix (output budget stubs drop `definition_key`), the full-repository code search (about 12 s per search at phase-1 HEAD) and the query p95 measured above budget on `bench-small`.
+
+Phase 4 added `WorkspaceRepository.bump_policy_epoch` and `ArtifactRepository.require` with their first callers; `WorkspaceRepository.format_version` and `WorkspaceOwner.uow` still wait for theirs.
 
 ## Format changes across phases
 
@@ -377,44 +379,64 @@ Schema added: `representation_dependencies(owner_id, dependency_id)` (owners: un
 ### Produced by phase 4
 
 ```python
-# src/tychora/application/owner.py (changed public surface)
+# src/tychora/application/owner.py, runtime.py (changed public surface)
 Priority = Literal["interactive", "background"]
 class WorkspaceOwner:
     async def run_write[T](self, call: Callable[[], T], ctx: ExecutionContext, priority: Priority = "background") -> T: ...
-    async def run_read[T](self, call: Callable[[ReadTransaction], T], ctx: ExecutionContext) -> T: ...
+    def run_write_sync[T](self, call: Callable[[], T], ctx: ExecutionContext, priority: Priority = "background") -> T: ...
+    async def run_read[T](self, call: Callable[[ReadTransaction], T], ctx: ExecutionContext) -> T: ...  # read pool, one WAL snapshot
     async def run_cpu[T](self, call: Callable[[], T], ctx: ExecutionContext) -> T: ...
-# run_blocking is removed; every call site moves to one of the three.
+    catalog: SnapshotCatalog; eligibility_cache: EligibilityCache
+# run_blocking and run_blocking_sync are removed. Queue bounds: interactive 256, background 64, read 128 (WORKSPACE_BUSY queue.full).
 
-# src/tychora/contracts/eligibility.py (replaces contracts/graph.py:188-238)
+# src/tychora/contracts/eligibility.py
 class RevisionGrant(Contract): extraction_id; source_id; kind_id; lane: str; collection_id
-class GraphBinding(Contract): family_id: Sha256; all_eligible: bool
+class GraphBinding(Contract): family_id: Sha256; all_eligible: bool; receipt: GraphBatchReceipt   # receipt until phase 6
 class EligibilityView(Contract):
     snapshot_id; policy_epoch: int; scope_digest; eligibility_policy_digest; eligibility_request_digest
     revisions: Mapping[str, RevisionGrant]; excluded_unit_ids: frozenset[str]; excluded_asset_ids: frozenset[str]
     unit_filter: frozenset[str] | None; selected_batches: Mapping[str, tuple[str, ...]]; graph: GraphBinding | None
-    def allows(self, dependency_ids: Iterable[str], kinds: Mapping[str, str]) -> bool: ...
+    all_members_eligible: bool
+    def allows(self, dependency_ids: Iterable[str]) -> bool: ...   # one revision per persisted set; exclusions closed under dependency
+    revision_of_extraction; extraction_ids; batch_ids   # cached properties
+# src/tychora/contracts/graph.py: GraphScope (unit lists a traversal filters by, derived per view when a graph channel runs; phase 6 replaces it)
 
-# src/tychora/retrieval/  (split of retrieval/eligibility.py)
-# selection.py: select_temporal_revisions v2; compiler.py: EligibilityCompiler; attempt.py: run_pinned_eligibility
-class SnapshotCatalog:  def get(self, snapshot_id: str) -> SnapshotView: ...   # LRU 32, SQL only
-class EligibilityCache: def get_or_compile(self, key: EligibilityKey, compile: Callable[[], EligibilityView]) -> EligibilityView: ...
+# src/tychora/retrieval/
+# selection.py: RevisionFact(edition_key), EditionDecision, EditionSelection, select_temporal_revisions
+# compiler.py: EligibilityKey, eligible_cache_key, CompiledEligibility, ModePolicy, EligibilityCompiler, filter_matches
+# attempt.py: EligibilityAttempt, run_pinned_eligibility, admission predicates (is_source_unit, is_admitted_chunk, ...), readable_units, require_epoch
+# catalog.py: class SnapshotCatalog: def get(self, tx: ReadTransaction, snapshot_id: str) -> SnapshotView   # LRU 32, SQL only
+# cache.py: class EligibilityCache: def get_or_compile(self, key: EligibilityKey, compile: Callable[[], CompiledEligibility]) -> CompiledEligibility; graph_scope(key, build)
+# cached_selection.py: class CachedSelection(Contract): canonical JSON <= max_response_bytes + 65536, no pickle
+# survivors.py (at most 200 candidates), vectors.py, coverage.py, graph_scope.py
 
 # src/tychora/ports/search.py
-class RankedOwner(Contract): key: CandidateKey; rank: PositiveInt; score: float
+class RankedOwner(Contract): key: CandidateKey; rank: PositiveInt; score: float; window_ids: tuple[str, ...] = ()
 class RankedOwners(Contract): owners: tuple[RankedOwner, ...]; truncated: bool; detail: Mapping[str, int]
-class LexicalSearch(Protocol): def search(self, view: EligibilityView, query: str, limit: int, ctx: ExecutionContext) -> RankedOwners: ...
+class LexicalSearch(Protocol): search(view, query, limit, ctx, *, stopwords=frozenset()) -> RankedOwners; exact(view, identifiers, limit, ctx) -> RankedOwners
 class VectorSearch(Protocol): def search(self, view: EligibilityView, vector: bytes, limit: int, ctx: ExecutionContext) -> RankedOwners: ...
+
+# src/tychora/ports/repositories.py (added)
+MemberRow, ReviewRow, UnitFlags, FacetValue (NamedTuples); OwnerFact(Contract); EligibilityRepository; AssetRepository;
+InspectionRepository; UploadPolicyRepository; RemovalRepository
+RepresentationRepository.neighbours(unit_id, radius: int | None) -> tuple[UnitRow, ...]; .slice(extraction_id, *, unit_ids=(), asset_ids=(), relative_path=None) -> RepresentationSlice
+SnapshotRepository.member(snapshot_id, extraction_id); .members(snapshot_id, *, after=None, limit=1000) -> (page, cursor)
+WorkspaceRepository.bump_policy_epoch(); .collection(collection_id); ArtifactRepository.require(sha256); payload-state methods
+# ReadTransaction gains eligibility, lexical, assets, inspection, upload_policy, removal
 
 # src/tychora/contracts/requests.py (changed, additive)
 class ChannelSelection(Contract): lexical: bool = True; text: bool = True; image: bool = True; graph: bool = True
+                                  graph_strategies: frozenset[Literal["structural","semantic"]] | None = None
 class QueryRequest: channels: ChannelSelection | None = None; rerank: Literal["auto","on","off"] = "auto"
                     review_states: tuple[str, ...] | None = None; revision_selector adds "applicable"
-
-# src/tychora/retrieval/cache.py (changed)
-class CachedSelection(Contract): canonical JSON bytes <= max_response_bytes + 65536, no pickle
+# contracts/evidence.py: Coverage.truncated_channels, Coverage.skipped_channels, DecisionRequirement.revision_ids
+# contracts/publication.py: SnapshotView without members and lexical_statistics_epoch; RetainedSlot removed; RetainedBatch kept for native recovery
+# configuration: RetrievalSettings.lexical (languages, stopwords); configuration/stopwords.py; collection_policy.py and graph_policy.py moved here
+# also as built: contracts/graph.py AssertionQuery (one request value for get_assertions); retrieval/compiler.py EligibilityInputs
+#   (the public compile request); application/query_plan.py QueryBindings, QueryPlan(explicit), plan_for; retrieval/response.py budget_stub
 ```
 
-Schema added: `review_current(target_kind, target_id, state)`, `sources.allowed_uses_override`. Resources added: `resources/stopwords/en@1.txt`, `resources/stopwords/fr@1.txt`.
+Schema added: `review_current(target_kind, target_id, state, review_event_id)`, `sources.allowed_uses_override`, `vector_records.group_id`, indexes `representation_dependencies_dependency`, `units_declared_review` and `unit_assets_asset`; `SCHEMA_CHECKSUM` changed and `be4274cd…` (phase 3) joined `EARLIER_FORMAT_TWO_CHECKSUMS`. Resources added: `resources/stopwords/en@1.txt`, `fr@1.txt`, `LICENSE-snowball.txt`. Reasons added: `canonical.facts_missing`, `policy.use_unknown`, `policy.use_override_empty`, `source.absent`, `scope.capability_missing`, `request.limit_exceeded`, `mode.unavailable`, `profile.snapshot_mismatch`, `kind.historical_unavailable`, `facet.binding_unverified`, `policy.epoch_changed`, `identifier.namespace_unknown`, `scope.dependency_ineligible`, `edition.as_of_required`, `channel.not_configured`, `channel.input_unusable`.
 
 ### Produced by phase 5
 
@@ -538,6 +560,8 @@ All gates run with `python -m tychora.interfaces.bench run …` (phase 1). "Offl
 
 On shared CI runners, `bench-small` fails only on a regression of more than 20% against the last result from the same runner class (spec §4.12 "Assertions").
 
+**Phase 4 gate status: pending reference-runner run.** The verdict comes only from the `Benchmarks` workflow on the reference runner, dispatched by the owner. Informative macOS figures (developer laptop, not a gate, not committed to `bench-results`): `bench-small` offline query total p95 1.3 ms; scale search p95 3.5 ms at 100 documents and 5.3 ms at 1,000 (phase 2 measured 36 s at 10,000); the 10,000 checkpoint was stopped locally after 98 minutes at about 7,600 documents, so E3 ratio, E3 publication p90 and E4 were not measured there; E3 artifact ceiling passed (largest snapshot artifact 84,741 bytes). Strict "verification outcome" succeeded at 20, 1,000 and 10,000 documents. Known misses to resolve before merge: the concurrency acceptance test fails on its 33rd caller (the client bridge admits 32 calls, below the owner queue bounds) and on its p95 ratio (20 concurrent queries during the add, about 150 ms, are compared with 20 sequential idle queries, about 7 ms; at equal concurrency the add costs about 12%); and code gold G22 falls on five file metrics (see "Phase 4 as built").
+
 ## Code-health ratchet by phase
 
 | Phase | Ratchet obligation (spec §7) |
@@ -549,6 +573,20 @@ On shared CI runners, `bench-small` fails only on a regression of more than 20% 
 | 5 | Purge commands have callers; `application/recovery` joins `SQL_FREE_MODULES` |
 | 6 | Deleted: per-add graph generations, `_graph_slot`'s corpus-wide read, corpus-wide `GraphManifest`, `snapshot_root_batches` |
 | 7 | `indexing/coordinator` joins `SQL_FREE_MODULES`; `execute_accepted` split into five stages of at most 60 lines; `application/sources` joins `SQL_FREE_MODULES`; import-linter contract "rewritten modules import no `sqlite3`" enabled; 0 reasonless `INTEGRITY_ERROR` in touched modules; mutation score on `adapters/sqlite/repositories/` and `retrieval/compiler.py` at or above the code-health baseline; no function over 120 lines in touched modules |
+
+## Phase 4 as built: documented changes and follow-ups
+
+Decisions taken while executing phase 4 that the spec or later phases must take into account.
+
+- **Spec wording (§4.7).** `EligibilityView.allows(dependency_ids)` takes no `kinds`: every persisted dependency set names one revision and units or assets of its extraction, so the revision grant and the exclusion sets decide alone (spec gap 30). `excluded_unit_ids` holds no non-citable unit, although §4.7 lists "non-citable" among exclusions: non-citable units are structural context that dependency sets name, and citability is a candidate rule applied in the search joins and the survivor check (spec gap 31). The spec text should be amended to match both.
+- **Filter semantics, a documented change from v1.** A revision-metadata filter clause judges the revision. Owners that no unit reaches (unlinked assets, their vector records, revisions with zero units) are evaluated on revision metadata with empty unit values on every path, so admission no longer depends on the shape of the filter tree; v1 admitted such owners under a filtered query.
+- **`review_states`.** A request's `review_states` narrows the mode's review states at every gate: revisions, units, assets and proxies. An accepted-only request returns nothing until units are reviewed, as with the `verified` profile.
+- **`allow_degraded`.** It is a query-time setting and is excluded from the pinned-runtime compatibility comparison, as the lexical profile is: a configuration differing only in `allow_degraded` reuses the pinned snapshot.
+- **Delivery truncation.** Omission by the output budget alone is a limit truncation: `delivery` is listed in `Coverage.truncated_channels` and the status stays `complete` (§4.9). An unmet declared requirement still makes the result `partial`.
+- **Inventory and rebuild.** `manage rebuild workspace --from` does not carry `sources.allowed_uses_override` into the new workspace; the inventory drops it. Deferred; no phase owns it yet, and the next phase that touches the inventory or rebuild should carry it.
+- **Guard query plan.** The read-path guard query's plan relies on SQLite having no `ANALYZE` statistics for the workspace (nothing in `src` runs `ANALYZE`). A phase that adds `ANALYZE` must re-check that plan.
+- **Trace.** Per-stage query budgets (§4.12) are asserted from phase 5, when the query trace exists; phase 4's gate measures wall-clock totals only.
+- **Code gold README.** `tests/fixtures/evaluation/code-gold/README.md` ("Search time", `definition_recall` table) now holds values measured on the phase-4 branch on a developer laptop: a search takes about 3.0 s median (5.4 s maximum) instead of 12 s, and `definition_recall` rises to 0.413 (lexical) and 0.174 (lexical_structural). Five file metrics fall below `baseline.json` (lexical `file_mrr` 0.7007 < 0.7101 and `file_ndcg` 0.739 < 0.7469; lexical_structural `file_recall` 0.8261 < 0.8696, `file_mrr` 0.6703 < 0.6848, `file_ndcg` 0.7061 < 0.7279). G22 has zero tolerance, so this blocks the merge until the owner resolves it.
 
 ## Spec gaps found while planning
 
@@ -582,3 +620,17 @@ Recorded here so the spec can be amended; each plan states the default it applie
 26. **Measuring the windowing gate before traces.** Answer: the coordinator emits `windowing` and `normalize_commit` job stages; bench-small has no 100-page document, so a 300,000-character single-unit probe stands in, measured with the additive `OffsetCharacters` counter (not `BenchCounter`, which stays on the counted path); informative off the reference runner.
 27. **`depth:N` deeper than the unit.** §4.10's fallback reads "the depth-1 ancestor". Answer: applied literally, then raised to the context key by `chunk_section_key`'s "never coarser" rule.
 28. **Fact reads before facts exist.** Extractions committed by tests without facts, and any committed by an earlier commit of this branch, have no rows. Answer: the coordinator's reuse path writes the facts of an extraction it finds already committed, so every published member has them; how a read reports a missing set is phase 4's decision (suggested default: `INTEGRITY_ERROR` reason `canonical.row_invalid`).
+29. **`query_only` and temp tables.** §4.6 requires `query_only` read connections and §4.7 a per-connection temp table "filled once per cache key". SQLite refuses temp writes under `query_only`, and a read task's `ROLLBACK` drops a temp table it created. Answer: bind ID lists through `json_each(?)` inside `IN (...)` (materialised once per statement), skip the restriction when every member is eligible, and cache each view's JSON text (Task 8).
+30. **What `allows` needs.** The spec's `allows(dependency_ids, kinds)` leaves `kinds` undefined. Answer: none is needed. Every persisted dependency set names exactly one revision, its owner's, and units or assets of that revision's extraction; with exclusions closed under dependency, a set is readable when its revision is eligible and it names no excluded unit or asset (Tasks 6, 7).
+31. **What `excluded_unit_ids` holds.** §4.7 says "rejected/blocked/non-citable for this mode". Answer: units and assets of eligible extractions that fail the mode's review states, the proxy policy or a unit-level (`all_units`) filter, plus every unit or asset depending on one of them (a recursive closure over `representation_dependencies`, which reproduces v1's fixpoint). Non-citable units are not excluded: they are structural context that dependency sets name; citability is a candidate rule applied in the search joins and the survivor check (Task 7).
+32. **What `unit_filter` holds.** Answer: the units that pass a `matched_candidates` filter (candidate-only, as v1's candidate filter); the `all_units` filter's failures are exclusions (gap 3). Both are computed only when a request carries a filter, over the units of eligible extractions (Task 7).
+33. **Graph eligibility before contributions.** §4.5 binds graph contributions (phase 6); the corpus-wide generation still filters traversal by unit lists. Answer: `GraphScope` lists the eligible units of eligible extractions (all not excluded, by gap 3's closure, so no dependency read), built only when a graph channel runs and cached with the view; phase 6 replaces it (Task 12).
+34. **Blocked assertions.** v1 intersected assertions decided after the generation's watermark with the generation manifest, which it loaded per query. Answer: every assertion decided after the watermark is blocked; one outside the generation is never traversed, so the manifest is not read (Tasks 5, 12).
+35. **Edition overlap and undated editions.** §4.9 says a decision arises "when winners' `[effective_from, effective_until)` intervals overlap" and that undated editions are "returned as `undated_candidates`". Answer: with `as_of`, an overlap decision arises when another edition in force declares an `effective_until` later than the winner's `effective_from` (an open-ended older edition is superseded by a later start, so it raises nothing — otherwise every amended document would demand a decision); undated editions are selected beside the winners and reported in their own decision; `revision_selector="applicable"` requires `as_of` (`edition.as_of_required`) (Task 16).
+36. **Missing persisted facts.** Phase 3's gap 13 left the refusal to this phase, suggesting `canonical.row_invalid`. Answer: a dedicated `INTEGRITY_ERROR` reason `canonical.facts_missing` whose operator action names the workspace rebuild, because the remedy differs from a malformed row (Task 5).
+37. **Retained inspection of archived collections.** v1 compiled exact retained inspection with archived collections treated as active and never cached the result. Answer: `compile(..., include_archived=True)` for explicit retained members only, never through the cache (Task 11).
+38. **"Survivor check … in one query".** Answer: one statement reads the candidates', windows' and records' rows, one their dependency sets and, when a window's unit was not among the candidates, one more statement reads those units; at most three statements for at most 200 candidates (Tasks 8, 9).
+39. **Global facets on every query.** v1 verified each member's global-facet binding artifact on every query. Answer: they are read and verified only when a request carries a filter, and only for the revisions it admits (Task 7).
+40. **Stop-word lists.** §4.9 names `builtin@1` but not its content. Answer: the Snowball English and French lists (BSD 3-Clause, licence shipped beside them) without apostrophe forms, which the tokenizer splits, and without French "ai" and "eu", which collide with English acronyms in a combined list; the lexical profile is excluded from the pinned-configuration comparison because it only shapes query expressions (Task 14).
+41. **Partitioned upserts.** §4.6 runs each partition as a separate writer task, but the coordinator's `finalize` upserts inside one writer task. Answer: `SourceService` submits each ≤ 2 MB partition as its own background task before `finalize`, which then finds every record present and only reads them back to build the receipt (Task 9).
+42. **Vector hits outside the snapshot.** A family's collection holds records of unpublished or collected batches that v1 never saw (it queried by eligible ID lists). Answer: such hits are dropped silently by the canonical owner mapping (`is_admitted_record` checks the batch against the view), not refused (Task 9).

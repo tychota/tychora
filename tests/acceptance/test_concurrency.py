@@ -1,10 +1,12 @@
-"""Bounded query-channel scheduling over one pinned request context."""
+"""Bounded query-channel scheduling, and a large add that does not stall queries."""
 
 import asyncio
 import time
 
 import pytest
 
+from tests.helpers.legacy import OutputCounter
+from tychora import AsyncTychora
 from tychora.application.query import _run_independent_channels
 from tychora.contracts.errors import TychoraError
 from tychora.ports.execution import ExecutionContext
@@ -75,3 +77,52 @@ async def test_shared_deadline_stops_and_drains_both_channel_tasks():
         )
     assert error.value.code == "DEADLINE_EXCEEDED"
     assert finished == {"text", "visual"}
+
+
+_PAGE = "Operators inspect the pump seal and record the verification outcome. " * 30
+
+
+def _source(key, pages):
+    return {
+        "type": "text",
+        "source_key": key,
+        "collection_id": "default",
+        "kind": "document@1",
+        "format": "markdown",
+        "text": "\n\n".join(f"# Page {n}\n\n{_PAGE}" for n in range(pages)),
+        "metadata": {"title": key},
+    }
+
+
+async def _timed(kb, question):
+    started = time.perf_counter()
+    await kb.search({"question": question})
+    return time.perf_counter() - started
+
+
+def _p95(values):
+    ordered = sorted(values)
+    return ordered[max(0, round(0.95 * len(ordered)) - 1)]
+
+
+@pytest.mark.slow
+@pytest.mark.asyncio
+async def test_add_of_300_pages_with_20_queries(tmp_path):
+    """No busy refusals, and query p95 stays within 1.5x of idle during the add."""
+    async with AsyncTychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
+        for index in range(5):
+            job = await kb.sources.add(_source(f"seed-{index}.md", 3))
+            assert (await kb.jobs.wait(job.id)).state == "succeeded"
+        await _timed(kb, "pump seal")
+        idle = [await _timed(kb, "verification outcome") for _ in range(20)]
+        job = await kb.sources.add(_source("book.md", 300))
+        busy = await asyncio.gather(
+            *(_timed(kb, "verification outcome") for _ in range(20))
+        )
+        assert (await kb.jobs.wait(job.id)).state == "succeeded"
+        callers = await asyncio.gather(
+            *(kb.search({"question": f"seal {n}"}) for n in range(33)),
+            return_exceptions=True,
+        )
+    assert not [c for c in callers if isinstance(c, BaseException)]
+    assert _p95(busy) <= 1.5 * max(_p95(idle), 0.05)

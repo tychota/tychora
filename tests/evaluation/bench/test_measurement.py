@@ -216,3 +216,25 @@ def test_windowing_commit_and_embedding_stages_have_budget_rows():
     assert ingest_bucket("normalize_commit") == "normalize_commit"
     assert ingest_bucket("embedding") == "embedding"
     assert {"windowing", "normalize_commit", "embedding"} <= set(INGEST_STAGE_BUDGETS_S)
+
+
+def test_e4_compares_search_p95_at_ten_thousand_with_one_thousand():
+    from tychora.evaluation.bench.harness import e4_assertions
+    from tychora.evaluation.bench.results import ScalePoint
+
+    def point(documents, p95):
+        return ScalePoint(
+            documents=documents,
+            add_p50_ms=1.0,
+            bytes_per_add=1.0,
+            search_p50_ms=p95,
+            search_p95_ms=p95,
+            largest_artifact_bytes=1,
+            footprint_bytes=1,
+        )
+
+    (passed,) = e4_assertions([point(1000, 40.0), point(10_000, 59.0)], 10_000)
+    (failed,) = e4_assertions([point(1000, 40.0), point(10_000, 61.0)], 10_000)
+    (missing,) = e4_assertions([point(1000, 40.0)], 1000)
+    assert passed.passed and not failed.passed
+    assert missing.measured is False

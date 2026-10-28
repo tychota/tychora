@@ -12,7 +12,7 @@ TYCHORA_TEST_CODE_CORPUS=/path/to/corpus \
   pytest tests/evaluation/test_code_gold.py -p no:xdist
 ```
 
-`/path/to/corpus` contains the pinned `src/` directory. Without the variable the test is skipped. Set `TYCHORA_CODE_GOLD_REPORT` to write the mean metrics per variant as JSON. A full run takes about 15 minutes.
+`/path/to/corpus` contains the pinned `src/` directory. Without the variable the test is skipped. Set `TYCHORA_CODE_GOLD_REPORT` to write the mean metrics per variant as JSON. A full run takes about 7 minutes.
 
 ## Baseline
 
@@ -33,8 +33,15 @@ The repository is one extraction of about 19,300 retained rows and 30 MB of esti
 - Matches on non-symbol units contribute little: the lexical variant matches 95 symbol units and 12 code chunks in total.
 - Key drift is not a cause: every returned record's `definition_key` equals the stored one.
 
-Trimmed `code_symbol` records keep `definition_key`, `qualified_name` and `relative_path` in their stub (`retrieval/response.py`, `budget_stub`), so the metric sees every definition a result names; the values measured after this change are in the table above.
+Trimmed `code_symbol` records keep `definition_key`, `qualified_name` and `relative_path` in their stub (`retrieval/response.py`, `budget_stub`), so the metric sees every definition a result names. Measured after this change, offline with the `code` profile on a developer laptop (`baseline.json` is unchanged and remains the G22 reference):
+
+| Variant | file_recall | file_mrr | file_ndcg | definition_recall |
+| --- | --- | --- | --- | --- |
+| lexical | 0.8696 | 0.7007 | 0.7390 | 0.4130 |
+| lexical_structural | 0.8261 | 0.6703 | 0.7061 | 0.1739 |
+
+`definition_recall` rises in both variants. Five file metrics fall below `baseline.json` (G22 tolerance is zero): lexical `file_mrr` and `file_ndcg` after the stop-word, strict-mode and narrowing changes; lexical_structural `file_recall`, `file_mrr` and `file_ndcg` after the trimmed-record stub, whose larger stubs use more of the character-counted output budget. These falls block the merge until they are resolved or the owner accepts a new baseline.
 
 ## Search time
 
-One search over the gold workspace takes about 12 s (median, maximum 21 s over the 46 searches of one run, both variants), measured on a developer laptop. This is information only; the query path gates it.
+One search over the gold workspace takes about 3.0 s (median, maximum 5.4 s over the 46 searches of one run, both variants, read from each query run's `duration_ms`), measured on a developer laptop; before the query path rewrite it took about 12 s (median, maximum 21 s). This is information only; the query path gates it.
