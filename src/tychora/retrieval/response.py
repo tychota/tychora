@@ -47,6 +47,21 @@ if TYPE_CHECKING:
     from tychora.retrieval.rerank import RankedEvidence, RerankFacts
 
 
+STUB_IDENTITY_FIELDS = ("definition_key", "qualified_name", "relative_path")
+_STUB_FIELD_CHARS = 512
+
+
+def budget_stub(record: StructuredRecord) -> StructuredRecord:
+    """The record trimmed by the output budget; a code symbol keeps what names it."""
+    value: dict[str, object] = {"omitted_budget": True}
+    if record.record_type == "code_symbol":
+        for name in STUB_IDENTITY_FIELDS:
+            field = record.value.get(name)
+            if isinstance(field, str) and len(field) <= _STUB_FIELD_CHARS:
+                value[name] = field
+    return record.model_copy(update={"value": FrozenJsonMap(value)})
+
+
 @dataclass(frozen=True)
 class ResponseContext:
     """Pinned, already authorized producer inputs; no stores enter rendering."""
@@ -375,9 +390,7 @@ class ResponseAssembler:
             ):
                 if record.schema_id in required_schemas:
                     continue
-                stub = record.model_copy(
-                    update={"value": FrozenJsonMap({"omitted_budget": True})}
-                )
+                stub = budget_stub(record)
                 segments[index] = segments[index].model_copy(
                     update={
                         "structured_records": tuple(
