@@ -27,7 +27,7 @@ def test_bounded_phrases_stopwords_and_diacritics():
     assert '"café au lait"' in expression
     assert '"the"' not in expression
     assert expression.count('"alpha"') == 1
-    assert lexical_expression("the", frozenset({"the"})) is None
+    assert lexical_expression("the", frozenset({"the"})) == '"the"'
     bounded = lexical_expression(" ".join(f"word{i}" for i in range(100)), frozenset())
     assert bounded is not None
     assert len(bounded.split(" OR ")) == 32

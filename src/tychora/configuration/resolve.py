@@ -31,6 +31,7 @@ from .models import (
     ExtractionSettings,
     GraphSettings,
     IndexSettings,
+    LexicalSettings,
     OutputSettings,
     PackIdentity,
     ProfileDocument,
@@ -46,6 +47,7 @@ from .models import (
     VisionSettings,
     WorkspaceDocument,
 )
+from .stopwords import load_stopwords
 
 
 def merge_values(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
@@ -567,7 +569,15 @@ def _resolved_hashes(registry: dict, values: dict) -> _ResolvedHashes:
             values["filters"],
             values["retrieval"]["table_continuations"],
         ),
-        "query_fingerprint": digest("query-config-v1", registry_sha, values),
+        "query_fingerprint": digest(
+            "query-config-v2",
+            registry_sha,
+            values,
+            load_stopwords(
+                tuple(values["retrieval"]["lexical"]["languages"]),
+                values["retrieval"]["lexical"]["stopwords"],
+            ).digest,
+        ),
         "output_fingerprint": digest(
             "output-config-v1",
             values["output"],
@@ -646,7 +656,9 @@ _EXPORT_SHAPES = {
         "graph",
         "scoped_rrf_bonus",
         "allow_degraded",
+        "lexical",
     ),
+    LexicalSettings: ("languages", "stopwords"),
     RelationChecks: ("enabled", "required", "max_assertions"),
     ChecksSettings: ("relations",),
     SelectionSettings: ("lane_reservation",),

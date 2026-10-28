@@ -28,11 +28,19 @@ class GraphSettings(Contract):
     statuses: tuple[NonEmptyStr, ...] = ("recorded", "confirmed")
 
 
+class LexicalSettings(Contract):
+    """Query-side lexical profile: stop-word languages and list version."""
+
+    languages: tuple[Literal["en", "fr"], ...] = ("en", "fr")
+    stopwords: Literal["builtin@1", "none"] = "builtin@1"
+
+
 class RetrievalSettings(Contract):
     table_continuations: Literal["derived", "confirmed_only", "none"] = "derived"
     graph: GraphSettings = Field(default_factory=GraphSettings)
     scoped_rrf_bonus: Annotated[float, Field(ge=0, le=0.01)] = 0.0
     allow_degraded: bool = False
+    lexical: LexicalSettings = Field(default_factory=LexicalSettings)
 
 
 class RelationChecks(Contract):

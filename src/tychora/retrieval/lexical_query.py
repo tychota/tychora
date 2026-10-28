@@ -119,6 +119,8 @@ def retrieve_exact_lexical(
     registry: Registry,
     candidate_limit: int,
     ctx: ExecutionContext,
+    *,
+    stopwords: frozenset[str] = frozenset(),
 ) -> tuple[ChannelCandidates, ...]:
     """Run the exact channel, then lexical unless the request is exact-only."""
     ctx.checkpoint()
@@ -147,16 +149,12 @@ def retrieve_exact_lexical(
     exact_channel = _channel("exact", view, exact, epoch, scored=False)
     if request.exact_only or not query:
         return (exact_channel,)
-    lexical = tx.lexical.search(view, query, candidate_limit, ctx)
+    lexical = tx.lexical.search(view, query, candidate_limit, ctx, stopwords=stopwords)
     return (exact_channel, _channel("lexical", view, lexical, epoch, scored=True))
 
 
-def lexical_expression(text: str, stopwords: frozenset[str]) -> str | None:
-    """Return a literal OR query; user text never supplies FTS5 syntax."""
-    excluded = {word.casefold() for word in stopwords}
-    tokens = [match.group().casefold() for match in _TOKEN.finditer(text)]
-    tokens = [token for token in tokens if token not in excluded]
-
+def _phrases(text: str) -> list[tuple[str, ...]]:
+    """At most four quoted phrases of at most eight terms, 32 terms in total."""
     phrases: list[tuple[str, ...]] = []
     used = 0
     for match in _PHRASE.finditer(text):
@@ -166,12 +164,32 @@ def lexical_expression(text: str, stopwords: frozenset[str]) -> str | None:
             used += len(words)
             if len(phrases) == 4:
                 break
+    return phrases
 
+
+def _loose_terms(text: str, stopwords: frozenset[str], room: int) -> list[str]:
+    """Distinct loose terms, most frequent first, without the stop words."""
+    excluded = {word.casefold() for word in stopwords}
+    tokens = [match.group().casefold() for match in _TOKEN.finditer(text)]
+    tokens = [token for token in tokens if token not in excluded]
     frequency = Counter(tokens)
     first = {token: tokens.index(token) for token in frequency}
-    selected = sorted(
+    return sorted(
         frequency, key=lambda token: (-frequency[token], -len(token), first[token])
-    )[: 32 - used]
+    )[:room]
+
+
+def lexical_expression(text: str, stopwords: frozenset[str]) -> str | None:
+    """Return a literal OR query; user text never supplies FTS5 syntax.
+
+    Stop words are dropped from loose terms; a query made only of stop words
+    keeps its terms rather than becoming empty.
+    """
+    phrases = _phrases(text)
+    room = 32 - sum(len(words) for words in phrases)
+    terms = _loose_terms(text, stopwords, room)
+    if not terms and not phrases:
+        terms = _loose_terms(text, frozenset(), room)
     clauses = ['"' + " ".join(words).replace('"', '""') + '"' for words in phrases]
-    clauses.extend('"' + token.replace('"', '""') + '"' for token in selected)
+    clauses.extend('"' + token.replace('"', '""') + '"' for token in terms)
     return " OR ".join(clauses) or None
