@@ -7,11 +7,8 @@ import pytest
 
 from tests.helpers.eligibility import revision_attempt, revision_view
 from tests.helpers.legacy import OutputCounter
-from tychora.application.query import (
-    QueryExecutionPlan,
-    QueryService,
-    _delivered_eligibility,
-)
+from tychora.application.query import QueryService, _delivered_eligibility
+from tychora.application.query_plan import QueryPlan
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import (
@@ -22,6 +19,7 @@ from tychora.contracts.evidence import (
     StructuredRecord,
     VisualEvidence,
 )
+from tychora.contracts.graph import GraphCandidates
 from tychora.contracts.requests import QueryRequest, RequestScope
 from tychora.ports.execution import ExecutionContext
 from tychora.ports.repositories import OwnerFact
@@ -140,30 +138,37 @@ def test_delivery_refuses_an_excluded_relation_unit_or_visual_dependency(kind, m
     assert error.value.code == "INTEGRITY_ERROR"
 
 
+def _graph_plan(explicit: frozenset[str]) -> QueryPlan:
+    return QueryPlan(
+        lexical=True,
+        text=False,
+        image=False,
+        graph_strategies=frozenset({"semantic"}),
+        rerank=False,
+        skipped=(),
+        explicit=explicit,
+    )
+
+
 @pytest.mark.asyncio
 async def test_planned_graph_without_a_pinned_generation_raises_graph_disabled():
     async def no_scope(attempt, ctx):
         return None
 
     service = QueryService.__new__(QueryService)
-    vars(service).update(
-        graph=object(),
-        execution_plan=QueryExecutionPlan(
-            lexical=True,
-            text=False,
-            image=False,
-            graph_structural=False,
-            graph_semantic=True,
-            rerank=False,
-        ),
-        _graph_scope=no_scope,
-    )
+    vars(service).update(graph=object(), _graph_scope=no_scope)
     attempt = revision_attempt(revision_view())
+    request = QueryRequest.from_mapping({"question": "synthetic"})
+    # A graph only in the default plan is skipped, not refused.
+    assert await service._augment_graph(
+        request, attempt, (), _graph_plan(frozenset()), ExecutionContext()
+    ) == (None, GraphCandidates(), ())
     with pytest.raises(TychoraError) as error:
         await service._augment_graph(
-            QueryRequest.from_mapping({"question": "synthetic"}),
+            request,
             attempt,
             (),
+            _graph_plan(frozenset({"graph"})),
             ExecutionContext(),
         )
     assert (error.value.code, error.value.reason) == (

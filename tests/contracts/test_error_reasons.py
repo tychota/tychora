@@ -89,6 +89,7 @@ CLASSIFIED_REASONS = {
         "request.limit_exceeded",
         "identifier.namespace_unknown",
         "mode.unavailable",
+        "channel.not_configured",
         "profile.snapshot_mismatch",
         "edition.as_of_required",
     },

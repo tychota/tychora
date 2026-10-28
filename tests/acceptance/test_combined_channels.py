@@ -21,12 +21,19 @@ from tychora.adapters.voyage.text import VoyageTextEmbedder
 from tychora.adapters.voyage.validation import qualify_voyage_visual_capabilities
 from tychora.application.owner import WorkspaceOwner
 from tychora.application.query import QueryService
+from tychora.application.query_plan import QueryBindings
 from tychora.application.sources import SourceService
 from tychora.application.visual import create_visual_embedder
 from tychora.configuration.resolve import resolve_config
+from tychora.contracts.errors import TychoraError
 from tychora.contracts.identity import canonical_bytes
 from tychora.contracts.operations import ConfigurationVariant, EvaluationRequest
-from tychora.contracts.requests import QueryRequest, RequestScope, SourceInput
+from tychora.contracts.requests import (
+    ChannelSelection,
+    QueryRequest,
+    RequestScope,
+    SourceInput,
+)
 from tychora.evaluation.runner import EvaluationService
 from tychora.indexing.coordinator import ProjectionCoordinator
 from tychora.ports.execution import ExecutionContext
@@ -152,17 +159,19 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
             owner,
             output_counter=Counter(),
             caches=caches,
-            text_provider=VoyageTextQueryProvider(
-                VoyageTextEmbedder(
-                    capabilities=text_capabilities,
-                    counter=text_counter,
-                    runtime=text_runtime,
-                    authorize_document=lambda *_: None,
-                )
+            bindings=QueryBindings(
+                text_provider=VoyageTextQueryProvider(
+                    VoyageTextEmbedder(
+                        capabilities=text_capabilities,
+                        counter=text_counter,
+                        runtime=text_runtime,
+                        authorize_document=lambda *_: None,
+                    )
+                ),
+                text_index=text_index,
+                visual_provider=VoyageVisualQueryProvider(visual_embedder),
+                visual_index=visual_index,
             ),
-            text_index=text_index,
-            visual_provider=VoyageVisualQueryProvider(visual_embedder),
-            visual_index=visual_index,
         )
         entered = set()
         both = asyncio.Event()
@@ -196,6 +205,34 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
         assert text_transport.calls == 1
         assert len(visual_transport.calls) == 1
         assert any("amber" in segment.text for segment in delivered.result.segments)
+        # Every query has a plan now: a configured channel the question cannot
+        # use, or the service has no binding for, is refused only when selected.
+        monkeypatch.setattr(owner, "embed_queries", original_text)
+        plain = QueryRequest.from_mapping({"question": "amber"})
+        assert (await service.search(plain, scope, ExecutionContext())).result.segments
+        text_only = QueryService(
+            owner,
+            output_counter=Counter(),
+            caches=caches,
+            bindings=QueryBindings(
+                text_provider=service.text_provider, text_index=text_index
+            ),
+        )
+        unbound = (await text_only.search(plain, scope, ExecutionContext())).result
+        assert unbound.segments and unbound.coverage.skipped_channels == ()
+        for channels in ({"image": True}, {"text": True, "image": True}):
+            with pytest.raises(TychoraError) as refused:
+                await text_only.search(
+                    plain.model_copy(
+                        update={"channels": ChannelSelection.model_validate(channels)}
+                    ),
+                    scope,
+                    ExecutionContext(),
+                )
+            assert (refused.value.code, refused.value.reason) == (
+                "INVALID_REQUEST",
+                "channel.not_configured",
+            )
         snapshot = await owner.run_write(
             lambda: owner.store.resolve_snapshot(None), ExecutionContext()
         )
@@ -282,7 +319,11 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
         stored = await evaluation.get(run.id, scope, ExecutionContext())
         runs = stored["cases"]["combined-synthetic-amber"]["runs"]
         assert [entry["variant"] for entry in runs] == ["lexical", "combined"]
-        assert [entry["execution_plan"]["image"] for entry in runs] == [False, True]
+        assert [entry["execution_plan"]["channels"]["image"] for entry in runs] == [
+            False,
+            True,
+        ]
+        assert {entry["execution_plan"]["rerank"] for entry in runs} == {"off"}
         assert all(
             next(
                 metric

@@ -116,6 +116,9 @@ class ModePolicy:
     allowed_lanes: frozenset[str]
     allowed_uses: frozenset[str]
     original_reviews: frozenset[str]
+    # The revision review states the request admits: the mode's, narrowed by
+    # ``QueryRequest.review_states``. Unit and asset reviews keep the mode's.
+    revision_reviews: frozenset[str]
     proxy_reviews: frozenset[str]
     proxy_disabled: bool
     # Exact retained inspection alone reads archived collections; never cached.
@@ -172,6 +175,10 @@ def request_digest(request: QueryRequest, selected: ScopedFilter | None) -> str:
         request.cutoff.isoformat() if request.cutoff else None,
         request.unknown_dates,
         request.include_global,
+        list(request.review_states) if request.review_states is not None else None,
+        request.channels.model_dump(mode="json")
+        if request.channels is not None
+        else None,
     )
 
 
@@ -351,7 +358,7 @@ def _readable(
         and active
         and max(row.access_rank, row.source_floor, row.collection_floor)
         <= scope.access_ceiling
-        and row.review_state in mode.original_reviews
+        and row.review_state in mode.revision_reviews
         and bool(uses & mode.allowed_uses)
         and bool(kind.allowed_uses & mode.allowed_uses)
     )
@@ -514,7 +521,9 @@ class EligibilityCompiler:
         self.registry = registry
         self.artifacts = artifacts
         self._kinds: dict[tuple[str, str], _Kind] = {}
-        self._modes: dict[tuple[str, str, frozenset[str]], ModePolicy] = {}
+        self._modes: dict[
+            tuple[str, str, frozenset[str], tuple[str, ...] | None], ModePolicy
+        ] = {}
         self._compatible: set[tuple[str, str]] = set()
         self._lock = Lock()
 
@@ -525,7 +534,7 @@ class EligibilityCompiler:
         name = request.mode or config.values.mode or config.values.default_mode
         if name is None or name not in self.registry.modes:
             raise _invalid("Retrieval mode is unavailable", "mode.unavailable")
-        key = (config.config_sha, name, scope.uses)
+        key = (config.config_sha, name, scope.uses, request.review_states)
         with self._lock:
             cached = self._modes.get(key)
         if cached is not None:
@@ -535,6 +544,10 @@ class EligibilityCompiler:
         proxy_reviews = frozenset(definition.get("derived_proxy_review_states", ()))
         if definition["derived_proxy_policy"] == "accepted_only":
             proxy_reviews &= {"accepted"}
+        original_reviews = frozenset(definition["original_review_states"])
+        revision_reviews = original_reviews
+        if request.review_states is not None:
+            revision_reviews &= frozenset(request.review_states)
         mode = ModePolicy(
             name=name,
             digest=digest(
@@ -543,10 +556,16 @@ class EligibilityCompiler:
                 name,
                 definition,
                 policy.model_dump(mode="json"),
+                *(
+                    ()
+                    if request.review_states is None
+                    else (sorted(request.review_states),)
+                ),
             ),
             allowed_lanes=frozenset(definition["allowed_lanes"]),
             allowed_uses=frozenset(definition["allowed_uses"]) & scope.uses,
-            original_reviews=frozenset(definition["original_review_states"]),
+            original_reviews=original_reviews,
+            revision_reviews=revision_reviews,
             proxy_reviews=proxy_reviews,
             proxy_disabled=definition["derived_proxy_policy"] == "disabled"
             or not definition.get("allow_derived_proxies", True),

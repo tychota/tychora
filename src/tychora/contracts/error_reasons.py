@@ -389,6 +389,12 @@ _ENTRIES = (
     ),
     Reason(
         "INVALID_REQUEST",
+        "channel.not_configured",
+        False,
+        "Remove the channel from the request or configure it in the profile.",
+    ),
+    Reason(
+        "INVALID_REQUEST",
         "edition.as_of_required",
         False,
         "Give an as_of date with the applicable revision selector.",

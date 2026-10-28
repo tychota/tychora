@@ -11,6 +11,7 @@ from pydantic import (
     ConfigDict,
     Field,
     RootModel,
+    field_serializer,
     field_validator,
     model_serializer,
     model_validator,
@@ -354,6 +355,21 @@ class BudgetContract(Contract):
     max_response_bytes: PositiveInt = 1048576
 
 
+class ChannelSelection(Contract):
+    """Channels a query may use; it narrows the profile and never widens it."""
+
+    lexical: bool = True
+    text: bool = True
+    image: bool = True
+    graph: bool = True
+    graph_strategies: frozenset[Literal["structural", "semantic"]] | None = None
+
+    @field_serializer("graph_strategies", when_used="json")
+    def _sorted_strategies(self, value: frozenset[str] | None) -> list[str] | None:
+        """Dump strategies in a stable order, so digests of a request are stable."""
+        return sorted(value) if value is not None else None
+
+
 class QueryRequest(Contract):
     input: QueryInput
     profile: NonEmptyStr | None = None
@@ -363,6 +379,11 @@ class QueryRequest(Contract):
     context: FrozenJsonMap = Field(default_factory=FrozenJsonMap)
     revision_ids: tuple[Identifier, ...] = ()
     revision_selector: Literal["current", "all", "applicable"] = "current"
+    channels: ChannelSelection | None = None
+    rerank: Literal["auto", "on", "off"] = "auto"
+    review_states: (
+        tuple[Literal["unreviewed", "needs_review", "accepted", "rejected"], ...] | None
+    ) = None
     as_of: date | None = None
     cutoff: date | None = None
     unknown_dates: Literal["strict", "permissive"] = "strict"

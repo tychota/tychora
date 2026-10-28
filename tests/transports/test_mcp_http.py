@@ -699,3 +699,54 @@ asyncio.run(serve(Path(sys.argv[1]), token_counter=Counter()))
             except TimeoutError:
                 process.kill()
                 await asyncio.wait_for(process.wait(), 5)
+
+
+@pytest.mark.asyncio
+async def test_mcp_search_forwards_channels_rerank_and_review_states(tmp_path):
+    from tychora.interfaces.mcp.server import _current, build_mcp
+
+    with Tychora.open(tmp_path / "knowledge", token_counter=Counter()) as kb:
+        for key, approval in (("accepted.md", "accepted"), ("draft.md", "unreviewed")):
+            job = kb.sources.add(
+                {
+                    "type": "text",
+                    "source_key": key,
+                    "collection_id": "default",
+                    "kind": "document@1",
+                    "format": "markdown",
+                    "text": f"# {key}\n\nSeal inspection {approval}.\n",
+                    "metadata": {"title": key, "approval": approval},
+                }
+            )
+            assert kb.jobs.wait(job.id).state == "succeeded"
+        owner = kb._workspace.owner
+        server = build_mcp(kb._workspace.services, owner.scope)
+        with owner.service_runtime.operation() as services:
+            marker = _current.set((services, owner.scope))
+            try:
+                found = await server.call_tool(
+                    "search",
+                    {
+                        "request": {
+                            "question": "seal inspection",
+                            "channels": {"graph": False},
+                            "rerank": "off",
+                            "review_states": ["accepted"],
+                        }
+                    },
+                )
+                refused = await server.call_tool(
+                    "search",
+                    {"request": {"question": "seal", "channels": {"text": True}}},
+                )
+            finally:
+                _current.reset(marker)
+    assert isinstance(found, CallToolResult) and isinstance(refused, CallToolResult)
+    assert not found.is_error, found.content
+    result = found.structured_content
+    assert list(result["coverage"]["skipped_channels"]) == ["graph", "rerank"]
+    texts = [segment["text"] for segment in result["segments"]]
+    assert texts and all("accepted" in text for text in texts)
+    assert not any("unreviewed" in text for text in texts)
+    assert refused.is_error and isinstance(refused.content[0], TextContent)
+    assert "channel.not_configured" in refused.content[0].text

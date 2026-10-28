@@ -201,6 +201,7 @@ class Coverage(Contract):
     completed_channels: tuple[NonEmptyStr, ...] = ()
     unavailable_channels: tuple[NonEmptyStr, ...] = ()
     truncated_channels: tuple[NonEmptyStr, ...] = ()
+    skipped_channels: tuple[NonEmptyStr, ...] = ()
     warnings: tuple[str, ...] = ()
 
 

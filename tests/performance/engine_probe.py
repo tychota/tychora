@@ -25,6 +25,7 @@ from tychora.adapters.voyage.runtime import VoyageRuntime
 from tychora.adapters.voyage.text import VoyageTextEmbedder
 from tychora.application.owner import WorkspaceOwner
 from tychora.application.query import QueryService
+from tychora.application.query_plan import QueryBindings
 from tychora.application.sources import SourceService
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.base import FrozenJsonMap
@@ -247,8 +248,9 @@ class EngineSession:
             self.owner,
             output_counter=Counter(),
             caches=self.caches,
-            text_provider=VoyageTextQueryProvider(embedder),
-            text_index=self.index,
+            bindings=QueryBindings(
+                text_provider=VoyageTextQueryProvider(embedder), text_index=self.index
+            ),
         )
         self._instrument()
         self.identity = BenchmarkIdentity(
