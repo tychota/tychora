@@ -187,6 +187,8 @@ class _Fused:
     graph: GraphScope | None
     graph_candidates: GraphCandidates
     paths: tuple[GraphPath, ...]
+    # A configured graph channel had no pinned generation to read.
+    graph_unavailable: bool = False
 
 
 class _FamilyChannel(NamedTuple):
@@ -731,7 +733,10 @@ class QueryService:
         )
         coverage = build_coverage(
             completed=channels.completed,
-            unavailable=channels.incomplete,
+            unavailable=(
+                *channels.incomplete,
+                *(("graph",) if fused.graph_unavailable else ()),
+            ),
             truncated=(*channels.truncated, *(("survivors",) if unread else ())),
             rerank_failed=ranked.failure is not None,
             graph_exhausted=fused.graph_candidates.exhausted,
@@ -859,7 +864,7 @@ class QueryService:
         """Fuse the channel votes, then again with the graph channel's when it runs."""
         votes = dict(channels.votes)
         fused = fuse(votes)
-        graph, graph_candidates, graph_votes = await self._augment_graph(
+        graph, graph_candidates, graph_votes, unavailable = await self._augment_graph(
             query.job.request, query.attempt, fused, query.job.plan, query.ctx
         )
         if graph_votes:
@@ -870,7 +875,7 @@ class QueryService:
             for item in (*graph_candidates.candidates, *graph_candidates.enrichments)
             for path in item.paths
         )
-        return _Fused(fused, votes, graph, graph_candidates, paths)
+        return _Fused(fused, votes, graph, graph_candidates, paths, unavailable)
 
     async def _admit(
         self, query: _QueryInputs, channels: _Channels, fused: _Fused
@@ -1175,21 +1180,25 @@ class QueryService:
         fused: Sequence[FusedCandidate],
         plan: QueryPlan,
         ctx: ExecutionContext,
-    ) -> tuple[GraphScope | None, GraphCandidates, tuple[ChannelCandidate, ...]]:
-        """The graph scope, candidates and source votes, when a graph channel runs."""
+    ) -> tuple[GraphScope | None, GraphCandidates, tuple[ChannelCandidate, ...], bool]:
+        """The graph scope, candidates and source votes, when a graph channel runs.
+
+        The last item is whether a configured graph had no pinned generation:
+        a graph the request selected itself is refused, a planned one is
+        reported unavailable in coverage.
+        """
         graph = self.bindings.graph
         if request.exact_only or graph is None or "graph" in plan.skipped:
-            return None, GraphCandidates(), ()
+            return None, GraphCandidates(), (), False
         scoped = await self._graph_scope(attempt, ctx)
         if scoped is None:
-            # Only a graph the request selected itself is refused.
             if "graph" in plan.explicit:
                 raise TychoraError(
                     "CAPABILITY_MISSING",
                     "Pinned graph generation is unavailable",
                     reason="graph.disabled",
                 )
-            return None, GraphCandidates(), ()
+            return None, GraphCandidates(), (), True
         candidates = await self.owner.run_write(
             lambda: augment(
                 scoped,
@@ -1207,7 +1216,7 @@ class QueryService:
             for rank, item in enumerate(candidates.candidates, 1)
             if item.unit_id in scoped.source_unit_ids
         )
-        return scoped, candidates, votes
+        return scoped, candidates, votes, False
 
     async def _graph_scope(
         self, attempt: EligibilityAttempt, ctx: ExecutionContext

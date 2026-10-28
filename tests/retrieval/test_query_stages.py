@@ -126,3 +126,17 @@ def test_query_functions_stay_under_80_lines():
         and (node.end_lineno or node.lineno) - node.lineno + 1 > 80
     ]
     assert long == []
+
+
+def test_an_unavailable_configured_graph_makes_coverage_partial(tmp_path, monkeypatch):
+    from tychora.contracts.graph import GraphCandidates
+
+    async def unavailable(self, request, attempt, fused, plan, ctx):
+        return None, GraphCandidates(), (), True
+
+    with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
+        _ingest(kb)
+        monkeypatch.setattr(query_module.QueryService, "_augment_graph", unavailable)
+        result = kb.search({"question": "verification outcome"})
+    assert "graph" in result.coverage.unavailable_channels
+    assert result.coverage.status == "partial"
