@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Iterable, Mapping
-from contextlib import AbstractContextManager
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
+from contextlib import AbstractContextManager, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
@@ -82,16 +82,36 @@ def _changed() -> TychoraError:
     )
 
 
-def resolve_snapshot(
-    catalog: SnapshotCatalog, tx: ReadTransaction, selector: str | None
-) -> SnapshotView:
-    """The selected or active snapshot's view, through the catalog."""
-    snapshot_id = selector or tx.snapshots.active_id()
+def active_snapshot_id(tx: ReadTransaction) -> str:
+    """The active snapshot's ID; no published snapshot is ``snapshot.absent``."""
+    snapshot_id = tx.snapshots.active_id()
     if snapshot_id is None:
         raise TychoraError(
             "NOT_FOUND", "No published snapshot is available", reason="snapshot.absent"
         )
-    return catalog.get(tx, snapshot_id)
+    return snapshot_id
+
+
+def resolve_snapshot(
+    catalog: SnapshotCatalog, tx: ReadTransaction, selector: str | None
+) -> SnapshotView:
+    """The selected or active snapshot's view, through the catalog."""
+    return catalog.get(tx, selector or active_snapshot_id(tx))
+
+
+@asynccontextmanager
+async def pinned_snapshot(
+    owner: AttemptOwner, selector: str | None, ctx: ExecutionContext
+) -> AsyncIterator[SnapshotView]:
+    """Pin the selected or active snapshot, then resolve its view under the pin.
+
+    Pinning first keeps the collector from removing the snapshot while its
+    view is read; the pin is released when resolution fails or the caller
+    leaves the context.
+    """
+    snapshot_id = selector or await owner.run_read(active_snapshot_id, ctx)
+    with owner.store.leases.pin(frozenset({snapshot_id})):
+        yield await owner.run_read(lambda tx: owner.catalog.get(tx, snapshot_id), ctx)
 
 
 @dataclass(frozen=True)
@@ -172,10 +192,7 @@ async def run_pinned_eligibility[T](
     """Hold one snapshot lease through both attempts, provider calls and delivery."""
     compiler, owner, ctx, config = host.compiler, host.owner, host.ctx, inputs.config
     scope = owner.scope.narrow(inputs.scope)
-    snapshot = await owner.run_read(
-        lambda tx: resolve_snapshot(owner.catalog, tx, inputs.snapshot), ctx
-    )
-    with owner.store.leases.pin(frozenset({snapshot.snapshot_id})):
+    async with pinned_snapshot(owner, inputs.snapshot, ctx) as snapshot:
         if not compiler.knows_compatible(snapshot, config):
             retained = await owner.run_write(
                 lambda: owner.store.retained_config(snapshot), ctx, "interactive"

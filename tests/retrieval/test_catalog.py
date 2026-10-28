@@ -260,3 +260,70 @@ def test_full_member_reads_use_primary_keys_without_sorting(kb):
         )
         assert "TEMP B-TREE" not in plan, plan
         assert "USING" in plan and "INDEX" in plan, plan
+
+
+class _Snapshots:
+    """A read whose view lookup lets a collector discard mid-read."""
+
+    def __init__(self, catalog, during=None):
+        self.catalog, self.during, self.reads = catalog, during, 0
+
+    def view(self, snapshot_id):
+        self.reads += 1
+        if self.during is not None:
+            self.during()
+        return SnapshotView.model_construct(snapshot_id=snapshot_id)
+
+
+def test_a_view_read_across_a_discard_is_returned_but_not_cached():
+    catalog = SnapshotCatalog()
+    snapshots = _Snapshots(catalog)
+    snapshots.during = lambda: catalog.discard(("collected",))
+    tx = type("Tx", (), {"snapshots": snapshots})()
+    assert catalog.get(tx, "s").snapshot_id == "s"
+    snapshots.during = None
+    catalog.get(tx, "s")
+    assert snapshots.reads == 2
+    catalog.get(tx, "s")
+    assert snapshots.reads == 2
+
+
+def test_a_query_pins_its_snapshot_before_reading_the_view(kb, monkeypatch):
+    owner = kb._workspace.owner
+    pinned_at_read = []
+    original = SnapshotCatalog.get
+
+    def checked(self, tx, snapshot_id):
+        pinned_at_read.append(owner.store.leases.is_pinned(snapshot_id))
+        return original(self, tx, snapshot_id)
+
+    monkeypatch.setattr(SnapshotCatalog, "get", checked)
+    kb.search({"question": "pump seal"})
+    assert pinned_at_read and all(pinned_at_read)
+
+
+def test_a_failed_resolution_releases_the_pin(kb):
+    from tychora.retrieval.attempt import pinned_snapshot
+
+    owner = kb._workspace.owner
+    seen = []
+
+    async def resolve():
+        async with pinned_snapshot(owner, "missing-snapshot", ExecutionContext()):
+            pytest.fail("a missing snapshot resolved")
+
+    original = owner.store.leases.pin
+
+    def recording(keys):
+        seen.append(keys)
+        return original(keys)
+
+    owner.store.leases.pin = recording
+    try:
+        with pytest.raises(TychoraError) as error:
+            kb._workspace.bridge.call(resolve())
+    finally:
+        del owner.store.leases.pin
+    assert error.value.reason == "snapshot.absent"
+    assert seen == [frozenset({"missing-snapshot"})]
+    assert not owner.store.leases.is_pinned("missing-snapshot")
