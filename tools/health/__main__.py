@@ -25,7 +25,9 @@ from tools.health.model import (
 from tools.health.shard import DURATIONS, record
 from tools.health.testruns import flaky_tests, merge_junit
 
-DEFAULT_SELECTION = "not live and not qualification and not release and not quarantine and not scale"
+DEFAULT_SELECTION = (
+    "not live and not qualification and not release and not quarantine and not scale"
+)
 ISOLATION_LIST = Path("tools/health/isolation.txt")
 
 
