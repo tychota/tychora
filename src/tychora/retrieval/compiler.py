@@ -548,6 +548,12 @@ class EligibilityCompiler:
             # The request narrows every review gate the mode applies.
             original_reviews &= frozenset(request.review_states)
             proxy_reviews &= frozenset(request.review_states)
+            if not original_reviews:
+                # Nothing would be readable: refuse rather than answer empty.
+                raise _invalid(
+                    "Requested review states leave nothing the mode admits",
+                    "review.states_empty",
+                )
         mode = ModePolicy(
             name=name,
             digest=digest(

@@ -86,6 +86,7 @@ CLASSIFIED_REASONS = {
     "INVALID_REQUEST": {
         "bench.incomparable",
         "review.time_naive",
+        "review.states_empty",
         "kind.section_levels_invalid",
         "kind.unknown",
         "tokens.atomic_limit",
