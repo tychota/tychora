@@ -113,3 +113,63 @@ def test_changing_lists_needs_no_rebuild(tmp_path):
     assert before.segments and after.segments
     assert before.snapshot_id == after.snapshot_id
     assert only.segments
+
+
+def test_list_file_bytes_change_the_digest_and_query_fingerprint(tmp_path, monkeypatch):
+    from tychora.configuration import stopwords
+
+    before = _config(tmp_path)
+    original = stopwords._list
+    monkeypatch.setattr(
+        stopwords,
+        "_list",
+        lambda language, version: (
+            original(language, version)[0],
+            "edited-bytes-" + language,
+        ),
+    )
+    stopwords.load_stopwords.cache_clear()
+    try:
+        after = _config(tmp_path)
+    finally:
+        monkeypatch.undo()
+        stopwords.load_stopwords.cache_clear()
+    assert after.query_fingerprint != before.query_fingerprint
+    assert after.index_fingerprint == before.index_fingerprint
+
+
+def test_query_service_passes_the_configured_set_to_lexical_search(
+    tmp_path, monkeypatch
+):
+    from tychora.adapters.sqlite.lexical import SqliteLexicalSearch
+
+    seen: list[frozenset[str]] = []
+    real = SqliteLexicalSearch.search
+
+    def spy(self, view, query, limit, ctx, *, stopwords=frozenset()):
+        seen.append(stopwords)
+        return real(self, view, query, limit, ctx, stopwords=stopwords)
+
+    monkeypatch.setattr(SqliteLexicalSearch, "search", spy)
+    workspace = tmp_path / "ws"
+    with Tychora.open(workspace, token_counter=OutputCounter()) as kb:
+        job = kb.sources.add(
+            {
+                "type": "text",
+                "source_key": "pumps.md",
+                "collection_id": "default",
+                "kind": "document@1",
+                "format": "markdown",
+                "text": "# Pumps\n\nThe inspection of the pump seal.\n",
+                "metadata": {"title": "Pumps"},
+            }
+        )
+        assert kb.jobs.wait(job.id).state == "succeeded"
+        kb.search({"question": "the inspection of the seal"})
+    assert seen and seen[-1] == load_stopwords(("en", "fr"), "builtin@1").words
+    assert "the" in seen[-1]
+    seen.clear()
+    none = _config(tmp_path, '[configuration.retrieval.lexical]\nstopwords = "none"\n')
+    with Tychora.open(workspace, config=none, token_counter=OutputCounter()) as kb:
+        kb.search({"question": "the inspection of the seal"})
+    assert seen and seen[-1] == frozenset()
