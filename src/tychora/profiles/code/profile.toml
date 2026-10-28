@@ -13,5 +13,9 @@ predicates = ["contains@1", "precedes@1", "calls@1", "imports@1", "inherits@1"]
 directions = ["outgoing", "incoming"]
 statuses = ["recorded", "confirmed"]
 
+[retrieval.lexical]
+# Query words such as "and", "with" or "for" are code keywords in this corpus.
+stopwords = "none"
+
 [index]
 graph = "ladybug"

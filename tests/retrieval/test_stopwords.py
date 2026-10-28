@@ -169,3 +169,21 @@ def test_query_service_passes_the_configured_set_to_lexical_search(
     with Tychora.open(workspace, config=none, token_counter=OutputCounter()) as kb:
         kb.search({"question": "the inspection of the seal"})
     assert seen and seen[-1] == frozenset()
+
+
+def _builtin(tmp_path: Path, builtin: str):
+    path = tmp_path / f"{builtin.replace('@', '-')}.toml"
+    path.write_text(f'schema_version=1\n[profiles.local]\nbuiltin="{builtin}"\n')
+    return resolve_config(path, "local", {})
+
+
+def test_code_profile_keeps_query_words_that_are_code_keywords(tmp_path):
+    """Code queries keep words such as "and", "with" or "for"; document profiles drop them."""
+    code = _builtin(tmp_path, "code@1").values.retrieval.lexical
+    documents = _builtin(tmp_path, "documents@1").values.retrieval.lexical
+    assert code.stopwords == "none"
+    assert documents.stopwords == "builtin@1"
+    words = load_stopwords(code.languages, code.stopwords).words
+    assert lexical_expression("job repository with events and cancellation", words) == (
+        '"cancellation" OR "repository" OR "events" OR "with" OR "job" OR "and"'
+    )
