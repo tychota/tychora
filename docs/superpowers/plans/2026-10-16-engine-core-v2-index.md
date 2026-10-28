@@ -560,7 +560,7 @@ All gates run with `python -m tychora.interfaces.bench run …` (phase 1). "Offl
 
 On shared CI runners, `bench-small` fails only on a regression of more than 20% against the last result from the same runner class (spec §4.12 "Assertions").
 
-**Phase 4 gate status: pending reference-runner run.** The verdict comes only from the `Benchmarks` workflow on the reference runner, dispatched by the owner. Informative macOS figures (developer laptop, not a gate, not committed to `bench-results`): `bench-small` offline query total p95 1.3 ms; scale search p95 3.5 ms at 100 documents and 5.3 ms at 1,000 (phase 2 measured 36 s at 10,000); the 10,000 checkpoint was stopped locally after 98 minutes at about 7,600 documents, so E3 ratio, E3 publication p90 and E4 were not measured there; E3 artifact ceiling passed (largest snapshot artifact 84,741 bytes). Strict "verification outcome" succeeded at 20, 1,000 and 10,000 documents. Concurrency acceptance passes locally: the client bridge no longer caps admission below the owner queue bounds (33 concurrent callers succeed), and 20 concurrent queries during the 300-page add stay within 1.5× of the same 20 concurrent queries idle. Code gold G22 is at or above `baseline.json` on both variants (see "Phase 4 as built").
+**Phase 4 gate status: pending reference-runner run.** The verdict comes only from the `Benchmarks` workflow on the reference runner, dispatched by the owner. Strict "verification outcome" succeeded at 20, 1,000 and 10,000 documents. Concurrency acceptance passes locally: the client bridge no longer caps admission below the owner queue bounds (33 concurrent callers succeed), and rounds of 20 concurrent queries, sampled from the 300-page add until it settles and overlapping its stages past parsing, stay within 1.5× of the same 20 concurrent queries idle; an online-shaped variant with a synthetic reranker also checks that every writer task of a reranked query runs on the interactive lane. Code gold G22 is at or above `baseline.json` on both variants (see "Phase 4 as built").
 
 ## Code-health ratchet by phase
 
@@ -587,7 +587,22 @@ Decisions taken while executing phase 4 that the spec or later phases must take 
 - **Guard query plan.** The read-path guard query's plan relies on SQLite having no `ANALYZE` statistics for the workspace (nothing in `src` runs `ANALYZE`). A phase that adds `ANALYZE` must re-check that plan.
 - **Trace.** Per-stage query budgets (§4.12) are asserted from phase 5, when the query trace exists; phase 4's gate measures wall-clock totals only.
 - **Code gold and stop words.** The built-in `code@1` profile selects `retrieval.lexical.stopwords = "none"` (a value §4.9's lexical profile already allows; documents profiles keep `builtin@1`). With the built-in lists, dropping "and" and "with" from code questions pushed five code-gold file metrics below `baseline.json`; with `none`, every metric is at or above the baseline and `definition_recall` rises to 0.3696 (lexical) and 0.1522 (lexical_structural). `tests/fixtures/evaluation/code-gold/README.md` ("Search time", `definition_recall` table, "Stop words") holds the values measured on a developer laptop: a search takes about 3.7 s median (7.4 s maximum) instead of 12 s.
+- **`review_states` that admit nothing.** An empty `review_states` list is refused by the request contract, and states disjoint from the mode's are refused with `INVALID_REQUEST` `review.states_empty` (final fix M9), so an empty result always means no match.
+- **Survivor bound.** The survivor check reads at most 200 fused candidates, chosen in admission order: exact keys (up to 32), then graph-only keys (up to 8), then fused rank. Candidates left unread are reported as a `survivors` entry in `Coverage.truncated_channels`; the status stays `complete`, as for other bounded reads (final fix I1).
+- **Unavailable graph.** A configured graph with no pinned generation is listed in `Coverage.unavailable_channels` and makes the result `partial`; a graph the request selected itself is still refused with `graph.disabled`.
+- **CPU lane (§4.6), deferred to phase 5.** Only the counter preflight runs on `run_cpu`. Segment assembly and response measuring and serialization (`query.py` `_assemble` and the assembler) run inline on the client bridge's event-loop thread, and a registered image query's decode (`_registered_pixels`, up to 40 MP) runs on the writer thread. Phase 5 owns moving them to the CPU lane, with the query trace that measures them.
 - **Structural order after reopening.** `GraphTraversal._structural_order` reads the in-memory build of the process that built the graph generation, so a structural graph query in a reopened workspace fails with `INDEX_INCOMPLETE` "Canonical structural source order is unavailable" until the next build. This predates phase 4 (`e3dc00f`); phase 6 (incremental graph) replaces the generation and should persist the order.
+
+### Phase 4 follow-ups (Low, parked by the task reviews)
+
+- T6: `OwnerFact` fails validation on a NULL `index_batches.extraction_id`; only graph batches have one, and they hold no vector records.
+- T7: the eligibility oracle shares `owner_facts` with the code under test, has no image records, and its fixture needs extras.
+- T9: an absent kind is never reported truncated; `_enough` counts the metadata kind; concurrent adds that share record IDs are untested.
+- T12b: the `_unreached` classification and the extraction-read assumption.
+- T17: the plain query path raises on a pinned index rather than reporting it; the degraded test mutates a frozen config and its strict assertion should pin `CAPABILITY_MISSING`.
+- T19: `tests/ingestion/test_tables.py::test_tables[docx]` is order-dependent (predates phase 4).
+- T20: `references.py` splits the root list; `restore_rows` uses `fetchall` instead of streaming.
+- T21: two load flakes in the default suite (the upgrade test's 5 s legacy-extraction wait; the cancelled collector's short sleeps).
 
 ## Spec gaps found while planning
 

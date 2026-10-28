@@ -12,7 +12,7 @@ TYCHORA_TEST_CODE_CORPUS=/path/to/corpus \
   pytest tests/evaluation/test_code_gold.py -p no:xdist
 ```
 
-`/path/to/corpus` contains the pinned `src/` directory. Without the variable the test is skipped. Set `TYCHORA_CODE_GOLD_REPORT` to write the mean metrics per variant as JSON. A full run takes about 7 minutes.
+`/path/to/corpus` contains the pinned `src/` directory. Without the variable the test is skipped. Set `TYCHORA_CODE_GOLD_REPORT` to write the mean metrics per variant as JSON.
 
 ## Baseline
 

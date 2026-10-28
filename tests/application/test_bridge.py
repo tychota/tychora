@@ -1,4 +1,9 @@
-"""The client bridge admits every caller; the owner's lane bounds refuse work."""
+"""The client bridge admits every caller and refuses only once it is closed.
+
+The bridge has no admission cap of its own: the owner's lane bounds are what
+refuse work when a queue is full, and `tests/runtime/test_lanes.py` pins those
+refusals.
+"""
 
 import asyncio
 import threading
