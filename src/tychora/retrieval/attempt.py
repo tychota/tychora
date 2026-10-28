@@ -4,15 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from contextlib import AbstractContextManager
-from dataclasses import dataclass, field
-from types import MappingProxyType
+from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 from tychora.configuration.models import ResolvedConfig
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.eligibility import EligibilityView
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.graph import LegacyEligibilityView
 from tychora.contracts.publication import SnapshotView
 from tychora.contracts.requests import QueryRequest, RequestScope
 from tychora.ports.execution import ExecutionContext
@@ -20,7 +18,6 @@ from tychora.ports.repositories import OwnerFact, ReadTransaction
 from tychora.retrieval.cache import EligibilityCache
 from tychora.retrieval.catalog import SnapshotCatalog
 from tychora.retrieval.compiler import CompiledEligibility, EligibilityCompiler
-from tychora.retrieval.eligibility import LegacyEligibilityCompiler
 
 
 class SnapshotLeases(Protocol):
@@ -98,10 +95,6 @@ class EligibilityAttempt:
 
     compiled: CompiledEligibility
     snapshot: SnapshotView
-    legacy: LegacyEligibilityView | None = None
-    legacy_dependencies: Mapping[str, frozenset[str]] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
     owner: AttemptOwner | None = None
     ctx: ExecutionContext | None = None
 
@@ -124,27 +117,6 @@ class EligibilityAttempt:
     def historical_kind_envelopes(self) -> Mapping[str, FrozenJsonMap]:
         """The verified envelope of every selected kind."""
         return self.compiled.historical_kind_envelopes
-
-    def require_legacy(self) -> LegacyEligibilityView:
-        """The unit-level view the not-yet-moved readers admit through."""
-        if self.legacy is None:
-            raise TychoraError(
-                "INTEGRITY_ERROR",
-                "Attempt has no unit-level view",
-                reason="invariant.unexpected",
-            )
-        return self.legacy
-
-    def dependencies_for(self, representation_id: str) -> frozenset[str]:
-        """The legacy dependency set of an eligible representation."""
-        try:
-            return self.legacy_dependencies[representation_id]
-        except KeyError:
-            raise TychoraError(
-                "FORBIDDEN_SCOPE",
-                "Representation is not eligible",
-                reason="representation.ineligible",
-            ) from None
 
     async def revalidate(self, stage: Literal["provider", "delivery"]) -> None:
         """Refuse when the policy epoch moved since the view was compiled."""
@@ -176,7 +148,6 @@ class _Pinned:
     """What both attempts of one pinned query share."""
 
     compiler: EligibilityCompiler
-    legacy: LegacyEligibilityCompiler
     owner: AttemptOwner
     snapshot: SnapshotView
     scope: RequestScope
@@ -187,7 +158,6 @@ class _Pinned:
 
 async def run_pinned_eligibility[T](
     compiler: EligibilityCompiler,
-    legacy: LegacyEligibilityCompiler,
     selector: str | None,
     scope: RequestScope,
     request: QueryRequest,
@@ -209,11 +179,9 @@ async def run_pinned_eligibility[T](
                 lambda: owner.store.retained_config(snapshot), ctx, "interactive"
             )
             compiler.mark_compatible(snapshot, config, retained)
-        pinned = _Pinned(compiler, legacy, owner, snapshot, scope, request, config, ctx)
+        pinned = _Pinned(compiler, owner, snapshot, scope, request, config, ctx)
         for attempt_number in range(2):
             attempt = await _attempt(pinned)
-            if attempt is None:
-                continue
             delivered = await _deliver_once(
                 attempt, operation, on_invalidated, final=attempt_number == 1
             )
@@ -247,8 +215,8 @@ async def _deliver_once[T](
     return _Delivered(result)
 
 
-async def _attempt(pinned: _Pinned) -> EligibilityAttempt | None:
-    """Compile the view (cached, read pool) and, until every reader moved, the legacy one."""
+async def _attempt(pinned: _Pinned) -> EligibilityAttempt:
+    """Compile the view, cached, on the read pool."""
     owner, snapshot = pinned.owner, pinned.snapshot
     compiled = await owner.run_read(
         lambda tx: pinned.compiler.compile_cached(
@@ -261,20 +229,9 @@ async def _attempt(pinned: _Pinned) -> EligibilityAttempt | None:
         ),
         pinned.ctx,
     )
-    old = await owner.run_write(
-        lambda: pinned.legacy.compile_attempt(
-            snapshot, pinned.scope, pinned.request, pinned.config
-        ),
-        pinned.ctx,
-        "interactive",
-    )
-    if old.view.policy_epoch != compiled.view.policy_epoch:
-        return None
     return EligibilityAttempt(
         compiled=compiled,
         snapshot=snapshot,
-        legacy=old.view,
-        legacy_dependencies=old.dependencies,
         owner=owner,
         ctx=pinned.ctx,
     )
@@ -307,16 +264,6 @@ def _candidate_filter(view: EligibilityView, unit_id: str) -> bool:
 def is_eligible_unit(view: EligibilityView, fact: OwnerFact, facts=None) -> bool:
     """A unit whose dependency set is readable: context or structural."""
     return fact.kind == "unit" and view.allows(fact.dependency_ids)
-
-
-def is_context_unit(view: EligibilityView, fact: OwnerFact, facts=None) -> bool:
-    """An eligible citable original or an eligible proxy."""
-    return is_eligible_unit(view, fact) and (fact.proxy or fact.citable)
-
-
-def is_structural_unit(view: EligibilityView, fact: OwnerFact, facts=None) -> bool:
-    """An eligible non-citable original (headings, file roots)."""
-    return is_eligible_unit(view, fact) and not fact.proxy and not fact.citable
 
 
 def is_source_unit(view: EligibilityView, fact: OwnerFact, facts=None) -> bool:

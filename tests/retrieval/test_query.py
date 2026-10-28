@@ -13,8 +13,14 @@ import pytest
 from PIL import Image
 
 from tests.helpers.assets import asset_path
-from tests.helpers.corpus import artifact, reader, registry, seed_bundle
-from tests.helpers.eligibility import eligibility_view, legacy_attempt
+from tests.helpers.corpus import (
+    artifact,
+    commit_with_facts,
+    reader,
+    registry,
+    seed_bundle,
+)
+from tests.helpers.eligibility import revision_attempt, revision_view
 from tests.indexing.test_publication import RecordingCounter, RecordingEmbedder
 from tests.providers.test_visual import CharacterCounter, RecordingRawTransport, _limits
 from tests.retrieval.test_segments import config as base_config
@@ -265,18 +271,12 @@ def test_image_query_descriptor_uses_registered_pixels_and_source_links(tmp_path
         }
     )
     db = open_corpus(tmp_path / "corpus.sqlite3", initialize=True)
-    CorpusStore(db, registry=registry(), artifacts=reader()).commit_extraction(bundle)
+    store = CorpusStore(db, registry=registry(), artifacts=reader())
+    commit_with_facts(store, bundle)
     service = QueryService.__new__(QueryService)
-    vars(service)["owner"] = SimpleNamespace(db=db, artifacts=reader())
-    view = eligibility_view(
-        revision_ids=frozenset({bundle.revision.revision_id}),
-        context_unit_ids=frozenset({unit.unit_id}),
-    ).model_copy(update={"asset_ids": frozenset({asset_id})})
-    attempt = legacy_attempt(
-        view,
-        dependencies={
-            asset_id: frozenset({asset_id, unit.unit_id, bundle.revision.revision_id})
-        },
+    vars(service)["owner"] = SimpleNamespace(db=db, artifacts=reader(), store=store)
+    attempt = revision_attempt(
+        revision_view({bundle.revision.revision_id: bundle.extraction.extraction_id})
     )
     query = service._registered_image_query(asset_id, attempt)
     assert query.image.dependency_ids == frozenset({asset_id, unit.unit_id})

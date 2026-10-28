@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
+from tests.helpers.eligibility_v1_oracle import read_eligibility_facts
 from tests.helpers.publication import members_of, slots_of
 from tests.indexing.test_publication import ProjectedCorpus, make_projected_corpus
 from tychora.adapters.sqlite.repositories import SqliteSnapshotRepository
@@ -265,7 +266,7 @@ def test_second_query_on_a_snapshot_reads_no_manifest_and_no_lexical_body(projec
     statements: list[str] = []
     f.store.db.set_trace_callback(statements.append)
     try:
-        first = f.store.read_eligibility_facts(view)
+        first = read_eligibility_facts(f.store, view)
         opened = []
         original = f.store.artifacts.open_verified
 
@@ -274,7 +275,7 @@ def test_second_query_on_a_snapshot_reads_no_manifest_and_no_lexical_body(projec
             return original(ref)
 
         with patch.object(f.store.artifacts, "open_verified", spy):
-            second = f.store.read_eligibility_facts(view)
+            second = read_eligibility_facts(f.store, view)
     finally:
         f.store.db.set_trace_callback(None)
     assert not opened
@@ -286,7 +287,7 @@ def test_second_query_on_a_snapshot_reads_no_manifest_and_no_lexical_body(projec
         first.lexical_chunks,
     )
     fresh_id = f.add_revision("a later activation", source_key="later.md")
-    fresh = f.store.read_eligibility_facts(f.store.resolve_snapshot(fresh_id))
+    fresh = read_eligibility_facts(f.store, f.store.resolve_snapshot(fresh_id))
 
     def lexical(facts):
         return {batch for slot, batch, _ in facts.batches if slot == "lexical"}
@@ -499,7 +500,7 @@ def test_a_query_after_an_add_opens_no_batch_input(projected):
         return original(ref)
 
     with patch.object(f.store.artifacts, "open_verified", spy):
-        f.store.read_eligibility_facts(second)
+        read_eligibility_facts(f.store, second)
     assert not set(opened) & set(_batch_inputs(f.store, second.snapshot_id).values())
     assert not opened
 
@@ -635,7 +636,7 @@ def test_native_health_cancelled_mid_run_stops_before_loading_next_batch(project
 
 def _refused_eligibility(f, view, message):
     with pytest.raises(TychoraError) as error:
-        f.store.read_eligibility_facts(view)
+        read_eligibility_facts(f.store, view)
     assert (error.value.code, error.value.reason, str(error.value)) == (
         "INTEGRITY_ERROR",
         "canonical.binding_mismatch",
@@ -660,7 +661,9 @@ def test_eligibility_vectors_are_the_records_the_snapshot_binds(projected):
         }
 
     def read(view):
-        return {item.record_id for item in f.store.read_eligibility_facts(view).vectors}
+        return {
+            item.record_id for item in read_eligibility_facts(f.store, view).vectors
+        }
 
     assert bound(second) - bound(first)
     assert read(first) == bound(first)

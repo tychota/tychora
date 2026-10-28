@@ -3,7 +3,7 @@
 from dataclasses import replace
 
 from tests.helpers.corpus import seed_bundle
-from tests.helpers.eligibility import eligibility_view, revision_view
+from tests.helpers.eligibility import revision_view, synthetic_graph_scope
 from tests.ingestion.conftest import native_case  # noqa: F401
 from tychora.configuration.resolve import resolve_config
 from tychora.contracts.base import FrozenJsonMap
@@ -543,11 +543,10 @@ def test_continuation_context_requires_current_eligible_graph_path(tmp_path):
         )
     )
     view = _view(bundle)
-    graph_view = eligibility_view(
-        revision_ids=frozenset({bundle.revision.revision_id}),
-        context_unit_ids=frozenset({first.unit_id, second.unit_id}),
-        chunk_ids=frozenset(),
-        graph_generation_id="pinned-generation",
+    graph_view = synthetic_graph_scope(
+        context=(first.unit_id, second.unit_id),
+        revisions=(bundle.revision.revision_id,),
+        generation_id="pinned-generation",
     )
     path = GraphPath(
         assertion_ids=("a" * 64,),
@@ -1012,21 +1011,18 @@ def test_verified_output_counter_counts_literal_source_tokens():
 
 def test_historical_role_comes_from_validated_selected_attempt(tmp_path):
     import json
+    from typing import Any, cast
 
     import pytest
 
-    from tests.retrieval.test_eligibility import _Reader, _request, _snapshot
+    from tests.helpers.eligibility import member_row, members_transaction
+    from tests.retrieval.test_eligibility import _request, _snapshot
     from tychora.configuration.registry import Registry
     from tychora.contracts.base import FrozenJsonMap
     from tychora.contracts.errors import TychoraError
     from tychora.contracts.identity import canonical_bytes, digest
     from tychora.contracts.requests import RequestScope
-    from tychora.retrieval.eligibility import (
-        EligibilityFacts,
-        LegacyEligibilityCompiler,
-        RevisionFact,
-        UnitFact,
-    )
+    from tychora.retrieval.compiler import EligibilityCompiler
 
     base = config(tmp_path)
     registry_data = json.loads(canonical_bytes(base.registry))
@@ -1048,44 +1044,18 @@ def test_historical_role_comes_from_validated_selected_attempt(tmp_path):
         {key: value for key, value in envelope.items() if key != "envelope_digest"},
     )
     bundle, prepared, ranked, _ = case("Historical text", ())
-    unit = bundle.units[0]
-    facts = EligibilityFacts(
-        policy_epoch=1,
-        revisions=(
-            RevisionFact(
+    tx = members_transaction(
+        (
+            member_row(
+                bundle.revision.revision_id,
+                envelope["envelope_digest"],
                 source_id=bundle.source.source_id,
-                revision_id=bundle.revision.revision_id,
                 extraction_id=bundle.extraction.extraction_id,
-                collection_id="collection",
                 kind_id="manual@0",
-                access_rank=0,
-                source_floor=0,
-                collection_floor=0,
-                allowed_uses=frozenset({"audit"}),
-                review_state="accepted",
-                withdrawn=False,
-                published_on=None,
-                effective_from=None,
-                effective_until=None,
-                is_default=True,
             ),
         ),
-        units=(
-            UnitFact(
-                unit_id=unit.unit_id,
-                revision_id=bundle.revision.revision_id,
-                extraction_id=bundle.extraction.extraction_id,
-                unit_type="paragraph",
-                review_state="accepted",
-                citable=True,
-                dependency_ids=frozenset({bundle.revision.revision_id, unit.unit_id}),
-            ),
-        ),
-        chunks=(),
-        assets=(),
-        historical_definitions=(("manual@0", envelope),),
+        {"manual@0": envelope},
     )
-    reader = _Reader(cfg, facts)
     scope = RequestScope(
         principal_id="principal",
         collection_ids=frozenset({"collection"}),
@@ -1093,9 +1063,10 @@ def test_historical_role_comes_from_validated_selected_attempt(tmp_path):
         uses=frozenset({"audit"}),
         capabilities=frozenset({"search"}),
     )
-    attempt = LegacyEligibilityCompiler(reader).compile_attempt(
-        _snapshot(cfg, chunks=()), scope, _request(), cfg
-    )
+    snapshot = _snapshot(cfg, chunks=())
+    compiler = EligibilityCompiler(Registry.from_config(cfg), cast(Any, None))
+    compiler.mark_compatible(snapshot, cfg, cfg)
+    attempt = compiler.compile(tx, snapshot, scope, _request(), cfg)
     assert attempt.historical_kind_roles == {"manual@0": original_role}
     assert (
         attempt.historical_kind_envelopes["manual@0"]["envelope_digest"]

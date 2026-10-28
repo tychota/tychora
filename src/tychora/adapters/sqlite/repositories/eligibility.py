@@ -188,6 +188,16 @@ class SqliteEligibilityRepository:
             )
         )
 
+    def blocked_assertions(self, watermark: int) -> frozenset[str]:
+        """Assertions with a decision recorded after ``watermark``."""
+        return frozenset(
+            row[0]
+            for row in self._db.execute(
+                "SELECT DISTINCT assertion_id FROM assertion_decisions WHERE decision_id>?",
+                (watermark,),
+            )
+        )
+
     def dependents(
         self, owner_ids: tuple[str, ...]
     ) -> Mapping[str, Literal["unit", "asset"]]:

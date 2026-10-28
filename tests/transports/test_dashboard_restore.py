@@ -31,7 +31,7 @@ async def test_missing_restore_archive_is_typed_and_authorized_before_path_looku
         async def identity():
             return await owner.run_write(
                 lambda: (
-                    owner.store.policy_epoch(owner.workspace_id),
+                    owner.policy_epoch(),
                     owner.store.active_snapshot_id(),
                 ),
                 ExecutionContext(),

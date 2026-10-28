@@ -24,7 +24,7 @@ from tychora.contracts.evidence import (
     StructuredRecord,
     VisualEvidence,
 )
-from tychora.contracts.graph import GraphBudget, LegacyEligibilityView
+from tychora.contracts.graph import GraphBudget, GraphScope
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.requests import (
     BudgetContract,
@@ -493,7 +493,7 @@ class ResponseAssembler:
 
 def inspect_relations(
     graph: GraphStore,
-    view: LegacyEligibilityView,
+    view: GraphScope | None,
     selected_unit_ids: tuple[str, ...],
     predicates: tuple[str, ...],
     ctx: ExecutionContext,
@@ -519,7 +519,7 @@ def inspect_relations(
                 "INTEGRITY_ERROR", "Relation decision policy is invalid."
             )
         policy[predicate] = (required, category)
-    if not enabled or view.graph_generation_id is None:
+    if not enabled or view is None:
         return RelationChecks(status="not_evaluated", predicates=predicates)
     if (
         not 0 <= expansion_inspected_rows <= max_rows <= 2000

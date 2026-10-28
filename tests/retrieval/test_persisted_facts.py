@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.helpers.eligibility_v1_oracle import read_eligibility_facts
 from tests.helpers.legacy import OutputCounter
 from tests.helpers.owner import on_owner
 from tychora import Tychora
@@ -31,12 +32,14 @@ def _add(kb, key, text):
 def _facts(owner):
     store = owner.store
     return on_owner(
-        owner, lambda: store.read_eligibility_facts(store.resolve_snapshot(None))
+        owner, lambda: read_eligibility_facts(store, store.resolve_snapshot(None))
     )
 
 
 def test_eligibility_reader_imports_no_indexing():
-    tree = ast.parse((SOURCE / "adapters/sqlite/eligibility.py").read_text())
+    tree = ast.parse(
+        (SOURCE / "adapters/sqlite/repositories/eligibility.py").read_text()
+    )
     modules = {
         node.module
         for node in ast.walk(tree)

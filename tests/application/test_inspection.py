@@ -6,7 +6,6 @@ from contextlib import asynccontextmanager
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
@@ -15,6 +14,7 @@ from PIL import Image
 from tests.helpers.corpus import raw_review, refresh_facts
 from tests.retrieval.graph_fixture import assertion, sealed_graph, unit
 from tests.typed_json import json_array, json_object, json_string
+from tychora.application import inspection
 from tychora.application.discovery import DiscoveryService
 from tychora.application.inspection import InspectionService
 from tychora.application.owner import WorkspaceOwner
@@ -485,12 +485,7 @@ async def test_ready_native_relation_cursor_rejects_changed_query(
     )
     service = InspectionService(owner, case.graph)
     view = case.view(context={"a", "b", "c"}, candidates={"a", "b", "c"})
-    monkeypatch.setattr(
-        service, "_legacy_attempt", lambda _snapshot, _scope: SimpleNamespace(view=view)
-    )
-    monkeypatch.setattr(
-        service, "legacy", SimpleNamespace(revalidate_epoch=lambda *_: None)
-    )
+    monkeypatch.setattr(inspection, "graph_scope", lambda _tx, _view: view)
     first = await service.relations(
         RelationRequest(
             unit_ids=("a",), predicates=frozenset({"cites@1"}), max_hops=1, max_edges=1
@@ -513,13 +508,14 @@ async def test_ready_native_relation_cursor_rejects_changed_query(
             ExecutionContext(),
         )
     assert changed.value.code == "INVALID_REQUEST"
-    monkeypatch.setattr(
-        service,
-        "_legacy_attempt",
-        lambda _snapshot, _scope: SimpleNamespace(
-            view=view.model_copy(update={"graph_generation_id": "later-generation"})
-        ),
+    later = view.model_copy(
+        update={
+            "receipt": view.receipt.model_copy(
+                update={"generation_id": "later-generation"}
+            )
+        }
     )
+    monkeypatch.setattr(inspection, "graph_scope", lambda _tx, _view: later)
     with pytest.raises(TychoraError) as generation:
         await service.relations(
             RelationRequest(
@@ -549,16 +545,8 @@ async def test_ready_native_relation_inspection_stops_at_100_edges(
     )
     service = InspectionService(owner, case.graph)
     eligible = {"seed", *targets}
-    monkeypatch.setattr(
-        service,
-        "_legacy_attempt",
-        lambda _snapshot, _scope: SimpleNamespace(
-            view=case.view(context=eligible, candidates=eligible)
-        ),
-    )
-    monkeypatch.setattr(
-        service, "legacy", SimpleNamespace(revalidate_epoch=lambda *_: None)
-    )
+    scope_view = case.view(context=eligible, candidates=eligible)
+    monkeypatch.setattr(inspection, "graph_scope", lambda _tx, _view: scope_view)
     result = await service.relations(
         RelationRequest(
             unit_ids=("seed",),

@@ -55,3 +55,22 @@ def test_least_recent_entry_is_evicted():
     assert cache.get_or_compile(eligible_cache_key(first.view), lambda: fresh) is fresh
     assert ELIGIBILITY_CACHE_SIZE == 64
     assert cache.purge() == 1
+
+
+def test_graph_scope_is_built_once_per_key_and_purged_with_views():
+    cache = EligibilityCache(capacity=1)
+    first, second = (eligible_cache_key(_compiled(request=r).view) for r in "ab")
+    builds = []
+
+    def build():
+        builds.append(1)
+
+    assert cache.graph_scope(first, build) is None
+    assert cache.graph_scope(first, build) is None
+    assert len(builds) == 1
+    cache.graph_scope(second, build)
+    cache.graph_scope(first, build)
+    assert len(builds) == 3
+    cache.purge()
+    cache.graph_scope(first, build)
+    assert len(builds) == 4

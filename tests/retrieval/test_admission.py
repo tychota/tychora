@@ -1,6 +1,6 @@
 import pytest
 
-from tests.helpers.eligibility import eligibility_view
+from tests.helpers.eligibility import synthetic_graph_scope
 from tests.retrieval.test_segments import config as base_config
 from tychora.configuration.models import ResolvedConfig
 from tychora.contracts.evidence import EvidenceUnit
@@ -10,7 +10,7 @@ from tychora.contracts.graph import (
     GraphBudget,
     GraphGenerationSpec,
     GraphManifest,
-    LegacyEligibilityView,
+    GraphScope,
 )
 from tychora.contracts.relationships import RelationshipAssertion
 from tychora.ports.execution import ExecutionContext
@@ -89,11 +89,8 @@ def _config(
     )
 
 
-def _view(*seeds: str) -> LegacyEligibilityView:
-    view = eligibility_view(
-        context_unit_ids=frozenset(seeds), graph_generation_id="generation"
-    )
-    return view.model_copy(update={"source_unit_ids": frozenset(seeds)})
+def _view(*seeds: str) -> GraphScope:
+    return synthetic_graph_scope(source=seeds, context=seeds, revisions=())
 
 
 class _TraversalGraph:
@@ -122,7 +119,7 @@ class _TraversalGraph:
 
     def get_assertions(
         self,
-        view: LegacyEligibilityView,
+        view: GraphScope,
         selected_unit_ids: tuple[str, ...],
         predicates: tuple[str, ...],
         limits: GraphBudget,
