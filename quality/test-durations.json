@@ -744,7 +744,7 @@
   "tests.formatting.test_response_budget::test_mandatory_warning_and_last_match_cannot_be_dropped": 0.12,
   "tests.formatting.test_response_budget::test_mcp_canonical_and_envelope_are_counted_together": 0.72,
   "tests.formatting.test_response_budget::test_new_run_id_is_measured_before_delivery": 0.29,
-  "tests.formatting.test_response_budget::test_optional_owner_omission_marks_delivery_partial_without_erasing_completed_channel": 0.13,
+  "tests.formatting.test_response_budget::test_optional_owner_omission_truncates_delivery_without_erasing_completed_channel": 0.13,
   "tests.formatting.test_response_budget::test_record_with_ineligible_dependency_is_rejected": 0.15,
   "tests.formatting.test_response_budget::test_required_lane_gap_is_recomputed_after_owner_omission": 0.13,
   "tests.formatting.test_response_budget::test_required_record_stays_with_owner_and_tiny_core_fails": 0.12,

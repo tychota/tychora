@@ -348,7 +348,8 @@ def test_zero_hit_mandatory_core_still_obeys_byte_cap():
     assert error.value.code == "BUDGET_TOO_SMALL"
 
 
-def test_optional_owner_omission_marks_delivery_partial_without_erasing_completed_channel():
+def test_optional_owner_omission_truncates_delivery_without_erasing_completed_channel():
+    """Omitting an optional owner alone is a delivery truncation, not a partial result."""
     primary = segment("first")
     secondary = segment("second " * 200).model_copy(update={"segment_id": "segment-2"})
     delivered = case(
@@ -358,7 +359,8 @@ def test_optional_owner_omission_marks_delivery_partial_without_erasing_complete
         coverage=Coverage(status="complete", completed_channels=("lexical",)),
     )
     assert delivered.result.segments == (primary,)
-    assert delivered.result.coverage.status == "partial"
+    assert delivered.result.coverage.status == "complete"
+    assert delivered.result.coverage.truncated_channels == ("delivery",)
     assert delivered.result.coverage.completed_channels == ("lexical",)
     assert any(
         gap.code == "output_budget_omission" for gap in delivered.result.coverage_gaps
