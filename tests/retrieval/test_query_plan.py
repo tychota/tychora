@@ -3,6 +3,7 @@
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from tests.helpers.legacy import OutputCounter
 from tests.helpers.owner import accept_source_units, owner_row
@@ -351,3 +352,19 @@ def test_generation_policy_never_generate_excluded_from_compose(tmp_path):
         looked_up = kb.search({"question": "seal inspection", "mode": "lookup"})
     assert source_id not in {s.source_id for s in composed.segments}
     assert source_id in {s.source_id for s in looked_up.segments}
+
+
+def test_an_empty_review_states_list_is_refused_by_the_contract():
+    with pytest.raises(ValidationError, match="at least 1 item"):
+        QueryRequest.from_mapping({"question": "seal", "review_states": []})
+
+
+def test_review_states_disjoint_from_the_mode_are_refused(tmp_path):
+    with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
+        _add_standard(kb)
+        with pytest.raises(TychoraError) as error:
+            kb.search({"question": "pump seal", "review_states": ["rejected"]})
+    assert (error.value.code, error.value.reason) == (
+        "INVALID_REQUEST",
+        "review.states_empty",
+    )

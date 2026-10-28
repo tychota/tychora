@@ -311,6 +311,12 @@ _ENTRIES = (
     ),
     Reason(
         "INVALID_REQUEST",
+        "review.states_empty",
+        False,
+        "Name review states the mode admits, or omit review_states to keep the mode's own.",
+    ),
+    Reason(
+        "INVALID_REQUEST",
         "cursor.invalid",
         False,
         "Restart paging without a cursor.",

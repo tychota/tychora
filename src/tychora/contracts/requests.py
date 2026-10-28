@@ -381,8 +381,13 @@ class QueryRequest(Contract):
     revision_selector: Literal["current", "all", "applicable"] = "current"
     channels: ChannelSelection | None = None
     rerank: Literal["auto", "on", "off"] = "auto"
+    # An empty list would read nothing; omit the field to keep the mode's states.
     review_states: (
-        tuple[Literal["unreviewed", "needs_review", "accepted", "rejected"], ...] | None
+        Annotated[
+            tuple[Literal["unreviewed", "needs_review", "accepted", "rejected"], ...],
+            Field(min_length=1),
+        ]
+        | None
     ) = None
     as_of: date | None = None
     cutoff: date | None = None
