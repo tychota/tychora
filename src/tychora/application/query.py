@@ -29,7 +29,11 @@ from tychora.configuration.registry import Registry
 from tychora.configuration.stopwords import load_stopwords
 from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
-from tychora.contracts.candidates import ChannelCandidate, ChannelCandidates
+from tychora.contracts.candidates import (
+    CandidateKey,
+    ChannelCandidate,
+    ChannelCandidates,
+)
 from tychora.contracts.eligibility import EligibilityView
 from tychora.contracts.embeddings import (
     EmbeddingCapabilities,
@@ -889,7 +893,7 @@ class QueryService:
         exact_keys = tuple(
             item.key for item in channels.exact_lexical[0].source_candidates
         )
-        graph_lists = {
+        graph_lists: dict[str, tuple[CandidateKey, ...]] = {
             strategy: tuple(
                 ("unit", item.unit_id)
                 for item in fused.graph_candidates.candidates

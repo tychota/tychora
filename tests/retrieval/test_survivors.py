@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from tests.helpers.eligibility import revision_view
 from tests.helpers.legacy import OutputCounter
 from tychora import Tychora
+from tychora.contracts.candidates import CandidateKey
 from tychora.ports.repositories import OwnerFact
 from tychora.retrieval import survivors as survivors_module
 from tychora.retrieval.admission import LanePolicy, admit
@@ -182,8 +183,11 @@ def _ranked(count):
 
 def test_the_bound_reads_reserved_exact_and_graph_keys_first():
     candidates = _ranked(260)
-    exact = (("unit", "u230"),)
-    graph = {"structural": (("unit", "u240"), ("unit", "u-absent")), "semantic": ()}
+    exact: tuple[CandidateKey, ...] = (("unit", "u230"),)
+    graph: dict[str, tuple[CandidateKey, ...]] = {
+        "structural": (("unit", "u240"), ("unit", "u-absent")),
+        "semantic": (),
+    }
     selected = survivor_selection(candidates, exact, graph)
     keys = [item.key for item in selected]
     assert len(keys) == SURVIVOR_LIMIT
@@ -195,8 +199,10 @@ def test_the_bound_reads_reserved_exact_and_graph_keys_first():
 
 def test_reservations_are_capped_at_admissions_places():
     candidates = _ranked(300)
-    exact = tuple(("unit", f"u{i}") for i in range(250, 290))
-    graph = {"semantic": tuple(("unit", f"u{i}") for i in range(200, 215))}
+    exact: tuple[CandidateKey, ...] = tuple(("unit", f"u{i}") for i in range(250, 290))
+    graph: dict[str, tuple[CandidateKey, ...]] = {
+        "semantic": tuple(("unit", f"u{i}") for i in range(200, 215))
+    }
     keys = {item.key for item in survivor_selection(candidates, exact, graph)}
     assert len(keys & set(exact)) == 32
     assert len(keys & set(graph["semantic"])) == 8
@@ -204,8 +210,11 @@ def test_reservations_are_capped_at_admissions_places():
 
 def test_a_graph_only_key_past_the_bound_is_admitted_and_the_cut_reported():
     candidates = _ranked(SURVIVOR_LIMIT + 50)
-    graph_key = ("unit", f"u{SURVIVOR_LIMIT + 40}")
-    graph = {"structural": (graph_key,), "semantic": ()}
+    graph_key: CandidateKey = ("unit", f"u{SURVIVOR_LIMIT + 40}")
+    graph: dict[str, tuple[CandidateKey, ...]] = {
+        "structural": (graph_key,),
+        "semantic": (),
+    }
     facts = {f"u{i}": _unit(f"u{i}") for i in range(SURVIVOR_LIMIT + 50)}
     selected = survivor_selection(candidates, (), graph)
     survivors = check_survivors(revision_view(), selected, facts, total=len(candidates))
