@@ -27,7 +27,7 @@ def _add_many(kb, count):
     [
         20,
         pytest.param(1000, marks=pytest.mark.slow),
-        pytest.param(10_000, marks=pytest.mark.slow),
+        pytest.param(10_000, marks=[pytest.mark.slow, pytest.mark.scale]),
     ],
 )
 def test_verification_outcome_succeeds_strict(tmp_path, count):

@@ -99,6 +99,7 @@ markers = [
   "release: installed artifact",
   "assets(*names): TYCHORA_TEST_* variables the test needs; skipped when unset",
   "slow: slower than 30 s locally; excluded from the pull-request test job, run nightly",
+  "scale: 10,000-document runs; excluded from pull-request and nightly runs, run by the Benchmarks workflow",
   "quarantine(reason, issue): outcome differs between random seeds; excluded from blocking runs, kept nightly",
 ]
 

@@ -61,7 +61,7 @@ jobs:
         run: >-
           uv run --locked python -m pytest -p tools.health.shard --shard "$SHARD/3"
           tests -q -n auto
-          -m 'not live and not qualification and not release and not slow and not quarantine'
+          -m 'not live and not qualification and not release and not slow and not quarantine and not scale'
           --cov --cov-config=quality/coverage-line.toml --cov-report= --cov-fail-under=0
           --junitxml="reports/junit-$SHARD.xml"
       - name: Keep reports for the report gates
@@ -99,7 +99,7 @@ jobs:
           env -i PATH="$PATH" HOME="$HOME" TYCHORA_TEST_TIMEOUT_FACTOR=2
           uv run --locked python -m pytest -p tools.health.shard --shard "$SHARD/2"
           tests -q -n auto -rs
-          -m 'not live and not qualification and not release and not quarantine'
+          -m 'not live and not qualification and not release and not quarantine and not scale'
           --junitxml="reports/clean-junit-$SHARD.xml"
       - name: Keep the clean-machine report
         if: always()

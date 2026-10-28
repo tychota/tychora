@@ -41,19 +41,19 @@ jobs:
           TYCHORA_CODE_GOLD_REPORT: reports/code-gold.json
         run: >-
           uv run --locked pytest tests -q -n auto --randomly-seed=1
-          -m 'not live and not qualification and not release'
+          -m 'not live and not qualification and not release and not scale'
           --cov --cov-branch --cov-report=json:reports/coverage-branch.json --cov-report=term
           --junitxml=reports/seed-1.xml
       - name: Seed 2
         if: always()
         env:
           TYCHORA_TEST_TIMEOUT_FACTOR: "3"
-        run: uv run --locked pytest tests -q -n auto --randomly-seed=2 -m 'not live and not qualification and not release' --junitxml=reports/seed-2.xml
+        run: uv run --locked pytest tests -q -n auto --randomly-seed=2 -m 'not live and not qualification and not release and not scale' --junitxml=reports/seed-2.xml
       - name: Seed 3
         if: always()
         env:
           TYCHORA_TEST_TIMEOUT_FACTOR: "3"
-        run: uv run --locked pytest tests -q -n auto --randomly-seed=3 -m 'not live and not qualification and not release' --junitxml=reports/seed-3.xml
+        run: uv run --locked pytest tests -q -n auto --randomly-seed=3 -m 'not live and not qualification and not release and not scale' --junitxml=reports/seed-3.xml
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
