@@ -33,7 +33,7 @@ The repository is one extraction of about 19,300 retained rows and 30 MB of esti
 - Matches on non-symbol units contribute little: the lexical variant matches 95 symbol units and 12 code chunks in total.
 - Key drift is not a cause: every returned record's `definition_key` equals the stored one.
 
-A fix changes either the stub shape of trimmed records (a response contract) or the cases' budgets (the queries), so it is left to the query-path work; the number is informational and not a gate.
+Trimmed `code_symbol` records keep `definition_key`, `qualified_name` and `relative_path` in their stub (`retrieval/response.py`, `budget_stub`), so the metric sees every definition a result names; the values measured after this change are in the table above.
 
 ## Search time
 
