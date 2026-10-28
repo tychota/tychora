@@ -1,6 +1,5 @@
 """SQLite FTS5 and identifier search restricted to an eligibility view by joins."""
 
-import json
 import sqlite3
 from collections import defaultdict
 from typing import Literal
@@ -35,29 +34,28 @@ _EXACT = (
 )
 
 
-def _json_ids(ids: frozenset[str]) -> str:
-    """One JSON array binding for ``json_each``, in a stable order."""
-    return json.dumps(sorted(ids))
-
-
 def _restriction(
     view: EligibilityView, extraction: str, unit: str, asset: str | None = None
 ) -> tuple[str, tuple[str, ...]]:
-    """Predicates and bindings for the view's extractions, exclusions and filter."""
+    """Predicates and bindings for the view's extractions, exclusions and filter.
+
+    The JSON bindings are cached on the immutable view, so a view reused from
+    the eligibility cache serializes each identifier set once.
+    """
     clauses: list[str] = []
     args: list[str] = []
     if not view.all_members_eligible:
         clauses.append(f"{extraction} {_IN}")
-        args.append(_json_ids(view.extraction_ids))
+        args.append(view.extraction_ids_json)
     if view.excluded_unit_ids:
         clauses.append(f"{unit} NOT {_IN}")
-        args.append(_json_ids(view.excluded_unit_ids))
+        args.append(view.excluded_unit_ids_json)
     if asset is not None and view.excluded_asset_ids:
         clauses.append(f"({asset} IS NULL OR {asset} NOT {_IN})")
-        args.append(_json_ids(view.excluded_asset_ids))
-    if view.unit_filter is not None:
+        args.append(view.excluded_asset_ids_json)
+    if view.unit_filter_json is not None:
         clauses.append(f"{unit} {_IN}")
-        args.append(_json_ids(view.unit_filter))
+        args.append(view.unit_filter_json)
     return "".join(" AND " + clause for clause in clauses), tuple(args)
 
 

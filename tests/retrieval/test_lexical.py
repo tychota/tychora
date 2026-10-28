@@ -161,6 +161,35 @@ def test_eligible_extraction_binding_is_skipped_when_every_member_is_eligible():
     db.close()
 
 
+def test_eligible_extraction_binding_is_built_once_per_view(monkeypatch):
+    from tychora.contracts import eligibility as eligibility_module
+
+    built = []
+    original = eligibility_module.json_array
+
+    def counted(ids):
+        built.append(ids)
+        return original(ids)
+
+    monkeypatch.setattr(eligibility_module, "json_array", counted)
+    db = _db()
+    db.executescript(
+        "CREATE TABLE identifiers(unit_id TEXT, namespace TEXT, normalized_value TEXT);"
+        "CREATE TABLE snapshot_members(snapshot_id TEXT, extraction_id TEXT);"
+    )
+    _record(db, "old", "window", "unit", "alpha")
+    view = revision_view(
+        excluded_units=("hidden",), unit_filter=("unit",), all_members=False
+    )
+    search = SqliteLexicalSearch(db)
+    for _ in range(3):
+        search.search(view, "alpha", 80, ExecutionContext())
+        search.exact(view, ("rule:STD-1.2",), 16, ExecutionContext())
+    # Extractions, exclusions and the unit filter: each serialized once.
+    assert len(built) == 3
+    db.close()
+
+
 def test_window_limit_is_not_reached_by_exactly_that_many_windows(monkeypatch):
     monkeypatch.setattr(lexical_module, "WINDOW_LIMIT", 3)
     db = _db()
