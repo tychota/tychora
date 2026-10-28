@@ -448,12 +448,19 @@ def _exclusions(
 
 def _selected_batches(
     rows: Iterable[tuple[str, str, str | None]], extraction_ids: frozenset[str]
-) -> dict[str, tuple[str, ...]]:
+) -> tuple[dict[str, tuple[str, ...]], dict[str, frozenset[str]]]:
+    """Each slot's selected batches and the extractions those batches serve."""
     found: dict[str, list[str]] = defaultdict(list)
+    served: dict[str, set[str]] = defaultdict(set)
     for slot, batch, extraction in rows:
         if slot == "graph" or extraction in extraction_ids:
             found[slot].append(batch)
-    return {slot: tuple(batches) for slot, batches in found.items()}
+            if extraction is not None:
+                served[slot].add(extraction)
+    return (
+        {slot: tuple(batches) for slot, batches in found.items()},
+        {slot: frozenset(items) for slot, items in served.items()},
+    )
 
 
 def _graph_binding(
@@ -687,7 +694,7 @@ class EligibilityCompiler:
             for row in chosen
         }
         units, assets = _exclusions(tx, chosen, job.mode, failing)
-        batches = _selected_batches(
+        batches, batch_extractions = _selected_batches(
             tx.eligibility.batches(snapshot.snapshot_id),
             frozenset(g.extraction_id for g in grants.values()),
         )
@@ -708,6 +715,7 @@ class EligibilityCompiler:
             excluded_asset_ids=assets,
             unit_filter=unit_filter,
             selected_batches=batches,
+            batch_extractions=batch_extractions,
             graph=_graph_binding(tx, batches, complete),
             all_members_eligible=len(grants) == snapshot.member_count,
         )

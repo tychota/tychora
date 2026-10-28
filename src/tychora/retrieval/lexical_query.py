@@ -112,6 +112,15 @@ def _channel(
     )
 
 
+def runs_lexical(request: QueryRequest) -> bool:
+    """Whether the lexical channel runs: query text and not exact-only."""
+    return (
+        not request.exact_only
+        and isinstance(request.input, (QuestionInput, PassageInput))
+        and bool(request.input.text)
+    )
+
+
 def retrieve_exact_lexical(
     tx: ReadTransaction,
     view: EligibilityView,
@@ -121,8 +130,9 @@ def retrieve_exact_lexical(
     ctx: ExecutionContext,
     *,
     stopwords: frozenset[str] = frozenset(),
+    with_lexical: bool = True,
 ) -> tuple[ChannelCandidates, ...]:
-    """Run the exact channel, then lexical unless the request is exact-only."""
+    """Run the exact channel, then lexical unless exact-only or not ``with_lexical``."""
     ctx.checkpoint()
     if len(request.exact_identifiers) > 16:
         raise TychoraError(
@@ -147,7 +157,7 @@ def retrieve_exact_lexical(
         else RankedOwners(owners=())
     )
     exact_channel = _channel("exact", view, exact, epoch, scored=False)
-    if request.exact_only or not query:
+    if not with_lexical or not runs_lexical(request):
         return (exact_channel,)
     lexical = tx.lexical.search(view, query, candidate_limit, ctx, stopwords=stopwords)
     return (exact_channel, _channel("lexical", view, lexical, epoch, scored=True))

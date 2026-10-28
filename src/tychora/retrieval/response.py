@@ -291,12 +291,11 @@ class ResponseAssembler:
                         message="selected_evidence_omitted",
                     )
                 )
-            status = ctx.coverage.status
-            if (
-                gaps or (ctx.checks_required and checks.status != "complete")
-            ) and status == "complete":
-                status = "partial"
-            coverage = ctx.coverage.model_copy(update={"status": status})
+            coverage = _delivered_coverage(
+                ctx.coverage,
+                gaps,
+                ctx.checks_required and checks.status != "complete",
+            )
             kept_assertions = tuple(
                 path
                 for path in checks.assertions
@@ -489,6 +488,26 @@ class ResponseAssembler:
             "BUDGET_TOO_SMALL",
             "Mandatory response core and last evidence owner exceed the output budget.",
         )
+
+
+def _delivered_coverage(
+    coverage: Coverage, gaps: list[CoverageGap], checks_failed: bool
+) -> Coverage:
+    """Coverage after delivery: an output-budget omission alone is a truncation.
+
+    The ``delivery`` gap is kept and ``delivery`` joins the truncated channels;
+    an unmet requirement or failed checks still make a complete result partial.
+    """
+    truncated = coverage.truncated_channels
+    if any(gap.channel == "delivery" for gap in gaps):
+        truncated = tuple(dict.fromkeys((*truncated, "delivery")))
+    unmet = any(gap.channel != "delivery" for gap in gaps)
+    status = coverage.status
+    if (unmet or checks_failed) and status == "complete":
+        status = "partial"
+    return coverage.model_copy(
+        update={"status": status, "truncated_channels": truncated}
+    )
 
 
 def _decision_policy(

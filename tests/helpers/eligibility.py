@@ -23,6 +23,7 @@ def revision_view(
     unit_filter=None,
     all_members=True,
     batches=None,
+    batch_extractions=None,
     snapshot_id="snapshot",
     lane="standard",
 ) -> EligibilityView:
@@ -48,6 +49,9 @@ def revision_view(
         excluded_asset_ids=frozenset(excluded_assets),
         unit_filter=None if unit_filter is None else frozenset(unit_filter),
         selected_batches=batches or {},
+        batch_extractions={
+            slot: frozenset(items) for slot, items in (batch_extractions or {}).items()
+        },
         all_members_eligible=all_members,
     )
 

@@ -47,6 +47,10 @@ class EligibilityView(Contract):
     selected_batches: Mapping[NonEmptyStr, tuple[Identifier, ...]] = Field(
         default_factory=dict
     )
+    # The extractions each slot's selected batches serve, from the same rows.
+    batch_extractions: Mapping[NonEmptyStr, frozenset[Identifier]] = Field(
+        default_factory=dict
+    )
     graph: GraphBinding | None = None
     all_members_eligible: bool = False
 

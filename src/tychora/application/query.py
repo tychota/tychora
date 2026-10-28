@@ -79,7 +79,7 @@ from tychora.retrieval.coverage import build_coverage, missing_batch_slots
 from tychora.retrieval.fusion import FusedCandidate, fuse
 from tychora.retrieval.graph import augment
 from tychora.retrieval.graph_scope import graph_scope
-from tychora.retrieval.lexical_query import retrieve_exact_lexical
+from tychora.retrieval.lexical_query import retrieve_exact_lexical, runs_lexical
 from tychora.retrieval.query import result_cache_key, validate_query_text
 from tychora.retrieval.rerank import (
     RankedEvidence,
@@ -650,9 +650,10 @@ class QueryService:
 
         Returns the entry, the lexical epoch it was prepared at, and whether
         it came from the cache. An entry larger than the response bound plus
-        ``CACHE_OVERHEAD_BYTES`` is served uncached, and so is one degraded by
-        an unavailable channel, so a transient failure is never replayed.
-        Partial coverage from deterministic limits is still cached.
+        ``CACHE_OVERHEAD_BYTES`` is served uncached, and so is one a failure
+        made partial or unavailable (an unavailable channel or rerank), so a
+        transient failure is never replayed. A complete entry whose channels a
+        deterministic limit truncated is cached.
         """
         lexical_epoch = await self.owner.run_read(
             lambda tx: tx.workspace.lexical_epoch(), ctx
@@ -710,8 +711,11 @@ class QueryService:
             raise TychoraError(
                 "INVALID_REQUEST", "Selected image channel cannot run for this query"
             )
-        incomplete = self._missing_batches(
-            attempt.view, ("lexical",) if plan is None or plan.lexical else ()
+        # Exact reads no lexical batch: a missing one skips lexical alone.
+        incomplete: list[str] = []
+        lexical_runs = (plan is None or plan.lexical) and runs_lexical(request)
+        lexical_missing = self._missing_batches(
+            attempt.view, ("lexical",) if lexical_runs else (), incomplete
         )
         channels = (
             await self.owner.run_read(
@@ -723,10 +727,11 @@ class QueryService:
                     80,
                     ctx,
                     stopwords=self.stopwords,
+                    with_lexical=not lexical_missing,
                 ),
                 ctx,
             )
-            if (plan is None or plan.lexical) and not incomplete
+            if plan is None or plan.lexical
             else ()
         )
         lexical_epoch = next(
@@ -749,7 +754,7 @@ class QueryService:
             channel.channel for channel in channels if channel.complete
         ]
         # A deterministic bound cut these short: reported, never refused.
-        truncated = [channel.channel for channel in channels if channel.truncated]
+        truncated: list[str] = [c.channel for c in channels if c.truncated]
         self._refuse_strict(incomplete, "channel.unavailable")
         lexical_votes: dict[str, tuple[ChannelCandidate, ...]] = {
             channel.channel: (*channel.source_candidates, *channel.asset_candidates)
@@ -772,19 +777,26 @@ class QueryService:
             except TychoraError as error:
                 return error
 
-        if (
+        text_runs = (
             (plan is None or plan.text)
             and _needs_text(request)
             and self.owner.config.values.index.text.backend != "disabled"
-            and not self._missing_batches(attempt.view, ("text",), incomplete)
-        ):
-            vector_calls.append(("text", text_candidates))
-        if (
+        )
+        image_runs = (
             (plan is None or plan.image)
             and _needs_visual(request)
             and self.owner.config.values.index.image.backend != "disabled"
-            and not self._missing_batches(attempt.view, ("image",), incomplete)
-        ):
+        )
+        # Strict mode refuses a missing batch; degraded mode records it.
+        text_missing = self._missing_batches(
+            attempt.view, ("text",) if text_runs else (), incomplete
+        )
+        image_missing = self._missing_batches(
+            attempt.view, ("image",) if image_runs else (), incomplete
+        )
+        if text_runs and not text_missing:
+            vector_calls.append(("text", text_candidates))
+        if image_runs and not image_missing:
             vector_calls.append(("visual", retrieve_visual_channel))
 
         vector_results = await _run_independent_channels(
