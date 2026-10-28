@@ -37,11 +37,15 @@ Trimmed `code_symbol` records keep `definition_key`, `qualified_name` and `relat
 
 | Variant | file_recall | file_mrr | file_ndcg | definition_recall |
 | --- | --- | --- | --- | --- |
-| lexical | 0.8696 | 0.7007 | 0.7390 | 0.4130 |
-| lexical_structural | 0.8261 | 0.6703 | 0.7061 | 0.1739 |
+| lexical | 0.8696 | 0.7101 | 0.7469 | 0.3696 |
+| lexical_structural | 0.8696 | 0.6848 | 0.7279 | 0.1522 |
 
-`definition_recall` rises in both variants. Five file metrics fall below `baseline.json` (G22 tolerance is zero): lexical `file_mrr` and `file_ndcg` after the stop-word, strict-mode and narrowing changes; lexical_structural `file_recall`, `file_mrr` and `file_ndcg` after the trimmed-record stub, whose larger stubs use more of the character-counted output budget. These falls block the merge until they are resolved or the owner accepts a new baseline.
+`definition_recall` rises in both variants and every file metric equals `baseline.json`.
+
+## Stop words
+
+The `code` profile selects `stopwords = "none"`. With the built-in English and French lists, "and" and "with" are dropped from questions such as "durable job repository with events and cancellation", and five file metrics fell below the baseline (lexical `file_mrr` 0.7007 and `file_ndcg` 0.739; lexical_structural `file_recall` 0.8261, `file_mrr` 0.6703 and `file_ndcg` 0.7061). Keeping those two words alone restores the lexical values; keeping every word restores all of them.
 
 ## Search time
 
-One search over the gold workspace takes about 3.0 s (median, maximum 5.4 s over the 46 searches of one run, both variants, read from each query run's `duration_ms`), measured on a developer laptop; before the query path rewrite it took about 12 s (median, maximum 21 s). This is information only; the query path gates it.
+One search over the gold workspace takes about 3.7 s (median, maximum 7.4 s over the 46 searches of one run, both variants, read from each query run's `duration_ms`), measured on a developer laptop; before the query path rewrite it took about 12 s (median, maximum 21 s). This is information only; the query path gates it.
