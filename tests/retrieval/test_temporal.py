@@ -2,15 +2,29 @@
 
 from datetime import date
 from hashlib import sha256
+from typing import Any, cast
 
 import pytest
 
-from tychora.contracts.identity import canonical_bytes
+from tests.helpers.eligibility import member_row, members_transaction
+from tests.typed_json import json_object, json_string
+from tychora.application.query import _edition_decisions
+from tychora.configuration.registry import Registry
+from tychora.configuration.resolve import resolve_config
+from tychora.contracts.errors import TychoraError
+from tychora.contracts.identity import canonical_bytes, digest
+from tychora.contracts.publication import SnapshotMember, SnapshotView
+from tychora.contracts.requests import QueryRequest, RequestScope
+from tychora.retrieval.compiler import EligibilityCompiler, EligibilityInputs
 from tychora.retrieval.selection import (
+    EditionDecision,
     RevisionFact,
     TemporalSelector,
     select_temporal_revisions,
 )
+
+_AS_OF = TemporalSelector(as_of=date(2023, 1, 1))
+_PERMISSIVE = TemporalSelector(as_of=date(2023, 1, 1), unknown_dates="permissive")
 
 
 def _revision(
@@ -21,9 +35,10 @@ def _revision(
     published: str | None = None,
     default: bool = False,
     edition: str = "1",
+    source: str = "source",
 ) -> RevisionFact:
     return RevisionFact(
-        source_id="source",
+        source_id=source,
         revision_id=name,
         extraction_id=name + "-extraction",
         collection_id="collection",
@@ -110,17 +125,6 @@ def test_explicit_revision_still_obeys_date_constraints():
 
 
 def test_compiled_attempt_exposes_overlap_warning(tmp_path):
-    from typing import Any, cast
-
-    from tests.helpers.eligibility import member_row, members_transaction
-    from tests.typed_json import json_object, json_string
-    from tychora.configuration.registry import Registry
-    from tychora.configuration.resolve import resolve_config
-    from tychora.contracts.identity import digest
-    from tychora.contracts.publication import SnapshotMember, SnapshotView
-    from tychora.contracts.requests import QueryRequest, RequestScope
-    from tychora.retrieval.compiler import EligibilityCompiler, EligibilityInputs
-
     workspace = tmp_path / "workspace.toml"
     workspace.write_text(
         'schema_version = 1\n[profiles.test]\nbuiltin = "documents@1"\n'
@@ -259,14 +263,13 @@ def test_undated_candidates_are_separate():
         TemporalSelector(as_of=date(2023, 1, 1), unknown_dates="permissive"),
     )
     assert result.selected == {"known", "unknown"}
-    assert result.undated == {"unknown"}
     assert [(d.reason, d.revision_ids) for d in result.decisions] == [
         ("undated", ("unknown",))
     ]
     strict = select_temporal_revisions(
         (known, unknown), TemporalSelector(as_of=date(2023, 1, 1))
     )
-    assert strict.selected == {"known"} and strict.undated == frozenset()
+    assert strict.selected == {"known"} and strict.decisions == ()
 
 
 def test_applicable_selector_lists_editions_in_force():
@@ -284,8 +287,6 @@ def test_applicable_selector_lists_editions_in_force():
 
 
 def test_applicable_selector_requires_as_of():
-    from tychora.contracts.errors import TychoraError
-
     with pytest.raises(TychoraError) as error:
         select_temporal_revisions(
             (_revision("a", start="2020-01-01"),),
@@ -295,10 +296,6 @@ def test_applicable_selector_requires_as_of():
 
 
 def test_edition_decisions_become_decision_requirements():
-    from tychora.application.query import _edition_decisions
-    from tychora.contracts.identity import digest
-    from tychora.retrieval.selection import EditionDecision
-
     decision = EditionDecision("overlap", "source", ("newer", "older"))
     (requirement,) = _edition_decisions((decision,))
     assert requirement.requirement_id == digest(
@@ -306,3 +303,198 @@ def test_edition_decisions_become_decision_requirements():
     )
     assert requirement.reason == "Overlapping retained editions for source source"
     assert requirement.revision_ids == ("newer", "older")
+
+
+def _decided(result):
+    return [(d.reason, d.revision_ids) for d in result.decisions]
+
+
+def test_provably_future_edition_is_neither_selected_nor_undated():
+    # The start proves it future; the missing publication date must not matter.
+    future = _revision("future", start="2025-01-01", edition="2")
+    current = _revision("current", start="2020-01-01", published="2020-01-01")
+    for selector in ("current", "applicable"):
+        result = select_temporal_revisions(
+            (future, current),
+            TemporalSelector(
+                selector=selector,
+                as_of=date(2023, 1, 1),
+                cutoff=date(2024, 1, 1),
+                unknown_dates="permissive",
+            ),
+        )
+        assert result.selected == {"current"}, selector
+        assert result.decisions == (), selector
+
+
+def test_provably_expired_or_late_edition_is_not_undated():
+    expired = _revision("expired", end="2022-01-01", edition="2")
+    late = _revision("late", published="2025-01-01", edition="3")
+    result = select_temporal_revisions(
+        (expired, late),
+        TemporalSelector(
+            as_of=date(2023, 1, 1), cutoff=date(2024, 1, 1), unknown_dates="permissive"
+        ),
+    )
+    assert result.selected == frozenset() and result.decisions == ()
+
+
+def test_tie_with_overlap_reports_both_decisions():
+    first = _revision("first", start="2022-01-01", edition="A")
+    second = _revision("second", start="2022-01-01", edition="A")
+    older = _revision("older", start="2020-01-01", end="2024-01-01", edition="1")
+    result = select_temporal_revisions((first, second, older), _AS_OF)
+    assert result.selected == {"first", "second"}
+    assert _decided(result) == [
+        ("tie", ("first", "second")),
+        ("overlap", ("first", "older", "second")),
+    ]
+
+
+def test_tie_boundaries():
+    cutoff = select_temporal_revisions(
+        (
+            _revision("a", published="2021-01-01"),
+            _revision("b", published="2021-01-01"),
+        ),
+        TemporalSelector(cutoff=date(2024, 1, 1)),
+    )
+    assert cutoff.selected == {"a", "b"}
+    assert _decided(cutoff) == [("tie", ("a", "b"))]
+    by_publication = select_temporal_revisions(
+        (
+            _revision("x", start="2022-01-01", published="2022-01-01"),
+            _revision("y", start="2022-01-01", published="2022-06-01"),
+        ),
+        _AS_OF,
+    )
+    assert by_publication.selected == {"y"} and by_publication.decisions == ()
+    by_key = select_temporal_revisions(
+        (
+            _revision("p", start="2022-01-01", published="2022-01-01", edition="1"),
+            _revision("q", start="2022-01-01", published="2022-01-01", edition="2"),
+        ),
+        _AS_OF,
+    )
+    assert by_key.selected == {"q"} and by_key.decisions == ()
+
+
+def test_overlap_boundaries():
+    newer = _revision("newer", start="2022-01-01", published="2022-01-01", edition="3")
+    ended = _revision("ended", start="2020-01-01", end="2022-01-01", edition="1")
+    adjacent = select_temporal_revisions(
+        (ended, newer), TemporalSelector(as_of=date(2022, 1, 1))
+    )
+    assert adjacent.selected == {"newer"} and adjacent.decisions == ()
+    declared = _revision(
+        "declared", start="2020-01-01", end="2024-01-01", published="2020-01-01"
+    )
+    cutoff = select_temporal_revisions(
+        (declared, newer), TemporalSelector(cutoff=date(2023, 1, 1))
+    )
+    assert cutoff.selected == {"newer"} and cutoff.decisions == ()
+    first = _revision("first", start="2019-01-01", end="2025-01-01", edition="1")
+    second = _revision("second", start="2020-01-01", end="2026-01-01", edition="2")
+    several = select_temporal_revisions((first, second, newer), _AS_OF)
+    assert several.selected == {"newer"}
+    assert _decided(several) == [("overlap", ("first", "newer", "second"))]
+
+
+def test_applicable_boundaries():
+    applicable = TemporalSelector(selector="applicable", as_of=date(2023, 1, 1))
+    older = _revision("older", start="2020-01-01", published="2020-01-01")
+    expired = _revision("expired", start="2019-01-01", end="2021-01-01", edition="0")
+    single = select_temporal_revisions((older, expired), applicable)
+    assert single.selected == {"older"} and single.decisions == ()
+    mid = _revision("mid", start="2021-01-01", published="2021-01-01", edition="2")
+    late = _revision("late", start="2022-01-01", published="2025-01-01", edition="3")
+    cutoff = select_temporal_revisions(
+        (older, mid, late),
+        TemporalSelector(
+            selector="applicable", as_of=date(2023, 1, 1), cutoff=date(2024, 1, 1)
+        ),
+    )
+    assert cutoff.selected == {"older", "mid"}
+    assert _decided(cutoff) == [("applicable", ("mid", "older"))]
+    unknown = _revision("unknown", edition="u")
+    permissive = select_temporal_revisions(
+        (older, mid, unknown),
+        TemporalSelector(
+            selector="applicable", as_of=date(2023, 1, 1), unknown_dates="permissive"
+        ),
+    )
+    assert permissive.selected == {"older", "mid", "unknown"}
+    assert _decided(permissive) == [
+        ("undated", ("unknown",)),
+        ("applicable", ("mid", "older")),
+    ]
+    explicit = select_temporal_revisions(
+        (older, mid),
+        TemporalSelector(
+            explicit_ids=("older", "mid"), selector="applicable", as_of=date(2023, 1, 1)
+        ),
+    )
+    assert explicit.selected == {"older", "mid"} and explicit.decisions == ()
+
+
+def test_undated_boundaries():
+    known = _revision("known", published="2020-01-01")
+    unpublished = _revision("unpublished", start="2021-01-01", edition="2")
+    cutoff = TemporalSelector(cutoff=date(2024, 1, 1))
+    strict = select_temporal_revisions((known, unpublished), cutoff)
+    assert strict.selected == {"known"} and strict.decisions == ()
+    loose = select_temporal_revisions(
+        (known, unpublished),
+        TemporalSelector(cutoff=date(2024, 1, 1), unknown_dates="permissive"),
+    )
+    assert loose.selected == {"known", "unpublished"}
+    assert _decided(loose) == [("undated", ("unpublished",))]
+    a, b = _revision("a"), _revision("b", edition="2")
+    assert select_temporal_revisions((a, b), _AS_OF).selected == frozenset()
+    every_undated = select_temporal_revisions((a, b), _PERMISSIVE)
+    assert every_undated.selected == {"a", "b"}
+    assert _decided(every_undated) == [("undated", ("a", "b"))]
+
+
+def test_explicit_and_all_report_undated_editions():
+    known = _revision("known", start="2022-01-01")
+    unknown = _revision("unknown", edition="2")
+    every = select_temporal_revisions(
+        (known, unknown),
+        TemporalSelector(
+            selector="all", as_of=date(2023, 1, 1), unknown_dates="permissive"
+        ),
+    )
+    assert every.selected == {"known", "unknown"}
+    assert _decided(every) == [("undated", ("unknown",))]
+    explicit = select_temporal_revisions(
+        (known, unknown),
+        TemporalSelector(
+            explicit_ids=("unknown",),
+            as_of=date(2023, 1, 1),
+            unknown_dates="permissive",
+        ),
+    )
+    assert explicit.selected == {"unknown"}
+    assert _decided(explicit) == [("undated", ("unknown",))]
+
+
+def test_decisions_are_ordered_by_source():
+    beta = (
+        _revision("b1", start="2022-01-01", edition="A", source="beta"),
+        _revision("b2", start="2022-01-01", edition="A", source="beta"),
+    )
+    alpha = (
+        _revision("a1", start="2020-01-01", end="2024-01-01", source="alpha"),
+        _revision("a2", start="2022-01-01", edition="2", source="alpha"),
+    )
+    result = select_temporal_revisions((*beta, *alpha), _AS_OF)
+    assert result.selected == {"a2", "b1", "b2"}
+    assert [(d.source_id, d.reason, d.revision_ids) for d in result.decisions] == [
+        ("alpha", "overlap", ("a1", "a2")),
+        ("beta", "tie", ("b1", "b2")),
+    ]
+    assert result.warnings == (
+        "Overlapping retained editions for source alpha",
+        "Retained editions tie for source beta",
+    )
