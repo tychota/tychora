@@ -42,7 +42,7 @@ from tychora.contracts.publication import (
 from tychora.contracts.requests import QueryRequest, RequestScope
 from tychora.contracts.snapshots import IndexFamily, SlotFamily
 from tychora.contracts.vectors import BatchReceipt
-from tychora.retrieval.compiler import EligibilityCompiler
+from tychora.retrieval.compiler import EligibilityCompiler, EligibilityInputs
 
 
 def test_vector_group_dependency_serialization_is_order_independent():
@@ -826,7 +826,7 @@ async def test_owner_runner_retries_after_canonical_withdrawal_and_releases_pin(
 
     from tests.runtime.test_upload_policy import prepared
     from tychora.ports.execution import ExecutionContext
-    from tychora.retrieval.attempt import run_pinned_eligibility
+    from tychora.retrieval.attempt import AttemptHost, run_pinned_eligibility
 
     with prepared(tmp_path) as (owner, scope):
         bundle = await _pin_synthetic(owner, monkeypatch)
@@ -855,14 +855,11 @@ async def test_owner_runner_retries_after_canonical_withdrawal_and_releases_pin(
             )
 
         result = await run_pinned_eligibility(
-            EligibilityCompiler(owner.store.registry, owner.artifacts),
-            "synthetic-pin",
-            scope,
-            _request("lookup"),
-            owner.config,
+            AttemptHost(
+                EligibilityCompiler(owner.store.registry, owner.artifacts), owner, ctx
+            ),
+            EligibilityInputs("synthetic-pin", scope, _request("lookup"), owner.config),
             operation,
-            owner=owner,
-            ctx=ctx,
         )
         assert result == "excluded"
         assert calls == ["withdraw"]
@@ -876,7 +873,7 @@ async def test_owner_runner_releases_pin_after_cancellation(tmp_path, monkeypatc
 
     from tests.runtime.test_upload_policy import prepared
     from tychora.ports.execution import ExecutionContext
-    from tychora.retrieval.attempt import run_pinned_eligibility
+    from tychora.retrieval.attempt import AttemptHost, run_pinned_eligibility
 
     with prepared(tmp_path) as (owner, scope):
         await _pin_synthetic(owner, monkeypatch)
@@ -889,14 +886,15 @@ async def test_owner_runner_releases_pin_after_cancellation(tmp_path, monkeypatc
 
         with pytest.raises(asyncio.CancelledError):
             await run_pinned_eligibility(
-                EligibilityCompiler(owner.store.registry, owner.artifacts),
-                "synthetic-pin",
-                scope,
-                _request("lookup"),
-                owner.config,
+                AttemptHost(
+                    EligibilityCompiler(owner.store.registry, owner.artifacts),
+                    owner,
+                    ctx,
+                ),
+                EligibilityInputs(
+                    "synthetic-pin", scope, _request("lookup"), owner.config
+                ),
                 operation,
-                owner=owner,
-                ctx=ctx,
             )
         assert not owner.store.leases.is_pinned("synthetic-pin")
 
@@ -906,7 +904,7 @@ async def test_owner_provider_denied_grant_never_dispatches(tmp_path, monkeypatc
 
     from tests.runtime.test_upload_policy import prepared
     from tychora.ports.execution import ExecutionContext
-    from tychora.retrieval.attempt import run_pinned_eligibility
+    from tychora.retrieval.attempt import AttemptHost, run_pinned_eligibility
 
     with prepared(tmp_path) as (owner, scope):
         bundle = await _pin_synthetic(owner, monkeypatch)
@@ -928,14 +926,15 @@ async def test_owner_provider_denied_grant_never_dispatches(tmp_path, monkeypatc
 
         with pytest.raises(TychoraError) as error:
             await run_pinned_eligibility(
-                EligibilityCompiler(owner.store.registry, owner.artifacts),
-                "synthetic-pin",
-                denied_scope,
-                _request("lookup"),
-                owner.config,
+                AttemptHost(
+                    EligibilityCompiler(owner.store.registry, owner.artifacts),
+                    owner,
+                    ctx,
+                ),
+                EligibilityInputs(
+                    "synthetic-pin", denied_scope, _request("lookup"), owner.config
+                ),
                 operation,
-                owner=owner,
-                ctx=ctx,
             )
         assert error.value.code == "FORBIDDEN_SCOPE"
         assert invoked == []
@@ -978,7 +977,7 @@ def _bump_epoch(owner, bundle):
 async def test_second_epoch_change_returns_scope_changed(tmp_path, monkeypatch):
     from tests.runtime.test_upload_policy import prepared
     from tychora.ports.execution import ExecutionContext
-    from tychora.retrieval.attempt import run_pinned_eligibility
+    from tychora.retrieval.attempt import AttemptHost, run_pinned_eligibility
 
     with prepared(tmp_path) as (owner, scope):
         bundle = await _pin_synthetic(owner, monkeypatch)
@@ -996,14 +995,15 @@ async def test_second_epoch_change_returns_scope_changed(tmp_path, monkeypatch):
 
         with pytest.raises(TychoraError) as error:
             await run_pinned_eligibility(
-                EligibilityCompiler(owner.store.registry, owner.artifacts),
-                "synthetic-pin",
-                scope,
-                _request("lookup"),
-                owner.config,
+                AttemptHost(
+                    EligibilityCompiler(owner.store.registry, owner.artifacts),
+                    owner,
+                    ctx,
+                ),
+                EligibilityInputs(
+                    "synthetic-pin", scope, _request("lookup"), owner.config
+                ),
                 operation,
-                owner=owner,
-                ctx=ctx,
             )
         assert error.value.code == "SCOPE_CHANGED"
         assert error.value.reason == "policy.epoch_changed"

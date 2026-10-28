@@ -1022,7 +1022,7 @@ def test_historical_role_comes_from_validated_selected_attempt(tmp_path):
     from tychora.contracts.errors import TychoraError
     from tychora.contracts.identity import canonical_bytes, digest
     from tychora.contracts.requests import RequestScope
-    from tychora.retrieval.compiler import EligibilityCompiler
+    from tychora.retrieval.compiler import EligibilityCompiler, EligibilityInputs
 
     base = config(tmp_path)
     registry_data = json.loads(canonical_bytes(base.registry))
@@ -1066,7 +1066,7 @@ def test_historical_role_comes_from_validated_selected_attempt(tmp_path):
     snapshot = _snapshot(cfg, chunks=())
     compiler = EligibilityCompiler(Registry.from_config(cfg), cast(Any, None))
     compiler.mark_compatible(snapshot, cfg, cfg)
-    attempt = compiler.compile(tx, snapshot, scope, _request(), cfg)
+    attempt = compiler.compile(tx, EligibilityInputs(snapshot, scope, _request(), cfg))
     assert attempt.historical_kind_roles == {"manual@0": original_role}
     assert (
         attempt.historical_kind_envelopes["manual@0"]["envelope_digest"]

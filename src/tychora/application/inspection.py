@@ -46,7 +46,7 @@ from tychora.retrieval.attempt import (
     readable_units,
     require_epoch,
 )
-from tychora.retrieval.compiler import EligibilityCompiler
+from tychora.retrieval.compiler import EligibilityCompiler, EligibilityInputs
 from tychora.retrieval.graph_scope import graph_scope
 
 if TYPE_CHECKING:
@@ -131,10 +131,7 @@ class InspectionService:
         )
         return self.compiler.compile(
             tx,
-            snapshot,
-            scope,
-            query,
-            self.owner.config,
+            EligibilityInputs(snapshot, scope, query, self.owner.config),
             members=members,
             include_archived=include_archived,
         ).view

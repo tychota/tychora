@@ -49,8 +49,12 @@ from tychora.contracts.requests import (
     RequestScope,
     canonical_scope_projection,
 )
-from tychora.retrieval.compiler import filter_matches
-from tychora.retrieval.selection import RevisionFact, select_temporal_revisions
+from tychora.retrieval.compiler import FacetSubject, filter_matches
+from tychora.retrieval.selection import (
+    RevisionFact,
+    TemporalSelector,
+    select_temporal_revisions,
+)
 
 if TYPE_CHECKING:
     from tychora.adapters.sqlite.corpus import CorpusStore
@@ -343,12 +347,7 @@ class OracleCompiler:
             if registry.lane_bindings.get(item.kind_id) in allowed_lanes
         )
         temporal, warnings = select_temporal_revisions(
-            revisions,
-            explicit_ids=request.revision_ids,
-            selector=request.revision_selector,
-            as_of=request.as_of,
-            cutoff=request.cutoff,
-            unknown_dates=request.unknown_dates,
+            revisions, TemporalSelector.of(request)
         )
         revision_ids = temporal
         revisions_by_id = {item.revision_id: item for item in facts.revisions}
@@ -380,10 +379,12 @@ class OracleCompiler:
                 or filter_matches(
                     selected_filter.all_units,
                     registry,
-                    revision_facets.get(item.revision_id, {}),
-                    dict(item.facets),
-                    include_global=request.include_global,
-                    global_facets=revisions_by_id[item.revision_id].global_facets,
+                    FacetSubject(
+                        revision_facets.get(item.revision_id, {}),
+                        dict(item.facets),
+                        request.include_global,
+                        revisions_by_id[item.revision_id].global_facets,
+                    ),
                 )
             )
         )
@@ -409,10 +410,12 @@ class OracleCompiler:
                 or filter_matches(
                     selected_filter.matched_candidates,
                     registry,
-                    revision_facets.get(item.revision_id, {}),
-                    dict(item.facets),
-                    include_global=request.include_global,
-                    global_facets=revisions_by_id[item.revision_id].global_facets,
+                    FacetSubject(
+                        revision_facets.get(item.revision_id, {}),
+                        dict(item.facets),
+                        request.include_global,
+                        revisions_by_id[item.revision_id].global_facets,
+                    ),
                 )
             )
 
