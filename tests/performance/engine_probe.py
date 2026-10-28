@@ -311,10 +311,19 @@ class EngineSession:
             query: str,
             limit: int,
             ctx: ExecutionContext,
+            *,
+            stopwords: frozenset[str] = frozenset(),
         ) -> RankedOwners:
             self._bump(retrieval_calls=1)
             return self._time(
-                "lexical_search", lexical_search, search, view, query, limit, ctx
+                "lexical_search",
+                lexical_search,
+                search,
+                view,
+                query,
+                limit,
+                ctx,
+                stopwords=stopwords,
             )
 
         def measured_vector(
