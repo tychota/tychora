@@ -204,3 +204,29 @@ async def test_reads_run_concurrently_with_a_long_write(owner):
     finally:
         release.set()
         await write
+
+
+@pytest.mark.asyncio
+async def test_a_transaction_left_open_on_a_pool_connection_is_rolled_back(owner):
+    database = owner.path / "corpus.sqlite3"
+    owner._reads.close()
+    owner._reads = ReadPool(lambda: open_read_connection(database), workers=1)
+
+    def leave_open():
+        db = owner._reads.connection()
+        db.execute("BEGIN")
+        # The first read fixes the transaction's WAL snapshot.
+        return db.execute("SELECT policy_epoch FROM workspaces").fetchone()[0]
+
+    stale = owner._reads.submit(leave_open).result(5)
+    await owner.run_write(lambda: _bump(owner), ExecutionContext())
+
+    def read(tx):
+        return tx.workspace.policy_epoch()
+
+    # The same (only) pool thread serves the read: it must not join the stale
+    # transaction, so it sees the writer's commit.
+    assert await owner.run_read(read, ExecutionContext()) == stale + 1
+    assert not owner._reads.submit(
+        lambda: owner._reads.connection().in_transaction
+    ).result(5)
