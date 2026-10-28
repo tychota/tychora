@@ -79,6 +79,8 @@ class OracleView(Contract):
     asset_ids: frozenset[Identifier]
     vector_record_ids: frozenset[Identifier]
     blocked_assertion_ids: frozenset[Sha256]
+    # Selected revisions whose every unit the all-units filter rejects.
+    filter_excluded_revision_ids: frozenset[Identifier] = frozenset()
     graph_generation_id: Identifier | None = None
     graph_family_id: Sha256 | None = None
     graph_config_sha: Sha256 | None = None
@@ -364,16 +366,9 @@ class OracleCompiler:
         revision_facets: dict[str, dict[str, object]] = {}
         for revision_id, key, value in facts.revision_facets:
             revision_facets.setdefault(revision_id, {})[key] = value
-        permitted_units = frozenset(
-            uid
-            for uid, item in units.items()
-            if (
-                item.review_state in proxy_reviews
-                if item.proxy_asset_id is not None
-                else item.review_state in original_reviews
-            )
-            and (item.proxy_asset_id is None or proxy_policy != "disabled")
-            and (
+
+        def passes_all_units(item: UnitFact) -> bool:
+            return (
                 selected_filter is None
                 or selected_filter.all_units is None
                 or filter_matches(
@@ -387,6 +382,20 @@ class OracleCompiler:
                     ),
                 )
             )
+
+        filter_failed_units = frozenset(
+            uid for uid, item in units.items() if not passes_all_units(item)
+        )
+        permitted_units = frozenset(
+            uid
+            for uid, item in units.items()
+            if (
+                item.review_state in proxy_reviews
+                if item.proxy_asset_id is not None
+                else item.review_state in original_reviews
+            )
+            and (item.proxy_asset_id is None or proxy_policy != "disabled")
+            and uid not in filter_failed_units
         )
         permitted_assets = frozenset(
             aid for aid, item in assets.items() if item.review_state in original_reviews
@@ -536,6 +545,12 @@ class OracleCompiler:
             asset_ids=eligible_assets,
             vector_record_ids=eligible_vectors,
             blocked_assertion_ids=blocked,
+            filter_excluded_revision_ids=frozenset(
+                revision
+                for revision in revision_ids
+                if (owned := {u for u, i in units.items() if i.revision_id == revision})
+                and owned <= filter_failed_units
+            ),
             **graph_kwargs,
         )
         return view, warnings
