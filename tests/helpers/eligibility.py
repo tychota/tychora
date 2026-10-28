@@ -1,52 +1,18 @@
 """Complete synthetic eligibility views and attempts for retrieval unit tests."""
 
 from collections.abc import Mapping
-from dataclasses import replace
 from types import MappingProxyType, SimpleNamespace
+from typing import cast
 
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.eligibility import EligibilityView, RevisionGrant
-from tychora.contracts.graph import LegacyEligibilityView
-from tychora.contracts.identity import digest
+from tychora.contracts.graph import GraphBatchReceipt, GraphScope
+from tychora.contracts.identity import JsonValue, canonical_bytes, digest
 from tychora.contracts.publication import SnapshotView
 from tychora.ports.execution import ExecutionContext
+from tychora.ports.repositories import MemberRow
 from tychora.retrieval.attempt import AttemptOwner, EligibilityAttempt
 from tychora.retrieval.compiler import CompiledEligibility
-
-
-def eligibility_view(
-    *,
-    revision_ids: frozenset[str] = frozenset(),
-    context_unit_ids: frozenset[str] = frozenset(),
-    structural_unit_ids: frozenset[str] = frozenset(),
-    chunk_ids: frozenset[str] = frozenset(),
-    graph_generation_id: str | None = None,
-) -> LegacyEligibilityView:
-    graph_bound = graph_generation_id is not None
-    return LegacyEligibilityView(
-        snapshot_id="synthetic-snapshot",
-        policy_epoch=0,
-        scope_digest=digest("synthetic-scope"),
-        eligibility_policy_digest=digest("synthetic-policy"),
-        eligibility_request_digest=digest("synthetic-request"),
-        selected_batch_ids=(graph_generation_id,) if graph_bound else (),
-        revision_ids=revision_ids,
-        source_unit_ids=frozenset(),
-        context_unit_ids=context_unit_ids,
-        structural_unit_ids=structural_unit_ids,
-        proxy_unit_ids=frozenset(),
-        chunk_ids=chunk_ids,
-        asset_ids=frozenset(),
-        vector_record_ids=frozenset(),
-        blocked_assertion_ids=frozenset(),
-        graph_generation_id=graph_generation_id,
-        graph_family_id=digest("synthetic-graph-family") if graph_bound else None,
-        graph_config_sha=digest("synthetic-graph-config") if graph_bound else None,
-        graph_decision_watermark=0 if graph_bound else None,
-        graph_manifest_digest=digest("synthetic-graph-manifest")
-        if graph_bound
-        else None,
-    )
 
 
 def revision_view(
@@ -114,45 +80,110 @@ def revision_attempt(
     )
 
 
-def legacy_attempt(
-    view: LegacyEligibilityView,
-    *,
-    dependencies: Mapping[str, frozenset[str]] | None = None,
-    historical_kind_envelopes: Mapping[str, FrozenJsonMap] | None = None,
-    owner: AttemptOwner | None = None,
-    ctx: ExecutionContext | None = None,
-    grants: Mapping[str, str] | None = None,
-) -> EligibilityAttempt:
-    """An attempt whose legacy readers see ``view``.
-
-    Its revision-level view carries ``view``'s snapshot, epoch and digests, so
-    epoch rechecks compare against the same policy epoch, and grants each
-    ``revision -> extraction`` pair of ``grants`` (none by default).
-    """
-    revisions = EligibilityView(
-        snapshot_id=view.snapshot_id,
-        policy_epoch=view.policy_epoch,
-        scope_digest=view.scope_digest,
-        eligibility_policy_digest=view.eligibility_policy_digest,
-        eligibility_request_digest=view.eligibility_request_digest,
-        revisions=revision_view(grants or {}).revisions,
-    )
-    return replace(
-        revision_attempt(
-            revisions,
-            historical_kind_envelopes=historical_kind_envelopes,
-            owner=owner,
-            ctx=ctx,
-        ),
-        legacy=view,
-        legacy_dependencies=MappingProxyType(dict(dependencies or {})),
-    )
-
-
 def sets_transaction(sets: Mapping[str, frozenset[str]]) -> SimpleNamespace:
     """A read transaction double whose representations know only these persisted sets."""
     return SimpleNamespace(
         representations=SimpleNamespace(
             dependencies=lambda ids: {i: sets[i] for i in ids if i in sets}
         )
+    )
+
+
+def member_row(revision_id: str, definition_hash: str, **changes) -> MemberRow:
+    """An accepted, readable ``manual@1`` member of ``collection`` in ``workspace``."""
+    row = MemberRow(
+        source_id="source",
+        revision_id=revision_id,
+        extraction_id=revision_id + "-extraction",
+        is_default=True,
+        kind_id="manual@1",
+        definition_hash=definition_hash,
+        collection_id="collection",
+        collection_policy_json='{"schema_version":1,"upload_providers":[]}',
+        collection_floor=0,
+        source_floor=0,
+        withdrawn=False,
+        allowed_uses_override=None,
+        access_rank=0,
+        allowed_uses_json='["audit"]',
+        review_state="accepted",
+        published_on=None,
+        effective_from=None,
+        effective_until=None,
+        edition_key=revision_id,
+        workspace_id="workspace",
+    )
+    return row._replace(**changes)
+
+
+def members_transaction(
+    rows: tuple[MemberRow, ...], envelopes: Mapping[str, Mapping[str, object]]
+) -> SimpleNamespace:
+    """A read transaction double serving members and kind envelopes, with no reviews."""
+
+    def members(snapshot_id: str, extraction_ids: tuple[str, ...] = ()):
+        return tuple(
+            row
+            for row in rows
+            if not extraction_ids or row.extraction_id in extraction_ids
+        )
+
+    def kind_definitions(kind_ids: tuple[str, ...]):
+        return tuple(
+            (
+                kind,
+                str(envelopes[kind]["envelope_digest"]),
+                canonical_bytes(cast(JsonValue, envelopes[kind])).decode(),
+            )
+            for kind in kind_ids
+        )
+
+    return SimpleNamespace(
+        workspace=SimpleNamespace(policy_epoch=lambda: 0),
+        eligibility=SimpleNamespace(
+            members=members,
+            kind_definitions=kind_definitions,
+            review_rows=lambda extractions, states: (),
+            dependents=lambda owner_ids: {},
+            batches=lambda snapshot_id: (),
+        ),
+    )
+
+
+def synthetic_graph_scope(
+    *,
+    source=(),
+    context=(),
+    structural=(),
+    blocked=(),
+    revisions=("revision",),
+    generation_id: str = "generation",
+    family_id: str | None = None,
+    config_sha: str | None = None,
+    decision_watermark: int = 0,
+    manifest_digest: str | None = None,
+) -> GraphScope:
+    """A graph scope over one pinned generation; ``source`` defaults to none."""
+    return GraphScope(
+        snapshot_id="snapshot",
+        policy_epoch=0,
+        scope_digest=digest("scope"),
+        eligibility_policy_digest=digest("policy"),
+        eligibility_request_digest=digest("request"),
+        receipt=GraphBatchReceipt(
+            generation_id=generation_id,
+            family_id=family_id or digest("family"),
+            config_sha=config_sha or digest("config"),
+            decision_watermark=decision_watermark,
+            manifest_digest=manifest_digest or digest("manifest"),
+            entity_count=0,
+            evidence_count=0,
+            assertion_count=0,
+        ),
+        revision_ids=frozenset(revisions),
+        selected_batch_ids=(generation_id,),
+        source_unit_ids=frozenset(source),
+        context_unit_ids=frozenset(context),
+        structural_unit_ids=frozenset(structural),
+        blocked_assertion_ids=frozenset(blocked),
     )

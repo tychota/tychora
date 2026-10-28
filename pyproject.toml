@@ -188,7 +188,6 @@ ignore_imports = [
   "tychora.adapters.docling.pdf_batches -> tychora.application.runtime",  # tychora/adapters/docling/pdf_batches.py:196
   "tychora.adapters.files.url_acquisition -> tychora.application.runtime",  # tychora/adapters/files/url_acquisition.py:13
   "tychora.adapters.sqlite.corpus -> tychora.application.leases",  # tychora/adapters/sqlite/corpus.py:9
-  "tychora.adapters.sqlite.eligibility -> tychora.retrieval.eligibility",  # tychora/adapters/sqlite/eligibility.py:40
   "tychora.adapters.sqlite.evaluations -> tychora.evaluation.dataset",  # tychora/adapters/sqlite/evaluations.py:14
   "tychora.adapters.sqlite.history -> tychora.retrieval.response",  # tychora/adapters/sqlite/history.py:23
   "tychora.adapters.sqlite.lexical -> tychora.retrieval.lexical_query",  # tychora/adapters/sqlite/lexical.py:13
@@ -302,8 +301,8 @@ only_mutate = [
   "src/tychora/contracts/identity.py",
   "src/tychora/contracts/publication.py",
   "src/tychora/adapters/sqlite/publication.py",
-  "src/tychora/retrieval/eligibility.py",
-  "src/tychora/adapters/sqlite/eligibility.py",
+  "src/tychora/retrieval/compiler.py",
+  "src/tychora/retrieval/selection.py",
   "src/tychora/retrieval/lexical_query.py",
   "src/tychora/adapters/sqlite/lexical.py",
   "src/tychora/retrieval/fusion.py",

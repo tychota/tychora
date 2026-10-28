@@ -25,8 +25,6 @@ class RevisionFact:
     effective_until: str | None
     is_default: bool
     kind_allowed_uses: frozenset[str] | None = None
-    global_facets: frozenset[str] = frozenset()
-    collection_archived: bool = False
 
 
 def _parsed_date(value: str | None) -> date | None:

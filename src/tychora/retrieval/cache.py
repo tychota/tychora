@@ -12,6 +12,7 @@ from threading import RLock
 from typing import Protocol
 
 from tychora.contracts.errors import TychoraError
+from tychora.contracts.graph import GraphScope
 from tychora.retrieval.compiler import (
     CompiledEligibility,
     EligibilityKey,
@@ -153,6 +154,7 @@ class EligibilityCache:
     def __init__(self, capacity: int = ELIGIBILITY_CACHE_SIZE) -> None:
         self._capacity = capacity
         self._entries: OrderedDict[EligibilityKey, CompiledEligibility] = OrderedDict()
+        self._graphs: OrderedDict[EligibilityKey, GraphScope | None] = OrderedDict()
         self._lock = RLock()
 
     def get_or_compile(
@@ -178,9 +180,25 @@ class EligibilityCache:
                 self._entries.popitem(last=False)
         return entry
 
+    def graph_scope(
+        self, key: EligibilityKey, build: Callable[[], GraphScope | None]
+    ) -> GraphScope | None:
+        """The graph scope of a cached view's key, built once."""
+        with self._lock:
+            if key in self._graphs:
+                self._graphs.move_to_end(key)
+                return self._graphs[key]
+        scope = build()
+        with self._lock:
+            self._graphs[key] = scope
+            while len(self._graphs) > self._capacity:
+                self._graphs.popitem(last=False)
+        return scope
+
     def purge(self) -> int:
         """Drop every entry; return how many there were."""
         with self._lock:
             count = len(self._entries)
             self._entries.clear()
+            self._graphs.clear()
             return count

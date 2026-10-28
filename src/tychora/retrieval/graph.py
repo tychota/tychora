@@ -7,7 +7,7 @@ from tychora.contracts.graph import (
     GraphBudget,
     GraphCandidate,
     GraphCandidates,
-    LegacyEligibilityView,
+    GraphScope,
 )
 from tychora.ports.execution import ExecutionContext
 from tychora.ports.graph import GraphStore
@@ -33,7 +33,7 @@ def _merge(previous: GraphCandidate, addition: GraphCandidate) -> GraphCandidate
 
 
 def augment(
-    view: LegacyEligibilityView,
+    view: GraphScope,
     fused: Sequence[FusedCandidate],
     config: ResolvedConfig,
     graph: GraphStore,
@@ -42,9 +42,7 @@ def augment(
 ) -> GraphCandidates:
     """Use one fixed seed list, budget and target set across strategies and replay."""
     settings = config.values.retrieval.graph
-    if view.graph_generation_id is None or not (
-        settings.semantic or settings.structural == "code_context@1"
-    ):
+    if not (settings.semantic or settings.structural == "code_context@1"):
         return GraphCandidates()
     limits = config.values.limits
     seeds = tuple(

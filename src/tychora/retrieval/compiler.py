@@ -22,7 +22,7 @@ from tychora.configuration.registry import Registry, ScopedFilter, compile_filte
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.eligibility import EligibilityView, GraphBinding, RevisionGrant
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.graph import GraphBatchReceipt, LegacyEligibilityView
+from tychora.contracts.graph import GraphBatchReceipt
 from tychora.contracts.identity import JsonValue, digest
 from tychora.contracts.publication import SnapshotMember, SnapshotView
 from tychora.contracts.requests import (
@@ -57,8 +57,8 @@ class EligibilityKey(NamedTuple):
     request_digest: str
 
 
-def eligible_cache_key(view: EligibilityView | LegacyEligibilityView) -> EligibilityKey:
-    """The key a compiled view answers; a legacy view carries the same five fields."""
+def eligible_cache_key(view: EligibilityView) -> EligibilityKey:
+    """The key a compiled view answers."""
     return EligibilityKey(
         view.snapshot_id,
         view.policy_epoch,

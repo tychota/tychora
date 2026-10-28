@@ -6,7 +6,7 @@ import asyncio
 import json
 import struct
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, cast
@@ -22,6 +22,7 @@ from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.candidates import ChannelCandidate
 from tychora.contracts.corpus import AssetRow
+from tychora.contracts.eligibility import EligibilityView
 from tychora.contracts.embeddings import (
     EmbeddingCapabilities,
     RegisteredImageQuery,
@@ -38,7 +39,7 @@ from tychora.contracts.evidence import (
     StructuredRecord,
     VisualEvidence,
 )
-from tychora.contracts.graph import GraphCandidates
+from tychora.contracts.graph import GraphCandidates, GraphPath, GraphScope
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.indexing import FamilySpec
 from tychora.contracts.publication import SnapshotView
@@ -53,15 +54,21 @@ from tychora.contracts.requirements import ResponseRequirement, active_requireme
 from tychora.formatting.render import OutputProfile
 from tychora.ports.execution import ExecutionContext
 from tychora.ports.query import TextQueryProvider, VisualQueryProvider
+from tychora.ports.repositories import ReadTransaction
 from tychora.ports.tokens import TokenCounter
 from tychora.ports.vectors import VectorIndex
 from tychora.retrieval.admission import LanePolicy, admit
-from tychora.retrieval.attempt import EligibilityAttempt, run_pinned_eligibility
+from tychora.retrieval.attempt import (
+    EligibilityAttempt,
+    is_eligible_asset,
+    is_eligible_unit,
+    run_pinned_eligibility,
+)
 from tychora.retrieval.cache import QueryCaches
-from tychora.retrieval.compiler import EligibilityCompiler
-from tychora.retrieval.eligibility import LegacyEligibilityCompiler
-from tychora.retrieval.fusion import fuse
+from tychora.retrieval.compiler import EligibilityCompiler, eligible_cache_key
+from tychora.retrieval.fusion import FusedCandidate, fuse
 from tychora.retrieval.graph import augment
+from tychora.retrieval.graph_scope import graph_scope
 from tychora.retrieval.lexical_query import retrieve_exact_lexical
 from tychora.retrieval.query import result_cache_key, validate_query_text
 from tychora.retrieval.rerank import (
@@ -209,7 +216,6 @@ class QueryService:
         self.owner = owner
         self.registry = owner.store.registry
         self.compiler = EligibilityCompiler(self.registry, owner.artifacts)
-        self.legacy_compiler = LegacyEligibilityCompiler(owner.store)
         self.graph = graph
         self.text_provider = text_provider
         self.text_index = text_index
@@ -593,8 +599,11 @@ class QueryService:
                 self.caches.put_result(key, prepared)
                 lexical_epoch = actual_epoch
                 cache_hit = False
+            eligible = await self.owner.run_read(
+                lambda tx: _delivered_eligibility(tx, attempt.view, prepared), ctx
+            )
             delivered = self._deliver(
-                request, granted, attempt, requirements, mode, prepared
+                request, granted, attempt, requirements, mode, prepared, eligible
             )
             metrics = RunMetrics(
                 policy_epoch=attempt.view.policy_epoch,
@@ -636,7 +645,6 @@ class QueryService:
 
         return await run_pinned_eligibility(
             self.compiler,
-            self.legacy_compiler,
             None,
             granted,
             request,
@@ -655,7 +663,6 @@ class QueryService:
         mode: FrozenJsonMap,
         ctx: ExecutionContext,
     ) -> tuple[_PreparedResult, int]:
-        view = attempt.require_legacy()
         plan = self.execution_plan
         if plan is not None and plan.text and not _needs_text(request):
             raise TychoraError(
@@ -755,37 +762,13 @@ class QueryService:
                 truncated.append(channel)
             completed.append(channel)
         fused = fuse(votes)
-        graph_candidates = GraphCandidates()
         graph = self.graph
-        if (
-            not request.exact_only
-            and graph is not None
-            and (plan is None or plan.graph_strategies)
-        ):
-            if plan is not None and view.graph_generation_id is None:
-                raise TychoraError(
-                    "CAPABILITY_MISSING", "Pinned graph generation is unavailable"
-                )
-            graph_candidates = await self.owner.run_write(
-                lambda: augment(
-                    view,
-                    fused,
-                    self.owner.config,
-                    graph,
-                    ctx,
-                    plan.graph_strategies if plan is not None else None,
-                ),
-                ctx,
-                "interactive",
-            )
-            graph_votes = tuple(
-                ChannelCandidate(key=("unit", item.unit_id), rank=rank)
-                for rank, item in enumerate(graph_candidates.candidates, 1)
-                if item.unit_id in view.source_unit_ids
-            )
-            if graph_votes:
-                votes["graph"] = graph_votes
-                fused = fuse(votes)
+        graph_view, graph_candidates, graph_votes = await self._augment_graph(
+            request, attempt, fused, ctx
+        )
+        if graph_votes:
+            votes["graph"] = graph_votes
+            fused = fuse(votes)
         survivors = await self.owner.run_read(
             lambda tx: load_survivors(tx, attempt.view, fused), ctx
         )
@@ -874,43 +857,13 @@ class QueryService:
                     unavailable=self.rerank_unavailable,
                 ),
             )
-        relations = []
-        seen_paths = set()
-        eligible = view.graph_eligible_unit_ids
-        for path in paths:
-            if (
-                not {path.source_unit_id, path.target_unit_id} <= eligible
-                or not path.required_support_ids <= eligible
-                or set(path.assertion_ids) & view.blocked_assertion_ids
-                or path.status not in {"recorded", "confirmed"}
-            ):
-                raise TychoraError(
-                    "INTEGRITY_ERROR", "Graph expansion returned an ineligible path"
-                )
-            key = (path.assertion_ids, path.source_unit_id, path.target_unit_id)
-            if key in seen_paths:
-                continue
-            seen_paths.add(key)
-            relations.append(
-                RelationPath(
-                    unit_ids=(path.source_unit_id, path.target_unit_id),
-                    assertion_ids=path.assertion_ids,
-                    predicates=(path.predicate,),
-                    support_unit_ids=path.required_support_ids,
-                    provenance=FrozenJsonMap(
-                        {
-                            "status": path.status,
-                            "confidence": path.confidence,
-                        }
-                    ),
-                )
-            )
+        relations = _graph_relations(paths, graph_view)
         selection = assemble_segments(
             ranked,
             attempt.view,
             self.owner.config,
             self.counter,
-            graph_view=attempt.legacy,
+            graph_view=graph_view,
             continuation_paths=paths,
             historical_kind_roles=attempt.historical_kind_roles,
             total_tokens=request.budgets.max_tokens,
@@ -934,7 +887,7 @@ class QueryService:
             checks = await self.owner.run_write(
                 lambda: inspect_relations(
                     graph,
-                    view,
+                    graph_view,
                     tuple(
                         dict.fromkeys(
                             uid
@@ -1082,23 +1035,90 @@ class QueryService:
             index, attempt, vector.values, ctx, visual_candidates
         )
 
+    async def _augment_graph(
+        self,
+        request: QueryRequest,
+        attempt: EligibilityAttempt,
+        fused: Sequence[FusedCandidate],
+        ctx: ExecutionContext,
+    ) -> tuple[GraphScope | None, GraphCandidates, tuple[ChannelCandidate, ...]]:
+        """The graph scope, candidates and source votes, when a graph channel runs."""
+        graph, plan = self.graph, self.execution_plan
+        if (
+            request.exact_only
+            or graph is None
+            or (plan is not None and not plan.graph_strategies)
+        ):
+            return None, GraphCandidates(), ()
+        scoped = await self._graph_scope(attempt, ctx)
+        if scoped is None:
+            if plan is not None:
+                raise TychoraError(
+                    "CAPABILITY_MISSING",
+                    "Pinned graph generation is unavailable",
+                    reason="graph.disabled",
+                )
+            return None, GraphCandidates(), ()
+        candidates = await self.owner.run_write(
+            lambda: augment(
+                scoped,
+                fused,
+                self.owner.config,
+                graph,
+                ctx,
+                plan.graph_strategies if plan is not None else None,
+            ),
+            ctx,
+            "interactive",
+        )
+        votes = tuple(
+            ChannelCandidate(key=("unit", item.unit_id), rank=rank)
+            for rank, item in enumerate(candidates.candidates, 1)
+            if item.unit_id in scoped.source_unit_ids
+        )
+        return scoped, candidates, votes
+
+    async def _graph_scope(
+        self, attempt: EligibilityAttempt, ctx: ExecutionContext
+    ) -> GraphScope | None:
+        """The attempt's graph scope, derived once per cached view."""
+        key = eligible_cache_key(attempt.view)
+        return await self.owner.run_read(
+            lambda tx: self.owner.eligibility_cache.graph_scope(
+                key, lambda: graph_scope(tx, attempt.view)
+            ),
+            ctx,
+        )
+
     def _registered_image_query(
         self, asset_id: str, attempt: EligibilityAttempt
     ) -> RegisteredImageQuery:
-        view = attempt.require_legacy()
-        if asset_id not in view.asset_ids:
-            raise TychoraError("FORBIDDEN_SCOPE", "Image query asset is not eligible.")
-        row = self.owner.db.execute(
-            "SELECT a.asset_id,a.extraction_id,a.artifact_sha,a.asset_type,a.native_ref,"
-            "a.locator_json,a.caption,a.declared_review_state,e.revision_id,"
-            "p.size_bytes,p.media_type,p.storage_key,p.payload_state "
-            "FROM assets a JOIN extractions e USING(extraction_id) "
-            "JOIN artifacts p ON p.artifact_sha=a.artifact_sha WHERE a.asset_id=?",
-            (asset_id,),
-        ).fetchone()
-        if row is None or row[12] != "present" or row[11] != row[2]:
-            raise TychoraError(
-                "ORIGINAL_REMOVED", "Image query original is unavailable."
+        view = attempt.view
+        with self.owner.store.uow.read() as tx:
+            _require_image_asset(tx, view, asset_id)
+            row = self.owner.db.execute(
+                "SELECT a.asset_id,a.extraction_id,a.artifact_sha,a.asset_type,a.native_ref,"
+                "a.locator_json,a.caption,a.declared_review_state,e.revision_id,"
+                "p.size_bytes,p.media_type,p.storage_key,p.payload_state "
+                "FROM assets a JOIN extractions e USING(extraction_id) "
+                "JOIN artifacts p ON p.artifact_sha=a.artifact_sha WHERE a.asset_id=?",
+                (asset_id,),
+            ).fetchone()
+            if row is None or row[12] != "present" or row[11] != row[2]:
+                raise TychoraError(
+                    "ORIGINAL_REMOVED", "Image query original is unavailable."
+                )
+            source_rows = self.owner.db.execute(
+                "SELECT u.unit_id FROM unit_assets ua JOIN evidence_units u USING(unit_id) "
+                "WHERE ua.asset_id=? AND ua.role='source' ORDER BY u.unit_id LIMIT 2049",
+                (asset_id,),
+            ).fetchall()
+            if not source_rows or len(source_rows) > 2048:
+                raise TychoraError(
+                    "INTEGRITY_ERROR", "Image query source links are invalid."
+                )
+            _require_image_sources(
+                tx, view, row[8], tuple(item[0] for item in source_rows)
             )
         asset = AssetRow.model_validate(
             {
@@ -1112,28 +1132,7 @@ class QueryService:
                 "declared_review_state": row[7],
             }
         )
-        if row[8] not in view.revision_ids:
-            raise TychoraError(
-                "FORBIDDEN_SCOPE", "Image query revision is not selected."
-            )
-        source_rows = self.owner.db.execute(
-            "SELECT u.unit_id FROM unit_assets ua JOIN evidence_units u USING(unit_id) "
-            "WHERE ua.asset_id=? AND ua.role='source' ORDER BY u.unit_id LIMIT 2049",
-            (asset_id,),
-        ).fetchall()
-        if not source_rows or len(source_rows) > 2048:
-            raise TychoraError(
-                "INTEGRITY_ERROR", "Image query source links are invalid."
-            )
         dependencies = frozenset({asset_id, *(item[0] for item in source_rows)})
-        if not dependencies <= (view.graph_eligible_unit_ids | view.asset_ids):
-            raise TychoraError("FORBIDDEN_SCOPE", "Image query source is not eligible.")
-        if not attempt.dependencies_for(asset_id) <= (
-            view.revision_ids | view.graph_eligible_unit_ids | view.asset_ids
-        ):
-            raise TychoraError(
-                "FORBIDDEN_SCOPE", "Image query ownership is not eligible."
-            )
         ref = ArtifactRef.from_row((row[2], *row[9:12]))
         try:
             from PIL import Image, ImageOps
@@ -1179,8 +1178,8 @@ class QueryService:
         requirements: tuple[ResponseRequirement, ...],
         mode: FrozenJsonMap,
         prepared: _PreparedResult,
+        eligible: tuple[frozenset[str], frozenset[str]],
     ) -> DeliveredResult:
-        legacy = attempt.require_legacy()
         return self.assembler.assemble(
             prepared.selection,
             prepared.records,
@@ -1192,8 +1191,8 @@ class QueryService:
                 scope=scope,
                 counter=self.counter,
                 profiles=self.profiles,
-                eligible_unit_ids=legacy.graph_eligible_unit_ids,
-                eligible_asset_ids=legacy.asset_ids,
+                eligible_unit_ids=eligible[0],
+                eligible_asset_ids=eligible[1],
                 relations=prepared.relations,
                 visuals=prepared.visuals,
                 coverage=prepared.coverage,
@@ -1208,6 +1207,100 @@ class QueryService:
                 delivery_serialization=self.delivery_serialization,
             ),
         )
+
+
+def _require_image_asset(
+    tx: ReadTransaction, view: EligibilityView, asset_id: str
+) -> None:
+    """Refuse an image query asset the view does not admit."""
+    fact = next(iter(tx.eligibility.owner_facts((asset_id,))), None)
+    if fact is None or not is_eligible_asset(view, fact):
+        raise TychoraError(
+            "FORBIDDEN_SCOPE",
+            "Image query asset is not eligible.",
+            reason="scope.dependency_ineligible",
+        )
+
+
+def _require_image_sources(
+    tx: ReadTransaction,
+    view: EligibilityView,
+    revision_id: str,
+    unit_ids: tuple[str, ...],
+) -> None:
+    """Refuse an image query whose revision or any source unit the view does not admit."""
+    facts = {f.owner_id: f for f in tx.eligibility.owner_facts(unit_ids)}
+    if revision_id not in view.revisions or not all(
+        (unit := facts.get(uid)) is not None and is_eligible_unit(view, unit)
+        for uid in unit_ids
+    ):
+        raise TychoraError(
+            "FORBIDDEN_SCOPE",
+            "Image query source is not eligible.",
+            reason="scope.dependency_ineligible",
+        )
+
+
+def _graph_relations(
+    paths: tuple[GraphPath, ...], graph_view: GraphScope | None
+) -> list[RelationPath]:
+    """Each distinct expansion path as a relation; an ineligible one is refused."""
+    eligible = graph_view.graph_eligible_unit_ids if graph_view else frozenset()
+    blocked = graph_view.blocked_assertion_ids if graph_view else frozenset()
+    relations = []
+    seen_paths = set()
+    for path in paths:
+        if (
+            not {path.source_unit_id, path.target_unit_id} <= eligible
+            or not path.required_support_ids <= eligible
+            or set(path.assertion_ids) & blocked
+            or path.status not in {"recorded", "confirmed"}
+        ):
+            raise TychoraError(
+                "INTEGRITY_ERROR", "Graph expansion returned an ineligible path"
+            )
+        key = (path.assertion_ids, path.source_unit_id, path.target_unit_id)
+        if key in seen_paths:
+            continue
+        seen_paths.add(key)
+        relations.append(
+            RelationPath(
+                unit_ids=(path.source_unit_id, path.target_unit_id),
+                assertion_ids=path.assertion_ids,
+                predicates=(path.predicate,),
+                support_unit_ids=path.required_support_ids,
+                provenance=FrozenJsonMap(
+                    {
+                        "status": path.status,
+                        "confidence": path.confidence,
+                    }
+                ),
+            )
+        )
+    return relations
+
+
+def _delivered_eligibility(
+    tx: ReadTransaction, view: EligibilityView, prepared: _PreparedResult
+) -> tuple[frozenset[str], frozenset[str]]:
+    """The units and assets a delivery names that the view still admits."""
+    units = {
+        *(uid for record in prepared.records for uid in record.dependencies),
+        *(uid for path in prepared.relations for uid in path.unit_ids),
+        *(uid for path in prepared.relations for uid in path.support_unit_ids),
+        *(
+            uid
+            for visual in prepared.visuals
+            for proxy in visual.proxies
+            for uid in proxy.dependencies
+        ),
+    }
+    assets = {visual.asset_id for visual in prepared.visuals}
+    facts = tx.eligibility.owner_facts(tuple(sorted(units | assets)))
+    return (
+        frozenset(f.owner_id for f in facts if is_eligible_unit(view, f)),
+        frozenset(f.owner_id for f in facts if is_eligible_asset(view, f)),
+    )
 
 
 def _needs_text(request: QueryRequest) -> bool:

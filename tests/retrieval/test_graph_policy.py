@@ -4,6 +4,7 @@ import io
 
 import pytest
 
+from tests.helpers.eligibility import synthetic_graph_scope
 from tychora.adapters.files.cas import LocalArtifacts
 from tychora.adapters.ladybug.generation import LadybugGraphStore
 from tychora.configuration.graph_policy import resolve_graph_traversal_policy
@@ -22,7 +23,6 @@ from tychora.contracts.graph import (
     GraphPredicatePolicy,
     GraphTraversalPolicy,
     GraphUnitBinding,
-    LegacyEligibilityView,
 )
 from tychora.contracts.identity import digest
 from tychora.contracts.relationships import (
@@ -152,27 +152,16 @@ def graph_fixture(tmp_path):
 
         @staticmethod
         def view(*, context, candidates, structural, blocked=frozenset()):
-            return LegacyEligibilityView(
-                snapshot_id="snapshot",
-                policy_epoch=0,
-                scope_digest=digest("scope"),
-                eligibility_policy_digest=digest("policy"),
-                eligibility_request_digest=digest("request"),
-                selected_batch_ids=(spec.generation_id,),
-                revision_ids=frozenset({"revision"}),
-                source_unit_ids=frozenset(candidates),
-                context_unit_ids=frozenset(context),
-                structural_unit_ids=frozenset(structural),
-                proxy_unit_ids=frozenset(),
-                chunk_ids=frozenset(),
-                asset_ids=frozenset(),
-                vector_record_ids=frozenset(),
-                blocked_assertion_ids=frozenset(blocked),
-                graph_generation_id="generation",
-                graph_family_id=spec.family_id,
-                graph_config_sha=spec.config_sha,
-                graph_decision_watermark=spec.decision_watermark,
-                graph_manifest_digest=receipt.manifest_digest,
+            return synthetic_graph_scope(
+                source=candidates,
+                context=context,
+                structural=structural,
+                blocked=blocked,
+                generation_id="generation",
+                family_id=spec.family_id,
+                config_sha=spec.config_sha,
+                decision_watermark=spec.decision_watermark,
+                manifest_digest=receipt.manifest_digest,
             )
 
     fixture = Fixture(graph, assertion)

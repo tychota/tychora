@@ -8,6 +8,7 @@ from datetime import date
 import grimp
 import pytest
 
+from tests.helpers.eligibility_v1_oracle import OracleCompiler
 from tests.helpers.legacy import OutputCounter
 from tests.helpers.owner import on_owner, owner_row, owner_rows
 from tests.retrieval.eligibility_corpus import (
@@ -25,7 +26,10 @@ from tychora import Tychora
 from tychora.configuration.registry import compile_filter
 from tychora.contracts.collections import CollectionCreate, CollectionEdit
 from tychora.contracts.corpus import ReviewTarget
+from tychora.contracts.eligibility import GraphBinding
 from tychora.contracts.errors import TychoraError
+from tychora.contracts.graph import GraphBatchReceipt
+from tychora.contracts.identity import digest
 from tychora.contracts.requests import QueryRequest, RequestScope
 from tychora.ports.execution import ExecutionContext
 from tychora.retrieval.attempt import (
@@ -33,15 +37,13 @@ from tychora.retrieval.attempt import (
     is_admitted_record,
     is_candidate_asset,
     is_candidate_proxy,
-    is_context_unit,
     is_eligible_asset,
     is_eligible_unit,
     is_source_unit,
-    is_structural_unit,
 )
 from tychora.retrieval.cache import EligibilityCache
 from tychora.retrieval.compiler import EligibilityCompiler
-from tychora.retrieval.eligibility import LegacyEligibilityCompiler
+from tychora.retrieval.graph_scope import graph_scope
 
 ITERATIONS = 500
 _REVIEW_STATES = ("unreviewed", "needs_review", "accepted", "rejected")
@@ -306,6 +308,22 @@ def _mutate(run):
 # Comparison
 
 
+_RECEIPT = GraphBatchReceipt(
+    generation_id="generation",
+    family_id=digest("graph-family"),
+    config_sha=digest("graph-config"),
+    decision_watermark=0,
+    manifest_digest=digest("graph-manifest"),
+    entity_count=0,
+    evidence_count=0,
+    assertion_count=0,
+)
+# The corpus has no graph: its views gain this binding to derive a graph scope.
+_GRAPH = GraphBinding(
+    family_id=_RECEIPT.family_id, all_eligible=False, receipt=_RECEIPT
+)
+
+
 def _compare(run, v1, v2, request, registry, context):
     facts = run.facts
     units = [f for f in facts.values() if f.kind == "unit"]
@@ -318,8 +336,16 @@ def _compare(run, v1, v2, request, registry, context):
 
     assert set(v2.revisions) == v1.revision_ids, context
     assert admitted(is_source_unit, units) == v1.source_unit_ids, context
-    assert admitted(is_context_unit, units) == v1.context_unit_ids, context
-    assert admitted(is_structural_unit, units) == v1.structural_unit_ids, context
+    # The graph scope a traversal reads splits the eligible units as v1 did.
+    scope = run.call(
+        run.owner.run_read(
+            lambda tx: graph_scope(tx, v2.model_copy(update={"graph": _GRAPH})),
+            ExecutionContext(),
+        )
+    )
+    assert scope.source_unit_ids == v1.source_unit_ids, context
+    assert scope.context_unit_ids == v1.context_unit_ids, context
+    assert scope.structural_unit_ids == v1.structural_unit_ids, context
     eligible_proxies = {
         f.owner_id for f in units if f.proxy and is_eligible_unit(v2, f)
     }
@@ -392,7 +418,7 @@ def _compile_both(run, legacy, compiler, cache, scope, request):
     snapshot = run.snapshot
     try:
         v1 = owner.run_write_sync(
-            lambda: legacy.compile_attempt(snapshot, scope, request, owner.config).view,
+            lambda: legacy.compile_eligibility(snapshot, scope, request, owner.config),
             ExecutionContext(),
         )
     except TychoraError as error:
@@ -435,7 +461,7 @@ def corpus(tmp_path_factory):
 def test_v2_admits_exactly_what_v1_admitted_on_500_randomized_fixtures(corpus):
     owner = corpus.kb._workspace.owner
     compiler = EligibilityCompiler(owner.store.registry, owner.artifacts)
-    legacy = LegacyEligibilityCompiler(owner.store)
+    legacy = OracleCompiler(owner.store)
     cache = EligibilityCache()
     run = _Run(corpus, random.Random(20261023))
     run.refresh()

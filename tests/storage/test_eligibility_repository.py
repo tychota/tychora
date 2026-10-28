@@ -161,6 +161,32 @@ def test_batches_and_unit_flags(kb):
     assert flags and all(not row.proxy for row in flags)
 
 
+def test_blocked_assertions_are_those_decided_after_the_watermark(kb):
+    owner = kb._workspace.owner
+    (sha,) = _row(owner, "SELECT artifact_sha FROM artifacts LIMIT 1")
+
+    def decide() -> list[int]:
+        ids = []
+        for assertion in ("early", "late", "late"):
+            cursor = owner.db.execute(
+                "INSERT INTO assertion_decisions(assertion_id,provenance_artifact_sha,"
+                "provenance_record_id,state,actor_id,created_at) "
+                "VALUES (?,?,'record','recorded','actor','2025-01-01')",
+                (assertion, sha),
+            )
+            ids.append(cursor.lastrowid)
+        owner.db.commit()
+        return ids
+
+    first, second, _ = on_owner(owner, decide)
+    assert _read(kb, lambda tx: tx.eligibility.blocked_assertions(first - 1)) == {
+        "early",
+        "late",
+    }
+    assert _read(kb, lambda tx: tx.eligibility.blocked_assertions(first)) == {"late"}
+    assert _read(kb, lambda tx: tx.eligibility.blocked_assertions(second + 1)) == set()
+
+
 def test_kind_definitions_and_facets_bind_json_lists(kb):
     def read(tx):
         kinds = tx.eligibility.kind_definitions(("document@1",))

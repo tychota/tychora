@@ -10,7 +10,7 @@ from tychora.contracts.graph import (
     GraphCandidates,
     GraphGenerationSpec,
     GraphManifest,
-    LegacyEligibilityView,
+    GraphScope,
 )
 from tychora.contracts.relationships import RelationshipAssertion
 from tychora.ports.execution import ExecutionContext
@@ -37,7 +37,7 @@ class GraphStore(Protocol):
 
     def expand(
         self,
-        view: LegacyEligibilityView,
+        view: GraphScope,
         seed_unit_ids: tuple[str, ...],
         limits: GraphBudget,
         ctx: ExecutionContext,
@@ -45,7 +45,7 @@ class GraphStore(Protocol):
 
     def structural_context(
         self,
-        view: LegacyEligibilityView,
+        view: GraphScope,
         seed_unit_ids: tuple[str, ...],
         limits: GraphBudget,
         ctx: ExecutionContext,
@@ -53,7 +53,7 @@ class GraphStore(Protocol):
 
     def get_assertions(
         self,
-        view: LegacyEligibilityView,
+        view: GraphScope,
         selected_unit_ids: tuple[str, ...],
         predicates: tuple[str, ...],
         limits: GraphBudget,

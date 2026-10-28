@@ -5,9 +5,21 @@ from dataclasses import replace
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
+from typing import Any, NamedTuple, cast
 
 import pytest
 
+from tests.helpers.eligibility_v1_oracle import (
+    AssetFact,
+    ChunkFact,
+    EligibilityFacts,
+    OracleCompiler,
+    OracleRevisionFact,
+    OracleView,
+    UnitFact,
+    VectorFact,
+    read_eligibility_facts,
+)
 from tests.typed_json import json_object, json_string
 from tychora.adapters.sqlite.repositories import SqliteEligibilityRepository
 from tychora.configuration.models import ResolvedConfig
@@ -31,15 +43,6 @@ from tychora.contracts.requests import QueryRequest, RequestScope
 from tychora.contracts.snapshots import IndexFamily, SlotFamily
 from tychora.contracts.vectors import BatchReceipt
 from tychora.retrieval.compiler import EligibilityCompiler
-from tychora.retrieval.eligibility import (
-    AssetFact,
-    ChunkFact,
-    EligibilityFacts,
-    LegacyEligibilityCompiler,
-    RevisionFact,
-    UnitFact,
-    VectorFact,
-)
 
 
 def test_vector_group_dependency_serialization_is_order_independent():
@@ -84,7 +87,7 @@ def scope():
 
 
 def _revision(**changes):
-    fact = RevisionFact(
+    fact = OracleRevisionFact(
         source_id="source",
         revision_id="revision",
         extraction_id="extraction",
@@ -269,7 +272,6 @@ def _snapshot(config, chunks=("parent-chunk", "child-chunk"), vectors=(), images
 def _serve_synthetic(monkeypatch, owner, snapshot, members):
     """Serve a synthetic snapshot from the owner's catalog, read with ``members``."""
     real_get = owner.catalog.get
-    real_read = owner.store.read_eligibility_facts
     real_members = SqliteEligibilityRepository.members
     listed = tuple(member.extraction_id for member in members)
 
@@ -283,11 +285,7 @@ def _serve_synthetic(monkeypatch, owner, snapshot, members):
             return snapshot
         return real_get(tx, snapshot_id)
 
-    def read(view, given=None):
-        return real_read(view, members if given is None else given)
-
     monkeypatch.setattr(owner.catalog, "get", get)
-    monkeypatch.setattr(owner.store, "read_eligibility_facts", read)
     monkeypatch.setattr(SqliteEligibilityRepository, "members", member_rows)
 
 
@@ -366,7 +364,6 @@ class _Reader:
         self.config = config
         self.registry = Registry.from_config(config)
         self.facts = facts
-        self.epoch = facts.policy_epoch
 
     def read_eligibility_facts(
         self, snapshot: SnapshotView, members=None
@@ -386,8 +383,25 @@ class _Reader:
             "Synthetic reader has no retained configuration artifact.",
         )
 
-    def policy_epoch(self, workspace_id: str) -> int:
-        return self.epoch
+
+class _Compiled(NamedTuple):
+    view: OracleView
+    warnings: tuple[str, ...]
+
+
+class _Oracle:
+    """The v1 oracle compiling a synthetic reader's facts."""
+
+    def __init__(self, reader: _Reader):
+        self.reader = reader
+
+    def compile(self, snapshot, scope, request, config) -> _Compiled:
+        facts = self.reader.read_eligibility_facts(snapshot)
+        return _Compiled(
+            *OracleCompiler(cast(Any, self.reader))._compile(
+                snapshot, scope, request, config, facts
+            )
+        )
 
 
 def _request(mode="audit", **updates):
@@ -396,11 +410,7 @@ def _request(mode="audit", **updates):
 
 def test_reviewed_child_blocks_ancestor_representation_and_proxy(config, scope):
     reader = _Reader(config, _facts(child_review="rejected"))
-    view = (
-        LegacyEligibilityCompiler(reader)
-        .compile_attempt(_snapshot(config), scope, _request(), config)
-        .view
-    )
+    view = _Oracle(reader).compile(_snapshot(config), scope, _request(), config).view
     assert view.revision_ids == frozenset({"revision"})
     assert view.source_unit_ids == frozenset()
     assert view.context_unit_ids == frozenset()
@@ -413,54 +423,30 @@ def test_snapshot_semantic_digest_cannot_substitute_retained_artifact(config, sc
     reader = _Reader(config, _facts())
     snapshot = _snapshot(config).model_copy(update={"config_sha": config.config_sha})
     with pytest.raises(TychoraError) as error:
-        LegacyEligibilityCompiler(reader).compile_attempt(
-            snapshot, scope, _request(), config
-        )
+        _Oracle(reader).compile(snapshot, scope, _request(), config)
     assert error.value.code == "INVALID_REQUEST"
 
 
 def test_access_floor_and_withdrawal_remove_every_channel(config, scope):
     snapshot = _snapshot(config)
     reader = _Reader(config, _facts(source_floor=3))
-    denied = (
-        LegacyEligibilityCompiler(reader)
-        .compile_attempt(snapshot, scope, _request(), config)
-        .view
-    )
+    denied = _Oracle(reader).compile(snapshot, scope, _request(), config).view
     assert denied.revision_ids == frozenset()
     reader.facts = replace(_facts(), revisions=(_revision(withdrawn=True),))
-    withdrawn = (
-        LegacyEligibilityCompiler(reader)
-        .compile_attempt(snapshot, scope, _request(), config)
-        .view
-    )
+    withdrawn = _Oracle(reader).compile(snapshot, scope, _request(), config).view
     assert withdrawn.revision_ids == frozenset()
 
 
 def test_mode_policy_changes_cache_identity_on_same_snapshot(config, scope):
     reader = _Reader(config, _facts())
-    compiler = LegacyEligibilityCompiler(reader)
+    compiler = _Oracle(reader)
     snapshot = _snapshot(config)
-    audit = compiler.compile_attempt(snapshot, scope, _request("audit"), config).view
-    compose = compiler.compile_attempt(
-        snapshot, scope, _request("compose"), config
-    ).view
+    audit = compiler.compile(snapshot, scope, _request("audit"), config).view
+    compose = compiler.compile(snapshot, scope, _request("compose"), config).view
     assert audit.snapshot_id == compose.snapshot_id
     assert audit.scope_digest == compose.scope_digest
     assert audit.eligibility_policy_digest != compose.eligibility_policy_digest
     assert "child" in audit.source_unit_ids
-
-
-def test_provider_and_delivery_boundaries_detect_new_policy_epoch(config, scope):
-    reader = _Reader(config, _facts())
-    compiler = LegacyEligibilityCompiler(reader)
-    view = compiler.compile_attempt(_snapshot(config), scope, _request(), config).view
-    compiler.revalidate_epoch(view, "provider")
-    reader.epoch += 1
-    for stage in ("provider", "delivery"):
-        with pytest.raises(TychoraError) as error:
-            compiler.revalidate_epoch(view, stage)
-        assert error.value.code == "SCOPE_CHANGED"
 
 
 def test_sqlite_reader_detaches_current_floor_and_epoch(tmp_path, config):
@@ -508,7 +494,7 @@ def test_sqlite_reader_detaches_current_floor_and_epoch(tmp_path, config):
     )
     _register_config_artifact(db, store.artifacts, config)
     snapshot = _snapshot(config, chunks=())
-    first = store.read_eligibility_facts(snapshot, _FIXTURE_MEMBERS)
+    first = read_eligibility_facts(store, snapshot, _FIXTURE_MEMBERS)
     assert first.policy_epoch == 0
     assert first.revisions[0].source_floor == 0
     db.execute("UPDATE sources SET access_floor=3 WHERE source_id='source'")
@@ -516,10 +502,9 @@ def test_sqlite_reader_detaches_current_floor_and_epoch(tmp_path, config):
         "UPDATE workspaces SET policy_epoch=policy_epoch+1 WHERE workspace_id='workspace'"
     )
     db.commit()
-    second = store.read_eligibility_facts(snapshot, _FIXTURE_MEMBERS)
+    second = read_eligibility_facts(store, snapshot, _FIXTURE_MEMBERS)
     assert second.policy_epoch == 1
     assert second.revisions[0].source_floor == 3
-    assert store.policy_epoch(snapshot.workspace_id) == 1
     db.close()
 
 
@@ -539,8 +524,8 @@ def test_all_unit_filter_removes_context_and_group_dependent_chunks(config, scop
     )
     reader = _Reader(config, facts)
     view = (
-        LegacyEligibilityCompiler(reader)
-        .compile_attempt(
+        _Oracle(reader)
+        .compile(
             _snapshot(config),
             scope,
             _request(filters=EqFilter(field="scope.project", value="alpha")),
@@ -563,7 +548,7 @@ def test_mixed_scope_or_is_rejected_before_eligibility(config, scope):
         )
     )
     with pytest.raises(TychoraError) as error:
-        LegacyEligibilityCompiler(_Reader(config, _facts())).compile_attempt(
+        _Oracle(_Reader(config, _facts())).compile(
             _snapshot(config),
             scope,
             _request(filters=expression),
@@ -586,8 +571,8 @@ def test_candidate_filter_preserves_allowed_context(config, scope):
         ),
     )
     view = (
-        LegacyEligibilityCompiler(_Reader(config, facts))
-        .compile_attempt(
+        _Oracle(_Reader(config, facts))
+        .compile(
             _snapshot(config),
             scope,
             _request(filters=EqFilter(field="code.symbol_kind", value="function")),
@@ -620,15 +605,15 @@ def test_candidate_filter_limits_proxy_lexical_without_removing_context(config, 
             ),
         ),
     )
-    compiler = LegacyEligibilityCompiler(_Reader(config, facts))
+    compiler = _Oracle(_Reader(config, facts))
     snapshot = _snapshot(config, chunks=("child-chunk", "proxy-chunk"))
-    matching = compiler.compile_attempt(
+    matching = compiler.compile(
         snapshot,
         scope,
         _request(filters=EqFilter(field="code.symbol_kind", value="function")),
         config,
     ).view
-    nonmatching = compiler.compile_attempt(
+    nonmatching = compiler.compile(
         snapshot,
         scope,
         _request(filters=EqFilter(field="code.symbol_kind", value="class")),
@@ -666,9 +651,9 @@ def test_candidate_filter_limits_image_vector_per_complete_source_owner(config, 
             ),
         ),
     )
-    compiler = LegacyEligibilityCompiler(_Reader(config, facts))
+    compiler = _Oracle(_Reader(config, facts))
     snapshot = _snapshot(config, images=(("image-vector", "asset"),))
-    matching = compiler.compile_attempt(
+    matching = compiler.compile(
         snapshot,
         scope,
         _request(
@@ -681,7 +666,7 @@ def test_candidate_filter_limits_image_vector_per_complete_source_owner(config, 
         ),
         config,
     ).view
-    nonmatching = compiler.compile_attempt(
+    nonmatching = compiler.compile(
         snapshot,
         scope,
         _request(filters=EqFilter(field="code.symbol_kind", value="class")),
@@ -751,9 +736,7 @@ def test_image_candidate_requires_one_owner_to_match_entire_expression(config, s
             ),
         )
         return (
-            LegacyEligibilityCompiler(_Reader(config, facts))
-            .compile_attempt(snapshot, scope, query, config)
-            .view
+            _Oracle(_Reader(config, facts)).compile(snapshot, scope, query, config).view
         )
 
     whole = view(
@@ -804,8 +787,8 @@ def test_rejected_overlapping_child_does_not_remove_unrelated_source(config, sco
         ),
     )
     view = (
-        LegacyEligibilityCompiler(_Reader(config, facts))
-        .compile_attempt(
+        _Oracle(_Reader(config, facts))
+        .compile(
             _snapshot(
                 config, chunks=("parent-chunk", "child-chunk", "independent-chunk")
             ),
@@ -824,8 +807,8 @@ def test_original_kind_use_restriction_is_part_of_readability(config, scope):
         _facts(), revisions=(_revision(kind_allowed_uses=frozenset({"lookup"})),)
     )
     view = (
-        LegacyEligibilityCompiler(_Reader(config, facts))
-        .compile_attempt(
+        _Oracle(_Reader(config, facts))
+        .compile(
             _snapshot(config),
             scope,
             _request("audit"),
@@ -834,65 +817,6 @@ def test_original_kind_use_restriction_is_part_of_readability(config, scope):
         .view
     )
     assert view.revision_ids == frozenset()
-
-
-def test_attempt_dependency_lookup_carries_complete_group_leaves(config, scope):
-    original = _facts()
-    facts = replace(
-        original,
-        chunks=(
-            ChunkFact(
-                "parent-chunk", "parent", frozenset({"revision", "parent"}), "group"
-            ),
-            ChunkFact(
-                "child-chunk", "child", frozenset({"revision", "child"}), "group"
-            ),
-        ),
-        vectors=(
-            VectorFact(
-                "parent-vector",
-                chunk_id="parent-chunk",
-                dependency_ids=frozenset({"revision", "parent", "child"}),
-            ),
-            VectorFact(
-                "child-vector",
-                chunk_id="child-chunk",
-                dependency_ids=frozenset({"revision", "parent", "child"}),
-            ),
-        ),
-    )
-    attempt = LegacyEligibilityCompiler(_Reader(config, facts)).compile_attempt(
-        _snapshot(
-            config,
-            vectors=(
-                (
-                    "parent-vector",
-                    "parent-chunk",
-                    "group",
-                    {"revision", "parent", "child"},
-                ),
-                (
-                    "child-vector",
-                    "child-chunk",
-                    "group",
-                    {"revision", "parent", "child"},
-                ),
-            ),
-        ),
-        scope,
-        _request(),
-        config,
-    )
-    assert attempt.dependencies_for("parent-chunk") == frozenset({"revision", "parent"})
-    assert attempt.dependencies_for("parent-vector") == frozenset(
-        {"revision", "parent", "child"}
-    )
-    assert attempt.dependencies_for("child-vector") == frozenset(
-        {"revision", "parent", "child"}
-    )
-    with pytest.raises(TychoraError) as error:
-        attempt.dependencies_for("unknown")
-    assert error.value.code == "FORBIDDEN_SCOPE"
 
 
 @pytest.mark.asyncio
@@ -932,7 +856,6 @@ async def test_owner_runner_retries_after_canonical_withdrawal_and_releases_pin(
 
         result = await run_pinned_eligibility(
             EligibilityCompiler(owner.store.registry, owner.artifacts),
-            LegacyEligibilityCompiler(owner.store),
             "synthetic-pin",
             scope,
             _request("lookup"),
@@ -967,7 +890,6 @@ async def test_owner_runner_releases_pin_after_cancellation(tmp_path, monkeypatc
         with pytest.raises(asyncio.CancelledError):
             await run_pinned_eligibility(
                 EligibilityCompiler(owner.store.registry, owner.artifacts),
-                LegacyEligibilityCompiler(owner.store),
                 "synthetic-pin",
                 scope,
                 _request("lookup"),
@@ -1007,7 +929,6 @@ async def test_owner_provider_denied_grant_never_dispatches(tmp_path, monkeypatc
         with pytest.raises(TychoraError) as error:
             await run_pinned_eligibility(
                 EligibilityCompiler(owner.store.registry, owner.artifacts),
-                LegacyEligibilityCompiler(owner.store),
                 "synthetic-pin",
                 denied_scope,
                 _request("lookup"),
@@ -1076,7 +997,6 @@ async def test_second_epoch_change_returns_scope_changed(tmp_path, monkeypatch):
         with pytest.raises(TychoraError) as error:
             await run_pinned_eligibility(
                 EligibilityCompiler(owner.store.registry, owner.artifacts),
-                LegacyEligibilityCompiler(owner.store),
                 "synthetic-pin",
                 scope,
                 _request("lookup"),
@@ -1089,59 +1009,6 @@ async def test_second_epoch_change_returns_scope_changed(tmp_path, monkeypatch):
         assert error.value.reason == "policy.epoch_changed"
         assert error.value.retryable
         assert dispatched == []
-        assert not owner.store.leases.is_pinned("synthetic-pin")
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("bumps", [1, 2])
-async def test_views_compiled_at_different_epochs_are_never_paired(
-    tmp_path, monkeypatch, bumps
-):
-    """The legacy view is compiled after the v2 one; a bump in between retries."""
-    from tests.runtime.test_upload_policy import prepared
-    from tychora.ports.execution import ExecutionContext
-    from tychora.retrieval.attempt import run_pinned_eligibility
-
-    with prepared(tmp_path) as (owner, scope):
-        bundle = await _pin_synthetic(owner, monkeypatch)
-        legacy = LegacyEligibilityCompiler(owner.store)
-        compile_attempt = legacy.compile_attempt
-        compiled = []
-
-        def bumped_then_compiled(*args, **kwargs):
-            if len(compiled) < bumps:
-                _bump_epoch(owner, bundle)
-            compiled.append(1)
-            return compile_attempt(*args, **kwargs)
-
-        monkeypatch.setattr(legacy, "compile_attempt", bumped_then_compiled)
-        operated = []
-
-        async def operation(attempt):
-            assert attempt.require_legacy().policy_epoch == attempt.view.policy_epoch
-            operated.append(attempt.view.policy_epoch)
-            return "delivered"
-
-        run = run_pinned_eligibility(
-            EligibilityCompiler(owner.store.registry, owner.artifacts),
-            legacy,
-            "synthetic-pin",
-            scope,
-            _request("lookup"),
-            owner.config,
-            operation,
-            owner=owner,
-            ctx=ExecutionContext(),
-        )
-        if bumps == 1:
-            assert await run == "delivered"
-            assert len(operated) == 1
-        else:
-            with pytest.raises(TychoraError) as error:
-                await run
-            assert error.value.reason == "policy.epoch_changed"
-            assert operated == []
-        assert len(compiled) == 2
         assert not owner.store.leases.is_pinned("synthetic-pin")
 
 
@@ -1185,14 +1052,13 @@ def test_lexical_chunks_do_not_inherit_other_split_group_owners(config, scope):
         ),
         assets=(),
     )
-    attempt = LegacyEligibilityCompiler(_Reader(config, facts)).compile_attempt(
+    attempt = _Oracle(_Reader(config, facts)).compile(
         _snapshot(config, chunks=("first-chunk", "second-chunk")),
         scope,
         _request(),
         config,
     )
     assert attempt.view.chunk_ids == frozenset({"first-chunk"})
-    assert attempt.dependencies_for("first-chunk") == frozenset({"revision", "first"})
 
 
 def test_rejected_group_owner_blocks_only_its_vector_records(config, scope):
@@ -1261,13 +1127,11 @@ def test_rejected_group_owner_blocks_only_its_vector_records(config, scope):
             ("b-vector", "b-chunk", "group-b", {"revision", "b"}),
         ),
     )
-    attempt = LegacyEligibilityCompiler(_Reader(config, facts)).compile_attempt(
+    attempt = _Oracle(_Reader(config, facts)).compile(
         snapshot, scope, _request(), config
     )
     assert attempt.view.chunk_ids == frozenset({"a-chunk", "b-chunk"})
     assert attempt.view.vector_record_ids == frozenset({"b-vector"})
-    assert attempt.dependencies_for("a-chunk") == frozenset({"revision", "a"})
-    assert attempt.dependencies_for("b-vector") == frozenset({"revision", "b"})
 
 
 @pytest.mark.asyncio
@@ -1301,7 +1165,7 @@ async def test_retired_original_is_not_reopened_for_range_ownership(tmp_path):
                 (bundle.revision.original_sha,),
             )
             owner.db.commit()
-            return owner.store.read_eligibility_facts(snapshot, members)
+            return read_eligibility_facts(owner.store, snapshot, members)
 
         facts = await owner.run_write(retire_and_read, ExecutionContext())
         assert facts.units[0].dependency_ids == frozenset(
@@ -1311,7 +1175,7 @@ async def test_retired_original_is_not_reopened_for_range_ownership(tmp_path):
 
 def test_request_cannot_exceed_resolved_limit(config, scope):
     with pytest.raises(TychoraError) as error:
-        LegacyEligibilityCompiler(_Reader(config, _facts())).compile_attempt(
+        _Oracle(_Reader(config, _facts())).compile(
             _snapshot(config),
             scope,
             _request(limit=config.values.limits.limit + 1),
@@ -1330,13 +1194,13 @@ def test_only_explicit_global_revision_matches_missing_scoped_facet(config, scop
         _facts(), revisions=(_revision(global_facets=frozenset({"scope.project"})),)
     )
     normal = (
-        LegacyEligibilityCompiler(_Reader(config, _facts()))
-        .compile_attempt(_snapshot(config), scope, request, config)
+        _Oracle(_Reader(config, _facts()))
+        .compile(_snapshot(config), scope, request, config)
         .view
     )
     global_view = (
-        LegacyEligibilityCompiler(_Reader(config, global_facts))
-        .compile_attempt(_snapshot(config), scope, request, config)
+        _Oracle(_Reader(config, global_facts))
+        .compile(_snapshot(config), scope, request, config)
         .view
     )
     assert normal.context_unit_ids == frozenset()
@@ -1386,8 +1250,8 @@ def test_new_decision_blocks_every_assertion_after_the_watermark(config, scope):
         ),
     )
     view = (
-        LegacyEligibilityCompiler(_Reader(config, facts))
-        .compile_attempt(snapshot, scope, _request(), config)
+        _Oracle(_Reader(config, facts))
+        .compile(snapshot, scope, _request(), config)
         .view
     )
     assert view.graph_generation_id == "generation"
@@ -1468,29 +1332,6 @@ def _reference_eligibility(facts: EligibilityFacts, selected_chunks, selected_ve
             item.dependency_ids, revision_ids, eligible_units, eligible_assets
         )
     )
-    lookup = {
-        item.unit_id: item.dependency_ids
-        for item in facts.units
-        if item.unit_id in eligible_units
-    }
-    lookup.update(
-        {c.chunk_id: c.dependency_ids for c in facts.chunks if c.chunk_id in chunks}
-    )
-    lookup.update(
-        {
-            a.asset_id: a.dependency_ids
-            for a in facts.assets
-            if a.asset_id in eligible_assets
-        }
-    )
-    for item in facts.vectors:
-        if item.record_id in vectors:
-            owner = item.chunk_id or item.asset_id
-            if owner is None or owner not in lookup:
-                raise TychoraError(
-                    "INTEGRITY_ERROR", "Vector has no eligible owner dependency"
-                )
-            lookup[item.record_id] = item.dependency_ids
     return (
         eligible_units,
         eligible_assets,
@@ -1498,7 +1339,6 @@ def _reference_eligibility(facts: EligibilityFacts, selected_chunks, selected_ve
         proxy_units,
         chunks,
         vectors,
-        lookup,
     )
 
 
@@ -1606,24 +1446,19 @@ def test_worklist_matches_reference_fixpoint(config, scope, seed):
         config, chunks=chunk_ids, vectors=vector_rows, images=image_rows
     )
     selected_vectors = {row[0] for row in vector_rows} | {row[0] for row in image_rows}
-    compiler = LegacyEligibilityCompiler(_Reader(config, facts))
-    try:
-        expected = _reference_eligibility(facts, set(chunk_ids), selected_vectors)
-    except TychoraError as error:
-        with pytest.raises(TychoraError) as raised:
-            compiler.compile_attempt(snapshot, scope, _request(), config)
-        assert raised.value.code == error.code
-        return
-    attempt = compiler.compile_attempt(snapshot, scope, _request(), config)
-    view = attempt.view
-    units, assets, sources, proxies, chunks, vectors, lookup = expected
+    expected = _reference_eligibility(facts, set(chunk_ids), selected_vectors)
+    view = (
+        _Oracle(_Reader(config, facts))
+        .compile(snapshot, scope, _request(), config)
+        .view
+    )
+    units, assets, sources, proxies, chunks, vectors = expected
     assert view.context_unit_ids | view.structural_unit_ids == units
     assert view.asset_ids == assets
     assert view.source_unit_ids == sources
     assert view.proxy_unit_ids == proxies
     assert view.chunk_ids == chunks
     assert view.vector_record_ids == vectors
-    assert dict(attempt.dependencies) == lookup
 
 
 def test_worklist_handles_cyclic_and_cross_kind_dependencies(config, scope):
@@ -1663,58 +1498,17 @@ def test_worklist_handles_cyclic_and_cross_kind_dependencies(config, scope):
         assets=(AssetFact("asset", "revision", "accepted", revision | {"asset", "c"}),),
     )
     view = (
-        LegacyEligibilityCompiler(_Reader(config, facts))
-        .compile_attempt(_snapshot(config, chunks=()), scope, _request(), config)
+        _Oracle(_Reader(config, facts))
+        .compile(_snapshot(config, chunks=()), scope, _request(), config)
         .view
     )
     assert view.context_unit_ids == frozenset({"a", "b", "c"})
     assert view.asset_ids == frozenset({"asset"})
     broken = replace(facts, assets=(replace(facts.assets[0], review_state="rejected"),))
     view = (
-        LegacyEligibilityCompiler(_Reader(config, broken))
-        .compile_attempt(_snapshot(config, chunks=()), scope, _request(), config)
+        _Oracle(_Reader(config, broken))
+        .compile(_snapshot(config, chunks=()), scope, _request(), config)
         .view
     )
     assert view.context_unit_ids == frozenset({"a", "b"})
     assert view.asset_ids == frozenset()
-
-
-def _grouped_facts(count: int) -> EligibilityFacts:
-    """Chains of four dependent units; every fifth chain loses its head."""
-    revision = frozenset({"revision"})
-    units = []
-    chunks = []
-    for index in range(count):
-        position = index % 4
-        group = index // 4
-        uid = f"u{index}"
-        parent = f"u{index - 1}" if position else None
-        dependencies = revision | {uid} | ({parent} if parent else set())
-        review = "rejected" if position == 0 and group % 5 == 4 else "accepted"
-        units.append(
-            UnitFact(uid, "revision", "extraction", "p", review, True, dependencies)
-        )
-        chunks.append(ChunkFact(f"c{index}", uid, dependencies))
-    return replace(_facts(), units=tuple(units), chunks=tuple(chunks), assets=())
-
-
-def test_compile_work_stays_linear_in_unit_count(config, scope):
-    import time
-
-    def best(count: int) -> float:
-        facts = _grouped_facts(count)
-        snapshot = _snapshot(
-            config, chunks=tuple(item.chunk_id for item in facts.chunks)
-        )
-        compiler = LegacyEligibilityCompiler(_Reader(config, facts))
-        runs = []
-        for _ in range(5):
-            started = time.perf_counter()
-            view = compiler.compile_attempt(snapshot, scope, _request(), config).view
-            runs.append(time.perf_counter() - started)
-        assert len(view.source_unit_ids) == count - 4 * (count // 20)
-        return min(runs)
-
-    small, large = best(2_000), best(16_000)
-    assert large < 30.0
-    assert large / max(small, 1e-3) < 25

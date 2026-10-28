@@ -104,23 +104,6 @@ class CorpusStore(PolicyRepository):
         """Verify a plan's new pages and batches, then activate its snapshot."""
         return publish_snapshot(self, plan)
 
-    def read_eligibility_facts(
-        self,
-        snapshot: SnapshotView,
-        members: tuple[SnapshotMember, ...] | None = None,
-    ):
-        """Detach the snapshot's eligibility facts; the configuration artifact is not reopened.
-
-        The configuration artifact was verified when the snapshot was published.
-        """
-        from .eligibility import all_members, read_eligibility_facts
-
-        return read_eligibility_facts(
-            self,
-            snapshot,
-            members if members is not None else all_members(self, snapshot.snapshot_id),
-        )
-
     def retained_config(self, snapshot: SnapshotView) -> ResolvedConfig:
         return self.retained_config_sha(snapshot.config_sha)
 
@@ -151,11 +134,6 @@ class CorpusStore(PolicyRepository):
             return ResolvedConfig.model_validate_json(canonical_bytes(payload["data"]))
         except ValueError:
             _fail("Retained resolved-config artifact is invalid")
-
-    def policy_epoch(self, workspace_id: str) -> int:
-        from .eligibility import policy_epoch
-
-        return policy_epoch(self, workspace_id)
 
     def resolve_snapshot(self, selector: str | None) -> SnapshotView:
         """Read the selected or active snapshot from SQL; no artifact is opened."""

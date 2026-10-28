@@ -100,31 +100,25 @@ def test_explicit_revision_still_obeys_date_constraints():
 
 
 def test_compiled_attempt_exposes_overlap_warning(tmp_path):
+    from typing import Any, cast
+
+    from tests.helpers.eligibility import member_row, members_transaction
+    from tests.typed_json import json_object, json_string
     from tychora.configuration.registry import Registry
     from tychora.configuration.resolve import resolve_config
     from tychora.contracts.identity import digest
     from tychora.contracts.publication import SnapshotMember, SnapshotView
     from tychora.contracts.requests import QueryRequest, RequestScope
-    from tychora.retrieval.eligibility import (
-        EligibilityFacts,
-        LegacyEligibilityCompiler,
-    )
+    from tychora.retrieval.compiler import EligibilityCompiler
 
     workspace = tmp_path / "workspace.toml"
     workspace.write_text(
         'schema_version = 1\n[profiles.test]\nbuiltin = "documents@1"\n'
     )
     config = resolve_config(workspace, "test", {})
-    facts = EligibilityFacts(
-        policy_epoch=0,
-        revisions=(
-            _revision("one", start="2023-01-01"),
-            _revision("two", start="2023-01-01"),
-        ),
-        units=(),
-        chunks=(),
-        assets=(),
-    )
+    registry = Registry.from_config(config)
+    envelope = json_object(registry.historical_definitions(), "manual@1")
+    definition_hash = json_string(envelope["envelope_digest"])
     snapshot = SnapshotView(
         snapshot_id="snapshot",
         workspace_id="workspace",
@@ -143,24 +137,20 @@ def test_compiled_attempt_exposes_overlap_warning(tmp_path):
         families=(),
     )
 
-    class Reader:
-        registry = Registry.from_config(config)
-
-        def read_eligibility_facts(self, snapshot, members=None):
-            return facts
-
-        def policy_epoch(self, workspace_id):
-            return 0
-
-        def retained_config(self, snapshot):
-            return config
-
+    rows = tuple(
+        member_row(name, definition_hash, is_default=False, effective_from="2023-01-01")
+        for name in ("one", "two")
+    )
+    tx = members_transaction(rows, {"manual@1": envelope})
     scope = RequestScope(
         principal_id="principal",
         collection_ids=frozenset({"collection"}),
         uses=frozenset({"audit"}),
     )
-    attempt = LegacyEligibilityCompiler(Reader()).compile_attempt(
+    compiler = EligibilityCompiler(registry, cast(Any, None))
+    compiler.mark_compatible(snapshot, config, config)
+    compiled = compiler.compile(
+        tx,
         snapshot,
         scope,
         QueryRequest.from_mapping(
@@ -176,4 +166,5 @@ def test_compiled_attempt_exposes_overlap_warning(tmp_path):
             ),
         ),
     )
-    assert attempt.warnings
+    assert compiled.warnings
+    assert set(compiled.view.revisions) == {"one", "two"}

@@ -1,5 +1,6 @@
 """Bounded graph inspection is separate from rank expansion."""
 
+from tests.helpers.eligibility import synthetic_graph_scope
 from tests.retrieval.test_segments import config
 from tychora.configuration.registry import Registry
 from tychora.contracts.evidence import EvidenceUnit
@@ -11,9 +12,8 @@ from tychora.contracts.graph import (
     GraphGenerationSpec,
     GraphManifest,
     GraphPath,
-    LegacyEligibilityView,
+    GraphScope,
 )
-from tychora.contracts.identity import digest
 from tychora.contracts.relationships import RelationshipAssertion
 from tychora.ports.execution import ExecutionContext
 from tychora.retrieval.response import inspect_relations
@@ -45,7 +45,7 @@ class Graph:
 
     def expand(
         self,
-        view: LegacyEligibilityView,
+        view: GraphScope,
         seed_unit_ids: tuple[str, ...],
         limits: GraphBudget,
         ctx: ExecutionContext,
@@ -54,7 +54,7 @@ class Graph:
 
     def structural_context(
         self,
-        view: LegacyEligibilityView,
+        view: GraphScope,
         seed_unit_ids: tuple[str, ...],
         limits: GraphBudget,
         ctx: ExecutionContext,
@@ -63,7 +63,7 @@ class Graph:
 
     def get_assertions(
         self,
-        view: LegacyEligibilityView,
+        view: GraphScope,
         selected_unit_ids: tuple[str, ...],
         predicates: tuple[str, ...],
         limits: GraphBudget,
@@ -91,28 +91,9 @@ class Graph:
         )
 
 
-def _view(eligible: frozenset[str]) -> LegacyEligibilityView:
-    return LegacyEligibilityView(
-        snapshot_id="snapshot",
-        policy_epoch=0,
-        scope_digest=digest("scope"),
-        eligibility_policy_digest=digest("policy"),
-        eligibility_request_digest=digest("request"),
-        selected_batch_ids=("generation-1",),
-        revision_ids=frozenset(),
-        source_unit_ids=eligible,
-        context_unit_ids=eligible,
-        structural_unit_ids=frozenset(),
-        proxy_unit_ids=frozenset(),
-        chunk_ids=frozenset(),
-        asset_ids=frozenset(),
-        vector_record_ids=frozenset(),
-        blocked_assertion_ids=frozenset(),
-        graph_generation_id="generation-1",
-        graph_family_id=digest("family"),
-        graph_config_sha=digest("config"),
-        graph_decision_watermark=0,
-        graph_manifest_digest=digest("manifest"),
+def _view(eligible: frozenset[str]) -> GraphScope:
+    return synthetic_graph_scope(
+        source=eligible, context=eligible, revisions=(), generation_id="generation-1"
     )
 
 

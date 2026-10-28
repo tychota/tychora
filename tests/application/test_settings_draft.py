@@ -530,7 +530,7 @@ async def _assert_settings_workspace_searchable(client):
 async def _retained_settings_state(owner):
     return await owner.run_write(
         lambda: (
-            owner.store.policy_epoch(owner.workspace_id),
+            owner.policy_epoch(),
             owner.store.resolve_snapshot(None),
             owner.db.execute("SELECT * FROM index_families ORDER BY 1").fetchall(),
         ),

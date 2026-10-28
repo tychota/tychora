@@ -496,6 +496,10 @@ class EligibilityRepository(Protocol):
         """Every unit of these extractions; read only for filters and graph scopes."""
         ...
 
+    def blocked_assertions(self, watermark: int) -> frozenset[str]:
+        """Assertions with a decision recorded after ``watermark``."""
+        ...
+
     def dependents(
         self, owner_ids: tuple[str, ...]
     ) -> Mapping[str, Literal["unit", "asset"]]:

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from tests.helpers.corpus import commit_with_facts, reader, seed_bundle
-from tests.helpers.eligibility import legacy_attempt, revision_view
+from tests.helpers.eligibility import revision_attempt, revision_view
 from tests.providers.test_reranker import (
     LengthCounter,
     RecordingRerankTransport,
@@ -25,8 +25,6 @@ from tychora.application.reranking import (
 from tychora.contracts.base import FrozenJsonMap
 from tychora.contracts.candidates import ChannelCandidate
 from tychora.contracts.errors import TychoraError
-from tychora.contracts.graph import LegacyEligibilityView
-from tychora.contracts.identity import digest
 from tychora.contracts.requests import QueryRequest, QuestionInput
 from tychora.indexing.representations import prepare_extraction
 from tychora.ports.execution import ExecutionContext
@@ -336,43 +334,25 @@ async def _owner_case(tmp_path: Path, *, upload: bool = True):
             for rank, bundle in enumerate(bundles, 1)
         )
         admission = Admission(candidates, (), {}, {}, (), {}, 62)
-        view = LegacyEligibilityView(
-            snapshot_id="synthetic-snapshot",
-            policy_epoch=epoch,
-            scope_digest=digest("synthetic-scope"),
-            eligibility_policy_digest=digest("synthetic-policy"),
-            eligibility_request_digest=digest("synthetic-request"),
-            selected_batch_ids=(),
-            revision_ids=frozenset(bundle.revision.revision_id for bundle in bundles),
-            source_unit_ids=frozenset(bundle.units[0].unit_id for bundle in bundles),
-            context_unit_ids=frozenset(bundle.units[0].unit_id for bundle in bundles),
-            structural_unit_ids=frozenset(),
-            proxy_unit_ids=frozenset(),
-            asset_ids=frozenset(),
-            chunk_ids=frozenset(bundle.chunks[0].chunk_id for bundle in bundles),
-            vector_record_ids=frozenset(),
-            blocked_assertion_ids=frozenset(),
-        )
         execution = ExecutionContext()
-        attempt = legacy_attempt(
-            view,
-            grants={
+        view = revision_view(
+            {
                 bundle.revision.revision_id: bundle.extraction.extraction_id
                 for bundle in bundles
             },
-            dependencies={
-                representation_id: frozenset(
-                    {bundle.revision.revision_id, bundle.units[0].unit_id}
-                )
-                for bundle in bundles
-                for representation_id in (
-                    bundle.chunks[0].chunk_id,
-                    bundle.units[0].unit_id,
-                )
-            },
-            owner=owner,
-            ctx=execution,
-        )
+            snapshot_id="synthetic-snapshot",
+        ).model_copy(update={"policy_epoch": epoch})
+        attempt = revision_attempt(view, owner=owner, ctx=execution)
+        dependencies = {
+            representation_id: frozenset(
+                {bundle.revision.revision_id, bundle.units[0].unit_id}
+            )
+            for bundle in bundles
+            for representation_id in (
+                bundle.chunks[0].chunk_id,
+                bundle.units[0].unit_id,
+            )
+        }
         transport = RecordingRerankTransport()
         runtime = VoyageRuntime(
             lambda: transport,
@@ -397,7 +377,7 @@ async def _owner_case(tmp_path: Path, *, upload: bool = True):
                         1.0,
                     ),
                 ),
-                dependencies=attempt.legacy_dependencies,
+                dependencies=dependencies,
             )
             for candidate, bundle in zip(candidates, bundles, strict=True)
         }

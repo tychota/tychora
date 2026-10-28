@@ -21,7 +21,7 @@ from tychora.contracts.evidence import (
     Segment,
     TextLocator,
 )
-from tychora.contracts.graph import GraphPath, LegacyEligibilityView
+from tychora.contracts.graph import GraphPath, GraphScope
 from tychora.contracts.identity import digest
 from tychora.indexing.representations import project_code_excerpt_locator
 from tychora.ingestion.tables import continuation_context_allowed
@@ -289,16 +289,10 @@ def _readable(item: RankedEvidenceItem, unit_id: str, view: EligibilityView) -> 
 
 @dataclass(frozen=True)
 class _Continuations:
-    """Pinned continuation paths and the unit-level view that admits them."""
+    """Pinned continuation paths and the graph scope that admits them."""
 
     paths: tuple[GraphPath, ...]
-    graph_view: LegacyEligibilityView | None
-
-    @property
-    def admitting(self) -> LegacyEligibilityView | None:
-        """The unit-level view when it binds a graph generation, else ``None``."""
-        view = self.graph_view
-        return None if view is None or view.graph_generation_id is None else view
+    graph_view: GraphScope | None
 
 
 def _fit(text: str, counter: TokenCounter, ceiling: int) -> int:
@@ -327,7 +321,7 @@ def _continuation_context(
     """Attach a separate physical fragment only from a pinned eligible path."""
     assert item.facts is not None
     settings = config.values.retrieval
-    graph_view = continuations.admitting
+    graph_view = continuations.graph_view
     if not continuations.paths or not settings.graph.semantic or graph_view is None:
         return (), ()
     eligible = graph_view.context_unit_ids | graph_view.structural_unit_ids
@@ -835,7 +829,7 @@ def assemble_segments(
     config: ResolvedConfig,
     counter: TokenCounter,
     *,
-    graph_view: LegacyEligibilityView | None = None,
+    graph_view: GraphScope | None = None,
     visual_limit: int = 3,
     continuation_paths: tuple[GraphPath, ...] = (),
     historical_kind_roles: Mapping[str, str] | None = None,

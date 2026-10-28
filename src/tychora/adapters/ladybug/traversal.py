@@ -14,8 +14,8 @@ from tychora.contracts.graph import (
     GraphCandidates,
     GraphManifest,
     GraphPath,
+    GraphScope,
     GraphTraversalPolicy,
-    LegacyEligibilityView,
     graph_manifest_digest,
 )
 from tychora.contracts.identity import digest
@@ -66,7 +66,7 @@ class _PageStream:
     def __init__(
         self,
         traversal: GraphTraversal,
-        view: LegacyEligibilityView,
+        view: GraphScope,
         seed: str,
         direction: str,
         predicates: tuple[str, ...],
@@ -114,7 +114,7 @@ class GraphTraversal:
         self.policy = policy
 
     @staticmethod
-    def _bind_budget(view: LegacyEligibilityView, limits: GraphBudget) -> None:
+    def _bind_budget(view: GraphScope, limits: GraphBudget) -> None:
         identity = digest(
             "graph-eligibility-view-v1",
             view.snapshot_id,
@@ -157,7 +157,7 @@ class GraphTraversal:
             )
         return limits.max_new_units
 
-    def _ready(self, view: LegacyEligibilityView) -> str:
+    def _ready(self, view: GraphScope) -> str:
         gid = view.graph_generation_id
         if gid is None:
             raise TychoraError("INDEX_INCOMPLETE", "Graph generation is not selected")
@@ -178,7 +178,7 @@ class GraphTraversal:
         return gid
 
     def _structural_order(
-        self, view: LegacyEligibilityView
+        self, view: GraphScope
     ) -> dict[str, tuple[tuple[str, str, str | None], int]]:
         build = self.store._build
         if build is None or build.spec.generation_id != view.graph_generation_id:
@@ -221,7 +221,7 @@ class GraphTraversal:
 
     def _adjacent_structural(
         self,
-        view: LegacyEligibilityView,
+        view: GraphScope,
         source: str,
         direction: str,
         order: dict[str, tuple[tuple[str, str, str | None], int]],
@@ -256,7 +256,7 @@ class GraphTraversal:
 
     def _sibling_path(
         self,
-        view: LegacyEligibilityView,
+        view: GraphScope,
         seed: str,
         target: str,
         order: dict[str, tuple[tuple[str, str, str | None], int]],
@@ -307,7 +307,7 @@ class GraphTraversal:
 
     def _fetch(
         self,
-        view: LegacyEligibilityView,
+        view: GraphScope,
         seed: str,
         direction: str,
         predicates: tuple[str, ...],
@@ -383,7 +383,7 @@ SKIP {offset} LIMIT {page_size}
 
     def _iter_edges(
         self,
-        view: LegacyEligibilityView,
+        view: GraphScope,
         seed: str,
         direction: str,
         predicates: tuple[str, ...],
@@ -413,7 +413,7 @@ SKIP {offset} LIMIT {page_size}
 
     def _strategy_enabled(
         self,
-        view: LegacyEligibilityView,
+        view: GraphScope,
         limits: GraphBudget,
         strategy: Literal["semantic", "structural"],
         enabled: bool,
@@ -430,7 +430,7 @@ SKIP {offset} LIMIT {page_size}
 
     def expand(
         self,
-        view: LegacyEligibilityView,
+        view: GraphScope,
         seed_unit_ids: tuple[str, ...],
         limits: GraphBudget,
         ctx: ExecutionContext,
@@ -549,7 +549,7 @@ SKIP {offset} LIMIT {page_size}
 
     def structural_context(
         self,
-        view: LegacyEligibilityView,
+        view: GraphScope,
         seed_unit_ids: tuple[str, ...],
         limits: GraphBudget,
         ctx: ExecutionContext,
@@ -705,7 +705,7 @@ SKIP {offset} LIMIT {page_size}
 
     def get_assertions(
         self,
-        view: LegacyEligibilityView,
+        view: GraphScope,
         selected_unit_ids: tuple[str, ...],
         predicates: tuple[str, ...],
         limits: GraphBudget,

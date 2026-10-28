@@ -185,56 +185,50 @@ class GraphBatchReceipt(Contract):
     assertion_count: NonNegativeInt
 
 
-class LegacyEligibilityView(Contract):
-    """Pinned request eligibility; graph bindings are absent together when disabled."""
+class GraphScope(Contract):
+    """The units, batches and blocked assertions one query's traversal may read."""
 
     snapshot_id: Identifier
     policy_epoch: NonNegativeInt
     scope_digest: Sha256
     eligibility_policy_digest: Sha256
     eligibility_request_digest: Sha256
-    selected_batch_ids: tuple[Identifier, ...]
+    receipt: GraphBatchReceipt
     revision_ids: frozenset[Identifier]
+    selected_batch_ids: tuple[Identifier, ...]
     source_unit_ids: frozenset[Identifier]
     context_unit_ids: frozenset[Identifier]
     structural_unit_ids: frozenset[Identifier]
-    proxy_unit_ids: frozenset[Identifier]
-    chunk_ids: frozenset[Identifier]
-    asset_ids: frozenset[Identifier]
-    vector_record_ids: frozenset[Identifier]
     blocked_assertion_ids: frozenset[Sha256]
-    graph_generation_id: Identifier | None = None
-    graph_family_id: Sha256 | None = None
-    graph_config_sha: Sha256 | None = None
-    graph_decision_watermark: NonNegativeInt | None = None
-    graph_manifest_digest: Sha256 | None = None
 
-    @model_validator(mode="after")
-    def graph_binding(self) -> Self:
-        fields = (
-            self.graph_generation_id,
-            self.graph_family_id,
-            self.graph_config_sha,
-            self.graph_decision_watermark,
-            self.graph_manifest_digest,
-        )
-        if any(value is None for value in fields) and any(
-            value is not None for value in fields
-        ):
-            raise ValueError("Graph ready bindings must be present or absent together")
-        if not self.source_unit_ids <= self.context_unit_ids:
-            raise ValueError("Candidate sources must be context eligible")
-        if self.context_unit_ids & self.structural_unit_ids:
-            raise ValueError("Structural and source context must be separate")
-        if (
-            self.graph_generation_id is not None
-            and self.graph_generation_id not in self.selected_batch_ids
-        ):
-            raise ValueError("Selected graph generation is absent from ready batches")
-        return self
+    @property
+    def graph_generation_id(self) -> str:
+        """The pinned graph generation."""
+        return self.receipt.generation_id
+
+    @property
+    def graph_family_id(self) -> str:
+        """The pinned generation's index family."""
+        return self.receipt.family_id
+
+    @property
+    def graph_config_sha(self) -> str:
+        """The pinned generation's configuration digest."""
+        return self.receipt.config_sha
+
+    @property
+    def graph_decision_watermark(self) -> int:
+        """The last assertion decision the pinned generation saw."""
+        return self.receipt.decision_watermark
+
+    @property
+    def graph_manifest_digest(self) -> str:
+        """The pinned generation's sealed manifest digest."""
+        return self.receipt.manifest_digest
 
     @property
     def graph_eligible_unit_ids(self) -> frozenset[str]:
+        """Every unit traversal may reach: context and structural."""
         return self.context_unit_ids | self.structural_unit_ids
 
 

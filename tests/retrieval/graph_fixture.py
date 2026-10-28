@@ -4,6 +4,7 @@ import io
 from dataclasses import dataclass, field
 from typing import Literal
 
+from tests.helpers.eligibility import synthetic_graph_scope
 from tychora.adapters.files.cas import LocalArtifacts
 from tychora.adapters.ladybug.generation import LadybugGraphStore
 from tychora.contracts.base import FrozenJsonMap
@@ -16,9 +17,9 @@ from tychora.contracts.graph import (
     GraphGenerationSpec,
     GraphManifest,
     GraphPredicatePolicy,
+    GraphScope,
     GraphTraversalPolicy,
     GraphUnitBinding,
-    LegacyEligibilityView,
 )
 from tychora.contracts.identity import digest
 from tychora.contracts.relationships import (
@@ -98,28 +99,17 @@ class GraphCase:
         candidates: set[str],
         structural: set[str] | None = None,
         blocked: set[str] | None = None,
-    ) -> LegacyEligibilityView:
-        return LegacyEligibilityView(
-            snapshot_id="snapshot",
-            policy_epoch=0,
-            scope_digest=digest("scope"),
-            eligibility_policy_digest=digest("policy"),
-            eligibility_request_digest=digest("request"),
-            selected_batch_ids=(self.spec.generation_id,),
-            revision_ids=frozenset({"revision"}),
-            source_unit_ids=frozenset(candidates),
-            context_unit_ids=frozenset(context),
-            structural_unit_ids=frozenset(structural or set()),
-            proxy_unit_ids=frozenset(),
-            chunk_ids=frozenset(),
-            asset_ids=frozenset(),
-            vector_record_ids=frozenset(),
-            blocked_assertion_ids=frozenset(blocked or set()),
-            graph_generation_id=self.spec.generation_id,
-            graph_family_id=self.spec.family_id,
-            graph_config_sha=self.spec.config_sha,
-            graph_decision_watermark=self.spec.decision_watermark,
-            graph_manifest_digest=self.receipt_digest,
+    ) -> GraphScope:
+        return synthetic_graph_scope(
+            source=candidates,
+            context=context,
+            structural=structural or (),
+            blocked=blocked or (),
+            generation_id=self.spec.generation_id,
+            family_id=self.spec.family_id,
+            config_sha=self.spec.config_sha,
+            decision_watermark=self.spec.decision_watermark,
+            manifest_digest=self.receipt_digest,
         )
 
 

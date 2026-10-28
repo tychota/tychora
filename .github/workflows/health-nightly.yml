@@ -94,8 +94,8 @@ jobs:
           - {shard: contracts-identity, module: tychora.contracts.identity}
           - {shard: contracts-publication, module: tychora.contracts.publication}
           - {shard: sqlite-publication, module: tychora.adapters.sqlite.publication}
-          - {shard: retrieval-eligibility, module: tychora.retrieval.eligibility}
-          - {shard: sqlite-eligibility, module: tychora.adapters.sqlite.eligibility}
+          - {shard: retrieval-compiler, module: tychora.retrieval.compiler}
+          - {shard: retrieval-selection, module: tychora.retrieval.selection}
           - {shard: retrieval-lexical-query, module: tychora.retrieval.lexical_query}
           - {shard: sqlite-lexical, module: tychora.adapters.sqlite.lexical}
           - {shard: retrieval-fusion, module: tychora.retrieval.fusion}

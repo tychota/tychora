@@ -20,7 +20,7 @@ from tychora.contracts.artifacts import ArtifactRef
 from tychora.contracts.base import CodepointRange, FrozenJsonMap
 from tychora.contracts.errors import TychoraError
 from tychora.contracts.evidence import Excerpt, RelationPath
-from tychora.contracts.graph import GraphBudget
+from tychora.contracts.graph import GraphBudget, GraphScope
 from tychora.contracts.identity import canonical_bytes, digest
 from tychora.contracts.operations import (
     ExtractionContentRequest,
@@ -47,7 +47,7 @@ from tychora.retrieval.attempt import (
     require_epoch,
 )
 from tychora.retrieval.compiler import EligibilityCompiler
-from tychora.retrieval.eligibility import LegacyEligibilityCompiler
+from tychora.retrieval.graph_scope import graph_scope
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -99,8 +99,6 @@ class InspectionService:
         self.owner = owner
         self.graph = graph
         self.compiler = EligibilityCompiler(owner.store.registry, owner.artifacts)
-        # Relation inspection reads the unit-level graph view until the graph moves.
-        self.legacy = LegacyEligibilityCompiler(owner.store)
         # Opaque continuations never disclose excluded row IDs or positions.
         self._content_cursors: dict[str, tuple[str, int]] = {}
 
@@ -140,16 +138,6 @@ class InspectionService:
             members=members,
             include_archived=include_archived,
         ).view
-
-    def _legacy_attempt(self, snapshot: SnapshotView, scope: RequestScope):
-        """The unit-level attempt relation inspection still reads."""
-        return self.legacy.compile_attempt(
-            snapshot,
-            scope,
-            self._exact_query(scope),
-            self.owner.config,
-            _retained_inspection=True,
-        )
 
     def _artifact(
         self,
@@ -836,6 +824,27 @@ class InspectionService:
             lambda: self._relations_sync(request, scope, ctx), ctx, "interactive"
         )
 
+    def _relation_scope(
+        self, snapshot: SnapshotView, granted: RequestScope, seeds: tuple[str, ...]
+    ) -> tuple[EligibilityView, GraphScope]:
+        """The retained view and graph scope; ineligible seeds are refused first."""
+        with self.owner.store.uow.read() as tx:
+            view = self._attempt(tx, snapshot, granted, include_archived=True)
+            graph = graph_scope(tx, view) if self.graph is not None else None
+            eligible = (
+                graph.graph_eligible_unit_ids
+                if graph is not None
+                else readable_units(tx, view, seeds)
+            )
+        if any(seed not in eligible for seed in seeds):
+            _deny()
+        if graph is None:
+            raise TychoraError(
+                "INDEX_INCOMPLETE",
+                "Graph inspection requires a rebuilt ready generation.",
+            )
+        return view, graph
+
     def _relations_sync(
         self, request: RelationRequest, scope: RequestScope, ctx: ExecutionContext
     ) -> RelationResult:
@@ -844,12 +853,8 @@ class InspectionService:
             _deny()
         with self.owner.store.pin_snapshot(None) as snapshot:
             ctx.checkpoint()
-            attempt = self._legacy_attempt(snapshot, granted)
-            view = attempt.view
-            eligible = view.graph_eligible_unit_ids
-            if any(seed not in eligible for seed in request.unit_ids):
-                _deny()
-            if self.graph is None or view.graph_generation_id is None:
+            view, graph = self._relation_scope(snapshot, granted, request.unit_ids)
+            if self.graph is None:
                 raise TychoraError(
                     "INDEX_INCOMPLETE",
                     "Graph inspection requires a rebuilt ready generation.",
@@ -878,11 +883,11 @@ class InspectionService:
                 },
             )
             cursor_identity = [
-                view.snapshot_id,
-                view.policy_epoch,
-                view.scope_digest,
-                view.graph_generation_id,
-                view.graph_manifest_digest,
+                graph.snapshot_id,
+                graph.policy_epoch,
+                graph.scope_digest,
+                graph.graph_generation_id,
+                graph.graph_manifest_digest,
                 query_digest,
             ]
             last = ""
@@ -913,7 +918,7 @@ class InspectionService:
                 max_inspection_hops=min(request.max_hops, limits.inspection_hops, 2),
             )
             page = self.graph.get_assertions(
-                view,
+                graph,
                 request.unit_ids,
                 predicates,
                 budget,
@@ -921,6 +926,7 @@ class InspectionService:
                 direction=request.direction,
                 relation_view=request.view,
             )
+            eligible = graph.graph_eligible_unit_ids
             paths = []
             incomplete = page.truncation is not None or not page.exhausted
             for path in page.assertions:
@@ -929,7 +935,7 @@ class InspectionService:
                     or path.target_unit_id not in eligible
                     or not path.required_support_ids
                     or not path.required_support_ids <= eligible
-                    or set(path.assertion_ids) & view.blocked_assertion_ids
+                    or set(path.assertion_ids) & graph.blocked_assertion_ids
                     or path.predicate not in predicates
                 ):
                     incomplete = True
@@ -970,7 +976,8 @@ class InspectionService:
                     .decode()
                     .rstrip("=")
                 )
-            self.legacy.revalidate_epoch(view, "delivery")
+            with self.owner.store.uow.read() as tx:
+                require_epoch(tx, view)
             ctx.checkpoint()
             return RelationResult(
                 paths=tuple(item for _, item in selected),
