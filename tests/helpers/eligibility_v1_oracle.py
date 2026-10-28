@@ -351,10 +351,8 @@ class OracleCompiler:
             for item in revisions
             if registry.lane_bindings.get(item.kind_id) in allowed_lanes
         )
-        temporal, warnings = select_temporal_revisions(
-            revisions, TemporalSelector.of(request)
-        )
-        revision_ids = temporal
+        edition = select_temporal_revisions(revisions, TemporalSelector.of(request))
+        revision_ids, warnings = edition.selected, edition.warnings
         revisions_by_id = {item.revision_id: item for item in facts.revisions}
         units = {
             item.unit_id: item
@@ -706,7 +704,7 @@ def read_eligibility_facts(
                 "SELECT r.kind_id,r.access_rank,r.allowed_uses_json,r.published_on,"
                 "r.effective_from,r.effective_until,c.collection_id,c.access_floor,"
                 "s.access_floor,s.withdrawn_at,c.workspace_id,k.definition_json,k.definition_hash,r.metadata_json,r.metadata_sha,c.policy_json,"
-                "s.allowed_uses_override "
+                "s.allowed_uses_override,r.edition_key "
                 "FROM revisions r JOIN sources s USING(source_id) "
                 "JOIN collections c USING(collection_id) JOIN kinds k USING(kind_id) "
                 "JOIN extractions e USING(revision_id) "
@@ -792,6 +790,7 @@ def read_eligibility_facts(
                     effective_until=row[5],
                     is_default=member.is_default,
                     kind_allowed_uses=kind_uses,
+                    edition_key=row[17],
                     global_facets=global_facets,
                 )
             )

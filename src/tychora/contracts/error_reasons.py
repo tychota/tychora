@@ -389,6 +389,12 @@ _ENTRIES = (
     ),
     Reason(
         "INVALID_REQUEST",
+        "edition.as_of_required",
+        False,
+        "Give an as_of date with the applicable revision selector.",
+    ),
+    Reason(
+        "INVALID_REQUEST",
         "profile.snapshot_mismatch",
         False,
         "Open the workspace with the profile that published its snapshots.",

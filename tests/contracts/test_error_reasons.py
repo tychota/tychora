@@ -90,6 +90,7 @@ CLASSIFIED_REASONS = {
         "identifier.namespace_unknown",
         "mode.unavailable",
         "profile.snapshot_mismatch",
+        "edition.as_of_required",
     },
     "SCOPE_CHANGED": {"policy.epoch_changed"},
 }

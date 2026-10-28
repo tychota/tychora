@@ -110,6 +110,8 @@ _MINIMUMS = {
     "rejected_revision_proxy": 3,
     "request.limit_exceeded": 3,
     "mode.unavailable": 3,
+    "edition.as_of_required": 3,
+    "decision:undated": 30,  # tie, overlap and applicable: tests/retrieval/test_temporal.py
 }
 
 
@@ -142,8 +144,11 @@ def _request(rng, revision_ids):
         ).isoformat()
     if rng.random() < 0.2:
         value["cutoff"] = date(rng.randint(2020, 2025), 6, 1).isoformat()
-    if rng.random() < 0.2:
+    selector_draw = rng.random()
+    if selector_draw < 0.12:
         value["revision_selector"] = "all"
+    elif selector_draw < 0.2:
+        value["revision_selector"] = "applicable"  # refused without as_of
     if rng.random() < 0.2:
         value["unknown_dates"] = "permissive"
     if rng.random() < 0.1 and revision_ids:
@@ -533,19 +538,28 @@ def _compile_both(run, legacy, compiler, cache, scope, request):
         ), request
         run.counts[error.reason or error.code] += 1
         return None
-    v2 = run.call(
+    compiled = run.call(
         owner.run_read(
-            lambda tx: (
-                compiler.compile_cached(
-                    tx,
-                    cache,
-                    EligibilityInputs(snapshot, scope, request, owner.config),
-                ).view
+            lambda tx: compiler.compile_cached(
+                tx,
+                cache,
+                EligibilityInputs(snapshot, scope, request, owner.config),
             ),
             ExecutionContext(),
         )
     )
-    return v1, v2
+    # Edition decisions are new in v2 (spec 4.9). Each names editions v1 also
+    # selected, except an overlap, which names its one winner beside the older
+    # editions that declare they still apply.
+    for decision in compiled.decisions:
+        named = set(decision.revision_ids)
+        chosen = named & v1.revision_ids
+        assert len(chosen) == 1 if decision.reason == "overlap" else chosen == named, (
+            decision,
+            request,
+        )
+        run.counts[f"decision:{decision.reason}"] += 1
+    return v1, compiled.view
 
 
 @pytest.fixture(scope="module")

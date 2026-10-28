@@ -95,6 +95,7 @@ from tychora.retrieval.response import (
     prepare_records,
 )
 from tychora.retrieval.segments import assemble_segments
+from tychora.retrieval.selection import EditionDecision
 from tychora.retrieval.survivors import load_survivors
 from tychora.retrieval.vectors import (
     CHANNEL_LIMIT,
@@ -982,7 +983,7 @@ class QueryService:
                     visuals=visuals,
                     coverage=coverage,
                     warnings=attempt.warnings,
-                    decisions=_edition_decisions(attempt.warnings),
+                    decisions=_edition_decisions(attempt.decisions),
                     candidate_count=len(fused),
                 ),
             ),
@@ -1380,15 +1381,22 @@ def _delivered_eligibility(
     )
 
 
-def _edition_decisions(warnings: tuple[str, ...]) -> tuple[DecisionRequirement, ...]:
-    """A version decision for each overlapping-editions warning."""
+def _edition_decisions(
+    decisions: tuple[EditionDecision, ...],
+) -> tuple[DecisionRequirement, ...]:
+    """A decision requirement for each edition decision selection left open."""
     return tuple(
         DecisionRequirement(
-            requirement_id=digest("applicable-version-decision-v1", warning),
-            reason=warning,
+            requirement_id=digest(
+                "edition-decision-v1",
+                decision.reason,
+                decision.source_id,
+                list(decision.revision_ids),
+            ),
+            reason=decision.message(),
+            revision_ids=decision.revision_ids,
         )
-        for warning in warnings
-        if warning.startswith("Overlapping retained editions")
+        for decision in decisions
     )
 
 
