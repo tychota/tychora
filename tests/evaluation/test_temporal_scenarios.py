@@ -490,3 +490,45 @@ def test_invalid_half_open_interval_is_rejected_before_publication(tmp_path):
             )
             == 0
         )
+
+
+def test_overlapping_editions_reach_decision_requirements(tmp_path):
+    with Tychora.open(tmp_path / "workspace", token_counter=SyntheticCounter()) as kb:
+        for edition, start, end in (
+            ("2022", "2022-01-01", "2026-01-01"),
+            ("2024", "2024-01-01", None),
+        ):
+            _add(
+                kb,
+                _source(
+                    f"cobalt edition {edition}",
+                    edition=edition,
+                    publication_date=start,
+                    effective_start=start,
+                    effective_end=end,
+                    approval="accepted",
+                ),
+            )
+        owner = kb._workspace.owner
+        rows = kb._workspace.bridge.call(
+            owner.run_write(
+                lambda: owner.db.execute(
+                    "SELECT revision_id,source_id FROM revisions ORDER BY edition_key"
+                ).fetchall(),
+                ExecutionContext(),
+            )
+        )
+        (old_id, source_id), (new_id, _) = rows
+        query = {"question": "cobalt", "modalities": ["lexical"]}
+        result = kb.search({**query, "as_of": "2025-01-01"})
+        assert {segment.revision_id for segment in result.segments} == {new_id}
+        assert [
+            (decision.reason, decision.revision_ids)
+            for decision in result.decision_requirements
+        ] == [
+            (
+                f"Overlapping retained editions for source {source_id}",
+                tuple(sorted((old_id, new_id))),
+            )
+        ]
+        assert not kb.search({**query, "as_of": "2023-01-01"}).decision_requirements

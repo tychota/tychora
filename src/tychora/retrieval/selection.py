@@ -84,7 +84,6 @@ class EditionSelection:
 
     selected: frozenset[str]
     decisions: tuple[EditionDecision, ...] = ()
-    undated: frozenset[str] = frozenset()
 
     @property
     def warnings(self) -> tuple[str, ...]:
@@ -99,7 +98,11 @@ def _parsed_date(value: str | None) -> date | None:
 def _in_force(
     edition: RevisionFact, as_of: date | None, cutoff: date | None
 ) -> bool | None:
-    """Whether a dated edition passes both constraints; ``None`` when a needed date is unknown."""
+    """Whether a dated edition passes both constraints; ``None`` when a needed date is unknown.
+
+    Every exclusion the known dates prove is decided first, so an edition that
+    is provably expired, future or too late is never reported as undated.
+    """
     start, end = (
         _parsed_date(edition.effective_from),
         _parsed_date(edition.effective_until),
@@ -107,13 +110,14 @@ def _in_force(
     published = _parsed_date(edition.published_on)
     if as_of is not None and end is not None and as_of >= end:
         return False
+    if as_of is not None and start is not None and as_of < start:
+        return False
     if cutoff is not None and published is not None and published > cutoff:
         return False
-    if (as_of is not None and start is None) or (
+    unknown = (as_of is not None and start is None) or (
         cutoff is not None and published is None
-    ):
-        return None
-    return not (as_of is not None and start is not None and as_of < start)
+    )
+    return None if unknown else True
 
 
 def _ids(editions: list[RevisionFact]) -> tuple[str, ...]:
@@ -121,20 +125,27 @@ def _ids(editions: list[RevisionFact]) -> tuple[str, ...]:
 
 
 def _key(edition: RevisionFact, as_of: date | None) -> tuple[str, str, str]:
-    """The ordering key: effective start with ``as_of``, publication otherwise."""
+    """The ordering key: effective start with ``as_of``, publication otherwise.
+
+    Under ``as_of`` a missing ``published_on`` sorts lowest among equal starts.
+    ``edition_key`` order is lexicographic (``"10"`` sorts before ``"9"``).
+    """
     published = edition.published_on or ""
     if as_of is not None:
         return (edition.effective_from or "", published, edition.edition_key)
     return (published, edition.edition_key, "")
 
 
-def _overlapping(winner: RevisionFact, known: list[RevisionFact]) -> list[RevisionFact]:
-    """Other editions in force that declare an end later than the winner's start."""
-    start = winner.effective_from or ""
+def _overlapping(
+    winners: list[RevisionFact], known: list[RevisionFact]
+) -> list[RevisionFact]:
+    """Other editions in force that declare an end later than the winners' start."""
+    start = winners[0].effective_from or ""
+    chosen = {edition.revision_id for edition in winners}
     return [
         edition
         for edition in known
-        if edition is not winner
+        if edition.revision_id not in chosen
         and edition.effective_until is not None
         and edition.effective_until > start
     ]
@@ -143,17 +154,21 @@ def _overlapping(winner: RevisionFact, known: list[RevisionFact]) -> list[Revisi
 def _winners(
     source: str, known: list[RevisionFact], as_of: date | None
 ) -> tuple[list[RevisionFact], list[EditionDecision]]:
-    """The editions with the greatest key, and the tie or overlap they leave open."""
+    """The editions with the greatest key, and the tie and overlap they leave open.
+
+    A tie and an overlap together report both decisions.
+    """
     best = max(_key(edition, as_of) for edition in known)
     winners = [edition for edition in known if _key(edition, as_of) == best]
+    decisions: list[EditionDecision] = []
     if len(winners) > 1:
-        return winners, [EditionDecision("tie", source, _ids(winners))]
-    if as_of is None:
-        return winners, []
-    overlapping = _overlapping(winners[0], known)
-    if not overlapping:
-        return winners, []
-    return winners, [EditionDecision("overlap", source, _ids(winners + overlapping))]
+        decisions.append(EditionDecision("tie", source, _ids(winners)))
+    overlapping = _overlapping(winners, known) if as_of is not None else []
+    if overlapping:
+        decisions.append(
+            EditionDecision("overlap", source, _ids(winners + overlapping))
+        )
+    return winners, decisions
 
 
 def _pick(
@@ -202,7 +217,7 @@ def select_temporal_revisions(
     """Select editions per source after applying both date constraints (spec 4.9).
 
     Permissive unknown-date editions are selected beside the winners and
-    reported apart, as ``undated``.
+    reported apart, by an ``undated`` decision.
     """
     if temporal.selector == "applicable" and temporal.as_of is None:
         raise TychoraError(
@@ -221,6 +236,4 @@ def select_temporal_revisions(
         picked, found = _pick(source, known, temporal)
         selected.update(edition.revision_id for edition in picked)
         decisions.extend(found)
-    return EditionSelection(
-        frozenset(selected | undated), tuple(decisions), frozenset(undated)
-    )
+    return EditionSelection(frozenset(selected | undated), tuple(decisions))
