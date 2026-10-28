@@ -1,0 +1,263 @@
+tests/operations/test_snapshot_gc.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 56,142,242,479
+tests/acceptance/test_combined_channels.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 73,198,201,220,244,315,320
+tests/api/test_scope.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 270,281
+tests/code/test_legacy_retry.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 56,66
+tests/retrieval/test_visual_selection.py
+  s_ab847b2c6c265a::t_05fc7394644d24 153
+tests/transports/test_dashboard_restore.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 32
+tests/security/test_history_privacy.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 97,121,182,186
+src/tychora/application/setup.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 809
+tests/operations/test_backup.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 91,197,203,238,272,330,416,517,563,780,792
+tests/retrieval/test_degraded.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 334
+src/tychora/application/inspection.py
+  s_ab847b2c6c265a::t_7321a188939143 763,775
+  s_ab847b2c6c265a::t_7c26884cd85a3e 762,774
+  s_ab847b2c6c265a::t_0dd4fc0a16892f 776-777,788-791,797-798
+tests/indexing/test_sources.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 121,145,175,179,186,227,324,333,358,412,426,445,468,510,551,554,562,595,619,622,644,649,652,657,677,685,697-698,707,717,724,732,746,753,760,769,778,810,845,849,855,889,924,929,939,944,979,1035,1049,1078,1107,1148,1152,1161,1165,1190,1217,1222,1234,1245
+  s_ab847b2c6c265a::t_33aed1f474fe1d 251,325,560,641-642,655
+src/tychora/application/discovery.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 407,451,550,653,692,744,913,1016,1227
+tests/api/test_public_vision.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 205,291,354,519,528,773,847,990,1052
+tests/qualification/test_docling_records.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 59,131,154,187,190
+tests/api/test_public_async.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 261,315
+tests/providers/test_text.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 657,674,679,685,693,719,759,777,812,858,927
+src/tychora/application/visual.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 81,335
+src/tychora/application/model_inventory.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 59,133,251
+tests/application/test_content_inspection.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 20,70,214,246,266,306,333,416,573,577,602
+tests/application/test_ingest_stage_cost.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 28
+tests/operations/test_closure_bounds.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 64
+tests/runtime/test_lanes.py
+  s_ab847b2c6c265a::t_dcb5740e0e032f 1-147
+  s_ab847b2c6c265a::t_5e8a715a1b6e9b 148-155
+src/tychora/application/recovery.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 478,491,888
+tests/evaluation/test_repository.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 45
+  s_ab847b2c6c265a::t_066ae430f688d9 31
+tests/acceptance/test_crash_matrix.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 103,108-109,115,126,129,135,140,146,185,195,205,328,348,352,361,367,376-377,382,388
+tests/transports/test_pdf_intake.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 270,354
+packaging/native_fixture.py
+  s_ab847b2c6c265a::t_0c204874b73e27 116,171,174,179
+src/tychora/application/backup.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 107
+src/tychora/retrieval/visuals.py
+  s_ab847b2c6c265a::t_7321a188939143 314
+tests/storage/test_representation_facts.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 224,246
+src/tychora/application/query.py
+  s_ab847b2c6c265a::t_7321a188939143 548,654,858,1115,1253
+  s_ab847b2c6c265a::t_68f1639e779053 561,837-841,843-845,847,997-998,1000-1013,1016,1120-1123,1125,1256-1259,1261
+  s_ab847b2c6c265a::t_bb3971e93ea833 585-590,661,715,729-731,805,827,830,842,994,999,1132-1134,1243
+  s_ab847b2c6c265a::t_7c26884cd85a3e 584,658,704,800,857,1114,1131,1240,1252
+tests/operations/test_setup.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 189,193,199-200,228,243,253,261,273,307,350,411-412,418
+tests/qualification/test_docling.py
+  s_ab847b2c6c265a::t_33aed1f474fe1d 34
+  s_ab847b2c6c265a::t_7c26884cd85a3e 43,46
+tests/evaluation/test_runner.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 455,499,536,541,555
+src/tychora/application/consent.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 171
+tests/security/test_upload_consent.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 45,85,106,174,251,357,440
+src/tychora/retrieval/eligibility.py
+  s_ab847b2c6c265a::t_7321a188939143 824-826,861,867
+  s_ab847b2c6c265a::t_7c26884cd85a3e 823
+  s_ab847b2c6c265a::t_08413590ebdb84 870,881,886,906-909
+tests/application/test_workspace_rebuild.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 27,71
+tests/operations/export_support.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 17,94
+tests/transports/test_http.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 184,294,1329,1515,1810,1812,1849,1862,1922,2019
+tests/runtime/test_upload_policy.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 62,64,68,73,80,110,171,187,210,241,260,308,310,322,324
+src/tychora/adapters/vision/local.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 171
+tests/transports/test_pdf_policy_confirmation.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 247
+tests/indexing/test_collection_lifecycle.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 50,160,173,231,243,289,314
+tests/api/test_configured_runtime.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 106,393,666,781
+tests/evaluation/test_code_gold.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 85,101
+src/tychora/api.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 164,179,208,219,318
+tests/acceptance/test_document_kind_compatibility.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 32,93,107,191,249,275,295,321,356,390
+tests/evaluation/conftest.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 102
+src/tychora/application/sources.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 241,244,419,436,522,608,655,670,674,677-678,682,685,689,693,696-697,706-708,724,729,750,762,780,791,801,812,862,867,876-877,923,940-941,944,985,1799,1837,1859,1897,1908,1912,1960,2005,2017,2025,2049
+src/tychora/interfaces/bench.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 158
+tests/application/test_collections.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 114,121,250,272,289,314
+src/tychora/evaluation/runner.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 278,291,427,433,454,468,547,554,563,568
+tests/evaluation/test_global_scope_scenario.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 98,114,135,236,284,314
+tests/transports/test_pdf_intake_recovery.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 43
+src/tychora/adapters/voyage/query.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 60
+tests/providers/test_reranker.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 575,682,768
+src/tychora/application/reranking.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 489,507
+  s_ab847b2c6c265a::t_7321a188939143 508
+  s_ab847b2c6c265a::t_61d506158738e4 509-510,649,688,830
+src/tychora/application/jobs.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 66,76,123
+tests/evaluation/test_bench_footprint.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 35
+tests/application/test_discovery.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 181,270
+src/tychora/application/collections.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 131,134,198,239,259,283,409
+tests/ingestion/test_ocr_origin.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 269
+src/tychora/application/owner.py
+  s_ab847b2c6c265a::t_70febef64e2f91 75-76,79-80,132,166,174,324-325,333,335-342,344-350,352-362,749-750
+  s_ab847b2c6c265a::t_b0e54c48c535bc 133-135
+  s_ab847b2c6c265a::t_7c26884cd85a3e 617,657,784,834
+tests/ingestion/test_public_vision_selection.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 43,53,116,122,134,138,168,174
+tests/indexing/test_resume_after_gc.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 22,36,40,43
+tests/evaluation/test_image_scenario.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 66,84,91,112,119,216,242,246,249,252,255,262,320
+tests/indexing/test_recovery.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 70,97,115,125,160,167,172,186,192,196
+tests/application/test_inspection.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 65,107,203,323,576,587,671,726,750,756,841,887,931,963
+src/tychora/application/runtime.py
+  s_ab847b2c6c265a::t_b9c95cab0078e2 14,22,28-45,50-53,65,101-110,115-150,152-154
+  s_ab847b2c6c265a::t_b0e54c48c535bc 111-114,151
+  s_ab847b2c6c265a::t_c64d9260bdf846 155-156
+tests/runtime/test_owner.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 50,77,224,266,270,349,385,566,589,597,618,661
+  s_ab847b2c6c265a::t_33aed1f474fe1d 577,580
+  s_ab847b2c6c265a::t_dcb5740e0e032f 113
+tests/retrieval/test_eligibility.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 934-935,970,1012-1013,1072-1073,1280-1281,1307
+src/tychora/application/pdf_intake.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 345,349,370,406,436,472,488,513,669,845,870,885
+tests/providers/test_visual.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 271,309,339,381,404,426,442,448,480,499,532,554,570,590,621,657,660,678,706
+tests/acceptance/combined_store_probe.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 47,55,61,78,84,93-94
+tests/evaluation/test_code_scenarios.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 52,142,161,170,185
+tests/performance/engine_probe.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 104,184,205
+src/tychora/application/settings.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 102,201,224,237,271
+tests/security/history_probe.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 65,98
+tests/operations/test_removal.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 48,179,222,252,292,360,382,402,423,442,470,509,584,604,621,723
+src/tychora/application/removal.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 540-541
+tests/transports/test_mcp_http.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 474,524
+tests/ingestion/test_tables.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 334,372,375,379,388,487,499,633,802,826,832,856,875,906,996,1010,1015,1049,1065,1109,1633,1647
+tests/cli/test_commands.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 536,575
+tests/api/test_read_grants.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 120,136,149,162
+tests/ingestion/test_document_records.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 390,399
+tests/application/test_settings_draft.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 44,56,531,570,637
+tests/retrieval/test_query.py
+  s_ab847b2c6c265a::t_33aed1f474fe1d 400,657
+  s_ab847b2c6c265a::t_7c26884cd85a3e 363,466,495,531,610,828,891,946,993,1001
+tests/ingestion/test_vision.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 802,824,845,854,860,923,932,957,996,1119,1149,1164,1173,1221,1229,1236,1246,1255,1262,1268,1275,1282,1317,1410,1448,1604,1615,1627,1707,1736,1824,1869,1998,2014,2062,2133,2228,2242,2308,2315,2379
+src/tychora/application/services.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 187,208,230,253
+src/tychora/application/maintenance.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 98,107,149,226,250,292,307
+tests/fixtures/docling.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 91,125,178,312,354,376
+  s_ab847b2c6c265a::t_33aed1f474fe1d 393
+tests/jobs/test_acquired_sources.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 85,189,289,304
+tests/transports/test_mcp_stdio.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 95
+tests/evaluation/test_gold_labels.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 137,146
+tests/evaluation/test_table_scenario.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 140,151,169,252,268,288,321,356,391,430
+tests/evaluation/test_temporal_scenarios.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 47,54,65,115,131,152,257,405,435,445,472
+tests/operations/test_restore.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 98,191,258,275,413,536,542,549,803
+tests/performance/test_ingestion_delta.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 50
+tests/qualification/test_scanned_pdf.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 158,169,207,355-356,395,404,465
+tests/jobs/test_service.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 26,32,67,73
+tests/evaluation/test_cli.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 45
+tests/evaluation/test_graph_scenarios.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 167,180,202,238-239,242,245,248,316,373
+src/tychora/adapters/docling/parser.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 572,588,599
+tests/ingestion/test_pdf_composition_capacity.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 130,162,306,948,1035
+tests/qualification/test_rebuild_rich_document.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 24,30,77
+src/tychora/application/settings_draft.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 195,271,283
+src/tychora/interfaces/http/routes.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 203
+tests/evaluation/test_provenance.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 59,160,214,256,307,321,451
+  s_ab847b2c6c265a::t_6ae6e58f9cb184 471,473,478,512,542
+tests/qualification/test_visual_live.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 87
+tests/acceptance/parser_crash_probe.py
+  s_ab847b2c6c265a::t_7c26884cd85a3e 33
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7bda9d7e9832811e11f8501b8aa77b067de1c159",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}

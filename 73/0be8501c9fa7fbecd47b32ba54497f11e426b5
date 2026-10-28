@@ -1,0 +1,128 @@
+tests/retrieval/test_segments.py
+  s_ab847b2c6c265a::t_afdf03ef15a5fa 1018-1019,1025,1047-1051,1057,1066-1069
+  s_ab847b2c6c265a::t_6e59cb44e5d761 6,546-549,1014
+pyproject.toml
+  s_ab847b2c6c265a::t_f8fef6e87bcec6 304-305
+tests/formatting/test_relation_checks.py
+  s_ab847b2c6c265a::t_4a4e3e36bd1d37 15,48,57,66,94-96
+  s_ab847b2c6c265a::t_89fb866ddbf5de 3
+src/tychora/ports/graph.py
+  s_ab847b2c6c265a::t_0090010673d1b8 13,40,48,56
+tests/helpers/eligibility_v1_oracle.py
+  s_ab847b2c6c265a::t_1436cbc926ded9 162,645-647,650-651,660,736
+  s_ab847b2c6c265a::t_929047cf9c0cae 1-105,107-114,116-117,119-161,163-538,550-644,648-649,652-659,661-735,737-860
+  s_ab847b2c6c265a::t_4e8a5b9636577a 539-549
+  s_ab847b2c6c265a::t_5505ed853e153d 115,118
+  s_ab847b2c6c265a::t_7b6b4a6d0c3ddd 106
+tests/retrieval/test_eligibility_v2.py
+  s_ab847b2c6c265a::t_d9afc88468e7a3 11,421,464
+  s_ab847b2c6c265a::t_4dab5dac0891e3 29,31-32,46,311-326,339-348
+tests/application/test_settings_draft.py
+  s_ab847b2c6c265a::t_07991020321354 533
+tests/retrieval/test_persisted_facts.py
+  s_ab847b2c6c265a::t_07991020321354 8,35,40-42
+src/tychora/retrieval/graph.py
+  s_ab847b2c6c265a::t_f39feeb29841ee 45
+  s_ab847b2c6c265a::t_0090010673d1b8 10,36
+.github/workflows/health-nightly.yml
+  s_ab847b2c6c265a::t_f8fef6e87bcec6 97-98
+src/tychora/application/inspection.py
+  s_ab847b2c6c265a::t_17b44d9f0c8018 827-847,856-857
+  s_ab847b2c6c265a::t_c161ffcc2ec918 23
+  s_ab847b2c6c265a::t_2f886166226f05 886-890,921,938,979-980
+  s_ab847b2c6c265a::t_cefb79cf4ae5b5 929
+  s_ab847b2c6c265a::t_ff7d679a58ac89 50
+src/tychora/contracts/graph.py
+  s_ab847b2c6c265a::t_82ed14bd7d577d 188-189,196,198,204-227,231
+src/tychora/retrieval/compiler.py
+  s_ab847b2c6c265a::t_7c7674045e51f9 25,60-61
+tests/helpers/eligibility.py
+  s_ab847b2c6c265a::t_4a4e3e36bd1d37 9,150-189
+  s_ab847b2c6c265a::t_5b022919b5aa7e 5,10,136
+  s_ab847b2c6c265a::t_dbc18cd3ade6e1 13,90-135,137-149
+tests/retrieval/test_graph_policy.py
+  s_ab847b2c6c265a::t_4a4e3e36bd1d37 155-164
+  s_ab847b2c6c265a::t_89fb866ddbf5de 7
+tests/application/test_inspection.py
+  s_ab847b2c6c265a::t_4304d67fd02a9c 17
+  s_ab847b2c6c265a::t_e2be25ef8330ae 488,511-516,518,548-549
+src/tychora/adapters/ladybug/generation.py
+  s_ab847b2c6c265a::t_0090010673d1b8 25,86,95,106
+src/tychora/retrieval/response.py
+  s_ab847b2c6c265a::t_0090010673d1b8 27
+  s_ab847b2c6c265a::t_f39feeb29841ee 496,522
+src/tychora/application/query.py
+  s_ab847b2c6c265a::t_554ca4bcf1ed09 1098,1120-1121,1212-1240
+  s_ab847b2c6c265a::t_e043eb92c8b475 9
+  s_ab847b2c6c265a::t_336c14c252dae5 42,69,1042
+  s_ab847b2c6c265a::t_f39feeb29841ee 890
+  s_ab847b2c6c265a::t_dde09044153b13 61-66,68,71,866
+  s_ab847b2c6c265a::t_ad5add9c804e17 602-604,606,1073,1080-1092,1096-1097,1099-1119,1181,1194-1195,1281-1303
+  s_ab847b2c6c265a::t_b7b23360969d94 25,57
+  s_ab847b2c6c265a::t_4575de0d764452 766-771,860,1038-1041,1043-1072,1074-1079,1241-1280
+  s_ab847b2c6c265a::t_90df575f2487c5 1304-1305
+tests/indexing/test_page_publication.py
+  s_ab847b2c6c265a::t_07991020321354 8,269,278,290,503,639,664-666
+tests/retrieval/test_query.py
+  s_ab847b2c6c265a::t_29b64a88e683a3 23,274,277-279
+  s_ab847b2c6c265a::t_94b1f4ab703c28 16-22,275
+src/tychora/adapters/sqlite/repositories/eligibility.py
+  s_ab847b2c6c265a::t_21d6a13c856502 191-200
+src/tychora/adapters/ladybug/traversal.py
+  s_ab847b2c6c265a::t_0090010673d1b8 17,69,117,160,181,224,259,310,386,416,433,552,708
+tools/health/testruns.py
+  s_ab847b2c6c265a::t_f8fef6e87bcec6 19-20
+src/tychora/retrieval/graph_scope.py
+  s_ab847b2c6c265a::t_21d6a13c856502 1-51
+tests/retrieval/test_temporal.py
+  s_ab847b2c6c265a::t_07c737dba14eb2 103,150
+  s_ab847b2c6c265a::t_c87f3d86757513 104,112,119,143,151-153,169-170
+  s_ab847b2c6c265a::t_89fb866ddbf5de 141
+  s_ab847b2c6c265a::t_afdf03ef15a5fa 105,140,142,144
+  s_ab847b2c6c265a::t_600d081b3fcec7 106,120-121
+tests/retrieval/graph_fixture.py
+  s_ab847b2c6c265a::t_89fb866ddbf5de 7,20
+  s_ab847b2c6c265a::t_4a4e3e36bd1d37 102-112
+tests/storage/test_eligibility_repository.py
+  s_ab847b2c6c265a::t_feb8311e33573e 164-189
+src/tychora/retrieval/attempt.py
+  s_ab847b2c6c265a::t_29bd4f2f794a21 7,182,218-219
+tests/transports/test_dashboard_restore.py
+  s_ab847b2c6c265a::t_07991020321354 34
+src/tychora/retrieval/segments.py
+  s_ab847b2c6c265a::t_0090010673d1b8 24,295,832
+  s_ab847b2c6c265a::t_ab9adc0d2d50f8 292,324
+tests/retrieval/test_admission.py
+  s_ab847b2c6c265a::t_4a4e3e36bd1d37 3,13,92-93,122
+tests/retrieval/test_degraded.py
+  s_ab847b2c6c265a::t_4222520a6d0b98 10,338-339,343-355,380
+tests/retrieval/test_eligibility.py
+  s_ab847b2c6c265a::t_e644288dfc1f44 8,12-22,90,386-404,413,426,433,436,442,444-445,497,505,527-528,551,574-575,608,610,616,654,656,669,739,790-791,810-811,1055,1130,1168,1178,1197-1198,1202-1203,1253-1254,1449-1455,1501-1502,1509-1510
+tests/retrieval/test_eligibility_cache.py
+  s_ab847b2c6c265a::t_3db756c8b89d3b 58-76
+tests/retrieval/test_graph_scope.py
+  s_ab847b2c6c265a::t_82a4839896eaf5 50-54,64,72
+  s_ab847b2c6c265a::t_ab4c5178bbe932 1
+  s_ab847b2c6c265a::t_bd94f932b74ce2 2-49,55-63,65,67-71,73-81
+  s_ab847b2c6c265a::t_5b022919b5aa7e 66
+src/tychora/retrieval/cache.py
+  s_ab847b2c6c265a::t_21d6a13c856502 15,157,183-197,203
+src/tychora/ports/repositories.py
+  s_ab847b2c6c265a::t_21d6a13c856502 499-502
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "730be8501c9fa7fbecd47b32ba54497f11e426b5",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}

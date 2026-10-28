@@ -1,0 +1,79 @@
+tests/storage/test_eligibility_repository.py
+  s_ab847b2c6c265a::t_708eef251c009e 334-360
+  s_ab847b2c6c265a::t_eaccbd9c16b0e5 361
+src/tychora/ports/vectors.py
+  s_ab847b2c6c265a::t_a2709be57502b0 3,14,17-19
+src/tychora/contracts/vectors.py
+  s_ab847b2c6c265a::t_c2fe36f48de6f3 1,7,43-67
+tests/qualification/test_chroma.py
+  s_ab847b2c6c265a::t_7106c7d116c1e5 39,56-61
+  s_ab847b2c6c265a::t_e74d3c2468f26b 19-20,24-25,30,35-36,47-51,64,69-73,78-79,82,91-96,101-105,107
+tests/performance/engine_probe.py
+  s_ab847b2c6c265a::t_f47920c989310f 13
+  s_ab847b2c6c265a::t_7671c1528b7e6a 321-323,325,327
+tests/indexing/test_publication.py
+  s_ab847b2c6c265a::t_14f123ba6202bd 128-129
+src/tychora/retrieval/survivors.py
+  s_ab847b2c6c265a::t_839a36f0fc6c62 107-139,146
+tests/runtime/test_lanes.py
+  s_ab847b2c6c265a::t_33bc2379696398 237-263
+tests/retrieval/test_vector_selection.py
+  s_ab847b2c6c265a::t_61f1cace258104 11,21,23,26
+  s_ab847b2c6c265a::t_24064d9d7d2ad2 294-304
+  s_ab847b2c6c265a::t_eaccbd9c16b0e5 72-74,255-261,266-268,278-284
+  s_ab847b2c6c265a::t_7ca08b7adeeddf 1-10,12-20,22,24-25,27-71,75-254,262-265,269-277,285-293
+src/tychora/adapters/chroma/index.py
+  s_ab847b2c6c265a::t_b39a79577c04a2 1,18-19,30,34,51-54,56,235-236,241-242,288
+  s_ab847b2c6c265a::t_26155f70f1b88b 11,59-94,358-368,371-374,376-380,382-383,385-402,404-408
+  s_ab847b2c6c265a::t_daf3c93c193ca0 58
+src/tychora/application/query.py
+  s_ab847b2c6c265a::t_d567a7c1a4a8c0 698
+  s_ab847b2c6c265a::t_106cef23afa090 753,1075-1077,1079
+  s_ab847b2c6c265a::t_bc6aee30af92ad 697
+  s_ab847b2c6c265a::t_a529f25bb8d293 23,82-86,95-97,707,710,716,754-755,989,993,1018,1020,1022,1024,1026-1027,1029-1030,1034-1036,1044
+src/tychora/indexing/coordinator.py
+  s_ab847b2c6c265a::t_91387ff2135849 870-875
+  s_ab847b2c6c265a::t_4b61a5e541b8c8 755,761-764,766,768-769,773,783,790-804,868-869,876,998-1028,1069,1465-1533
+  s_ab847b2c6c265a::t_014bee031a1e81 1534
+src/tychora/application/sources.py
+  s_ab847b2c6c265a::t_eaccbd9c16b0e5 96
+  s_ab847b2c6c265a::t_200ca0619ad12d 894,911-931
+  s_ab847b2c6c265a::t_fed05d0a84409e 932
+src/tychora/adapters/sqlite/repositories/eligibility.py
+  s_ab847b2c6c265a::t_87ff5f067135c6 80,84,86,90-91,93-94,96-98,295,309
+tests/indexing/test_sources.py
+  s_ab847b2c6c265a::t_961100f7224aa9 6,25,29
+  s_ab847b2c6c265a::t_e06e8b51bb656b 1333-1334
+  s_ab847b2c6c265a::t_8d052b947de78a 1298-1332,1335-1378
+tests/storage/conftest.py
+  s_ab847b2c6c265a::t_0e1bf88f613adc 4,7,42
+  s_ab847b2c6c265a::t_ceb943c83d3031 18
+  s_ab847b2c6c265a::t_eaccbd9c16b0e5 85-87
+  s_ab847b2c6c265a::t_73f92cd0985bf6 12,30,38-41,43-47,64-84
+src/tychora/retrieval/vectors.py
+  s_ab847b2c6c265a::t_f6bf03991451d2 1-19,25,27,30-130,134-144
+  s_ab847b2c6c265a::t_eaccbd9c16b0e5 131-133
+  s_ab847b2c6c265a::t_4336e98f1609a0 20-24,26,28-29
+tests/retrieval/test_query.py
+  s_ab847b2c6c265a::t_9d5259565d0407 34,872,954-958,960-962,965,1010-1011,1024-1025,1028-1033
+tests/storage/test_vector_contract.py
+  s_ab847b2c6c265a::t_fd99b0cd160fa8 3,158,331,338
+  s_ab847b2c6c265a::t_8c412a89c304b9 17,32,36-40,43-44,49-51,54-55,58,60-61,64-69,74-75,77-78,80-81,134-135,140-141,145-147,149-152,155-156,160-163,165-174,177-196,201,206,213,216-219,222,224,226,229,232,234,240,242,244,246-247,249-251,253-271,327-328,332,339-343,346-347,349-353
+  s_ab847b2c6c265a::t_eaccbd9c16b0e5 333-336
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "da4d8f08d3e80d544938a25bccf82d805457910e",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}

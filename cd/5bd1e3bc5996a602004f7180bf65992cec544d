@@ -1,0 +1,99 @@
+tests/storage/test_representation_facts.py
+  s_ab847b2c6c265a::t_c2634670517a18 5-11,205,224
+src/tychora/retrieval/rerank.py
+  s_ab847b2c6c265a::t_0f4d712bd1e68e 6,16-17,23,62-63,173-186,191,242,285,294,364-365,379-381,393,440,498,508,607
+tests/formatting/test_record_attachment.py
+  s_ab847b2c6c265a::t_cd1cd076bf57e0 9,70,76-77,96,183,186,189,200,203
+src/tychora/adapters/sqlite/repositories/representations.py
+  s_ab847b2c6c265a::t_ed34786a291d79 43
+  s_ab847b2c6c265a::t_a748e95cb4264a 11,16-17,42,44-51,109-144
+  s_ab847b2c6c265a::t_48eca0127f998c 145
+src/tychora/evaluation/provenance.py
+  s_ab847b2c6c265a::t_b75d501629f632 107
+  s_ab847b2c6c265a::t_6deaa4e32f0e17 10,12
+src/tychora/retrieval/anchors.py
+  s_ab847b2c6c265a::t_4d36efb0dcb877 5,17,36
+tests/providers/test_reranker.py
+  s_ab847b2c6c265a::t_095a78716cc98f 202-209,214-215,217,235-236,238
+  s_ab847b2c6c265a::t_3b16bf192b58e5 12-19,22,574,681
+tests/retrieval/test_rerank_inputs.py
+  s_ab847b2c6c265a::t_b9275e4211cffa 8,12-16,18,37-54,83-84,102,104,129-135,243,291-299,303,306,313,321,374-376
+src/tychora/contracts/error_reasons.py
+  s_ab847b2c6c265a::t_4769b154df006a 281-284
+  s_ab847b2c6c265a::t_92337faa3e000c 279-280
+tests/storage/test_representation_slices.py
+  s_ab847b2c6c265a::t_bfd20d2425da74 29-37,49,60,82
+  s_ab847b2c6c265a::t_b75d501629f632 46-47,90-92,97-98,105-109,111-114
+  s_ab847b2c6c265a::t_dc930ed5fecdaa 1-28,38-45,48,50-59,61-81,83-89,93-96,99-104,110,115-121
+src/tychora/adapters/sqlite/repositories/slices.py
+  s_ab847b2c6c265a::t_645797ddec02c5 1-268,273,276-287,291-292
+  s_ab847b2c6c265a::t_095a78716cc98f 269-272,274-275
+  s_ab847b2c6c265a::t_b75d501629f632 288-290
+src/tychora/indexing/representations.py
+  s_ab847b2c6c265a::t_dee5704fff8906 38
+  s_ab847b2c6c265a::t_8c7de28f3a7498 962
+src/tychora/contracts/corpus.py
+  s_ab847b2c6c265a::t_629e1adb5290e7 20,203-207
+  s_ab847b2c6c265a::t_25cd97900b5ccb 208-209
+src/tychora/retrieval/segments.py
+  s_ab847b2c6c265a::t_4d36efb0dcb877 12,218,254,283-289,321,333,355,446,468,524,555,671,746,833,837,868
+  s_ab847b2c6c265a::t_f940a70fd54857 297-301,303,330-331,337
+  s_ab847b2c6c265a::t_e854796bbf331c 290-296,302,325,332,556,604,871-872,901
+tests/retrieval/test_segments.py
+  s_ab847b2c6c265a::t_ecef5c2da0a43e 1100,1111
+  s_ab847b2c6c265a::t_16a2b1ea9eed29 431,523-524,571,582,598-603,649-650,745,755,838,843,959,968,1212,1514,1639
+  s_ab847b2c6c265a::t_46032687a09a00 6,46-78,92,94,216,411,510,736,824,940,1202,1327,1368,1526
+src/tychora/application/reranking.py
+  s_ab847b2c6c265a::t_b75d501629f632 231-233
+  s_ab847b2c6c265a::t_785eed9bf85792 21,26-27,32,44
+  s_ab847b2c6c265a::t_ae555ebcdcfcc5 221-230,234-250,313-333,343,350,482-543,550-551,553,557-564,571-575,578-583,587
+  s_ab847b2c6c265a::t_69f9f2c6c9a80a 74
+  s_ab847b2c6c265a::t_b2f76c9dad3366 15-16,75,77-81,83-85,87
+src/tychora/contracts/indexing.py
+  s_ab847b2c6c265a::t_8c7de28f3a7498 4,38-72
+  s_ab847b2c6c265a::t_8c2d765a4d4009 73-74
+tests/helpers/corpus.py
+  s_ab847b2c6c265a::t_c2634670517a18 259-274
+  s_ab847b2c6c265a::t_6deaa4e32f0e17 206-207,215-216,219
+tests/retrieval/test_degraded.py
+  s_ab847b2c6c265a::t_095a78716cc98f 9,319
+  s_ab847b2c6c265a::t_5dd1503e1909ec 10,62,77,80-82,245-246,260-268,359-362,400,559,563-568,574
+src/tychora/application/retained_content.py
+  s_ab847b2c6c265a::t_69f9f2c6c9a80a 12,147
+src/tychora/ports/repositories.py
+  s_ab847b2c6c265a::t_a748e95cb4264a 23,376-388
+  s_ab847b2c6c265a::t_0fd4166f1da6ef 389
+tests/helpers/eligibility.py
+  s_ab847b2c6c265a::t_cd1cd076bf57e0 4-5,89-90,96,98,113-146,149-157
+src/tychora/adapters/sqlite/retained_bindings.py
+  s_ab847b2c6c265a::t_629e1adb5290e7 12,34,43-47
+  s_ab847b2c6c265a::t_fe3d6a1c057525 29,60-61
+tests/formatting/test_code_record_binding.py
+  s_ab847b2c6c265a::t_cd1cd076bf57e0 11-15,35-40,75,79
+tests/contracts/test_error_reasons.py
+  s_ab847b2c6c265a::t_4769b154df006a 63
+src/tychora/retrieval/visuals.py
+  s_ab847b2c6c265a::t_69f9f2c6c9a80a 8,285
+src/tychora/application/inspection.py
+  s_ab847b2c6c265a::t_69f9f2c6c9a80a 16,430
+src/tychora/application/query.py
+  s_ab847b2c6c265a::t_7caea93165719d 827-834,910,913,923-925
+src/tychora/retrieval/response.py
+  s_ab847b2c6c265a::t_57f511e3176efa 5,12,28,42,45,636-645,647,653,656,658-660,711
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "cd5bd1e3bc5996a602004f7180bf65992cec544d",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}

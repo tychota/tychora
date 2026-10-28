@@ -1,0 +1,108 @@
+tests/retrieval/test_graph_policy.py
+  s_ab847b2c6c265a::t_d96bc1455683ab 25
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 155
+tests/formatting/test_relation_checks.py
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 48,57,66,94-95
+  s_ab847b2c6c265a::t_d96bc1455683ab 14
+tests/retrieval/test_exact.py
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 11,23,62
+src/tychora/adapters/sqlite/lexical.py
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 10,25,148
+src/tychora/retrieval/anchors.py
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 7,17
+src/tychora/contracts/eligibility.py
+  s_ab847b2c6c265a::t_66d374d0c24cca 1-84
+tests/performance/engine_probe.py
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 34,311,340
+tests/retrieval/test_degraded.py
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 27,346
+tests/retrieval/test_lexical.py
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 7,41
+src/tychora/retrieval/response.py
+  s_ab847b2c6c265a::t_d96bc1455683ab 26
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 493
+tests/helpers/eligibility.py
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 3,14,16
+src/tychora/adapters/ladybug/traversal.py
+  s_ab847b2c6c265a::t_d96bc1455683ab 19
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 164,212,255,276,319,354,405,481,511,631,788
+src/tychora/adapters/sqlite/corpus.py
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 23,163
+src/tychora/ports/lexical.py
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 6,13
+src/tychora/retrieval/visuals.py
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 29,39
+src/tychora/retrieval/segments.py
+  s_ab847b2c6c265a::t_d96bc1455683ab 23
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 217,299,427,505,536,652,814
+src/tychora/adapters/sqlite/repositories/eligibility.py
+  s_ab847b2c6c265a::t_66d374d0c24cca 1-9,11-109,117-125,127-130,132-135,137-145,147-158,160-170,172-184,186-188,198-201,209-213,222-226,228-235,240-255,257-269,281-299
+  s_ab847b2c6c265a::t_b762337b90ec59 10,110-116,126,131,136,146,159,171,185,189,193-197,202-208,214-221,227,236-239,256
+  s_ab847b2c6c265a::t_0a426cbc73415e 190-192
+  s_ab847b2c6c265a::t_f8b883c5d5d17f 270-280
+src/tychora/ports/corpus.py
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 9,45
+src/tychora/contracts/graph.py
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 188
+src/tychora/retrieval/eligibility.py
+  s_ab847b2c6c265a::t_d96bc1455683ab 22-23,45
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 5,8,281,350,597,630,650,687
+src/tychora/retrieval/selection.py
+  s_ab847b2c6c265a::t_99227cc07e9ae6 1-95
+src/tychora/ports/repositories.py
+  s_ab847b2c6c265a::t_66d374d0c24cca 13,375-470,474-509,519
+  s_ab847b2c6c265a::t_f8b883c5d5d17f 471-473
+tests/retrieval/test_policy_cache.py
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 5,10-11
+src/tychora/ports/graph.py
+  s_ab847b2c6c265a::t_d96bc1455683ab 13
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 40,48,56
+tests/retrieval/test_temporal.py
+  s_ab847b2c6c265a::t_99227cc07e9ae6 8
+src/tychora/adapters/ladybug/generation.py
+  s_ab847b2c6c265a::t_d96bc1455683ab 27
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 78,91,104
+src/tychora/adapters/sqlite/repositories/__init__.py
+  s_ab847b2c6c265a::t_f8b883c5d5d17f 5,15
+src/tychora/retrieval/rerank.py
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 23,369,450
+tests/contracts/test_eligibility_view.py
+  s_ab847b2c6c265a::t_f8b883c5d5d17f 52-55
+  s_ab847b2c6c265a::t_b762337b90ec59 3-4,12
+  s_ab847b2c6c265a::t_7d8a47c1279301 1-2,5-11,13-51,56-64
+tests/storage/test_eligibility_repository.py
+  s_ab847b2c6c265a::t_1136313ac6808f 54,58,95-113,119-120,122-124
+  s_ab847b2c6c265a::t_f49b8a413adf65 43-48,71,94,129,145
+  s_ab847b2c6c265a::t_b7f5f8c409a2c8 114,121
+  s_ab847b2c6c265a::t_7d8a47c1279301 1-13,17-42,49-53,55-57,59-70,74-76,80-93,115-118,125-128,130-133,137-144,146-175
+  s_ab847b2c6c265a::t_f8b883c5d5d17f 14-16,72-73,77-79,134-136
+src/tychora/retrieval/graph.py
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 36
+  s_ab847b2c6c265a::t_d96bc1455683ab 10
+tests/retrieval/test_admission.py
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 92,125
+  s_ab847b2c6c265a::t_d96bc1455683ab 13
+src/tychora/adapters/sqlite/repositories/unit_of_work.py
+  s_ab847b2c6c265a::t_f8b883c5d5d17f 11,22,77,86
+src/tychora/retrieval/lexical_query.py
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 11,80
+tests/retrieval/graph_fixture.py
+  s_ab847b2c6c265a::t_d96bc1455683ab 21
+  s_ab847b2c6c265a::t_50cd3fcab51c0e 101-102
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d22265a02895623a0f45586570d20021d9185375",
+  "prompts": {},
+  "sessions": {
+    "s_ab847b2c6c265a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "918c31e6-c32e-4b90-8312-3394709b55db",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Tycho Tatitscheff <tychot@bam.tech>"
+    }
+  }
+}
