@@ -724,7 +724,7 @@ class QueryService:
         """Run the stages: channels, fusion, admission, reranking and assembly."""
         channels = await self._channels(query)
         fused = await self._fuse(query, channels)
-        admission = await self._admit(query, channels, fused)
+        admission, unread = await self._admit(query, channels, fused)
         ranked = await self._rerank(query, admission, fused)
         selection, records, visuals, checks, relations = await self._assemble(
             query, ranked, fused
@@ -732,7 +732,7 @@ class QueryService:
         coverage = build_coverage(
             completed=channels.completed,
             unavailable=channels.incomplete,
-            truncated=channels.truncated,
+            truncated=(*channels.truncated, *(("survivors",) if unread else ())),
             rerank_failed=ranked.failure is not None,
             graph_exhausted=fused.graph_candidates.exhausted,
         ).model_copy(update={"skipped_channels": query.job.plan.skipped})
@@ -874,11 +874,29 @@ class QueryService:
 
     async def _admit(
         self, query: _QueryInputs, channels: _Channels, fused: _Fused
-    ) -> Admission:
-        """Admit the fused survivors under the mode's and the request's lane needs."""
+    ) -> tuple[Admission, int]:
+        """Admit the fused survivors under the mode's and the request's lane needs.
+
+        Returns the admission and how many fused candidates the survivor bound
+        left unread; a positive count is reported as a ``survivors`` truncation.
+        """
         request, attempt = query.job.request, query.attempt
+        exact_keys = tuple(
+            item.key for item in channels.exact_lexical[0].source_candidates
+        )
+        graph_lists = {
+            strategy: tuple(
+                ("unit", item.unit_id)
+                for item in fused.graph_candidates.candidates
+                if item.strategy == strategy
+            )
+            for strategy in ("structural", "semantic")
+        }
         survivors = await self.owner.run_read(
-            lambda tx: load_survivors(tx, attempt.view, fused.fused), query.ctx
+            lambda tx: load_survivors(
+                tx, attempt.view, fused.fused, exact_keys, graph_lists
+            ),
+            query.ctx,
         )
         required = cast(tuple[str, ...], query.job.mode.get("required_lanes", ()))
         active = active_requirements(query.job.requirements, request)
@@ -888,17 +906,10 @@ class QueryService:
         lane_order = self.owner.config.values.output.lane_order or tuple(
             self.registry.lanes
         )
-        return admit(
+        admission = admit(
             survivors.candidates,
-            tuple(item.key for item in channels.exact_lexical[0].source_candidates),
-            {
-                strategy: tuple(
-                    ("unit", item.unit_id)
-                    for item in fused.graph_candidates.candidates
-                    if item.strategy == strategy
-                )
-                for strategy in ("structural", "semantic")
-            },
+            exact_keys,
+            graph_lists,
             LanePolicy(
                 mode=self.owner.config.values.selection.lane_reservation,
                 order=lane_order,
@@ -907,6 +918,7 @@ class QueryService:
             ),
             lanes=survivors.lanes,
         )
+        return admission, survivors.beyond_limit
 
     async def _rerank(
         self, query: _QueryInputs, admission: Admission, fused: _Fused

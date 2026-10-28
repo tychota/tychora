@@ -3,13 +3,18 @@
 from types import SimpleNamespace
 
 from tests.helpers.eligibility import revision_view
+from tests.helpers.legacy import OutputCounter
+from tychora import Tychora
 from tychora.ports.repositories import OwnerFact
+from tychora.retrieval import survivors as survivors_module
+from tychora.retrieval.admission import LanePolicy, admit
 from tychora.retrieval.fusion import FusedCandidate
 from tychora.retrieval.survivors import (
     SURVIVOR_LIMIT,
     check_survivors,
     load_survivors,
     survivor_ids,
+    survivor_selection,
 )
 
 
@@ -102,7 +107,7 @@ def test_a_candidate_of_an_ungranted_extraction_is_dropped():
 
 def test_at_most_200_candidates_are_read():
     candidates = tuple(_candidate(("unit", f"u{i}"), (f"c{i}",)) for i in range(300))
-    ids = survivor_ids(candidates)
+    ids = survivor_ids(survivor_selection(candidates))
     assert SURVIVOR_LIMIT == 200
     assert len(ids) == 400
     assert "u199" in ids and "u200" not in ids
@@ -160,3 +165,80 @@ def test_load_survivors_reads_proxy_window_units_and_asset_sources_once_more():
     assert reads == [("a", "c"), ("p", "u")]
     assert [c.matching_window_ids for c in survivors.candidates] == [("c",), ()]
     assert survivors.dropped == 0
+
+
+def _ranked(count):
+    """``count`` fused unit candidates in descending score order."""
+    return tuple(
+        FusedCandidate(
+            key=("unit", f"u{i}"),
+            rank=i + 1,
+            score=1.0 / (i + 1),
+            ranks={"lexical": i + 1},
+        )
+        for i in range(count)
+    )
+
+
+def test_the_bound_reads_reserved_exact_and_graph_keys_first():
+    candidates = _ranked(260)
+    exact = (("unit", "u230"),)
+    graph = {"structural": (("unit", "u240"), ("unit", "u-absent")), "semantic": ()}
+    selected = survivor_selection(candidates, exact, graph)
+    keys = [item.key for item in selected]
+    assert len(keys) == SURVIVOR_LIMIT
+    assert ("unit", "u230") in keys and ("unit", "u240") in keys
+    # The rest is filled by fused rank, and fused order is kept.
+    assert keys[:198] == [("unit", f"u{i}") for i in range(198)]
+    assert ("unit", "u198") not in keys
+
+
+def test_reservations_are_capped_at_admissions_places():
+    candidates = _ranked(300)
+    exact = tuple(("unit", f"u{i}") for i in range(250, 290))
+    graph = {"semantic": tuple(("unit", f"u{i}") for i in range(200, 215))}
+    keys = {item.key for item in survivor_selection(candidates, exact, graph)}
+    assert len(keys & set(exact)) == 32
+    assert len(keys & set(graph["semantic"])) == 8
+
+
+def test_a_graph_only_key_past_the_bound_is_admitted_and_the_cut_reported():
+    candidates = _ranked(SURVIVOR_LIMIT + 50)
+    graph_key = ("unit", f"u{SURVIVOR_LIMIT + 40}")
+    graph = {"structural": (graph_key,), "semantic": ()}
+    facts = {f"u{i}": _unit(f"u{i}") for i in range(SURVIVOR_LIMIT + 50)}
+    selected = survivor_selection(candidates, (), graph)
+    survivors = check_survivors(revision_view(), selected, facts, total=len(candidates))
+    assert survivors.beyond_limit == 50
+    admission = admit(
+        survivors.candidates,
+        (),
+        graph,
+        LanePolicy(),
+        lanes=survivors.lanes,
+    )
+    assert graph_key in {item.key for item in admission.selected}
+    assert admission.reservation_coverage["graph"] == 1
+
+
+def test_a_query_reports_the_survivor_cut_as_a_truncation(tmp_path, monkeypatch):
+    with Tychora.open(tmp_path / "ws", token_counter=OutputCounter()) as kb:
+        for name in ("a", "b", "c"):
+            job = kb.sources.add(
+                {
+                    "type": "text",
+                    "source_key": f"{name}.md",
+                    "collection_id": "default",
+                    "kind": "document@1",
+                    "format": "markdown",
+                    "text": f"# {name}\n\nThe verification outcome {name}.\n",
+                    "metadata": {"title": name},
+                }
+            )
+            assert kb.jobs.wait(job.id).state == "succeeded"
+        whole = kb.search({"question": "verification outcome"})
+        assert "survivors" not in whole.coverage.truncated_channels
+        monkeypatch.setattr(survivors_module, "SURVIVOR_LIMIT", 1)
+        cut = kb.search({"question": "verification outcome", "limit": 3})
+    assert "survivors" in cut.coverage.truncated_channels
+    assert cut.coverage.status == "complete"

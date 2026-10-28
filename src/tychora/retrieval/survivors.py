@@ -2,6 +2,7 @@
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
+from itertools import islice
 from types import MappingProxyType
 
 from tychora.contracts.candidates import CandidateKey
@@ -16,6 +17,8 @@ from tychora.retrieval.attempt import (
 from tychora.retrieval.fusion import FusedCandidate
 
 SURVIVOR_LIMIT = 200
+EXACT_RESERVATION = 32
+GRAPH_RESERVATION = 8
 
 
 @dataclass(frozen=True)
@@ -33,10 +36,67 @@ class Survivors:
     beyond_limit: int = 0
 
 
+def _graph_reserved(
+    ranked: Sequence[FusedCandidate],
+    graph_lists: Mapping[str, Sequence[CandidateKey]],
+    graph_only: set[CandidateKey],
+) -> list[CandidateKey]:
+    """The graph-only keys admission would reserve, in admission's order.
+
+    Structural then semantic lists, four each when both ran, then fused rank,
+    up to ``GRAPH_RESERVATION`` keys that the fused list holds.
+    """
+    fused = {item.key for item in ranked}
+    both = bool(graph_lists.get("structural")) and bool(graph_lists.get("semantic"))
+    cap = GRAPH_RESERVATION // 2 if both else GRAPH_RESERVATION
+    picked: list[CandidateKey] = []
+    for strategy in ("structural", "semantic"):
+        pool = (
+            key
+            for key in dict.fromkeys(graph_lists.get(strategy, ()))
+            if key in graph_only and key in fused and key not in picked
+        )
+        picked.extend(islice(pool, min(cap, GRAPH_RESERVATION - len(picked))))
+    rest = (i.key for i in ranked if i.key in graph_only and i.key not in picked)
+    picked.extend(islice(rest, GRAPH_RESERVATION - len(picked)))
+    return picked
+
+
+def survivor_selection(
+    candidates: Sequence[FusedCandidate],
+    exact_keys: Sequence[CandidateKey] = (),
+    graph_lists: Mapping[str, Sequence[CandidateKey]] | None = None,
+) -> tuple[FusedCandidate, ...]:
+    """The at most ``SURVIVOR_LIMIT`` candidates to check, chosen in admission order.
+
+    Exact keys first (up to ``EXACT_RESERVATION``), then graph-only keys (up to
+    ``GRAPH_RESERVATION``), then fused rank, so admission's reserved places
+    never go empty because a low fused score put their keys past the bound.
+    The selection keeps fused order.
+    """
+    if len(candidates) <= SURVIVOR_LIMIT:
+        return tuple(candidates)
+    exact = set(exact_keys)
+    graph_only = {
+        key for values in (graph_lists or {}).values() for key in values
+    } - exact
+    chosen = dict.fromkeys(
+        islice((i.key for i in candidates if i.key in exact), EXACT_RESERVATION)
+    )
+    chosen.update(
+        dict.fromkeys(_graph_reserved(candidates, graph_lists or {}, graph_only))
+    )
+    for item in candidates:
+        if len(chosen) >= SURVIVOR_LIMIT:
+            break
+        chosen.setdefault(item.key)
+    return tuple(item for item in candidates if item.key in chosen)
+
+
 def survivor_ids(candidates: Sequence[FusedCandidate]) -> tuple[str, ...]:
-    """The owners and windows of the first ``SURVIVOR_LIMIT`` candidates."""
+    """The owners and windows of the selected candidates."""
     ids: set[str] = set()
-    for candidate in candidates[:SURVIVOR_LIMIT]:
+    for candidate in candidates:
         ids.add(candidate.key[1])
         ids.update(candidate.matching_window_ids)
     return tuple(sorted(ids))
@@ -70,8 +130,14 @@ def check_survivors(
     view: EligibilityView,
     candidates: Sequence[FusedCandidate],
     facts: Mapping[str, OwnerFact],
+    *,
+    total: int | None = None,
 ) -> Survivors:
     """Keep each candidate whose owner and at least one window the view admits.
+
+    ``candidates`` is the selection to check (see ``survivor_selection``);
+    ``total`` is the size of the fused list it came from, so the candidates
+    left unread are counted in ``beyond_limit``.
 
     A candidate without its own fact is dropped: a missing row means the owner
     is unknown to the snapshot (``owner_facts`` already refuses a known owner
@@ -100,7 +166,8 @@ def check_survivors(
         kept.append(replace(candidate, matching_window_ids=windows))
         revision = view.revision_of_extraction[fact.extraction_id]
         lanes[candidate.key] = view.revisions[revision].lane
-    beyond_limit = max(0, len(candidates) - SURVIVOR_LIMIT)
+    checked = min(len(candidates), SURVIVOR_LIMIT)
+    beyond_limit = max(0, (len(candidates) if total is None else total) - checked)
     return Survivors(tuple(kept), MappingProxyType(lanes), dropped, beyond_limit)
 
 
@@ -140,7 +207,14 @@ def load_facts(tx: ReadTransaction, owner_ids: Iterable[str]) -> dict[str, Owner
 
 
 def load_survivors(
-    tx: ReadTransaction, view: EligibilityView, candidates: Sequence[FusedCandidate]
+    tx: ReadTransaction,
+    view: EligibilityView,
+    candidates: Sequence[FusedCandidate],
+    exact_keys: Sequence[CandidateKey] = (),
+    graph_lists: Mapping[str, Sequence[CandidateKey]] | None = None,
 ) -> Survivors:
-    """Read the candidates', their windows' and those windows' units' facts, then check."""
-    return check_survivors(view, candidates, load_facts(tx, survivor_ids(candidates)))
+    """Select the candidates in admission order, read their facts, then check."""
+    selected = survivor_selection(candidates, exact_keys, graph_lists)
+    return check_survivors(
+        view, selected, load_facts(tx, survivor_ids(selected)), total=len(candidates)
+    )
