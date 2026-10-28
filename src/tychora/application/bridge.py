@@ -1,14 +1,19 @@
-"""One bounded off-loop bridge for owner-aware service coroutines."""
+"""One off-loop bridge for owner-aware service coroutines.
+
+The bridge admits every caller while it is open. Work is bounded where it runs:
+the owner's lanes refuse beyond their queue bounds with ``WORKSPACE_BUSY``
+reason ``queue.full``, so a smaller cap here would refuse callers below them.
+"""
 
 from __future__ import annotations
 
 import asyncio
 from collections.abc import Coroutine
 from concurrent.futures import Future, wait
-from threading import BoundedSemaphore, Event, Lock, Thread, current_thread
+from threading import Event, Lock, Thread, current_thread
 from typing import TypeVar
 
-from tychora.contracts.errors import TychoraError
+from tychora.application.runtime import workspace_closing
 from tychora.ports.execution import ExecutionContext
 
 T = TypeVar("T")
@@ -19,7 +24,6 @@ class ClientBridge:
         self.loop = asyncio.new_event_loop()
         self._ready = Event()
         self._closed = False
-        self._admission = BoundedSemaphore(32)
         self._pending: set[Future] = set()
         self._lock = Lock()
         self._thread = Thread(target=self._serve, name="tychora-client", daemon=True)
@@ -33,23 +37,14 @@ class ClientBridge:
         self.loop.close()
 
     def submit(self, operation: Coroutine[object, object, T]) -> Future[T]:
-        async def guarded() -> T:
-            try:
-                return await operation
-            finally:
-                self._admission.release()
-
         with self._lock:
-            if self._closed or not self._admission.acquire(blocking=False):
+            if self._closed:
                 operation.close()
-                raise TychoraError(
-                    "WORKSPACE_BUSY", "Client queue is full or closing.", retryable=True
-                )
+                raise workspace_closing()
             try:
-                future = asyncio.run_coroutine_threadsafe(guarded(), self.loop)
+                future = asyncio.run_coroutine_threadsafe(operation, self.loop)
             except BaseException:
                 operation.close()
-                self._admission.release()
                 raise
             self._pending.add(future)
 
