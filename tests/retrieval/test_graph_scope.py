@@ -1,6 +1,6 @@
-# tests/retrieval/test_graph_scope.py
 """Graph traversal scopes come from the revision-level view, only when needed."""
 
+import importlib.util
 from types import SimpleNamespace
 
 from tests.helpers.eligibility import revision_view
@@ -75,7 +75,5 @@ def test_scope_is_eligible_units_minus_exclusions():
 
 
 def test_legacy_names_are_gone():
-    import importlib.util
-
     assert importlib.util.find_spec("tychora.retrieval.eligibility") is None
     assert importlib.util.find_spec("tychora.adapters.sqlite.eligibility") is None

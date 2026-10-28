@@ -230,7 +230,8 @@ def test_query_upload_binding_uses_actual_owner_scope_and_epoch(tmp_path) -> Non
             )
 
 
-def test_image_query_descriptor_uses_registered_pixels_and_source_links(tmp_path):
+def _registered_image(tmp_path):
+    """A committed image asset with one source unit, and a service reading it."""
     bundle = seed_bundle("", source_key="image.png")
     encoded = BytesIO()
     Image.new("RGB", (2, 2), (255, 0, 0)).save(encoded, format="PNG")
@@ -275,16 +276,39 @@ def test_image_query_descriptor_uses_registered_pixels_and_source_links(tmp_path
     commit_with_facts(store, bundle)
     service = QueryService.__new__(QueryService)
     vars(service)["owner"] = SimpleNamespace(db=db, artifacts=reader(), store=store)
-    attempt = revision_attempt(
-        revision_view({bundle.revision.revision_id: bundle.extraction.extraction_id})
-    )
+    grants = {bundle.revision.revision_id: bundle.extraction.extraction_id}
+    return service, db, grants, asset_id, unit.unit_id
+
+
+def test_image_query_descriptor_uses_registered_pixels_and_source_links(tmp_path):
+    service, db, grants, asset_id, unit_id = _registered_image(tmp_path)
+    attempt = revision_attempt(revision_view(grants))
     query = service._registered_image_query(asset_id, attempt)
-    assert query.image.dependency_ids == frozenset({asset_id, unit.unit_id})
+    assert query.image.dependency_ids == frozenset({asset_id, unit_id})
     assert query.image.pixel_sha256 == sha256(bytes((255, 0, 0)) * 4).hexdigest()
     with pytest.raises(TychoraError) as error:
         service._registered_image_query("unselected", attempt)
     assert error.value.code == "FORBIDDEN_SCOPE"
     db.close()
+
+
+@pytest.mark.parametrize("excluded", ["asset", "source_unit"])
+def test_image_query_refuses_an_excluded_asset_or_ineligible_source(tmp_path, excluded):
+    service, db, grants, asset_id, unit_id = _registered_image(tmp_path)
+    view = (
+        revision_view(grants, excluded_assets={asset_id})
+        if excluded == "asset"
+        else revision_view(grants, excluded_units={unit_id})
+    )
+    try:
+        with pytest.raises(TychoraError) as error:
+            service._registered_image_query(asset_id, revision_attempt(view))
+        assert (error.value.code, error.value.reason) == (
+            "FORBIDDEN_SCOPE",
+            "scope.dependency_ineligible",
+        )
+    finally:
+        db.close()
 
 
 @pytest.mark.assets("TYCHORA_TEST_MODEL_CACHE")

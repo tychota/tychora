@@ -160,8 +160,6 @@ class GraphTraversal:
 
     def _ready(self, view: GraphScope) -> str:
         gid = view.graph_generation_id
-        if gid is None:
-            raise TychoraError("INDEX_INCOMPLETE", "Graph generation is not selected")
         state = self.store._read_state(gid)
         receipt = state.get("receipt") if state and not state.get("dropping") else None
         if not receipt or any(
