@@ -129,6 +129,12 @@ _ENTRIES = (
     ),
     Reason(
         "WORKSPACE_BUSY",
+        "owner.closing",
+        True,
+        "Retry shortly; the workspace is closing and the next open serves the request.",
+    ),
+    Reason(
+        "WORKSPACE_BUSY",
         "queue.full",
         True,
         "Retry shortly; the workspace queue is full.",

@@ -186,6 +186,33 @@ def test_failed_initialization_releases_lock(tmp_path, settings, scope):
         pass
 
 
+@pytest.mark.parametrize(
+    ("failure", "code", "reason"),
+    [
+        ("database is locked", "WORKSPACE_BUSY", "storage.busy"),
+        ("disk I/O error", "INTEGRITY_ERROR", "workspace.database_invalid"),
+    ],
+)
+def test_an_open_time_sqlite_failure_is_typed_with_a_reason(
+    tmp_path, settings, scope, monkeypatch, failure, code, reason
+):
+    import sqlite3
+
+    from tychora.application import owner as owner_module
+
+    def failing(*args, **kwargs):
+        raise sqlite3.OperationalError(failure)
+
+    monkeypatch.setattr(owner_module, "open_corpus", failing)
+    with (
+        pytest.raises(TychoraError) as error,
+        WorkspaceOwner.open(tmp_path / "data", settings, scope),
+    ):
+        pytest.fail("A failing database opened")
+    assert (error.value.code, error.value.reason) == (code, reason)
+    assert error.value.retryable is (code == "WORKSPACE_BUSY")
+
+
 def test_runtime_symlink_is_rejected_without_touching_target(tmp_path, settings, scope):
     root, outside = tmp_path / "data", tmp_path / "outside"
     root.mkdir()

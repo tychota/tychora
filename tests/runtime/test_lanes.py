@@ -175,7 +175,7 @@ def test_closed_lane_refuses_as_closing_not_queue_full(make):
         worker.submit(lambda: 1)
     assert error.value.code == "WORKSPACE_BUSY"
     assert error.value.retryable
-    assert error.value.reason != "queue.full"
+    assert error.value.reason == "owner.closing"
     assert error.value.message == "Workspace is closing; retry shortly"
 
 

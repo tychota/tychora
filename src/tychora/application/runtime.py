@@ -48,7 +48,10 @@ def queue_full() -> TychoraError:
 def workspace_closing() -> TychoraError:
     """The refusal for work submitted after the workspace started closing."""
     return TychoraError(
-        "WORKSPACE_BUSY", "Workspace is closing; retry shortly", retryable=True
+        "WORKSPACE_BUSY",
+        "Workspace is closing; retry shortly",
+        retryable=True,
+        reason="owner.closing",
     )
 
 

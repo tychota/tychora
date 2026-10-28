@@ -62,7 +62,12 @@ CLASSIFIED_REASONS = {
         "scope.dependency_ineligible",
     },
     "JOB_INTERRUPTED": {"job.orphaned"},
-    "WORKSPACE_BUSY": {"owner.absent", "family.claimed", "storage.busy"},
+    "WORKSPACE_BUSY": {
+        "owner.absent",
+        "owner.closing",
+        "family.claimed",
+        "storage.busy",
+    },
     "PROFILE_INCOMPATIBLE": {
         "workspace.schema_mismatch",
         "kind.historical_unavailable",
@@ -108,6 +113,7 @@ RETRYABLE = {
     "job.orphaned",
     "storage.busy",
     "owner.live",
+    "owner.closing",
     "queue.full",
     "publication.rebase",
     "family.claimed",

@@ -40,4 +40,5 @@ def test_closed_bridge_refuses_with_the_workspace_closing_error():
         bridge.submit(never())
     assert error.value.code == "WORKSPACE_BUSY"
     assert error.value.retryable
+    assert error.value.reason == "owner.closing"
     assert "closing" in error.value.message
