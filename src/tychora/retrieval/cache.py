@@ -126,6 +126,12 @@ class QueryCaches:
             raise TypeError("Cached results are canonical JSON bytes")
         self._put(1, key, value)
 
+    def drop_result(self, key: Hashable) -> None:
+        """Forget the entry kept under ``key``, if any."""
+        compact_key = self._key(key)
+        with self._lock:
+            self._drop(1, compact_key)
+
     def purge_results(self) -> int:
         """Bypass final results while retaining authorized query embeddings."""
         with self._lock:
