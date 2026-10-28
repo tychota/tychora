@@ -2,7 +2,8 @@
 
 Only tables whose columns are unchanged since storage format 1 are read, so the
 rebuild can enumerate any older workspace's retained originals without a
-format-specific reader. The database is read through a copy when a -wal exists,
+format-specific reader; the one optional column, a source's allowed-use
+override, is read only when the old schema has it. The database is read through a copy when a -wal exists,
 so the old workspace is never written.
 """
 
@@ -57,6 +58,7 @@ class InventorySource(Contract):
     access_floor: Annotated[int, Field(ge=0, le=3)]
     withdrawn: bool
     revisions: tuple[InventoryRevision, ...]
+    allowed_uses_override: NonEmptyStr | None = None
 
 
 class InventoryReview(Contract):
@@ -125,8 +127,17 @@ def _revisions(db: sqlite3.Connection) -> dict[str, list[InventoryRevision]]:
     return grouped
 
 
+def _has_column(db: sqlite3.Connection, table: str, column: str) -> bool:
+    return any(row[1] == column for row in db.execute(f"PRAGMA table_info({table})"))
+
+
 def _sources(db: sqlite3.Connection) -> tuple[InventorySource, ...]:
     revisions = _revisions(db)
+    override = (
+        "allowed_uses_override"
+        if _has_column(db, "sources", "allowed_uses_override")
+        else "NULL"
+    )
     return tuple(
         InventorySource(
             source_id=row[0],
@@ -137,10 +148,12 @@ def _sources(db: sqlite3.Connection) -> tuple[InventorySource, ...]:
             access_floor=row[5],
             withdrawn=row[6] is not None,
             revisions=tuple(revisions.get(row[0], ())),
+            allowed_uses_override=row[7],
         )
         for row in db.execute(
             "SELECT source_id,collection_id,source_key,source_type,registration_json,"
-            "access_floor,withdrawn_at FROM sources ORDER BY created_at,source_id"
+            f"access_floor,withdrawn_at,{override} FROM sources "
+            "ORDER BY created_at,source_id"
         )
     )
 

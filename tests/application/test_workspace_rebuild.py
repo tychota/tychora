@@ -558,3 +558,49 @@ def test_a_phase_two_workspace_is_refused_then_rebuilds(tmp_path):
     assert [item.source_key for item in report.sources] == ["alpha"]
     with Tychora.open(tmp_path / "new", token_counter=Counter()) as kb:
         assert _read(kb, "SELECT COUNT(*) FROM representation_dependencies")[0][0] > 0
+
+
+def _override(kb, key: str):
+    return _read(
+        kb, "SELECT allowed_uses_override FROM sources WHERE source_key=?", key
+    )
+
+
+def test_a_source_allowed_uses_override_survives_the_rebuild(old, tmp_path):
+    root, _ = old
+    with _edit(root) as db:
+        db.execute(
+            'UPDATE sources SET allowed_uses_override=\'["audit","lookup"]\' '
+            "WHERE source_key='alpha'"
+        )
+    report = rebuild_workspace_from(root, tmp_path / "new", token_counter=Counter())
+    assert "alpha" in {item.source_key for item in report.sources}
+    assert not [
+        item
+        for item in report.skipped
+        if item.subject == "source" and item.key == "alpha"
+    ]
+    with Tychora.open(tmp_path / "new", token_counter=Counter()) as kb:
+        assert _override(kb, "alpha") == [('["audit","lookup"]',)]
+        assert _override(kb, "beta") == [(None,)]
+
+
+def test_an_override_the_new_workspace_refuses_is_reported(old, tmp_path):
+    root, _ = old
+    with _edit(root) as db:
+        db.execute(
+            "UPDATE sources SET allowed_uses_override='[\"retired-use\"]' "
+            "WHERE source_key='alpha'"
+        )
+    report = rebuild_workspace_from(root, tmp_path / "new", token_counter=Counter())
+    (skip,) = [item for item in report.skipped if item.key == "alpha"]
+    assert (skip.subject, skip.reason) == ("source", "uses_override_unapplied")
+    assert "retired-use" in skip.detail
+
+
+def test_an_old_schema_without_the_override_column_still_rebuilds(old, tmp_path):
+    root, _ = old
+    with _edit(root) as db:
+        db.execute("ALTER TABLE sources DROP COLUMN allowed_uses_override")
+    report = rebuild_workspace_from(root, tmp_path / "new", token_counter=Counter())
+    assert "alpha" in {item.source_key for item in report.sources}
