@@ -18,6 +18,9 @@ SQL_FREE_MODULES: tuple[str, ...] = (
     "application/visual.py",
     "application/inspection.py",
     "retrieval/visuals.py",
+    "application/owner.py",
+    "application/removal.py",
+    "application/restore.py",
 )
 SQL_CALLS = {"execute", "executemany", "executescript"}
 

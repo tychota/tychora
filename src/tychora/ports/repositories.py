@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import json
 from collections.abc import Iterator, Mapping
+from datetime import datetime
 from typing import Literal, NamedTuple, Protocol
 
 from tychora.contracts.artifacts import ArtifactRef
@@ -132,6 +133,26 @@ class ArtifactRepository(Protocol):
 
     def revive(self, ref: ArtifactRef) -> bool:
         """Mark a released artifact present again; return whether it was released."""
+        ...
+
+    def state(self, sha256: str) -> tuple[ArtifactRef, str] | None:
+        """The registered artifact and its payload state, or ``None``."""
+        ...
+
+    def pending_deletions(self) -> tuple[str, ...]:
+        """The artifacts whose payload awaits deletion."""
+        ...
+
+    def mark_present(self, sha256: str) -> None:
+        """Mark the artifact's payload present."""
+        ...
+
+    def mark_delete_pending(self, sha256: str) -> int:
+        """Mark a present payload ``delete_pending``; return the rows changed."""
+        ...
+
+    def mark_deleted(self, sha256: str, deleted_at: datetime) -> int:
+        """Mark a pending payload deleted at ``deleted_at``; return the rows changed."""
         ...
 
 
@@ -665,6 +686,90 @@ class InspectionRepository(Protocol):
         ...
 
 
+class UploadPolicyRepository(Protocol):
+    """The rows upload authorization and captured-source registration use."""
+
+    def collection_policy(self, collection_id: str) -> tuple[str, int, str] | None:
+        """``(workspace ID, access floor, policy JSON)`` of the collection, or ``None``."""
+        ...
+
+    def kind_row(self, kind_id: str) -> tuple | None:
+        """The recorded kind row, or ``None``."""
+        ...
+
+    def insert_kind(self, row: tuple) -> None:
+        """Record a kind row."""
+        ...
+
+    def source_rows(
+        self, source_id: str, collection_id: str, source_key: str
+    ) -> tuple[tuple, ...]:
+        """The source rows that share the ID or the collection's source key."""
+        ...
+
+    def insert_source(self, row: tuple) -> None:
+        """Record a source row."""
+        ...
+
+    def captured_binding(self, kind_id: str, source_id: str) -> tuple | None:
+        """The source, collection and kind rows a captured revision binds, or ``None``."""
+        ...
+
+    def revision_grant(self, revision_id: str) -> tuple | None:
+        """The policy rows that grant a revision, or ``None``."""
+        ...
+
+    def identity_owner(self, identity: str) -> tuple[tuple[str, str], ...]:
+        """``(revision ID, revision|unit|asset)`` for each owner of the identity."""
+        ...
+
+    def proxy_requirements(
+        self, unit_id: str, limit: int
+    ) -> tuple[str, tuple[str, ...]] | None:
+        """``(asset ID, up to limit required unit IDs)`` of a proxy unit, or ``None``."""
+        ...
+
+
+class RemovalRepository(Protocol):
+    """The rows source withdrawal and original removal read and write."""
+
+    def source_grant(self, source_id: str, workspace_id: str) -> tuple | None:
+        """``(collection, withdrawn_at, collection floor, source floor)`` or ``None``."""
+        ...
+
+    def revision_original(
+        self, revision_id: str, source_id: str
+    ) -> tuple[str, int] | None:
+        """``(original SHA, access rank)`` of the source's revision, or ``None``."""
+        ...
+
+    def original_artifacts(self, revision_id: str) -> tuple[str, ...]:
+        """The revision's bound original and source-file payload SHAs."""
+        ...
+
+    def revision_payloads(self, revision_id: str) -> dict[str, tuple[str, ...]]:
+        """The revision's payload SHAs by role: original, source_file, derived and more."""
+        ...
+
+    def tombstoned(self, revision_id: str, sha: str) -> bool:
+        """Whether the revision's payload was removed."""
+        ...
+
+    def insert_tombstone(
+        self, revision_id: str, sha: str, job_id: str, removed_at: datetime
+    ) -> None:
+        """Record that the revision's payload was removed by the job."""
+        ...
+
+    def manifest_roots(self) -> frozenset[tuple[str, str]]:
+        """``(SHA, kind)`` of every typed manifest root."""
+        ...
+
+    def capture_roots(self) -> tuple[tuple[str, bool], ...]:
+        """``(captured inputs SHA, published)`` of every job capture."""
+        ...
+
+
 class ReadTransaction(Protocol):
     """Repositories bound to one read transaction; writes through them are refused."""
 
@@ -678,6 +783,8 @@ class ReadTransaction(Protocol):
     lexical: LexicalSearch
     assets: AssetRepository
     inspection: InspectionRepository
+    upload_policy: UploadPolicyRepository
+    removal: RemovalRepository
 
 
 class WriteTransaction(ReadTransaction, Protocol):

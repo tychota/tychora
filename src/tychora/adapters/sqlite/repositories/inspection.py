@@ -5,6 +5,8 @@ import sqlite3
 from tychora.contracts.publication import SnapshotMember
 from tychora.ports.repositories import RetainedSubject
 
+from .removal import revision_tombstoned
+
 _MEMBERS = (
     "SELECT s.source_id,e.revision_id,e.extraction_id FROM extractions e "
     "JOIN revisions r USING(revision_id) JOIN sources s USING(source_id) "
@@ -106,13 +108,7 @@ class SqliteInspectionRepository:
 
     def tombstoned(self, revision_id: str, artifact_sha: str) -> bool:
         """Whether the revision's original payload was removed."""
-        return (
-            self._db.execute(
-                "SELECT 1 FROM original_payload_tombstones WHERE revision_id=? AND artifact_sha=?",
-                (revision_id, artifact_sha),
-            ).fetchone()
-            is not None
-        )
+        return revision_tombstoned(self._db, revision_id, artifact_sha)
 
     def revision_summary(self, revision_id: str) -> tuple[str, str] | None:
         """``(original_sha, title)`` of the revision, or ``None``."""

@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import shutil
-import sqlite3
 import stat
 import tempfile
 from collections.abc import Callable, Iterator
@@ -13,7 +12,6 @@ from concurrent.futures import Future
 from contextlib import ExitStack, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from threading import Lock, get_ident
@@ -30,6 +28,7 @@ from typing import (
 from uuid import UUID, uuid4
 
 from tychora.adapters.files.cas import LocalArtifacts
+from tychora.adapters.sqlite.bootstrap import bootstrap_workspace, retained_kinds
 from tychora.adapters.sqlite.connection import (
     open_corpus,
     open_read_connection,
@@ -157,6 +156,11 @@ def _read_defect(error: Exception) -> TychoraError:
     )
 
 
+def _database_unopenable(error: Exception) -> TychoraError:
+    """The typed refusal for a canonical database that cannot be opened."""
+    return TychoraError("INTEGRITY_ERROR", "Canonical database cannot be opened")
+
+
 @contextmanager
 def read_boundary() -> Iterator[None]:
     """Let only typed errors leave a read task.
@@ -250,60 +254,16 @@ class WorkspaceOwner:
             database.exists() and database.stat().st_nlink != 1
         ):
             raise TychoraError("INTEGRITY_ERROR", "Canonical database path is unsafe")
-        try:
+        with typed_storage_errors(_database_unopenable):
             self.db = open_corpus(database, initialize=True, format_checked=True)
-        except sqlite3.DatabaseError:
-            raise TychoraError(
-                "INTEGRITY_ERROR", "Canonical database cannot be opened"
-            ) from None
-        rows = self.db.execute("SELECT workspace_id FROM workspaces").fetchall()
-        if not rows:
-            tables = self.db.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-            for (table,) in tables:
-                if table == "schema_migrations" or table.startswith(
-                    ("sqlite_", "lexical_fts")
-                ):
-                    continue
-                # Names come from the already-verified installed schema.
-                if self.db.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone():
-                    raise TychoraError(
-                        "INTEGRITY_ERROR", "Existing corpus has no workspace identity"
-                    )
-            self.workspace_id = str(uuid4())
-            self.db.execute(
-                "INSERT INTO workspaces (workspace_id,schema_version,created_at) VALUES (?,2,?)",
-                (self.workspace_id, datetime.now(UTC).isoformat()),
-            )
-            self.db.commit()
-        elif len(rows) == 1:
-            self.workspace_id = rows[0][0]
-            try:
-                if str(UUID(self.workspace_id)) != self.workspace_id:
-                    raise ValueError
-            except ValueError:
-                raise TychoraError(
-                    "INTEGRITY_ERROR", "Invalid workspace identity"
-                ) from None
-        else:
-            raise TychoraError("INTEGRITY_ERROR", "Workspace identity is ambiguous")
+        self.workspace_id = bootstrap_workspace(self.db)
         from .restore import deletion_suspended
 
         self.restore_deletion_suspended = deletion_suspended(
             self.path, self.workspace_id
         )
         registry = Registry.from_config(self.config)
-        retained = {
-            kind: json.loads(definition)
-            for kind, definition, collection in self.db.execute(
-                "SELECT DISTINCT k.kind_id,k.definition_json,c.collection_id FROM kinds k "
-                "JOIN revisions r USING(kind_id) JOIN sources s USING(source_id) "
-                "JOIN collections c USING(collection_id) WHERE c.workspace_id=?",
-                (self.workspace_id,),
-            )
-            if collection in self.scope.collection_ids
-        }
+        retained = retained_kinds(self.db, self.workspace_id, self.scope.collection_ids)
         registry.validate_activation(frozenset(retained), retained)
         self.upload_policy = CanonicalUploadPolicy(self)
         self.store = CorpusStore(
@@ -1042,13 +1002,9 @@ class CanonicalUploadPolicy:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Captured source registration requires a fresh write"
             )
-        owner.db.execute("BEGIN IMMEDIATE")
-        try:
+        with owner.store.uow.write() as tx:
             self._check_epoch(policy_epoch)
-            collection = owner.db.execute(
-                "SELECT workspace_id,access_floor,policy_json FROM collections WHERE collection_id=?",
-                (source.collection_id,),
-            ).fetchone()
+            collection = tx.upload_policy.collection_policy(source.collection_id)
             if (
                 collection is None
                 or collection[0] != owner.workspace_id
@@ -1073,18 +1029,9 @@ class CanonicalUploadPolicy:
                 kind["role"],
                 canonical_bytes(envelope).decode("utf-8"),
             )
-            existing_kind = owner.db.execute(
-                "SELECT kind_id,definition_hash,label,description,role,definition_json "
-                "FROM kinds WHERE kind_id=?",
-                (registration.kind_id,),
-            ).fetchone()
+            existing_kind = tx.upload_policy.kind_row(registration.kind_id)
             if existing_kind is None:
-                owner.db.execute(
-                    "INSERT INTO kinds "
-                    "(kind_id,definition_hash,label,description,role,definition_json) "
-                    "VALUES (?,?,?,?,?,?)",
-                    kind_row,
-                )
+                tx.upload_policy.insert_kind(kind_row)
             elif tuple(existing_kind) != kind_row:
                 _deny()
             source_row = (
@@ -1097,25 +1044,13 @@ class CanonicalUploadPolicy:
                 None,
                 source.created_at,
             )
-            existing_source = owner.db.execute(
-                "SELECT source_id,collection_id,source_key,source_type,registration_json,"
-                "access_floor,withdrawn_at,created_at FROM sources "
-                "WHERE source_id=? OR (collection_id=? AND source_key=?)",
-                (source.source_id, source.collection_id, source.source_key),
-            ).fetchall()
+            existing_source = tx.upload_policy.source_rows(
+                source.source_id, source.collection_id, source.source_key
+            )
             if not existing_source:
-                owner.db.execute(
-                    "INSERT INTO sources "
-                    "(source_id,collection_id,source_key,source_type,registration_json,"
-                    "access_floor,withdrawn_at,created_at) VALUES (?,?,?,?,?,?,?,?)",
-                    source_row,
-                )
+                tx.upload_policy.insert_source(source_row)
             elif len(existing_source) != 1 or tuple(existing_source[0]) != source_row:
                 _deny()
-            owner.db.commit()
-        except BaseException:
-            owner.db.rollback()
-            raise
 
     def authorize_captured(
         self,
@@ -1135,15 +1070,13 @@ class CanonicalUploadPolicy:
                 "Upload authorization requires a fresh canonical read",
             )
         self._verify_captured_pixels(authorization)
-        owner.db.execute("BEGIN")
-        try:
-            self._check_epoch(policy_epoch)
-            self._check_captured_revision(authorization, provider, granted)
-            self._check_candidate_context(authorization)
-        except (ValueError, TypeError, KeyError):
-            _deny()
-        finally:
-            owner.db.rollback()
+        with owner.store.uow.read():
+            try:
+                self._check_epoch(policy_epoch)
+                self._check_captured_revision(authorization, provider, granted)
+                self._check_candidate_context(authorization)
+            except (ValueError, TypeError, KeyError):
+                _deny()
 
     def _verify_captured_pixels(
         self, authorization: CapturedRegionAuthorization
@@ -1340,14 +1273,8 @@ class CanonicalUploadPolicy:
         registration = authorization.registration
         source = registration.source
         revision = authorization.revision
-        row = self._owner.db.execute(
-            "SELECT c.workspace_id,c.collection_id,c.access_floor,s.source_id,s.source_key,"
-            "s.source_type,s.registration_json,s.access_floor,s.withdrawn_at,c.policy_json,"
-            "k.definition_json,k.definition_hash FROM sources s "
-            "JOIN collections c USING(collection_id) JOIN kinds k ON k.kind_id=? "
-            "WHERE s.source_id=?",
-            (revision.kind_id, source.source_id),
-        ).fetchone()
+        with self._owner.store.uow.read() as tx:
+            row = tx.upload_policy.captured_binding(revision.kind_id, source.source_id)
         if (
             row is None
             or row[0] != self._owner.workspace_id
@@ -1414,14 +1341,12 @@ class CanonicalUploadPolicy:
                 "INTEGRITY_ERROR",
                 "Upload authorization requires a fresh canonical read",
             )
-        owner.db.execute("BEGIN")
-        try:
-            self._check_epoch(policy_epoch)
-            self._authorize_dependencies(dependencies, provider, granted)
-        except (ValueError, TypeError, KeyError):
-            _deny()
-        finally:
-            owner.db.rollback()
+        with owner.store.uow.read():
+            try:
+                self._check_epoch(policy_epoch)
+                self._authorize_dependencies(dependencies, provider, granted)
+            except (ValueError, TypeError, KeyError):
+                _deny()
 
     def authorize_local(
         self,
@@ -1441,14 +1366,12 @@ class CanonicalUploadPolicy:
             raise TychoraError(
                 "INTEGRITY_ERROR", "Local authorization requires a fresh canonical read"
             )
-        owner.db.execute("BEGIN")
-        try:
-            self._check_epoch(policy_epoch)
-            self._authorize_dependencies(dependencies, None, granted)
-        except (ValueError, TypeError, KeyError):
-            _deny()
-        finally:
-            owner.db.rollback()
+        with owner.store.uow.read():
+            try:
+                self._check_epoch(policy_epoch)
+                self._authorize_dependencies(dependencies, None, granted)
+            except (ValueError, TypeError, KeyError):
+                _deny()
 
     def authorize_query(
         self,
@@ -1471,65 +1394,46 @@ class CanonicalUploadPolicy:
                 "INTEGRITY_ERROR",
                 "Upload authorization requires a fresh canonical read",
             )
-        owner.db.execute("BEGIN")
-        try:
-            self._check_epoch(authorization.policy_epoch)
-            for collection_id in sorted(authorization.collection_ids):
-                row = owner.db.execute(
-                    "SELECT workspace_id,access_floor,policy_json "
-                    "FROM collections WHERE collection_id=?",
-                    (collection_id,),
-                ).fetchone()
-                if (
-                    row is None
-                    or row[0] != owner.workspace_id
-                    or row[1] > granted.access_ceiling
-                ):
-                    _deny()
-                self._collection_permits(row[2], provider)
-            if authorization.dependency_ids:
-                self._authorize_dependencies(
-                    authorization.dependency_ids, provider, granted
-                )
-        except (ValueError, TypeError, KeyError):
-            _deny()
-        finally:
-            owner.db.rollback()
+        with owner.store.uow.read() as tx:
+            try:
+                self._check_epoch(authorization.policy_epoch)
+                for collection_id in sorted(authorization.collection_ids):
+                    row = tx.upload_policy.collection_policy(collection_id)
+                    if (
+                        row is None
+                        or row[0] != owner.workspace_id
+                        or row[1] > granted.access_ceiling
+                    ):
+                        _deny()
+                    self._collection_permits(row[2], provider)
+                if authorization.dependency_ids:
+                    self._authorize_dependencies(
+                        authorization.dependency_ids, provider, granted
+                    )
+            except (ValueError, TypeError, KeyError):
+                _deny()
 
     def _resolve(self, identity: str) -> tuple[str, tuple[str, ...]]:
-        db = self._owner.db
-        matches = db.execute(
-            "SELECT revision_id,'revision' FROM revisions WHERE revision_id=? "
-            "UNION ALL SELECT e.revision_id,'unit' FROM evidence_units u JOIN extractions e USING(extraction_id) WHERE u.unit_id=? "
-            "UNION ALL SELECT e.revision_id,'asset' FROM assets a JOIN extractions e USING(extraction_id) WHERE a.asset_id=?",
-            (identity, identity, identity),
-        ).fetchall()
-        if len(matches) != 1:
-            _deny()
-        revision, kind = matches[0]
-        children: tuple[str, ...] = ()
-        if kind == "unit":
-            proxy = db.execute(
-                "SELECT asset_id FROM asset_proxies WHERE proxy_unit_id=?", (identity,)
-            ).fetchone()
-            if proxy:
-                rows = db.execute(
-                    "SELECT required_unit_id FROM asset_proxy_dependencies WHERE proxy_unit_id=? LIMIT 2049",
-                    (identity,),
-                ).fetchall()
-                if not rows or len(rows) > 2048:
-                    _deny()
-                children = (proxy[0], *(row[0] for row in rows))
+        with self._owner.store.uow.read() as tx:
+            matches = tx.upload_policy.identity_owner(identity)
+            if len(matches) != 1:
+                _deny()
+            revision, kind = matches[0]
+            children: tuple[str, ...] = ()
+            if kind == "unit":
+                proxy = tx.upload_policy.proxy_requirements(identity, 2049)
+                if proxy:
+                    asset_id, required = proxy
+                    if not required or len(required) > 2048:
+                        _deny()
+                    children = (asset_id, *required)
         return revision, children
 
     def _check_revision(
         self, revision: str, provider: str | None, scope: RequestScope
     ) -> None:
-        row = self._owner.db.execute(
-            "SELECT c.workspace_id,c.collection_id,c.access_floor,s.access_floor,r.access_rank,s.withdrawn_at,c.policy_json,r.allowed_uses_json,k.definition_json,k.definition_hash "
-            "FROM revisions r JOIN sources s USING(source_id) JOIN collections c USING(collection_id) JOIN kinds k USING(kind_id) WHERE r.revision_id=?",
-            (revision,),
-        ).fetchone()
+        with self._owner.store.uow.read() as tx:
+            row = tx.upload_policy.revision_grant(revision)
         if (
             row is None
             or row[0] != self._owner.workspace_id

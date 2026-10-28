@@ -60,7 +60,8 @@ ELIGIBILITY_INPUT_WRITES = {
     + " when it registers a collection or source; "
     + NEW_ROWS,
     "adapters/sqlite/corpus.py:CorpusStore._insert_facets": NEW_ROWS,
-    "application/owner.py:CanonicalUploadPolicy.register_captured_source": NEW_ROWS,
+    "adapters/sqlite/repositories/upload_policy.py:SqliteUploadPolicyRepository.insert_kind": NEW_ROWS,
+    "adapters/sqlite/repositories/upload_policy.py:SqliteUploadPolicyRepository.insert_source": NEW_ROWS,
     "api.py:LocalWorkspace._ensure_default_collection": "creates the default collection of an empty workspace",
 }
 

@@ -113,3 +113,46 @@ class SqliteArtifactRepository:
             ).rowcount
             == 1
         )
+
+    def state(self, sha256: str) -> tuple[ArtifactRef, str] | None:
+        """The registered artifact and its payload state, or ``None``."""
+        row = self._db.execute(
+            "SELECT size_bytes,media_type,storage_key,payload_state FROM artifacts WHERE artifact_sha=?",
+            (sha256,),
+        ).fetchone()
+        return None if row is None else (artifact_ref((sha256, *row[:3])), row[3])
+
+    def pending_deletions(self) -> tuple[str, ...]:
+        """The artifacts whose payload awaits deletion."""
+        return tuple(
+            sha
+            for (sha,) in self._db.execute(
+                "SELECT artifact_sha FROM artifacts WHERE payload_state='delete_pending'"
+            )
+        )
+
+    def mark_present(self, sha256: str) -> None:
+        """Mark the artifact's payload present."""
+        require_write(self._db, self._writable)
+        self._db.execute(
+            "UPDATE artifacts SET payload_state='present' WHERE artifact_sha=?",
+            (sha256,),
+        )
+
+    def mark_delete_pending(self, sha256: str) -> int:
+        """Mark a present payload ``delete_pending``; return the rows changed."""
+        require_write(self._db, self._writable)
+        return self._db.execute(
+            "UPDATE artifacts SET payload_state='delete_pending',payload_deleted_at=NULL "
+            "WHERE artifact_sha=? AND payload_state='present'",
+            (sha256,),
+        ).rowcount
+
+    def mark_deleted(self, sha256: str, deleted_at: datetime) -> int:
+        """Mark a pending payload deleted at ``deleted_at``; return the rows changed."""
+        require_write(self._db, self._writable)
+        return self._db.execute(
+            "UPDATE artifacts SET payload_state='deleted',payload_deleted_at=? "
+            "WHERE artifact_sha=? AND payload_state='delete_pending'",
+            (deleted_at.isoformat(), sha256),
+        ).rowcount
