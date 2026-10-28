@@ -200,6 +200,7 @@ class Coverage(Contract):
     status: Literal["complete", "partial", "unavailable"]
     completed_channels: tuple[NonEmptyStr, ...] = ()
     unavailable_channels: tuple[NonEmptyStr, ...] = ()
+    truncated_channels: tuple[NonEmptyStr, ...] = ()
     warnings: tuple[str, ...] = ()
 
 
