@@ -293,12 +293,15 @@ async def create_visual_embedder(
     runtime: VoyageRuntime,
     scope: RequestScope,
     ctx: ExecutionContext,
+    priority: Priority,
 ) -> VoyageVisualEmbedder:
     """Trusted composition entry point; no transport is constructed here.
 
     The generic owner consumes an owner-bound provider port. Application
     composition alone selects the concrete adapter, reader and mandatory gate.
     Runtime/counter injection is privileged Python, including recording tests.
+    ``priority`` is the caller's lane: ``interactive`` when a query binds the
+    embedder, ``background`` when ingestion does.
     """
     from tychora.adapters.voyage.visual import VoyageVisualEmbedder
 
@@ -308,11 +311,11 @@ async def create_visual_embedder(
         if runtime.workspace_id != owner.workspace_id:
             raise TychoraError("INTEGRITY_ERROR", "Visual runtime workspace differs.")
         access = OwnerVisualAccess(owner, granted, epoch)
-        access.read_scope((), ctx)
+        access.read_scope((), ctx, priority)
         embedder = VoyageVisualEmbedder(
             capabilities=capabilities, counter=counter, runtime=runtime, access=access
         )
         owner.register_runtime(runtime)
         return embedder
 
-    return await owner.run_write(create, ctx)
+    return await owner.run_write(create, ctx, priority)

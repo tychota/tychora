@@ -105,6 +105,7 @@ async def test_live_synthetic_diagram_and_distinctly_phrased_text_query(tmp_path
             runtime=runtime,
             scope=scope,
             ctx=ctx,
+            priority="background",
         )
         item = _descriptor(bundle, asset, ref, image)
         (document,) = await owner.embed_visual_assets(

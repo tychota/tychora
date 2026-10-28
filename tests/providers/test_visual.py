@@ -253,6 +253,7 @@ async def _provider(owner, scope, transport):
         runtime=runtime,
         scope=scope,
         ctx=ctx,
+        priority="background",
     )
     return provider, ctx
 

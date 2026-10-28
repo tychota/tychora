@@ -120,6 +120,7 @@ async def test_real_text_and_visual_channels_overlap_on_one_pinned_query(
             runtime=visual_runtime,
             scope=scope,
             ctx=ExecutionContext(),
+            priority="interactive",
         )
         text_index = ChromaVectorIndex(tmp_path / "text-vectors")
         visual_index = ChromaVectorIndex(tmp_path / "image-vectors")

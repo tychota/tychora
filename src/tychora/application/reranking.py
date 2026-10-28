@@ -359,7 +359,7 @@ async def create_reranker(
 
     if owner.config.values.offline:
         raise TychoraError("CAPABILITY_MISSING", "Reranker is unavailable.")
-    counter = await owner.run_write(verified_counter, ctx)
+    counter = await owner.run_write(verified_counter, ctx, "interactive")
     return await _create_injected_reranker(
         owner, runtime=runtime, scope=scope, counter=counter, ctx=ctx
     )
@@ -398,7 +398,7 @@ async def _create_injected_reranker(
         owner.register_runtime(runtime)
         return reranker
 
-    return await owner.run_write(create, ctx)
+    return await owner.run_write(create, ctx, "interactive")
 
 
 async def rank_with_owner(

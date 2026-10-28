@@ -1023,6 +1023,7 @@ async def test_png_source_uses_owner_authorized_visual_provider(tmp_path, monkey
             runtime=runtime,
             scope=scope,
             ctx=ExecutionContext(),
+            priority="background",
         )
         image_index = ChromaVectorIndex(tmp_path / "images")
         coordinator = ProjectionCoordinator(

@@ -205,6 +205,7 @@ async def test_declared_png_proxy_enters_visual_query_and_evaluation(tmp_path):
             runtime=runtime,
             scope=scope,
             ctx=ctx,
+            priority="background",
         )
         image_index = ChromaVectorIndex(tmp_path / "vectors")
         coordinator = ProjectionCoordinator(
