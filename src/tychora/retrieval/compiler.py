@@ -245,6 +245,40 @@ def _filter_keys(expr: FilterExpr) -> set[str]:
     return {expr.field}
 
 
+def _metadata_bound(expr: FilterExpr, registry: Registry) -> bool:
+    """Whether every leaf of ``expr`` reads revision metadata."""
+    if isinstance(expr, (AndFilter, OrFilter)):
+        return all(_metadata_bound(child, registry) for child in expr.children)
+    return str(registry.facet(expr.field)["source_binding"]).startswith("metadata.")
+
+
+def _conjuncts(expr: FilterExpr) -> list[FilterExpr]:
+    if isinstance(expr, AndFilter):
+        return [leaf for child in expr.children for leaf in _conjuncts(child)]
+    return [expr]
+
+
+def _conjunction(children: list[FilterExpr]) -> FilterExpr | None:
+    if len(children) > 1:
+        return AndFilter(children=tuple(children))
+    return children[0] if children else None
+
+
+def split_revision_filter(
+    expr: FilterExpr, registry: Registry
+) -> tuple[FilterExpr | None, FilterExpr | None]:
+    """An all-units filter as ``(revision-level part, unit-level part)``.
+
+    A conjunct whose every leaf reads revision metadata is decided once per
+    revision; any other conjunct, including an ``or`` mixing metadata and unit
+    leaves, stays on the per-unit path.
+    """
+    conjuncts = _conjuncts(expr)
+    revision = [item for item in conjuncts if _metadata_bound(item, registry)]
+    unit = [item for item in conjuncts if not _metadata_bound(item, registry)]
+    return _conjunction(revision), _conjunction(unit)
+
+
 def _grouped(rows: Iterable[FacetValue]) -> dict[str, dict[str, object]]:
     found: dict[str, dict[str, object]] = defaultdict(dict)
     for row in rows:
@@ -615,9 +649,12 @@ class EligibilityCompiler:
             tuple(_revision_fact(r, kinds[r.kind_id]) for r in admitted),
             TemporalSelector.of(request),
         )
-        chosen = [row for row in admitted if row.revision_id in selected_ids]
+        edition = [row for row in admitted if row.revision_id in selected_ids]
         # Global facets matter only to filters, and only for the chosen editions.
-        facets = self._global_facets(tx, chosen) if job.selected is not None else {}
+        facets = self._global_facets(tx, edition) if job.selected is not None else {}
+        chosen, selected = self._revision_filter(
+            tx, job.selected, request, edition, facets
+        )
         grants = {
             row.revision_id: RevisionGrant(
                 extraction_id=row.extraction_id,
@@ -628,9 +665,7 @@ class EligibilityCompiler:
             )
             for row in chosen
         }
-        failing, unit_filter = self._filter_sets(
-            tx, job.selected, request, chosen, facets
-        )
+        failing, unit_filter = self._filter_sets(tx, selected, request, chosen, facets)
         units, assets = _exclusions(tx, chosen, job.mode, failing)
         batches = _selected_batches(
             tx.eligibility.batches(snapshot.snapshot_id),
@@ -656,8 +691,54 @@ class EligibilityCompiler:
             graph=_graph_binding(tx, batches, complete),
             all_members_eligible=len(grants) == snapshot.member_count,
         )
-        roles, envelopes = _historical(self.registry, kinds, chosen)
+        roles, envelopes = _historical(self.registry, kinds, edition)
         return CompiledEligibility(view, warnings, roles, envelopes)
+
+    def _revision_filter(
+        self,
+        tx: ReadTransaction,
+        selected: ScopedFilter | None,
+        request: QueryRequest,
+        chosen: list[MemberRow],
+        global_facets: Mapping[str, frozenset[str]],
+    ) -> tuple[list[MemberRow], ScopedFilter | None]:
+        """Drop revisions failing the metadata part of the all-units filter.
+
+        Returns the surviving members and the filter left for the per-unit path.
+        A unit carrying its own value for a metadata facet keeps the whole
+        all-units filter per unit, as the unit value also has to match.
+        """
+        if selected is None or selected.all_units is None:
+            return chosen, selected
+        revision_part, unit_part = split_revision_filter(
+            selected.all_units, self.registry
+        )
+        if revision_part is None:
+            return chosen, selected
+        keys = tuple(sorted(_filter_keys(revision_part)))
+        extractions = tuple(sorted(row.extraction_id for row in chosen))
+        if tx.eligibility.unit_facets(extractions, keys):
+            return chosen, selected
+        by_revision = _grouped(
+            tx.eligibility.revision_facets(
+                tuple(sorted(row.revision_id for row in chosen)), keys
+            )
+        )
+        kept = [
+            row
+            for row in chosen
+            if filter_matches(
+                revision_part,
+                self.registry,
+                FacetSubject(
+                    by_revision.get(row.revision_id, {}),
+                    {},
+                    request.include_global,
+                    global_facets.get(row.revision_id, frozenset()),
+                ),
+            )
+        ]
+        return kept, selected.model_copy(update={"all_units": unit_part})
 
     def _filter_sets(
         self,
