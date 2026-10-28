@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from tests.helpers.legacy import OutputCounter
 from tychora import Tychora
 from tychora.application.query import QueryService
@@ -187,3 +189,55 @@ def test_code_profile_keeps_query_words_that_are_code_keywords(tmp_path):
     assert lexical_expression("job repository with events and cancellation", words) == (
         '"cancellation" OR "repository" OR "events" OR "with" OR "job" OR "and"'
     )
+
+
+def _retaining(kb):
+    """The workspace's query service, retaining requests for replay."""
+    from tychora.adapters.sqlite.history import HistoryRepository
+
+    service = kb._workspace.services.query
+    owner = service.owner
+    service.history = HistoryRepository(
+        owner.db, artifacts=owner.artifacts, retain_payloads=True
+    )
+    return service
+
+
+def test_replay_under_a_different_lexical_profile_is_refused(tmp_path):
+    from tychora.contracts.errors import TychoraError
+    from tychora.ports.execution import ExecutionContext
+
+    workspace = tmp_path / "ws"
+    builtin = _config(tmp_path)
+    with Tychora.open(workspace, config=builtin, token_counter=OutputCounter()) as kb:
+        job = kb.sources.add(
+            {
+                "type": "text",
+                "source_key": "pumps.md",
+                "collection_id": "default",
+                "kind": "document@1",
+                "format": "markdown",
+                "text": "# Pumps\n\nThe inspection of the pump seal is quarterly.\n",
+                "metadata": {"title": "Pumps"},
+            }
+        )
+        assert kb.jobs.wait(job.id).state == "succeeded"
+        _retaining(kb)
+        retained = kb.search({"question": "the inspection of the seal"})
+        same = kb._workspace.bridge.call(
+            _retaining(kb).replay(retained.run_id, kb.scope, ExecutionContext())
+        )
+        assert same.result.segments == retained.segments
+    changed = _config(
+        tmp_path, '[configuration.retrieval.lexical]\nstopwords = "none"\n'
+    )
+    with Tychora.open(workspace, config=changed, token_counter=OutputCounter()) as kb:
+        service = _retaining(kb)
+        with pytest.raises(TychoraError) as error:
+            kb._workspace.bridge.call(
+                service.replay(retained.run_id, kb.scope, ExecutionContext())
+            )
+    assert error.value.code == "REPLAY_UNAVAILABLE"
+    # Only the lexical profile differs between the two configurations.
+    assert builtin.index_fingerprint == changed.index_fingerprint
+    assert builtin.config_sha != changed.config_sha
